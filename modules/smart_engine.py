@@ -57,9 +57,9 @@ class SmartEngine:
         self.groq_keys: List[Resource] = []
         self.gemini_keys: List[Resource] = []
         
-        # Settings
-        self.parallel = 2
-        self.delay = 2
+        # Settings - TOI UU TOC DO
+        self.parallel = 4  # Tang tu 2 -> 4 workers
+        self.delay = 1     # Giam tu 2s -> 1s giua moi anh
         self.max_retries = 3
         
         # State
@@ -187,13 +187,14 @@ class SmartEngine:
     def get_token_for_profile(self, profile: Resource) -> bool:
         """Lay token cho 1 profile."""
         from modules.auto_token import ChromeAutoToken
-        
+
         self.log(f"Lay token: {Path(profile.value).name}...")
-        
+
         try:
             extractor = ChromeAutoToken(
                 chrome_path=self.chrome_path,
-                profile_path=profile.value
+                profile_path=profile.value,
+                auto_close=True  # Tu dong dong Chrome sau khi lay token
             )
             
             token, proj_id, error = extractor.extract_token(callback=self.callback)
@@ -233,10 +234,10 @@ class SmartEngine:
             
             if self.get_token_for_profile(profile):
                 success += 1
-            
-            # Doi giua cac profiles
+
+            # Doi giua cac profiles (giam tu 3s -> 1s)
             if i < len(self.profiles) - 1:
-                time.sleep(3)
+                time.sleep(1)
         
         self.log(f"=== XONG: {success}/{len(self.profiles)} tokens ===")
         return success
@@ -467,10 +468,10 @@ class SmartEngine:
             results["pending"] = failed_in_round
             
             self.log(f"Round {attempt}: +{len(done_in_round)} OK, {len(failed_in_round)} pending")
-            
-            # If still have pending, wait a bit
+
+            # If still have pending, wait a bit (giam tu 5s -> 2s)
             if results["pending"]:
-                time.sleep(5)
+                time.sleep(2)
         
         results["failed"] = len(results["pending"])
         self.log(f"=== XONG: {results['success']} OK, {results['failed']} FAIL ===")

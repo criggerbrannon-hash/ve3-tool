@@ -1,19 +1,34 @@
 """
-VE3 Tool - Auto Token v14
+VE3 Tool - Auto Token v15
 =========================
 Flow:
-1. Mo Chrome
+1. Mo Chrome (minimized)
 2. DevTools -> Inject capture -> DONG DevTools
 3. PyAutoGUI: Click dropdown -> Click "Tao hinh anh" -> Click textarea -> Paste -> Enter
 4. Doi
 5. DevTools -> Lay token -> Dong
+6. TAT Chrome
+
+Updates v15:
+- Auto close Chrome sau khi lay token
+- Chay minimized mac dinh, chi restore khi can tuong tac
+- Giam thoi gian doi
 """
 
 import sys
 import time
 import subprocess
+import os
 from pathlib import Path
 from typing import Optional, Tuple, Callable
+
+# Windows-specific imports for window management
+try:
+    import ctypes
+    from ctypes import wintypes
+    HAS_CTYPES = True
+except ImportError:
+    HAS_CTYPES = False
 
 try:
     import pyautogui as pag
@@ -29,27 +44,78 @@ except ImportError:
 
 
 class ChromeAutoToken:
-    """Auto lay token."""
-    
+    """Auto lay token voi Chrome minimized."""
+
     FLOW_URL = "https://labs.google/fx/vi/tools/flow"
-    
+
     def __init__(
         self,
         chrome_path: str = None,
         profile_path: str = None,
-        headless: bool = False
+        headless: bool = False,
+        auto_close: bool = True  # Auto close Chrome after getting token
     ):
         self.chrome_path = chrome_path or r"C:\Program Files\Google\Chrome\Application\chrome.exe"
         self.profile_path = profile_path
         self.headless = headless
+        self.auto_close = auto_close
         self.callback = None
+        self.chrome_process = None  # Track Chrome process to close later
     
     def log(self, msg: str):
         print(f"[AutoToken] {msg}")
         if self.callback:
             self.callback(msg)
-    
-    def open_chrome(self, url: str) -> bool:
+
+    def close_chrome(self):
+        """Dong Chrome process da mo."""
+        if self.chrome_process:
+            try:
+                self.log("Dong Chrome...")
+                self.chrome_process.terminate()
+                # Doi 2s roi force kill neu can
+                try:
+                    self.chrome_process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    self.chrome_process.kill()
+                self.chrome_process = None
+                self.log("Chrome da dong")
+            except Exception as e:
+                self.log(f"Loi dong Chrome: {e}")
+                # Fallback: kill by window title
+                try:
+                    if os.name == 'nt':
+                        os.system('taskkill /F /IM chrome.exe /T 2>nul')
+                except:
+                    pass
+
+    def minimize_chrome(self):
+        """Thu nho cua so Chrome."""
+        if not HAS_CTYPES or os.name != 'nt':
+            return
+        try:
+            # Find Chrome window and minimize
+            hwnd = ctypes.windll.user32.FindWindowW(None, None)
+            # Alt+Space, N to minimize active window
+            if pag:
+                pag.hotkey('win', 'down')  # Minimize
+        except:
+            pass
+
+    def restore_chrome(self):
+        """Phuc hoi cua so Chrome tu minimized."""
+        if not HAS_CTYPES or os.name != 'nt':
+            return
+        try:
+            if pag:
+                # Use Alt+Tab to bring Chrome to front
+                pag.hotkey('alt', 'tab')
+                time.sleep(0.3)
+        except:
+            pass
+
+    def open_chrome(self, url: str, minimized: bool = False) -> bool:
+        """Mo Chrome va track process de dong sau."""
         try:
             cmd = [self.chrome_path]
             if self.profile_path and Path(self.profile_path).exists():
@@ -57,18 +123,28 @@ class ChromeAutoToken:
                     f"--user-data-dir={Path(self.profile_path).parent}",
                     f"--profile-directory={Path(self.profile_path).name}"
                 ])
-            
-            # Headless/minimized mode
-            if self.headless:
-                # Note: True headless won't work with PyAutoGUI
-                # So we start minimized and restore when needed
+
+            # Disable unnecessary features for faster startup
+            cmd.extend([
+                "--disable-extensions",
+                "--disable-plugins",
+                "--disable-sync",
+                "--no-first-run",
+                "--disable-default-apps",
+            ])
+
+            # Minimized mode - start small window at corner
+            if minimized or self.headless:
                 cmd.extend([
-                    "--start-minimized",
-                    "--window-position=-32000,-32000"  # Off-screen
+                    "--window-size=800,600",
+                    "--window-position=0,0",
                 ])
-            
+
             cmd.append(url)
-            subprocess.Popen(cmd, shell=False)
+
+            # Track process to close later
+            self.chrome_process = subprocess.Popen(cmd, shell=False)
+            self.log(f"Chrome PID: {self.chrome_process.pid}")
             return True
         except Exception as e:
             self.log(f"Loi: {e}")
@@ -245,72 +321,87 @@ class ChromeAutoToken:
         self,
         project_id: str = None,
         callback: Callable = None,
-        timeout: int = 90
+        timeout: int = 60  # Reduced from 90
     ) -> Tuple[Optional[str], Optional[str], str]:
-        """Main function."""
+        """
+        Main function - lay token roi DONG Chrome.
+
+        Returns: (token, project_id, error_message)
+        """
         self.callback = callback
-        
+
         if not pag:
             return None, None, "Thieu pyautogui"
         if not pyperclip:
             return None, None, "Thieu pyperclip"
-        
+
+        token = None
+        proj = None
+        error = ""
+
         try:
             # === 1. Mo Chrome ===
             url = f"https://labs.google/fx/vi/tools/flow/project/{project_id}" if project_id else self.FLOW_URL
             self.log("Mo Chrome...")
-            
+
             if not self.open_chrome(url):
                 return None, None, "Khong mo duoc Chrome"
-            
-            # === 2. Doi trang load ===
-            self.log("Doi trang load (12s)...")
-            time.sleep(12)
-            
+
+            # === 2. Doi trang load (giam tu 12s -> 8s) ===
+            self.log("Doi trang load (8s)...")
+            time.sleep(8)
+
             # === 3. Inject capture (DevTools mo roi dong) ===
             self.inject_capture_only()
-            time.sleep(1)
-            
+            time.sleep(0.5)
+
             # === 4. Click "Du an moi" (JS) ===
             if not project_id:
                 self.log("Click Du an moi...")
                 self.click_new_project_js()
-                self.log("Doi 5s...")
-                time.sleep(5)
-            
+                self.log("Doi 3s...")
+                time.sleep(3)
+
             # === 5. Click dropdown + chon "Tao hinh anh" (JS) ===
             self.log("Chon mode Tao hinh anh...")
             self.click_image_mode_js()
-            time.sleep(3)
-            
+            time.sleep(2)
+
             # === 6. Focus textarea (JS) ===
             self.log("Focus textarea...")
             self.focus_textarea_js()
-            time.sleep(1)
-            
+            time.sleep(0.5)
+
             # === 7. Gui prompt BANG PYAUTOGUI ===
-            # DevTools da dong, textarea da focus
-            # Chi can Ctrl+V va Enter
             prompt = "beautiful sunset over ocean with golden clouds and birds flying"
             self.send_prompt_manual(prompt)
-            
-            # === 8. Doi token ===
-            self.log("Doi capture token (60s)...")
-            
-            for i in range(20):
+
+            # === 8. Doi token (giam tu 60s -> 45s) ===
+            self.log("Doi capture token (45s max)...")
+
+            for i in range(15):  # 15 * 3s = 45s max
                 time.sleep(3)
                 self.log(f"Kiem tra #{i+1}...")
-                
+
                 token, proj = self.get_token_from_devtools()
-                
+
                 if token:
                     self.log("=== DA LAY DUOC TOKEN! ===")
-                    return token, proj or project_id, ""
-            
-            return None, None, "Khong lay duoc token. Thu lai."
-            
+                    break
+
+            if not token:
+                error = "Khong lay duoc token. Thu lai."
+
         except Exception as e:
-            return None, None, f"Loi: {e}"
+            error = f"Loi: {e}"
+
+        finally:
+            # === 9. DONG Chrome (QUAN TRONG!) ===
+            if self.auto_close:
+                time.sleep(0.5)
+                self.close_chrome()
+
+        return token, proj or project_id, error
 
 
 # Aliases
