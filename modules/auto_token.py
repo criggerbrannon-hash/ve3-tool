@@ -84,8 +84,11 @@ class ChromeAutoToken:
             return None
 
         start = time.time()
-        while time.time() - start < timeout:
-            def enum_callback(hwnd, results):
+        found_windows = []  # List luu ket qua
+
+        # Callback dung closure de truy cap found_windows
+        def enum_callback(hwnd, lParam):
+            try:
                 if user32.IsWindowVisible(hwnd):
                     length = user32.GetWindowTextLengthW(hwnd)
                     if length > 0:
@@ -93,15 +96,21 @@ class ChromeAutoToken:
                         user32.GetWindowTextW(hwnd, buff, length + 1)
                         title = buff.value
                         if 'Google' in title or 'Chrome' in title or 'Flow' in title:
-                            results.append(hwnd)
-                return True
+                            found_windows.append(hwnd)
+            except:
+                pass
+            return True
 
-            results = []
-            WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int))
-            user32.EnumWindows(WNDENUMPROC(enum_callback), 0)
+        # Tao callback type dung
+        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.c_int)
+        callback = WNDENUMPROC(enum_callback)
 
-            if results:
-                self.chrome_hwnd = results[0]
+        while time.time() - start < timeout:
+            found_windows.clear()
+            user32.EnumWindows(callback, 0)
+
+            if found_windows:
+                self.chrome_hwnd = found_windows[0]
                 return self.chrome_hwnd
             time.sleep(0.5)
         return None
