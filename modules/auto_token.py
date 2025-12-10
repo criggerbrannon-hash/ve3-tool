@@ -149,20 +149,29 @@ class ChromeAutoToken:
             pass
 
     def close_chrome(self):
-        """Dong Chrome process."""
+        """Dong Chrome process - kill ca process tree."""
         if self.chrome_process:
             try:
-                self.log("Dong Chrome...")
-                self.chrome_process.terminate()
-                try:
-                    self.chrome_process.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    self.chrome_process.kill()
+                pid = self.chrome_process.pid
+                self.log(f"Dong Chrome (PID: {pid})...")
+
+                # Windows: Dung taskkill de kill ca process tree
+                if os.name == 'nt':
+                    # Kill process tree bang PID
+                    os.system(f'taskkill /F /T /PID {pid} 2>nul')
+                else:
+                    self.chrome_process.terminate()
+                    try:
+                        self.chrome_process.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        self.chrome_process.kill()
+
                 self.chrome_process = None
                 self.chrome_hwnd = None
                 self.log("Chrome da dong")
             except Exception as e:
                 self.log(f"Loi dong Chrome: {e}")
+                # Fallback: kill tat ca Chrome
                 try:
                     if os.name == 'nt':
                         os.system('taskkill /F /IM chrome.exe /T 2>nul')
