@@ -13,6 +13,7 @@ Flow thong minh:
 5. Retry neu fail -> dam bao 100% output
 """
 
+import os
 import json
 import time
 import shutil
@@ -42,7 +43,13 @@ class SmartEngine:
     """
     
     def __init__(self, config_path: str = None):
-        self.config_path = Path(config_path or "config/accounts.json")
+        # Support VE3_CONFIG_DIR environment variable
+        if config_path:
+            self.config_path = Path(config_path)
+        else:
+            config_dir = os.environ.get('VE3_CONFIG_DIR', 'config')
+            self.config_path = Path(config_dir) / "accounts.json"
+        
         self.chrome_path = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
         
         # Resources
