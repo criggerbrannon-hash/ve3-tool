@@ -58,8 +58,8 @@ class SmartEngine:
         self.gemini_keys: List[Resource] = []
         
         # Settings - TOI UU TOC DO
-        self.parallel = 4  # Tang tu 2 -> 4 workers
-        self.delay = 1     # Giam tu 2s -> 1s giua moi anh
+        self.parallel = 20  # Tang len 20 - dung TAT CA tokens co san
+        self.delay = 0.5    # Giam tu 1s -> 0.5s giua moi anh
         self.max_retries = 3
         
         # State
@@ -404,8 +404,10 @@ class SmartEngine:
             
             if not active_profiles:
                 break
-            
-            n_workers = min(len(active_profiles), self.parallel, len(results["pending"]))
+
+            # DUNG TAT CA tokens co san - khong gioi han
+            n_workers = min(len(active_profiles), len(results["pending"]))
+            self.log(f"Su dung {n_workers} workers ({len(active_profiles)} tokens)")
             
             # Distribute prompts
             pending = results["pending"]
