@@ -1,0 +1,56 @@
+# VE3 Tool Configuration
+# ========================
+
+project_root: "./VE3_TOOL"
+
+# ============================================================================
+# CHROME SETTINGS (Cho tự động lấy Bearer Token)
+# ============================================================================
+# Tool sẽ sử dụng Chrome profile của bạn để tự động lấy token
+
+chrome_path: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
+chrome_profile: "C:\\Users\\admin\\AppData\\Local\\Google\\Chrome\\User Data\\Profile 2"
+
+# ============================================================================
+# GOOGLE FLOW API Configuration
+# ============================================================================
+# Token sẽ được tự động lấy khi chạy GUI
+# Hoặc paste thủ công vào đây
+
+flow_bearer_token: ""
+flow_project_id: ""
+flow_aspect_ratio: "landscape"
+flow_image_count: 2
+flow_timeout: 120
+flow_delay: 3.0
+
+# ============================================================================
+# GEMINI API Configuration (Chỉ cần nếu tạo prompts từ SRT)
+# ============================================================================
+# Lấy API key tại: https://makersuite.google.com/app/apikey
+# Có thể dùng nhiều keys để tránh rate limit
+
+gemini_api_keys:
+  - ""  # Thêm API key của bạn vào đây
+
+gemini_models:
+  - "gemini-2.0-flash"
+  - "gemini-2.5-flash"
+
+# ============================================================================
+# Automation Settings (Optional)
+# ============================================================================
+max_scenes_per_account: 50
+retry_count: 3
+wait_timeout: 30
+
+# Scene duration (giây) - dùng khi gom SRT thành scenes
+min_scene_duration: 15
+max_scene_duration: 25
+
+# Whisper Settings (Voice to SRT)
+whisper_model: "base"
+whisper_language: "vi"
+
+# Logging
+log_level: "INFO"

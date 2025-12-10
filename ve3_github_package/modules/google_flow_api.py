@@ -1,0 +1,713 @@
+"""
+VE3 Tool - Google Flow API Module
+=================================
+Tích hợp trực tiếp với Google Flow API để tạo ảnh và video.
+
+Sử dụng Bearer Token authentication.
+API Endpoint: aisandbox-pa.googleapis.com
+"""
+
+import json
+import time
+import random
+import base64
+import uuid
+import requests
+from pathlib import Path
+from typing import Optional, List, Dict, Any, Tuple
+from datetime import datetime
+from dataclasses import dataclass
+from enum import Enum
+
+
+class AspectRatio(Enum):
+    """Tỷ lệ khung hình cho ảnh."""
+    LANDSCAPE = "IMAGE_ASPECT_RATIO_LANDSCAPE"    # 16:9
+    PORTRAIT = "IMAGE_ASPECT_RATIO_PORTRAIT"      # 9:16
+    SQUARE = "IMAGE_ASPECT_RATIO_SQUARE"          # 1:1
+
+
+class ImageModel(Enum):
+    """Model tạo ảnh."""
+    GEM_PIX = "GEM_PIX"  # Default model
+
+
+@dataclass
+class GeneratedImage:
+    """Kết quả ảnh được tạo."""
+    url: Optional[str] = None
+    base64_data: Optional[str] = None
+    media_id: Optional[str] = None
+    seed: Optional[int] = None
+    prompt: str = ""
+    aspect_ratio: str = ""
+    local_path: Optional[Path] = None
+    
+    @property
+    def has_data(self) -> bool:
+        return bool(self.url or self.base64_data or self.media_id)
+
+
+class GoogleFlowAPI:
+    """
+    Client để tương tác với Google Flow API.
+    
+    Sử dụng Bearer Token authentication từ browser session.
+    """
+    
+    BASE_URL = "https://aisandbox-pa.googleapis.com"
+    TOOL_NAME = "PINHOLE"  # Internal name for Flow
+    
+    def __init__(
+        self,
+        bearer_token: str,
+        project_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        timeout: int = 120,
+        verbose: bool = False
+    ):
+        """
+        Khởi tạo Google Flow API client.
+        
+        Args:
+            bearer_token: OAuth Bearer token (bắt đầu bằng "ya29.")
+            project_id: Project ID (nếu không có sẽ tự tạo UUID)
+            session_id: Session ID (nếu không có sẽ tự tạo)
+            timeout: Request timeout in seconds
+            verbose: Print debug info
+        """
+        self.bearer_token = bearer_token.strip()
+        self.project_id = project_id or str(uuid.uuid4())
+        self.session_id = session_id or f";{int(time.time() * 1000)}"
+        self.timeout = timeout
+        self.verbose = verbose
+        
+        # Validate token format
+        if not self.bearer_token.startswith("ya29."):
+            print("⚠️  Warning: Bearer token should start with 'ya29.'")
+        
+        self.session = self._create_session()
+    
+    def _create_session(self) -> requests.Session:
+        """Tạo HTTP session với headers chuẩn."""
+        session = requests.Session()
+        
+        session.headers.update({
+            "Authorization": f"Bearer {self.bearer_token}",
+            "Content-Type": "text/plain;charset=UTF-8",
+            "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Origin": "https://labs.google",
+            "Referer": "https://labs.google/",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "cross-site",
+        })
+        
+        return session
+    
+    def _log(self, message: str) -> None:
+        """Print log message if verbose."""
+        if self.verbose:
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            print(f"[{timestamp}] {message}")
+    
+    def _generate_seed(self) -> int:
+        """Tạo random seed cho image generation."""
+        return random.randint(1, 999999)
+    
+    # =========================================================================
+    # IMAGE GENERATION
+    # =========================================================================
+    
+    def generate_images(
+        self,
+        prompt: str,
+        count: int = 2,
+        aspect_ratio: AspectRatio = AspectRatio.LANDSCAPE,
+        model: ImageModel = ImageModel.GEM_PIX,
+        image_inputs: Optional[List[str]] = None
+    ) -> Tuple[bool, List[GeneratedImage], str]:
+        """
+        Tạo ảnh từ prompt sử dụng Flow API.
+        
+        Args:
+            prompt: Text prompt mô tả ảnh
+            count: Số lượng ảnh cần tạo (1-4)
+            aspect_ratio: Tỷ lệ khung hình
+            model: Model tạo ảnh
+            image_inputs: List base64 images cho image-to-image (optional)
+            
+        Returns:
+            Tuple[success, list_of_images, error_message]
+        """
+        self._log(f"Generating {count} images with prompt: {prompt[:50]}...")
+        
+        # Build requests array
+        requests_data = []
+        for _ in range(count):
+            request_item = {
+                "clientContext": {
+                    "sessionId": self.session_id,
+                    "projectId": self.project_id,
+                    "tool": self.TOOL_NAME
+                },
+                "seed": self._generate_seed(),
+                "imageModelName": model.value,
+                "imageAspectRatio": aspect_ratio.value,
+                "prompt": prompt,
+                "imageInputs": image_inputs or []
+            }
+            requests_data.append(request_item)
+        
+        payload = {"requests": requests_data}
+        
+        # Build URL
+        url = f"{self.BASE_URL}/v1/projects/{self.project_id}/flowMedia:batchGenerateImages"
+        
+        self._log(f"POST {url}")
+        
+        try:
+            response = self.session.post(
+                url,
+                data=json.dumps(payload),
+                timeout=self.timeout
+            )
+            
+            self._log(f"Response status: {response.status_code}")
+            
+            if response.status_code == 401:
+                return False, [], "Authentication failed - Bearer token may be expired"
+            
+            if response.status_code == 403:
+                return False, [], "Access forbidden - check permissions"
+            
+            if response.status_code != 200:
+                return False, [], f"API error: {response.status_code} - {response.text[:200]}"
+            
+            # Parse response
+            result = response.json()
+            
+            if self.verbose:
+                self._log(f"Response: {json.dumps(result, indent=2)[:500]}")
+            
+            # Extract images from response
+            images = self._parse_image_response(result, prompt, aspect_ratio.value)
+            
+            if images:
+                self._log(f"✓ Generated {len(images)} images successfully")
+                return True, images, ""
+            else:
+                # Check if we need to poll for results
+                if self._needs_polling(result):
+                    return self._poll_for_results(result, prompt, aspect_ratio.value)
+                
+                return False, [], "No images in response - check response format"
+            
+        except requests.exceptions.Timeout:
+            return False, [], f"Request timeout after {self.timeout}s"
+        except requests.exceptions.RequestException as e:
+            return False, [], f"Network error: {str(e)}"
+        except json.JSONDecodeError as e:
+            return False, [], f"Invalid JSON response: {str(e)}"
+        except Exception as e:
+            return False, [], f"Unexpected error: {str(e)}"
+    
+    def _parse_image_response(
+        self,
+        response: Dict[str, Any],
+        prompt: str,
+        aspect_ratio: str
+    ) -> List[GeneratedImage]:
+        """
+        Parse response từ API để lấy thông tin ảnh.
+        
+        Actual Flow API Response Format:
+        {
+          "media": [
+            {
+              "image": {
+                "generatedImage": {
+                  "aspectRatio": "IMAGE_ASPECT_RATIO_LANDSCAPE",
+                  "encodedImage": "iVBORw0KGgo...",  // Base64 PNG
+                  "fifeUrl": "https://storage.googleapis.com/...",
+                  "mediaGenerationId": "...",
+                  "seed": 634312,
+                  "prompt": "cute princess pictures",
+                  "modelNameType": "GEM_PIX"
+                }
+              },
+              "name": "...",
+              "workflowId": "..."
+            }
+          ],
+          "workflows": [...]
+        }
+        """
+        images = []
+        
+        # =====================================================================
+        # PRIMARY FORMAT: Flow API "media" array (ACTUAL FORMAT)
+        # =====================================================================
+        if "media" in response:
+            for media_item in response["media"]:
+                # Navigate: media[].image.generatedImage
+                image_wrapper = media_item.get("image", {})
+                gen_image = image_wrapper.get("generatedImage", {})
+                
+                if gen_image:
+                    img = GeneratedImage(
+                        url=gen_image.get("fifeUrl"),  # Direct download URL
+                        base64_data=gen_image.get("encodedImage"),  # Base64 PNG
+                        media_id=gen_image.get("mediaGenerationId"),
+                        seed=gen_image.get("seed"),
+                        prompt=gen_image.get("prompt", prompt),
+                        aspect_ratio=gen_image.get("aspectRatio", aspect_ratio)
+                    )
+                    if img.has_data:
+                        images.append(img)
+                        self._log(f"  ✓ Parsed image: seed={img.seed}, has_url={bool(img.url)}, has_b64={bool(img.base64_data)}")
+        
+        # =====================================================================
+        # FALLBACK FORMATS (for compatibility)
+        # =====================================================================
+        
+        # Format 2: Direct images array
+        if not images and "images" in response:
+            for img_data in response["images"]:
+                img = GeneratedImage(
+                    url=img_data.get("url") or img_data.get("imageUrl") or img_data.get("fifeUrl"),
+                    base64_data=img_data.get("base64") or img_data.get("imageBytes") or img_data.get("encodedImage"),
+                    media_id=img_data.get("mediaId") or img_data.get("id") or img_data.get("mediaGenerationId"),
+                    seed=img_data.get("seed"),
+                    prompt=prompt,
+                    aspect_ratio=aspect_ratio
+                )
+                if img.has_data:
+                    images.append(img)
+        
+        # Format 3: Nested in responses array
+        if not images and "responses" in response:
+            for resp in response["responses"]:
+                img_data = resp.get("image", {}).get("generatedImage", resp.get("image", resp))
+                img = GeneratedImage(
+                    url=img_data.get("url") or img_data.get("fifeUrl"),
+                    base64_data=img_data.get("base64") or img_data.get("encodedImage"),
+                    media_id=img_data.get("mediaId") or img_data.get("mediaGenerationId"),
+                    seed=img_data.get("seed") or resp.get("seed"),
+                    prompt=prompt,
+                    aspect_ratio=aspect_ratio
+                )
+                if img.has_data:
+                    images.append(img)
+        
+        # Format 4: Media items (alternative naming)
+        if not images and "mediaItems" in response:
+            for item in response["mediaItems"]:
+                gen_image = item.get("generatedImage", item)
+                img = GeneratedImage(
+                    url=gen_image.get("url") or gen_image.get("fifeUrl"),
+                    base64_data=gen_image.get("base64") or gen_image.get("encodedImage"),
+                    media_id=gen_image.get("id") or gen_image.get("mediaGenerationId"),
+                    prompt=prompt,
+                    aspect_ratio=aspect_ratio
+                )
+                if img.has_data:
+                    images.append(img)
+        
+        return images
+    
+    def _needs_polling(self, response: Dict[str, Any]) -> bool:
+        """Check if response indicates we need to poll for results."""
+        # Common indicators for async processing
+        indicators = [
+            "operationId" in response,
+            "taskId" in response,
+            "jobId" in response,
+            response.get("status") in ["PENDING", "PROCESSING", "IN_PROGRESS"],
+            "done" in response and response["done"] == False,
+        ]
+        return any(indicators)
+    
+    def _poll_for_results(
+        self,
+        initial_response: Dict[str, Any],
+        prompt: str,
+        aspect_ratio: str,
+        max_attempts: int = 30,
+        poll_interval: float = 2.0
+    ) -> Tuple[bool, List[GeneratedImage], str]:
+        """
+        Poll API để lấy kết quả khi generation là async.
+        """
+        self._log("Polling for results...")
+        
+        # Try to find operation/task ID
+        operation_id = (
+            initial_response.get("operationId") or
+            initial_response.get("taskId") or
+            initial_response.get("jobId") or
+            initial_response.get("name")
+        )
+        
+        if not operation_id:
+            return False, [], "No operation ID found for polling"
+        
+        # Poll endpoint - adjust based on actual API
+        poll_url = f"{self.BASE_URL}/v1/projects/{self.project_id}/media.fetchUserHistoryDirectly"
+        
+        for attempt in range(max_attempts):
+            self._log(f"Poll attempt {attempt + 1}/{max_attempts}")
+            time.sleep(poll_interval)
+            
+            try:
+                response = self.session.get(poll_url, timeout=30)
+                
+                if response.status_code != 200:
+                    continue
+                
+                result = response.json()
+                
+                # Check if complete
+                if result.get("done") == True or result.get("status") == "COMPLETED":
+                    images = self._parse_image_response(result, prompt, aspect_ratio)
+                    if images:
+                        return True, images, ""
+                
+            except Exception as e:
+                self._log(f"Poll error: {e}")
+                continue
+        
+        return False, [], f"Polling timeout after {max_attempts} attempts"
+    
+    # =========================================================================
+    # IMAGE DOWNLOAD
+    # =========================================================================
+    
+    def download_image(
+        self,
+        image: GeneratedImage,
+        output_dir: Path,
+        filename: Optional[str] = None
+    ) -> Optional[Path]:
+        """
+        Download ảnh về local.
+        
+        Flow API cung cấp 2 cách lấy ảnh:
+        1. fifeUrl: Direct signed URL từ Google Storage (ưu tiên)
+        2. encodedImage: Base64 PNG data
+        
+        Args:
+            image: GeneratedImage object
+            output_dir: Thư mục lưu ảnh
+            filename: Tên file (không có extension)
+            
+        Returns:
+            Path đến file đã download
+        """
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Generate filename
+        if not filename:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            seed_str = f"_{image.seed}" if image.seed else ""
+            filename = f"flow_{timestamp}{seed_str}"
+        
+        output_path = output_dir / f"{filename}.png"
+        
+        try:
+            # Priority 1: Download from fifeUrl (signed Google Storage URL)
+            if image.url:
+                self._log(f"Downloading from fifeUrl...")
+                
+                # Use simple GET request (no auth needed - URL is signed)
+                response = requests.get(image.url, timeout=60)
+                
+                if response.status_code == 200:
+                    with open(output_path, "wb") as f:
+                        f.write(response.content)
+                    image.local_path = output_path
+                    self._log(f"✓ Saved to {output_path}")
+                    return output_path
+                else:
+                    self._log(f"URL download failed ({response.status_code}), trying base64...")
+            
+            # Priority 2: Decode from encodedImage (base64)
+            if image.base64_data:
+                self._log("Decoding base64 encodedImage...")
+                
+                # Remove data URL prefix if present
+                b64_data = image.base64_data
+                if "," in b64_data:
+                    b64_data = b64_data.split(",")[1]
+                
+                # Remove any whitespace/newlines
+                b64_data = b64_data.strip().replace("\n", "").replace("\r", "")
+                
+                img_bytes = base64.b64decode(b64_data)
+                
+                with open(output_path, "wb") as f:
+                    f.write(img_bytes)
+                
+                image.local_path = output_path
+                self._log(f"✓ Saved to {output_path}")
+                return output_path
+            
+            self._log("No URL or base64 data available")
+            return None
+                
+        except Exception as e:
+            self._log(f"Download error: {e}")
+            return None
+    
+    def download_all_images(
+        self,
+        images: List[GeneratedImage],
+        output_dir: Path,
+        prefix: str = "flow"
+    ) -> List[Path]:
+        """
+        Download tất cả ảnh về local.
+        
+        Args:
+            images: List of GeneratedImage objects
+            output_dir: Thư mục lưu ảnh
+            prefix: Prefix cho tên file
+            
+        Returns:
+            List of paths to downloaded files
+        """
+        downloaded = []
+        
+        for i, img in enumerate(images):
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"{prefix}_{timestamp}_{i+1}"
+            
+            path = self.download_image(img, output_dir, filename)
+            if path:
+                downloaded.append(path)
+        
+        return downloaded
+    
+    # =========================================================================
+    # CONVENIENCE METHODS
+    # =========================================================================
+    
+    def generate_and_download(
+        self,
+        prompt: str,
+        output_dir: Path,
+        count: int = 2,
+        aspect_ratio: AspectRatio = AspectRatio.LANDSCAPE,
+        prefix: str = "flow"
+    ) -> Tuple[bool, List[Path], str]:
+        """
+        Tạo ảnh và download về local trong một lần gọi.
+        
+        Args:
+            prompt: Text prompt
+            output_dir: Thư mục lưu ảnh
+            count: Số lượng ảnh
+            aspect_ratio: Tỷ lệ khung hình
+            prefix: Prefix cho tên file
+            
+        Returns:
+            Tuple[success, list_of_paths, error_message]
+        """
+        # Generate
+        success, images, error = self.generate_images(
+            prompt=prompt,
+            count=count,
+            aspect_ratio=aspect_ratio
+        )
+        
+        if not success:
+            return False, [], error
+        
+        # Download
+        paths = self.download_all_images(images, output_dir, prefix)
+        
+        if not paths:
+            return False, [], "Generation succeeded but download failed"
+        
+        return True, paths, ""
+    
+    # =========================================================================
+    # TOKEN MANAGEMENT
+    # =========================================================================
+    
+    def test_connection(self) -> Tuple[bool, str]:
+        """
+        Test API connection với bearer token hiện tại.
+        
+        Returns:
+            Tuple[success, message]
+        """
+        self._log("Testing API connection...")
+        
+        try:
+            # Simple test: try to generate a minimal image
+            success, images, error = self.generate_images(
+                prompt="test",
+                count=1,
+                aspect_ratio=AspectRatio.SQUARE
+            )
+            
+            if success:
+                return True, "Connection successful - API is working"
+            else:
+                return False, f"Connection test failed: {error}"
+                
+        except Exception as e:
+            return False, f"Connection error: {str(e)}"
+    
+    def update_token(self, new_token: str) -> None:
+        """
+        Cập nhật Bearer token mới.
+        
+        Args:
+            new_token: Bearer token mới
+        """
+        self.bearer_token = new_token.strip()
+        self.session.headers["Authorization"] = f"Bearer {self.bearer_token}"
+        self._log("Bearer token updated")
+    
+    @staticmethod
+    def get_token_guide() -> str:
+        """Hướng dẫn lấy Bearer Token."""
+        return """
+╔══════════════════════════════════════════════════════════════════════════════╗
+║               HƯỚNG DẪN LẤY BEARER TOKEN TỪ GOOGLE FLOW                      ║
+╠══════════════════════════════════════════════════════════════════════════════╣
+║                                                                              ║
+║  1. Mở trình duyệt (Chrome/Edge) và truy cập:                               ║
+║     https://labs.google/fx/vi/tools/flow                                     ║
+║                                                                              ║
+║  2. Đăng nhập Google account nếu cần                                        ║
+║                                                                              ║
+║  3. Mở DevTools:                                                            ║
+║     - Windows/Linux: F12 hoặc Ctrl + Shift + I                              ║
+║     - Mac: Cmd + Option + I                                                  ║
+║                                                                              ║
+║  4. Chọn tab "Network"                                                      ║
+║                                                                              ║
+║  5. Thực hiện tạo một ảnh bất kỳ trên trang Flow                           ║
+║                                                                              ║
+║  6. Trong Network tab, tìm request "flowMedia:batchGenerateImages"         ║
+║                                                                              ║
+║  7. Click vào request đó, chọn tab "Headers"                                ║
+║                                                                              ║
+║  8. Tìm dòng "authorization" trong Request Headers                          ║
+║     Giá trị sẽ có dạng: Bearer ya29.a0Aa7pCA_VG7SzW...                      ║
+║                                                                              ║
+║  9. Copy TOÀN BỘ giá trị sau "Bearer " (bắt đầu bằng "ya29.")               ║
+║                                                                              ║
+║  ⚠️  LƯU Ý QUAN TRỌNG:                                                      ║
+║     - Token có thời hạn ngắn (~1 giờ), cần refresh thường xuyên            ║
+║     - Mỗi lần refresh trang hoặc tạo ảnh mới sẽ có token mới               ║
+║     - Không chia sẻ token với người khác                                    ║
+║                                                                              ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+"""
+
+
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
+def create_flow_client(
+    token: str,
+    project_id: Optional[str] = None,
+    verbose: bool = False
+) -> GoogleFlowAPI:
+    """
+    Factory function để tạo GoogleFlowAPI client.
+    
+    Args:
+        token: Bearer token
+        project_id: Project ID (optional)
+        verbose: Enable verbose logging
+        
+    Returns:
+        GoogleFlowAPI instance
+    """
+    return GoogleFlowAPI(
+        bearer_token=token,
+        project_id=project_id,
+        verbose=verbose
+    )
+
+
+def quick_generate(
+    prompt: str,
+    token: str,
+    output_dir: str = "./output",
+    count: int = 2,
+    aspect_ratio: str = "landscape"
+) -> List[str]:
+    """
+    Quick function để tạo ảnh với minimal setup.
+    
+    Args:
+        prompt: Text prompt
+        token: Bearer token
+        output_dir: Output directory
+        count: Number of images
+        aspect_ratio: "landscape", "portrait", or "square"
+        
+    Returns:
+        List of output file paths
+    """
+    # Map aspect ratio string
+    ar_map = {
+        "landscape": AspectRatio.LANDSCAPE,
+        "portrait": AspectRatio.PORTRAIT,
+        "square": AspectRatio.SQUARE,
+        "16:9": AspectRatio.LANDSCAPE,
+        "9:16": AspectRatio.PORTRAIT,
+        "1:1": AspectRatio.SQUARE,
+    }
+    ar = ar_map.get(aspect_ratio.lower(), AspectRatio.LANDSCAPE)
+    
+    client = GoogleFlowAPI(bearer_token=token, verbose=True)
+    success, paths, error = client.generate_and_download(
+        prompt=prompt,
+        output_dir=Path(output_dir),
+        count=count,
+        aspect_ratio=ar
+    )
+    
+    if success:
+        return [str(p) for p in paths]
+    else:
+        print(f"❌ Error: {error}")
+        return []
+
+
+# =============================================================================
+# CLI TEST
+# =============================================================================
+
+if __name__ == "__main__":
+    import sys
+    
+    print(GoogleFlowAPI.get_token_guide())
+    
+    if len(sys.argv) < 3:
+        print("\nUsage: python google_flow_api.py <token> <prompt>")
+        print("Example: python google_flow_api.py 'ya29.xxx' 'a cute cat'")
+        sys.exit(1)
+    
+    token = sys.argv[1]
+    prompt = sys.argv[2]
+    
+    print(f"\n🎨 Generating images for: {prompt}")
+    paths = quick_generate(prompt, token)
+    
+    if paths:
+        print(f"\n✅ Generated {len(paths)} images:")
+        for p in paths:
+            print(f"   📁 {p}")
+    else:
+        print("\n❌ Generation failed")

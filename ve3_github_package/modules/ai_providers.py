@@ -1,0 +1,393 @@
+"""
+VE3 Tool - Free AI Providers
+============================
+Cac AI provider mien phi de thay the Gemini:
+- Groq (mien phi, rat nhanh)
+- OpenRouter (nhieu model mien phi)
+- Google AI Studio (Gemini mien phi)
+"""
+
+import os
+import json
+import time
+import requests
+from typing import Optional, List, Dict, Any, Callable
+from dataclasses import dataclass
+
+
+@dataclass
+class AIProvider:
+    """Thong tin provider."""
+    name: str
+    api_key: str
+    model: str
+    endpoint: str
+    
+
+class GroqClient:
+    """
+    Groq API Client - Mien phi va rat nhanh!
+    
+    Dang ky: https://console.groq.com/keys
+    Models mien phi:
+    - llama-3.3-70b-versatile (tot nhat)
+    - llama-3.1-8b-instant (nhanh)
+    - mixtral-8x7b-32768
+    """
+    
+    ENDPOINT = "https://api.groq.com/openai/v1/chat/completions"
+    
+    MODELS = [
+        "llama-3.3-70b-versatile",  # Best
+        "llama-3.1-70b-versatile",
+        "llama-3.1-8b-instant",     # Fastest
+        "mixtral-8x7b-32768",
+        "gemma2-9b-it",
+    ]
+    
+    def __init__(self, api_key: str, model: str = None):
+        self.api_key = api_key
+        self.model = model or self.MODELS[0]
+    
+    def generate(
+        self,
+        prompt: str,
+        system_prompt: str = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096
+    ) -> Optional[str]:
+        """Generate text."""
+        
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        data = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens
+        }
+        
+        try:
+            resp = requests.post(
+                self.ENDPOINT,
+                headers=headers,
+                json=data,
+                timeout=120
+            )
+            
+            if resp.status_code == 200:
+                result = resp.json()
+                return result["choices"][0]["message"]["content"]
+            else:
+                print(f"[Groq Error] {resp.status_code}: {resp.text[:200]}")
+                return None
+                
+        except Exception as e:
+            print(f"[Groq Error] {e}")
+            return None
+
+
+class OpenRouterClient:
+    """
+    OpenRouter API Client - Nhieu model mien phi!
+    
+    Dang ky: https://openrouter.ai/keys
+    Models mien phi:
+    - meta-llama/llama-3.2-3b-instruct:free
+    - google/gemma-2-9b-it:free
+    - qwen/qwen-2-7b-instruct:free
+    """
+    
+    ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
+    
+    FREE_MODELS = [
+        "meta-llama/llama-3.2-3b-instruct:free",
+        "google/gemma-2-9b-it:free",
+        "qwen/qwen-2-7b-instruct:free",
+        "microsoft/phi-3-mini-128k-instruct:free",
+    ]
+    
+    def __init__(self, api_key: str, model: str = None):
+        self.api_key = api_key
+        self.model = model or self.FREE_MODELS[0]
+    
+    def generate(
+        self,
+        prompt: str,
+        system_prompt: str = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096
+    ) -> Optional[str]:
+        """Generate text."""
+        
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+        
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://ve3tool.local",
+            "X-Title": "VE3 Tool"
+        }
+        
+        data = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens
+        }
+        
+        try:
+            resp = requests.post(
+                self.ENDPOINT,
+                headers=headers,
+                json=data,
+                timeout=120
+            )
+            
+            if resp.status_code == 200:
+                result = resp.json()
+                return result["choices"][0]["message"]["content"]
+            else:
+                print(f"[OpenRouter Error] {resp.status_code}: {resp.text[:200]}")
+                return None
+                
+        except Exception as e:
+            print(f"[OpenRouter Error] {e}")
+            return None
+
+
+class GeminiClient:
+    """
+    Google Gemini API Client.
+    
+    Dang ky: https://makersuite.google.com/app/apikey
+    Models:
+    - gemini-2.0-flash (moi nhat)
+    - gemini-1.5-flash (nhanh)
+    - gemini-1.5-pro (tot nhat)
+    """
+    
+    ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    
+    MODELS = [
+        "gemini-2.0-flash",
+        "gemini-1.5-flash",
+        "gemini-1.5-pro",
+    ]
+    
+    def __init__(self, api_key: str, model: str = None):
+        self.api_key = api_key
+        self.model = model or self.MODELS[0]
+    
+    def generate(
+        self,
+        prompt: str,
+        system_prompt: str = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096
+    ) -> Optional[str]:
+        """Generate text."""
+        
+        url = self.ENDPOINT.format(model=self.model) + f"?key={self.api_key}"
+        
+        content = prompt
+        if system_prompt:
+            content = f"{system_prompt}\n\n{prompt}"
+        
+        data = {
+            "contents": [{"parts": [{"text": content}]}],
+            "generationConfig": {
+                "temperature": temperature,
+                "maxOutputTokens": max_tokens
+            }
+        }
+        
+        try:
+            resp = requests.post(url, json=data, timeout=120)
+            
+            if resp.status_code == 200:
+                result = resp.json()
+                return result["candidates"][0]["content"]["parts"][0]["text"]
+            else:
+                error_msg = resp.text[:300]
+                print(f"[Gemini Error] {resp.status_code}: {error_msg}")
+                
+                # Check specific errors
+                if "API key" in error_msg and "leaked" in error_msg:
+                    raise Exception("API key bi leak! Vui long tao key moi.")
+                elif resp.status_code == 429:
+                    raise Exception("Rate limit! Doi 1 phut va thu lai.")
+                
+                return None
+                
+        except requests.exceptions.Timeout:
+            print("[Gemini Error] Timeout")
+            return None
+        except Exception as e:
+            print(f"[Gemini Error] {e}")
+            raise
+
+
+class MultiAIClient:
+    """
+    Client ho tro nhieu AI providers.
+    Tu dong chuyen sang provider khac neu gap loi.
+    """
+    
+    def __init__(self, config: Dict[str, Any]):
+        """
+        Config format:
+        {
+            "groq_api_keys": ["key1", "key2"],
+            "openrouter_api_keys": ["key1"],
+            "gemini_api_keys": ["key1", "key2"],
+            "preferred_provider": "groq"  # groq, openrouter, gemini
+        }
+        """
+        self.config = config
+        self.clients = []
+        self._init_clients()
+    
+    def _init_clients(self):
+        """Khoi tao cac clients."""
+        
+        # Groq (uu tien vi nhanh nhat)
+        groq_keys = self.config.get("groq_api_keys", [])
+        for key in groq_keys:
+            if key and key.strip():
+                self.clients.append(("groq", GroqClient(key.strip())))
+        
+        # OpenRouter
+        openrouter_keys = self.config.get("openrouter_api_keys", [])
+        for key in openrouter_keys:
+            if key and key.strip():
+                self.clients.append(("openrouter", OpenRouterClient(key.strip())))
+        
+        # Gemini
+        gemini_keys = self.config.get("gemini_api_keys", [])
+        for key in gemini_keys:
+            if key and key.strip():
+                self.clients.append(("gemini", GeminiClient(key.strip())))
+        
+        # Sap xep theo preferred_provider
+        preferred = self.config.get("preferred_provider", "groq")
+        self.clients.sort(key=lambda x: 0 if x[0] == preferred else 1)
+    
+    def generate(
+        self,
+        prompt: str,
+        system_prompt: str = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        retry_count: int = 3
+    ) -> Optional[str]:
+        """
+        Generate text, tu dong retry voi provider khac neu loi.
+        """
+        
+        if not self.clients:
+            print("[MultiAI] Khong co AI provider nao duoc cau hinh!")
+            return None
+        
+        errors = []
+        
+        for name, client in self.clients:
+            for attempt in range(retry_count):
+                try:
+                    print(f"[MultiAI] Trying {name} (attempt {attempt + 1})...")
+                    
+                    result = client.generate(
+                        prompt=prompt,
+                        system_prompt=system_prompt,
+                        temperature=temperature,
+                        max_tokens=max_tokens
+                    )
+                    
+                    if result:
+                        return result
+                    
+                except Exception as e:
+                    error_msg = str(e)
+                    errors.append(f"{name}: {error_msg}")
+                    
+                    # Neu la loi key leaked, bo qua key nay
+                    if "leaked" in error_msg.lower():
+                        print(f"[MultiAI] {name} key leaked, skipping...")
+                        break
+                    
+                    # Rate limit - doi va thu lai
+                    if "rate" in error_msg.lower() or "429" in error_msg:
+                        print(f"[MultiAI] Rate limit, waiting 30s...")
+                        time.sleep(30)
+                        continue
+                
+                # Doi giua cac attempt
+                time.sleep(2)
+            
+            # Chuyen sang provider tiep theo
+        
+        print(f"[MultiAI] All providers failed: {errors}")
+        return None
+    
+    def get_available_providers(self) -> List[str]:
+        """Tra ve danh sach providers kha dung."""
+        return [name for name, _ in self.clients]
+
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+
+def create_ai_client(config: Dict[str, Any]) -> MultiAIClient:
+    """Tao AI client tu config."""
+    return MultiAIClient(config)
+
+
+def test_providers():
+    """Test cac providers."""
+    
+    print("=" * 50)
+    print("Testing AI Providers")
+    print("=" * 50)
+    
+    # Test Groq
+    groq_key = os.environ.get("GROQ_API_KEY")
+    if groq_key:
+        print("\n[Testing Groq]")
+        client = GroqClient(groq_key)
+        result = client.generate("Say hello in Vietnamese")
+        print(f"Result: {result[:100] if result else 'FAILED'}")
+    
+    # Test OpenRouter
+    or_key = os.environ.get("OPENROUTER_API_KEY")
+    if or_key:
+        print("\n[Testing OpenRouter]")
+        client = OpenRouterClient(or_key)
+        result = client.generate("Say hello in Vietnamese")
+        print(f"Result: {result[:100] if result else 'FAILED'}")
+    
+    # Test Gemini
+    gemini_key = os.environ.get("GEMINI_API_KEY")
+    if gemini_key:
+        print("\n[Testing Gemini]")
+        client = GeminiClient(gemini_key)
+        try:
+            result = client.generate("Say hello in Vietnamese")
+            print(f"Result: {result[:100] if result else 'FAILED'}")
+        except Exception as e:
+            print(f"Error: {e}")
+
+
+if __name__ == "__main__":
+    test_providers()
