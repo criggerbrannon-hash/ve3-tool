@@ -479,7 +479,7 @@ class SmartEngine:
         return results
     
     # ========== MAIN PIPELINE ==========
-    
+
     def run(
         self,
         input_path: str,
@@ -487,134 +487,185 @@ class SmartEngine:
         callback: Callable = None
     ) -> Dict:
         """
-        CHAY TAT CA - 1 ham duy nhat.
-        
+        PIPELINE LINH HOAT - bat dau ngay khi co 1 token.
+
+        Flow moi:
+        1. Check requirements
+        2. SONG SONG: Lay 1 token + Lam SRT + Lam prompts
+        3. Khi co 1 token + prompts -> BAT DAU TAO ANH NGAY
+        4. SONG SONG: Tiep tuc lay them token + Tao anh
+        5. Ket thuc khi het prompts
+
         Args:
             input_path: Voice file (.mp3, .wav) hoac Excel (.xlsx)
             output_dir: Thu muc output (optional)
             callback: Ham log callback
-        
+
         Returns:
             Dict with success/failed counts
         """
         self.callback = callback
         self.stop_flag = False
-        
+
         inp = Path(input_path)
         ext = inp.suffix.lower()
         name = inp.stem
-        
+
         # Setup output dir
         if output_dir:
             proj_dir = Path(output_dir)
         else:
             proj_dir = Path("PROJECTS") / name
-        
+
         proj_dir.mkdir(parents=True, exist_ok=True)
         for d in ["srt", "prompts", "nv", "img"]:
             (proj_dir / d).mkdir(exist_ok=True)
-        
+
         excel_path = proj_dir / "prompts" / f"{name}_prompts.xlsx"
-        
+        srt_path = proj_dir / "srt" / f"{name}.srt"
+
         self.log("="*50)
+        self.log(f"VE3 TOOL - FAST PIPELINE")
         self.log(f"INPUT: {inp}")
         self.log(f"OUTPUT: {proj_dir}")
         self.log("="*50)
-        
+
         # === 1. CHECK REQUIREMENTS ===
         self.log("[STEP 1] Kiem tra yeu cau...")
-        
+
         ok, missing = self.check_requirements(has_voice=(ext in ['.mp3', '.wav']))
         if not ok:
             self.log("THIEU:", "ERROR")
             for m in missing:
                 self.log(f"  - {m}", "ERROR")
             return {"error": "missing_requirements", "missing": missing}
-        
+
         self.log(f"  Profiles: {len(self.profiles)}")
         self.log(f"  Groq keys: {len(self.groq_keys)}")
         self.log(f"  Gemini keys: {len(self.gemini_keys)}")
-        
-        # === 2. PARALLEL: GET TOKENS + MAKE SRT ===
-        self.log("[STEP 2] Lay tokens + Tao SRT (song song)...")
-        
-        srt_path = proj_dir / "srt" / f"{name}.srt"
+
+        # === 2. SONG SONG: Token + SRT + Prompts ===
+        self.log("[STEP 2] SONG SONG: Token + SRT + Prompts...")
+
         voice_path = None
-        
         if ext in ['.mp3', '.wav']:
             voice_path = proj_dir / f"{name}{ext}"
             if inp != voice_path:
                 shutil.copy2(inp, voice_path)
-        
-        # Start SRT in background if voice
-        srt_thread = None
-        srt_result = [False]
-        
-        if voice_path and not srt_path.exists():
-            def srt_worker():
-                srt_result[0] = self.make_srt(voice_path, srt_path)
-            srt_thread = threading.Thread(target=srt_worker, daemon=True)
-            srt_thread.start()
-        else:
-            srt_result[0] = True
-        
-        # Get tokens (main thread - needs Chrome GUI)
-        n_tokens = self.get_all_tokens()
-        
-        # Wait for SRT
-        if srt_thread:
-            srt_thread.join()
-        
-        if not srt_result[0] and ext in ['.mp3', '.wav']:
+
+        # Results containers
+        srt_done = [srt_path.exists()]
+        prompts_done = [excel_path.exists()]
+        first_token_done = [False]
+
+        # Thread 1: Lay 1 token dau tien
+        def get_first_token():
+            if self.profiles and not self.profiles[0].token:
+                self.get_token_for_profile(self.profiles[0])
+            first_token_done[0] = True
+
+        # Thread 2: Lam SRT
+        def do_srt():
+            if voice_path and not srt_path.exists():
+                srt_done[0] = self.make_srt(voice_path, srt_path)
+            else:
+                srt_done[0] = True
+
+        # Thread 3: Lam Prompts (sau khi SRT xong)
+        def do_prompts():
+            # Doi SRT
+            while not srt_done[0] and not self.stop_flag:
+                time.sleep(0.5)
+
+            if ext == '.xlsx':
+                if inp != excel_path:
+                    shutil.copy2(inp, excel_path)
+                prompts_done[0] = True
+            elif srt_done[0] and not excel_path.exists():
+                prompts_done[0] = self.make_prompts(proj_dir, name, excel_path)
+            else:
+                prompts_done[0] = excel_path.exists()
+
+        # Start threads
+        threads = []
+        t1 = threading.Thread(target=get_first_token, daemon=True)
+        t2 = threading.Thread(target=do_srt, daemon=True)
+        t3 = threading.Thread(target=do_prompts, daemon=True)
+
+        t1.start()
+        t2.start()
+        t3.start()
+
+        threads = [t1, t2, t3]
+
+        # Doi ca 3 xong
+        for t in threads:
+            t.join()
+
+        # Check results
+        if not srt_done[0] and ext in ['.mp3', '.wav']:
             return {"error": "srt_failed"}
-        
-        if n_tokens == 0:
+
+        if not prompts_done[0]:
+            return {"error": "prompts_failed"}
+
+        # Check first token
+        has_token = any(p.token for p in self.profiles)
+        if not has_token:
+            self.log("Khong lay duoc token dau tien!", "ERROR")
             return {"error": "no_tokens"}
-        
-        # === 3. MAKE PROMPTS ===
-        self.log("[STEP 3] Tao prompts...")
-        
-        if ext == '.xlsx':
-            # Input is Excel
-            if inp != excel_path:
-                shutil.copy2(inp, excel_path)
-        else:
-            # Generate from SRT
-            if not self.make_prompts(proj_dir, name, excel_path):
-                return {"error": "prompts_failed"}
-        
-        # === 4. LOAD PROMPTS ===
-        self.log("[STEP 4] Load prompts...")
-        
+
+        # === 3. LOAD PROMPTS ===
+        self.log("[STEP 3] Load prompts...")
+
         prompts = self._load_prompts(excel_path, proj_dir)
-        
+
         if not prompts:
             return {"error": "no_prompts"}
-        
+
         self.log(f"  Tong: {len(prompts)} prompts")
-        
+
         # Filter existing
         prompts = [p for p in prompts if not Path(p['output_path']).exists()]
         self.log(f"  Can tao: {len(prompts)} anh")
-        
+
         if not prompts:
             self.log("Tat ca anh da ton tai!", "OK")
             return {"success": 0, "failed": 0, "skipped": "all_exist"}
-        
-        # === 5. GENERATE IMAGES ===
-        self.log("[STEP 5] Tao anh song song...")
-        
+
+        # === 4. SONG SONG: Tao anh + Lay them token ===
+        self.log("[STEP 4] SONG SONG: Tao anh + Lay them token...")
+
+        # Thread lay them token (background)
+        more_tokens_thread = None
+        if len(self.profiles) > 1:
+            def get_more_tokens():
+                for i, profile in enumerate(self.profiles[1:], 1):
+                    if self.stop_flag:
+                        break
+                    if not profile.token:
+                        self.log(f"[BG] Lay token #{i+1}...")
+                        self.get_token_for_profile(profile)
+                        time.sleep(0.5)
+
+            more_tokens_thread = threading.Thread(target=get_more_tokens, daemon=True)
+            more_tokens_thread.start()
+
+        # Tao anh (main)
         results = self.generate_images_parallel(prompts)
-        
-        # === 6. FINAL CHECK ===
-        self.log("[STEP 6] Kiem tra ket qua...")
-        
+
+        # Doi thread lay token xong
+        if more_tokens_thread:
+            more_tokens_thread.join(timeout=5)
+
+        # === 5. FINAL CHECK ===
+        self.log("[STEP 5] Kiem tra ket qua...")
+
         if results["failed"] > 0:
             self.log(f"CON {results['failed']} ANH CHUA XONG!", "WARN")
-            # TODO: Could try alternative methods here
         else:
             self.log("TAT CA ANH DA HOAN THANH!", "OK")
-        
+
         return results
     
     def _load_prompts(self, excel_path: Path, proj_dir: Path) -> List[Dict]:

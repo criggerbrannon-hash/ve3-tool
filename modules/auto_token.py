@@ -1,18 +1,18 @@
 """
-VE3 Tool - Auto Token v15
+VE3 Tool - Auto Token v16
 =========================
 Flow:
-1. Mo Chrome (minimized)
+1. Mo Chrome (HIDDEN - off screen)
 2. DevTools -> Inject capture -> DONG DevTools
 3. PyAutoGUI: Click dropdown -> Click "Tao hinh anh" -> Click textarea -> Paste -> Enter
 4. Doi
 5. DevTools -> Lay token -> Dong
 6. TAT Chrome
 
-Updates v15:
-- Auto close Chrome sau khi lay token
-- Chay minimized mac dinh, chi restore khi can tuong tac
-- Giam thoi gian doi
+Updates v16:
+- Chrome chay AN (off-screen) - khong hien thi tren man hinh
+- Tu dong minimize ngay sau khi tuong tac xong
+- Nhanh hon, it anh huong user
 """
 
 import sys
@@ -26,6 +26,14 @@ from typing import Optional, Tuple, Callable
 try:
     import ctypes
     from ctypes import wintypes
+
+    # Windows API constants
+    SW_HIDE = 0
+    SW_MINIMIZE = 6
+    SW_SHOW = 5
+    SW_RESTORE = 9
+
+    user32 = ctypes.windll.user32
     HAS_CTYPES = True
 except ImportError:
     HAS_CTYPES = False
@@ -33,7 +41,7 @@ except ImportError:
 try:
     import pyautogui as pag
     pag.FAILSAFE = True
-    pag.PAUSE = 0.1
+    pag.PAUSE = 0.05  # Faster - giam tu 0.1 -> 0.05
 except ImportError:
     pag = None
 
@@ -44,7 +52,7 @@ except ImportError:
 
 
 class ChromeAutoToken:
-    """Auto lay token voi Chrome minimized."""
+    """Auto lay token voi Chrome HIDDEN (off-screen)."""
 
     FLOW_URL = "https://labs.google/fx/vi/tools/flow"
 
@@ -53,69 +61,107 @@ class ChromeAutoToken:
         chrome_path: str = None,
         profile_path: str = None,
         headless: bool = False,
-        auto_close: bool = True  # Auto close Chrome after getting token
+        auto_close: bool = True,
+        hidden: bool = True  # NEW: Chay an mac dinh
     ):
         self.chrome_path = chrome_path or r"C:\Program Files\Google\Chrome\Application\chrome.exe"
         self.profile_path = profile_path
         self.headless = headless
         self.auto_close = auto_close
+        self.hidden = hidden
         self.callback = None
-        self.chrome_process = None  # Track Chrome process to close later
-    
+        self.chrome_process = None
+        self.chrome_hwnd = None  # Track window handle
+
     def log(self, msg: str):
         print(f"[AutoToken] {msg}")
         if self.callback:
             self.callback(msg)
 
+    def find_chrome_window(self, timeout: int = 5) -> Optional[int]:
+        """Tim Chrome window handle."""
+        if not HAS_CTYPES or os.name != 'nt':
+            return None
+
+        start = time.time()
+        while time.time() - start < timeout:
+            def enum_callback(hwnd, results):
+                if user32.IsWindowVisible(hwnd):
+                    length = user32.GetWindowTextLengthW(hwnd)
+                    if length > 0:
+                        buff = ctypes.create_unicode_buffer(length + 1)
+                        user32.GetWindowTextW(hwnd, buff, length + 1)
+                        title = buff.value
+                        if 'Google' in title or 'Chrome' in title or 'Flow' in title:
+                            results.append(hwnd)
+                return True
+
+            results = []
+            WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int))
+            user32.EnumWindows(WNDENUMPROC(enum_callback), 0)
+
+            if results:
+                self.chrome_hwnd = results[0]
+                return self.chrome_hwnd
+            time.sleep(0.5)
+        return None
+
+    def hide_chrome_window(self):
+        """An cua so Chrome (off-screen)."""
+        if not HAS_CTYPES or os.name != 'nt':
+            return
+        try:
+            if self.chrome_hwnd:
+                # Di chuyen off-screen thay vi hide hoan toan
+                user32.SetWindowPos(self.chrome_hwnd, 0, -2000, -2000, 800, 600, 0)
+        except:
+            pass
+
+    def show_chrome_window(self):
+        """Hien Chrome window de tuong tac."""
+        if not HAS_CTYPES or os.name != 'nt':
+            return
+        try:
+            if self.chrome_hwnd:
+                # Move to visible area
+                user32.SetWindowPos(self.chrome_hwnd, 0, 50, 50, 900, 700, 0)
+                user32.SetForegroundWindow(self.chrome_hwnd)
+        except:
+            pass
+
+    def minimize_chrome_window(self):
+        """Minimize Chrome sau khi xong."""
+        if not HAS_CTYPES or os.name != 'nt':
+            return
+        try:
+            if self.chrome_hwnd:
+                user32.ShowWindow(self.chrome_hwnd, SW_MINIMIZE)
+        except:
+            pass
+
     def close_chrome(self):
-        """Dong Chrome process da mo."""
+        """Dong Chrome process."""
         if self.chrome_process:
             try:
                 self.log("Dong Chrome...")
                 self.chrome_process.terminate()
-                # Doi 2s roi force kill neu can
                 try:
                     self.chrome_process.wait(timeout=2)
                 except subprocess.TimeoutExpired:
                     self.chrome_process.kill()
                 self.chrome_process = None
+                self.chrome_hwnd = None
                 self.log("Chrome da dong")
             except Exception as e:
                 self.log(f"Loi dong Chrome: {e}")
-                # Fallback: kill by window title
                 try:
                     if os.name == 'nt':
                         os.system('taskkill /F /IM chrome.exe /T 2>nul')
                 except:
                     pass
 
-    def minimize_chrome(self):
-        """Thu nho cua so Chrome."""
-        if not HAS_CTYPES or os.name != 'nt':
-            return
-        try:
-            # Find Chrome window and minimize
-            hwnd = ctypes.windll.user32.FindWindowW(None, None)
-            # Alt+Space, N to minimize active window
-            if pag:
-                pag.hotkey('win', 'down')  # Minimize
-        except:
-            pass
-
-    def restore_chrome(self):
-        """Phuc hoi cua so Chrome tu minimized."""
-        if not HAS_CTYPES or os.name != 'nt':
-            return
-        try:
-            if pag:
-                # Use Alt+Tab to bring Chrome to front
-                pag.hotkey('alt', 'tab')
-                time.sleep(0.3)
-        except:
-            pass
-
-    def open_chrome(self, url: str, minimized: bool = False) -> bool:
-        """Mo Chrome va track process de dong sau."""
+    def open_chrome(self, url: str) -> bool:
+        """Mo Chrome - an hoac hien tuy thuan hidden setting."""
         try:
             cmd = [self.chrome_path]
             if self.profile_path and Path(self.profile_path).exists():
@@ -124,26 +170,39 @@ class ChromeAutoToken:
                     f"--profile-directory={Path(self.profile_path).name}"
                 ])
 
-            # Disable unnecessary features for faster startup
+            # Disable unnecessary features
             cmd.extend([
                 "--disable-extensions",
                 "--disable-plugins",
                 "--disable-sync",
                 "--no-first-run",
                 "--disable-default-apps",
+                "--disable-background-networking",
+                "--disable-client-side-phishing-detection",
             ])
 
-            # Minimized mode - start small window at corner
-            if minimized or self.headless:
+            # Start off-screen if hidden mode
+            if self.hidden:
                 cmd.extend([
-                    "--window-size=800,600",
-                    "--window-position=0,0",
+                    "--window-size=900,700",
+                    "--window-position=-2000,-2000",  # Off-screen
+                ])
+            else:
+                cmd.extend([
+                    "--window-size=900,700",
+                    "--window-position=50,50",
                 ])
 
             cmd.append(url)
 
-            # Track process to close later
-            self.chrome_process = subprocess.Popen(cmd, shell=False)
+            # Start process with hidden window on Windows
+            startupinfo = None
+            if os.name == 'nt' and self.hidden:
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = SW_MINIMIZE
+
+            self.chrome_process = subprocess.Popen(cmd, shell=False, startupinfo=startupinfo)
             self.log(f"Chrome PID: {self.chrome_process.pid}")
             return True
         except Exception as e:
@@ -321,10 +380,11 @@ class ChromeAutoToken:
         self,
         project_id: str = None,
         callback: Callable = None,
-        timeout: int = 60  # Reduced from 90
+        timeout: int = 45  # Giam tu 60 -> 45
     ) -> Tuple[Optional[str], Optional[str], str]:
         """
         Main function - lay token roi DONG Chrome.
+        Chrome chay AN, chi hien khi can tuong tac.
 
         Returns: (token, project_id, error_message)
         """
@@ -340,50 +400,61 @@ class ChromeAutoToken:
         error = ""
 
         try:
-            # === 1. Mo Chrome ===
+            # === 1. Mo Chrome (AN - off screen) ===
             url = f"https://labs.google/fx/vi/tools/flow/project/{project_id}" if project_id else self.FLOW_URL
-            self.log("Mo Chrome...")
+            self.log("Mo Chrome (hidden)...")
 
             if not self.open_chrome(url):
                 return None, None, "Khong mo duoc Chrome"
 
-            # === 2. Doi trang load (giam tu 12s -> 8s) ===
-            self.log("Doi trang load (8s)...")
-            time.sleep(8)
+            # === 2. Doi trang load ===
+            self.log("Doi trang load (6s)...")
+            time.sleep(6)
 
-            # === 3. Inject capture (DevTools mo roi dong) ===
-            self.inject_capture_only()
+            # === 3. Tim va HIEN Chrome window de tuong tac ===
+            self.find_chrome_window()
+            self.show_chrome_window()
             time.sleep(0.5)
 
-            # === 4. Click "Du an moi" (JS) ===
+            # === 4. Inject capture ===
+            self.inject_capture_only()
+            time.sleep(0.3)
+
+            # === 5. Click "Du an moi" (JS) ===
             if not project_id:
                 self.log("Click Du an moi...")
                 self.click_new_project_js()
-                self.log("Doi 3s...")
-                time.sleep(3)
+                time.sleep(2)
 
-            # === 5. Click dropdown + chon "Tao hinh anh" (JS) ===
+            # === 6. Click dropdown + chon "Tao hinh anh" (JS) ===
             self.log("Chon mode Tao hinh anh...")
             self.click_image_mode_js()
-            time.sleep(2)
+            time.sleep(1.5)
 
-            # === 6. Focus textarea (JS) ===
+            # === 7. Focus textarea (JS) ===
             self.log("Focus textarea...")
             self.focus_textarea_js()
-            time.sleep(0.5)
+            time.sleep(0.3)
 
-            # === 7. Gui prompt BANG PYAUTOGUI ===
-            prompt = "beautiful sunset over ocean with golden clouds and birds flying"
+            # === 8. Gui prompt ===
+            prompt = "beautiful sunset over ocean"
             self.send_prompt_manual(prompt)
 
-            # === 8. Doi token (giam tu 60s -> 45s) ===
-            self.log("Doi capture token (45s max)...")
+            # === 9. AN Chrome ngay sau khi gui prompt ===
+            self.hide_chrome_window()
 
-            for i in range(15):  # 15 * 3s = 45s max
+            # === 10. Doi token (30s max) ===
+            self.log("Doi capture token (30s max)...")
+
+            for i in range(10):  # 10 * 3s = 30s max
                 time.sleep(3)
                 self.log(f"Kiem tra #{i+1}...")
 
+                # Hien Chrome chi de lay token
+                self.show_chrome_window()
+                time.sleep(0.2)
                 token, proj = self.get_token_from_devtools()
+                self.hide_chrome_window()
 
                 if token:
                     self.log("=== DA LAY DUOC TOKEN! ===")
@@ -396,9 +467,8 @@ class ChromeAutoToken:
             error = f"Loi: {e}"
 
         finally:
-            # === 9. DONG Chrome (QUAN TRONG!) ===
+            # === 11. DONG Chrome ===
             if self.auto_close:
-                time.sleep(0.5)
                 self.close_chrome()
 
         return token, proj or project_id, error
