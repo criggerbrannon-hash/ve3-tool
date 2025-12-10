@@ -149,34 +149,25 @@ class ChromeAutoToken:
             pass
 
     def close_chrome(self):
-        """Dong Chrome process - kill ca process tree."""
-        if self.chrome_process:
-            try:
-                pid = self.chrome_process.pid
-                self.log(f"Dong Chrome (PID: {pid})...")
+        """Dong Chrome bang Ctrl+W."""
+        try:
+            self.log("Dong Chrome (Ctrl+W)...")
 
-                # Windows: Dung taskkill de kill ca process tree
-                if os.name == 'nt':
-                    # Kill process tree bang PID
-                    os.system(f'taskkill /F /T /PID {pid} 2>nul')
-                else:
-                    self.chrome_process.terminate()
-                    try:
-                        self.chrome_process.wait(timeout=2)
-                    except subprocess.TimeoutExpired:
-                        self.chrome_process.kill()
+            # Hien window truoc khi dong
+            if self.chrome_hwnd and HAS_CTYPES:
+                user32.SetForegroundWindow(self.chrome_hwnd)
+                time.sleep(0.3)
 
-                self.chrome_process = None
-                self.chrome_hwnd = None
-                self.log("Chrome da dong")
-            except Exception as e:
-                self.log(f"Loi dong Chrome: {e}")
-                # Fallback: kill tat ca Chrome
-                try:
-                    if os.name == 'nt':
-                        os.system('taskkill /F /IM chrome.exe /T 2>nul')
-                except:
-                    pass
+            # Ctrl+W dong tab/window
+            if pag:
+                pag.hotkey('ctrl', 'w')
+                time.sleep(0.5)
+
+            self.chrome_process = None
+            self.chrome_hwnd = None
+            self.log("Chrome da dong")
+        except Exception as e:
+            self.log(f"Loi dong Chrome: {e}")
 
     def open_chrome(self, url: str) -> bool:
         """Mo Chrome - an hoac hien tuy thuan hidden setting."""
