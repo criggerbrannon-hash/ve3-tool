@@ -23,6 +23,7 @@ from modules.excel_manager import (
     Character,
     Scene
 )
+from modules.prompts_loader import get_analyze_story_prompt, get_generate_scenes_prompt
 
 
 # ============================================================================
@@ -334,101 +335,10 @@ class GeminiClient:
             raise ValueError(f"Invalid API response format: {e}")
 
 # ============================================================================
-# PROMPT TEMPLATES
+# PROMPT TEMPLATES - Loaded from config/prompts.yaml
 # ============================================================================
-
-ANALYZE_STORY_PROMPT = """
-Bạn là chuyên gia phân tích kịch bản video và tạo prompt cho AI image/video generation.
-
-Dưới đây là nội dung thoại/lời kể của một video kể chuyện:
-
----
-{story_text}
----
-
-NHIỆM VỤ:
-
-1. PHÂN TÍCH NHÂN VẬT:
-   - Xác định nhân vật chính (main character) - đặt ID là "nvc"
-   - Xác định các nhân vật phụ quan trọng - đặt ID là "nvp1", "nvp2", ... (tối đa 5 nhân vật phụ)
-   - Với mỗi nhân vật, tạo mô tả ngoại hình chi tiết bằng tiếng Anh để AI có thể tạo hình ảnh nhất quán:
-     * Giới tính, độ tuổi ước tính
-     * Đặc điểm khuôn mặt (hình dạng, da, mắt, mũi, miệng)
-     * Kiểu tóc và màu tóc
-     * Phong cách ăn mặc phù hợp với bối cảnh truyện
-     * Vibe/tính cách (nếu có thể suy ra từ truyện)
-
-2. OUTPUT FORMAT - Trả về JSON hợp lệ với cấu trúc sau:
-
-{{
-  "characters": [
-    {{
-      "id": "nvc",
-      "role": "main",
-      "name": "Tên nhân vật trong truyện",
-      "english_prompt": "Detailed appearance description in English...",
-      "vietnamese_prompt": "Mô tả tiếng Việt ngắn gọn"
-    }},
-    {{
-      "id": "nvp1",
-      "role": "supporting",
-      "name": "Tên nhân vật phụ 1",
-      "english_prompt": "...",
-      "vietnamese_prompt": "..."
-    }}
-  ]
-}}
-
-LƯU Ý:
-- english_prompt phải đủ chi tiết để AI tạo ảnh nhất quán
-- Mô tả ngoại hình đẹp, thiện cảm, phù hợp với vai trò
-- Chỉ trả về JSON, không có text giải thích khác
-"""
-
-
-GENERATE_SCENE_PROMPTS = """
-Bạn là chuyên gia tạo prompt cho AI image/video generation.
-
-THÔNG TIN NHÂN VẬT (đã định nghĩa):
-{characters_info}
-
-DANH SÁCH SCENE CẦN TẠO PROMPT:
-{scenes_info}
-
-NHIỆM VỤ:
-Với mỗi scene, tạo:
-1. img_prompt: Prompt tạo ảnh tĩnh mô tả scene
-2. video_prompt: Prompt tạo video/animation từ ảnh
-
-YÊU CẦU QUAN TRỌNG:
-- LUÔN đề cập đến sự nhất quán nhân vật bằng cách tham chiếu đến file ảnh:
-  * Nhân vật chính: "The main character must look exactly like nvc.png: same face, age, hairstyle, and clothing style."
-  * Nhân vật phụ: "Supporting character must match nvp1.png exactly."
-- Mô tả chi tiết: bối cảnh, ánh sáng, góc camera, cảm xúc
-- img_prompt: tập trung vào composition, lighting, mood
-- video_prompt: tập trung vào movement, camera motion, transitions
-- Viết hoàn toàn bằng tiếng Anh
-- Prompt phải phù hợp với style realistic/cinematic
-
-OUTPUT FORMAT - Trả về JSON:
-
-{{
-  "scenes": [
-    {{
-      "scene_id": 1,
-      "img_prompt": "...",
-      "video_prompt": "..."
-    }},
-    {{
-      "scene_id": 2,
-      "img_prompt": "...",
-      "video_prompt": "..."
-    }}
-  ]
-}}
-
-Chỉ trả về JSON, không có text khác.
-"""
+# Prompts are now loaded from external file for easy editing
+# Edit config/prompts.yaml to customize prompts without changing code
 
 
 # ============================================================================
@@ -606,7 +516,9 @@ class PromptGenerator:
         Returns:
             List các Character objects
         """
-        prompt = ANALYZE_STORY_PROMPT.format(story_text=story_text[:8000])
+        # Load prompt từ config/prompts.yaml
+        prompt_template = get_analyze_story_prompt()
+        prompt = prompt_template.format(story_text=story_text[:8000])
         
         try:
             response = self._generate_content(prompt, temperature=0.5)
@@ -663,7 +575,9 @@ class PromptGenerator:
             for s in scenes_data
         ])
         
-        prompt = GENERATE_SCENE_PROMPTS.format(
+        # Load prompt từ config/prompts.yaml
+        prompt_template = get_generate_scenes_prompt()
+        prompt = prompt_template.format(
             characters_info=characters_info,
             scenes_info=scenes_info
         )

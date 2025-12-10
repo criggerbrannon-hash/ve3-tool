@@ -1,0 +1,124 @@
+# =============================================================================
+# VE3 TOOL - PROMPTS CONFIGURATION
+# =============================================================================
+# Edit file này để tùy chỉnh các prompts gửi đến AI
+# Sau khi edit, chạy RUN.bat để áp dụng thay đổi
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# PROMPT PHÂN TÍCH NHÂN VẬT
+# Dùng để phân tích câu chuyện và tạo mô tả nhân vật
+# Variables: {story_text} - Nội dung truyện
+# -----------------------------------------------------------------------------
+analyze_story: |
+  Bạn là chuyên gia phân tích kịch bản video và tạo prompt cho AI image/video generation.
+
+  Dưới đây là nội dung thoại/lời kể của một video kể chuyện:
+
+  ---
+  {story_text}
+  ---
+
+  NHIỆM VỤ:
+
+  1. PHÂN TÍCH NHÂN VẬT:
+     - Xác định nhân vật chính (main character) - đặt ID là "nvc"
+     - Xác định các nhân vật phụ quan trọng - đặt ID là "nvp1", "nvp2", ... (tối đa 5 nhân vật phụ)
+     - Với mỗi nhân vật, tạo mô tả ngoại hình chi tiết bằng tiếng Anh để AI có thể tạo hình ảnh nhất quán:
+       * Giới tính, độ tuổi ước tính
+       * Đặc điểm khuôn mặt (hình dạng, da, mắt, mũi, miệng)
+       * Kiểu tóc và màu tóc
+       * Phong cách ăn mặc phù hợp với bối cảnh truyện
+       * Vibe/tính cách (nếu có thể suy ra từ truyện)
+
+  2. OUTPUT FORMAT - Trả về JSON hợp lệ với cấu trúc sau:
+
+  {{
+    "characters": [
+      {{
+        "id": "nvc",
+        "role": "main",
+        "name": "Tên nhân vật trong truyện",
+        "english_prompt": "Detailed appearance description in English...",
+        "vietnamese_prompt": "Mô tả tiếng Việt ngắn gọn"
+      }},
+      {{
+        "id": "nvp1",
+        "role": "supporting",
+        "name": "Tên nhân vật phụ 1",
+        "english_prompt": "...",
+        "vietnamese_prompt": "..."
+      }}
+    ]
+  }}
+
+  LƯU Ý:
+  - english_prompt phải đủ chi tiết để AI tạo ảnh nhất quán
+  - Mô tả ngoại hình đẹp, thiện cảm, phù hợp với vai trò
+  - Chỉ trả về JSON, không có text giải thích khác
+
+# -----------------------------------------------------------------------------
+# PROMPT TẠO SCENE
+# Dùng để tạo img_prompt và video_prompt cho từng scene
+# Variables: {characters_info}, {scenes_info}
+# -----------------------------------------------------------------------------
+generate_scenes: |
+  Bạn là chuyên gia tạo prompt cho AI image/video generation.
+
+  THÔNG TIN NHÂN VẬT (đã định nghĩa):
+  {characters_info}
+
+  DANH SÁCH SCENE CẦN TẠO PROMPT:
+  {scenes_info}
+
+  NHIỆM VỤ:
+  Với mỗi scene, tạo:
+  1. img_prompt: Prompt tạo ảnh tĩnh mô tả scene
+  2. video_prompt: Prompt tạo video/animation từ ảnh
+
+  YÊU CẦU QUAN TRỌNG:
+  - LUÔN đề cập đến sự nhất quán nhân vật bằng cách tham chiếu đến file ảnh:
+    * Nhân vật chính: "The main character must look exactly like nvc.png: same face, age, hairstyle, and clothing style."
+    * Nhân vật phụ: "Supporting character must match nvp1.png exactly."
+  - Mô tả chi tiết: bối cảnh, ánh sáng, góc camera, cảm xúc
+  - img_prompt: tập trung vào composition, lighting, mood
+  - video_prompt: tập trung vào movement, camera motion, transitions
+  - Viết hoàn toàn bằng tiếng Anh
+  - Prompt phải phù hợp với style realistic/cinematic
+
+  OUTPUT FORMAT - Trả về JSON:
+
+  {{
+    "scenes": [
+      {{
+        "scene_id": 1,
+        "img_prompt": "...",
+        "video_prompt": "..."
+      }},
+      {{
+        "scene_id": 2,
+        "img_prompt": "...",
+        "video_prompt": "..."
+      }}
+    ]
+  }}
+
+  Chỉ trả về JSON, không có text khác.
+
+# -----------------------------------------------------------------------------
+# PROMPT TEST CHO TOKEN EXTRACTION
+# Dùng để trigger API call khi lấy token từ Google Flow
+# -----------------------------------------------------------------------------
+test_prompt: "beautiful sunset over ocean, golden hour, dramatic clouds"
+
+# -----------------------------------------------------------------------------
+# IMAGE GENERATION STYLE PREFIX
+# Thêm vào đầu mỗi img_prompt để đảm bảo style nhất quán
+# -----------------------------------------------------------------------------
+style_prefix: "Cinematic photography, high quality, detailed, 8K resolution, "
+
+# -----------------------------------------------------------------------------
+# VIDEO GENERATION STYLE PREFIX
+# Thêm vào đầu mỗi video_prompt
+# -----------------------------------------------------------------------------
+video_style_prefix: "Smooth cinematic motion, professional footage, "

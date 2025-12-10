@@ -50,6 +50,13 @@ try:
 except ImportError:
     pyperclip = None
 
+# Load prompts from config
+try:
+    from modules.prompts_loader import get_test_prompt
+except ImportError:
+    def get_test_prompt():
+        return "beautiful sunset over ocean"
+
 
 class ChromeAutoToken:
     """Auto lay token voi Chrome HIDDEN (off-screen)."""
@@ -446,7 +453,7 @@ class ChromeAutoToken:
             time.sleep(0.3)
 
             # === 8. Gui prompt ===
-            prompt = "beautiful sunset over ocean"
+            prompt = get_test_prompt()  # Load từ config/prompts.yaml
             self.send_prompt_manual(prompt)
 
             # === 9. AN Chrome ngay sau khi gui prompt ===
