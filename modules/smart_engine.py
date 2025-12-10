@@ -35,13 +35,17 @@ class Resource:
     status: str = "ready"  # ready, busy, exhausted, error
     fail_count: int = 0
     last_used: float = 0
+    token_time: float = 0  # Thoi gian lay token (de check het han)
 
 
 class SmartEngine:
     """
     Engine thong minh - dam bao output 100%.
     """
-    
+
+    # Token het han sau 50 phut (thuc te la ~1h nhung de an toan)
+    TOKEN_EXPIRY_SECONDS = 50 * 60
+
     def __init__(self, config_path: str = None):
         # Support VE3_CONFIG_DIR environment variable
         if config_path:
@@ -49,25 +53,29 @@ class SmartEngine:
         else:
             config_dir = os.environ.get('VE3_CONFIG_DIR', 'config')
             self.config_path = Path(config_dir) / "accounts.json"
-        
+
+        # Token cache file
+        self.tokens_path = self.config_path.parent / "tokens.json"
+
         self.chrome_path = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
-        
+
         # Resources
         self.profiles: List[Resource] = []
         self.groq_keys: List[Resource] = []
         self.gemini_keys: List[Resource] = []
-        
+
         # Settings - TOI UU TOC DO
         self.parallel = 20  # Tang len 20 - dung TAT CA tokens co san
         self.delay = 0.5    # Giam tu 1s -> 0.5s giua moi anh
         self.max_retries = 3
-        
+
         # State
         self.stop_flag = False
         self.callback = None
         self._lock = threading.Lock()
-        
+
         self.load_config()
+        self.load_cached_tokens()  # Load tokens da luu
     
     def log(self, msg: str, level: str = "INFO"):
         ts = datetime.now().strftime("%H:%M:%S")
@@ -116,7 +124,87 @@ class SmartEngine:
             
         except Exception as e:
             self.log(f"Load config error: {e}", "ERROR")
-    
+
+    # ========== TOKEN CACHING ==========
+
+    def load_cached_tokens(self):
+        """Load tokens da luu tu file."""
+        if not self.tokens_path.exists():
+            return
+
+        try:
+            with open(self.tokens_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            now = time.time()
+            loaded = 0
+            expired = 0
+
+            for profile in self.profiles:
+                profile_name = Path(profile.value).name
+                if profile_name in data:
+                    token_data = data[profile_name]
+                    token_time = token_data.get('time', 0)
+
+                    # Check het han chua (50 phut)
+                    if now - token_time < self.TOKEN_EXPIRY_SECONDS:
+                        profile.token = token_data.get('token', '')
+                        profile.project_id = token_data.get('project_id', '')
+                        profile.token_time = token_time
+                        loaded += 1
+                    else:
+                        expired += 1
+
+            if loaded > 0:
+                self.log(f"Loaded {loaded} cached tokens ({expired} expired)")
+
+        except Exception as e:
+            self.log(f"Load cached tokens error: {e}", "WARN")
+
+    def save_cached_tokens(self):
+        """Luu tokens vao file de dung lai."""
+        try:
+            data = {}
+            for profile in self.profiles:
+                if profile.token:
+                    profile_name = Path(profile.value).name
+                    data[profile_name] = {
+                        'token': profile.token,
+                        'project_id': profile.project_id,
+                        'time': profile.token_time or time.time()
+                    }
+
+            self.tokens_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.tokens_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2)
+
+            self.log(f"Saved {len(data)} tokens to cache")
+
+        except Exception as e:
+            self.log(f"Save tokens error: {e}", "WARN")
+
+    def is_token_valid(self, profile: Resource) -> bool:
+        """Check token con valid khong (chua het han + API hoat dong)."""
+        if not profile.token:
+            return False
+
+        # Check het han chua
+        if profile.token_time:
+            age = time.time() - profile.token_time
+            if age > self.TOKEN_EXPIRY_SECONDS:
+                self.log(f"Token {Path(profile.value).name} het han ({int(age/60)} phut)")
+                profile.token = ""
+                return False
+
+        # Quick API test (optional - co the bo qua de nhanh hon)
+        # TODO: Them API test neu can
+
+        return True
+
+    def get_valid_token_count(self) -> int:
+        """Dem so token con valid."""
+        return sum(1 for p in self.profiles if self.is_token_valid(p))
+
     def check_requirements(self, has_voice: bool = True) -> Tuple[bool, List[str]]:
         """
         Kiem tra thieu gi.
@@ -202,8 +290,10 @@ class SmartEngine:
             if token:
                 profile.token = token
                 profile.project_id = proj_id or ""
+                profile.token_time = time.time()  # Luu thoi gian lay token
                 profile.status = 'ready'
                 self.log(f"OK: {Path(profile.value).name} - Token OK!", "OK")
+                self.save_cached_tokens()  # Luu ngay vao file
                 return True
             else:
                 profile.fail_count += 1
@@ -227,10 +317,15 @@ class SmartEngine:
             
             self.log(f"[{i+1}/{len(self.profiles)}] {Path(profile.value).name}")
             
-            if profile.token:
-                self.log(f"  -> Da co token, skip")
+            # Check token con valid khong
+            if self.is_token_valid(profile):
+                self.log(f"  -> Da co token valid, skip")
                 success += 1
                 continue
+
+            # Token het han hoac chua co
+            if profile.token:
+                self.log(f"  -> Token het han, lay moi...")
             
             if self.get_token_for_profile(profile):
                 success += 1
@@ -243,9 +338,8 @@ class SmartEngine:
         return success
     
     def refresh_token_if_needed(self, profile: Resource) -> bool:
-        """Refresh token neu can."""
-        # TODO: Check token expiry
-        if not profile.token:
+        """Refresh token neu can - check expiry."""
+        if not self.is_token_valid(profile):
             return self.get_token_for_profile(profile)
         return True
     
@@ -542,7 +636,8 @@ class SmartEngine:
                 self.log(f"  - {m}", "ERROR")
             return {"error": "missing_requirements", "missing": missing}
 
-        self.log(f"  Profiles: {len(self.profiles)}")
+        valid_tokens = self.get_valid_token_count()
+        self.log(f"  Profiles: {len(self.profiles)} ({valid_tokens} tokens da co)")
         self.log(f"  Groq keys: {len(self.groq_keys)}")
         self.log(f"  Gemini keys: {len(self.gemini_keys)}")
 
@@ -560,10 +655,13 @@ class SmartEngine:
         prompts_done = [excel_path.exists()]
         first_token_done = [False]
 
-        # Thread 1: Lay 1 token dau tien
+        # Thread 1: Lay 1 token dau tien (neu chua co hoac het han)
         def get_first_token():
-            if self.profiles and not self.profiles[0].token:
+            if self.profiles and not self.is_token_valid(self.profiles[0]):
+                self.log("Lay token dau tien...")
                 self.get_token_for_profile(self.profiles[0])
+            else:
+                self.log("Token dau tien con valid, skip")
             first_token_done[0] = True
 
         # Thread 2: Lam SRT
@@ -638,17 +736,20 @@ class SmartEngine:
         # === 4. SONG SONG: Tao anh + Lay them token ===
         self.log("[STEP 4] SONG SONG: Tao anh + Lay them token...")
 
-        # Thread lay them token (background)
+        # Thread lay them token (background) - chi lay khi can
         more_tokens_thread = None
         if len(self.profiles) > 1:
             def get_more_tokens():
                 for i, profile in enumerate(self.profiles[1:], 1):
                     if self.stop_flag:
                         break
-                    if not profile.token:
+                    # Chi lay token neu chua co hoac het han
+                    if not self.is_token_valid(profile):
                         self.log(f"[BG] Lay token #{i+1}...")
                         self.get_token_for_profile(profile)
                         time.sleep(0.5)
+                    else:
+                        self.log(f"[BG] Token #{i+1} con valid, skip")
 
             more_tokens_thread = threading.Thread(target=get_more_tokens, daemon=True)
             more_tokens_thread.start()
