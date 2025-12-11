@@ -955,9 +955,10 @@ class SmartEngine:
                     continue
                 
                 pid_str = str(pid).strip()
-                
+
                 # Xac dinh output folder
-                if pid_str.startswith('nv'):
+                # Characters (nv*) and Locations (loc*) are reference images -> save in nv/
+                if pid_str.startswith('nv') or pid_str.startswith('loc'):
                     out_path = proj_dir / "nv" / f"{pid_str}.png"
                 else:
                     out_path = proj_dir / "img" / f"{pid_str}.png"

@@ -29,11 +29,11 @@ class FlowImageGenerator:
     Generator ảnh sử dụng Google Flow API.
     Đọc prompts từ Excel và tạo ảnh tự động.
     """
-    
+
     def __init__(
         self,
-        project_path: Path,
-        bearer_token: str,
+        project_path: Path = None,
+        bearer_token: str = None,
         project_id: Optional[str] = None,
         aspect_ratio: str = "landscape",
         delay_between_requests: float = 3.0,
@@ -41,21 +41,21 @@ class FlowImageGenerator:
     ):
         """
         Khởi tạo Flow Image Generator.
-        
+
         Args:
             project_path: Đường dẫn đến thư mục project (PROJECTS/{CODE}/)
-            bearer_token: Google Flow Bearer token
+            bearer_token: Google Flow Bearer token (có thể để None nếu dùng generate_and_save với token riêng)
             project_id: Flow Project ID (optional)
             aspect_ratio: Tỷ lệ khung hình (landscape/portrait/square)
             delay_between_requests: Thời gian chờ giữa các request (giây)
             verbose: In log chi tiết
         """
-        self.project_path = Path(project_path)
+        self.project_path = Path(project_path) if project_path else None
         self.bearer_token = bearer_token
         self.project_id = project_id
         self.delay = delay_between_requests
         self.verbose = verbose
-        
+
         # Map aspect ratio
         ar_map = {
             "landscape": AspectRatio.LANDSCAPE,
@@ -66,22 +66,29 @@ class FlowImageGenerator:
             "1:1": AspectRatio.SQUARE,
         }
         self.aspect_ratio = ar_map.get(aspect_ratio.lower(), AspectRatio.LANDSCAPE)
-        
-        # Tạo Flow API client
-        self.flow_client = GoogleFlowAPI(
-            bearer_token=bearer_token,
-            project_id=project_id,
-            verbose=verbose
-        )
-        
-        # Paths
-        self.nv_path = self.project_path / "nv"
-        self.img_path = self.project_path / "img"
-        self.prompts_path = self.project_path / "prompts"
-        
-        # Tạo thư mục nếu chưa có
-        self.nv_path.mkdir(parents=True, exist_ok=True)
-        self.img_path.mkdir(parents=True, exist_ok=True)
+
+        # Tạo Flow API client (nếu có bearer_token)
+        self.flow_client = None
+        if bearer_token:
+            self.flow_client = GoogleFlowAPI(
+                bearer_token=bearer_token,
+                project_id=project_id,
+                verbose=verbose
+            )
+
+        # Paths (chỉ khởi tạo nếu có project_path)
+        self.nv_path = None
+        self.img_path = None
+        self.prompts_path = None
+
+        if self.project_path:
+            self.nv_path = self.project_path / "nv"
+            self.img_path = self.project_path / "img"
+            self.prompts_path = self.project_path / "prompts"
+
+            # Tạo thư mục nếu chưa có
+            self.nv_path.mkdir(parents=True, exist_ok=True)
+            self.img_path.mkdir(parents=True, exist_ok=True)
         
         # Stats
         self.stats = {
@@ -535,6 +542,75 @@ class FlowImageGenerator:
         
         return results
     
+    def generate_and_save(
+        self,
+        prompt: str,
+        output_path: str,
+        token: str = None,
+        project_id: str = None,
+        reference_images: List[str] = None
+    ) -> bool:
+        """
+        Tạo một ảnh đơn lẻ và lưu vào file.
+
+        Args:
+            prompt: Prompt mô tả ảnh
+            output_path: Đường dẫn lưu ảnh
+            token: Bearer token (nếu khác với token đã cấu hình)
+            project_id: Project ID (nếu khác với ID đã cấu hình)
+            reference_images: List of base64 encoded reference images
+
+        Returns:
+            True nếu thành công, False nếu thất bại
+        """
+        self._log(f"🎨 Generating single image...")
+        self._log(f"   Prompt: {prompt[:80]}...")
+
+        # Create new Flow client if token provided
+        if token:
+            from .google_flow_api import GoogleFlowAPI
+            flow_client = GoogleFlowAPI(
+                bearer_token=token,
+                project_id=project_id or self.project_id,
+                verbose=self.verbose
+            )
+        else:
+            flow_client = self.flow_client
+
+        try:
+            # Generate image
+            success, images, error = flow_client.generate_images(
+                prompt=prompt,
+                count=1,
+                aspect_ratio=self.aspect_ratio,
+                image_inputs=reference_images
+            )
+
+            if not success or not images:
+                self._log(f"   ❌ Generation failed: {error}")
+                return False
+
+            # Download/save to output path
+            output_dir = Path(output_path).parent
+            filename = Path(output_path).stem
+
+            downloaded = flow_client.download_image(
+                images[0],
+                output_dir,
+                filename
+            )
+
+            if downloaded:
+                self._log(f"   ✅ Saved to: {output_path}")
+                return True
+            else:
+                self._log(f"   ❌ Download failed")
+                return False
+
+        except Exception as e:
+            self._log(f"   ❌ Error: {e}")
+            return False
+
     def get_stats(self) -> Dict[str, int]:
         """Lấy thống kê."""
         return self.stats.copy()

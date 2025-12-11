@@ -1557,9 +1557,10 @@ class UnixVoiceToVideo:
                     
                     if not pid:
                         continue
-                    
-                    # Check status
-                    if pid.startswith('nv'):
+
+                    # Check status - reference images (nv*, loc*) in nv/, scenes in img/
+                    is_reference = pid.startswith('nv') or pid.startswith('loc')
+                    if is_reference:
                         img_path = nv_dir / f"{pid}.png"
                         status = "✅" if img_path.exists() else "⏳"
                         self.char_tree.insert('', tk.END, values=(pid, prompt, status))
@@ -1735,7 +1736,7 @@ class UnixVoiceToVideo:
                     return
 
                 # Generate image
-                from modules.flow_generator import FlowImageGenerator
+                from modules.flow_image_generator import FlowImageGenerator
                 generator = FlowImageGenerator()
 
                 # Determine output path
@@ -2020,7 +2021,7 @@ class UnixVoiceToVideo:
         def worker():
             try:
                 from modules.smart_engine import SmartEngine
-                from modules.flow_generator import FlowImageGenerator
+                from modules.flow_image_generator import FlowImageGenerator
 
                 engine = SmartEngine()
                 generator = FlowImageGenerator()
