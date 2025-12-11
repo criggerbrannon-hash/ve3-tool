@@ -1848,8 +1848,21 @@ class VE3ToolPro:
 # MAIN
 # ============================================================================
 
+def hide_console():
+    """Hide console window on Windows."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.user32.ShowWindow(
+                ctypes.windll.kernel32.GetConsoleWindow(), 0
+            )
+        except:
+            pass
+
+
 def main():
     """Entry point."""
+    hide_console()
     app = VE3ToolPro()
     app.run()
 
