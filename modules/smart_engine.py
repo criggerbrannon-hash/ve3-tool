@@ -613,13 +613,26 @@ class SmartEngine:
                     success, token_expired = self.generate_single_image(pd, current_profile)
 
                     if token_expired:
-                        # Token expired, try another profile
+                        # Token expired, mark as invalid
+                        current_profile.token = ""
+
+                        # Try another profile first
                         other_profile = self._get_other_valid_profile(current_profile)
                         if other_profile:
-                            self.log(f"[W{worker_id}] Token het han, thu profile khac...", "WARN")
+                            self.log(f"[W{worker_id}] Token het han, chuyen sang profile khac...", "WARN")
                             current_profile = other_profile
                             # Retry with new profile
                             success, _ = self.generate_single_image(pd, current_profile)
+                        else:
+                            # No other valid profile, refresh current one
+                            self.log(f"[W{worker_id}] Tat ca token het han, dang refresh...", "WARN")
+                            if self.get_token_for_profile(current_profile):
+                                # Refresh success, retry the image
+                                self.log(f"[W{worker_id}] Token moi OK, thu lai {pid}...", "INFO")
+                                success, _ = self.generate_single_image(pd, current_profile)
+                            else:
+                                self.log(f"[W{worker_id}] Khong the lay token moi!", "ERROR")
+                                success = False
 
                     with lock:
                         if success:
