@@ -80,9 +80,11 @@ class SmartEngine:
     def log(self, msg: str, level: str = "INFO"):
         ts = datetime.now().strftime("%H:%M:%S")
         full_msg = f"[{ts}] [{level}] {msg}"
-        print(full_msg)
         if self.callback:
             self.callback(full_msg)
+        else:
+            # Fallback to print only when no GUI callback
+            print(full_msg)
     
     def load_config(self):
         """Load config."""
