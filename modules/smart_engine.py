@@ -355,7 +355,46 @@ class SmartEngine:
         if not self.is_token_valid(profile):
             return self.get_token_for_profile(profile)
         return True
-    
+
+    def _get_other_valid_profile(self, exclude_profile: Resource) -> Optional[Resource]:
+        """Tim profile khac co token con valid."""
+        with self._lock:
+            for p in self.profiles:
+                if p != exclude_profile and p.token and self.is_token_valid(p):
+                    return p
+        return None
+
+    def refresh_expired_tokens(self) -> int:
+        """
+        Kiem tra va refresh cac token da het han.
+        Goi khi khoi dong tool.
+
+        Returns:
+            So token da refresh thanh cong
+        """
+        refreshed = 0
+        expired_profiles = []
+
+        # Tim cac profile co token het han
+        for profile in self.profiles:
+            if profile.token and not self.is_token_valid(profile):
+                expired_profiles.append(profile)
+                profile.token = ""  # Clear expired token
+
+        if not expired_profiles:
+            return 0
+
+        self.log(f"Tim thay {len(expired_profiles)} token het han, dang refresh...")
+
+        for profile in expired_profiles:
+            if self.stop_flag:
+                break
+            if self.get_token_for_profile(profile):
+                refreshed += 1
+
+        self.log(f"Da refresh {refreshed}/{len(expired_profiles)} tokens")
+        return refreshed
+
     # ========== SRT PROCESSING ==========
     
     def make_srt(self, voice_path: Path, srt_path: Path) -> bool:
@@ -430,30 +469,35 @@ class SmartEngine:
         return False
     
     # ========== IMAGE GENERATION ==========
-    
-    def generate_single_image(self, prompt_data: Dict, profile: Resource) -> bool:
-        """Tao 1 anh voi 1 profile."""
+
+    def generate_single_image(self, prompt_data: Dict, profile: Resource) -> tuple:
+        """
+        Tao 1 anh voi 1 profile.
+
+        Returns:
+            tuple: (success: bool, token_expired: bool)
+        """
         from modules.google_flow_api import GoogleFlowAPI, AspectRatio
-        
+
         pid = prompt_data.get('id', '')
         prompt = prompt_data.get('prompt', '')
         output = prompt_data.get('output_path', '')
-        
+
         if not prompt or not output:
-            return False
-        
+            return False, False
+
         # Skip if exists
         if Path(output).exists():
-            return True
-        
+            return True, False
+
         try:
             api = GoogleFlowAPI(
                 bearer_token=profile.token,
                 project_id=profile.project_id
             )
-            
+
             Path(output).parent.mkdir(parents=True, exist_ok=True)
-            
+
             # generate_and_download returns (success, paths, error)
             success, paths, error = api.generate_and_download(
                 prompt=prompt,
@@ -462,7 +506,7 @@ class SmartEngine:
                 aspect_ratio=AspectRatio.LANDSCAPE,
                 prefix=pid
             )
-            
+
             if success and paths:
                 # Rename first image to correct filename
                 src = paths[0]
@@ -470,16 +514,27 @@ class SmartEngine:
                     if Path(output).exists():
                         Path(output).unlink()
                     src.rename(output)
-                return True
+                return True, False
             else:
-                self.log(f"Generate failed {pid}: {error}", "ERROR")
-                return False
-            
+                # Check if token expired
+                error_str = str(error).lower()
+                token_expired = 'expired' in error_str or 'unauthorized' in error_str or '401' in error_str or 'authentication' in error_str
+                if token_expired:
+                    self.log(f"Token het han cho {pid}, can refresh", "WARN")
+                    profile.token = ""  # Clear expired token
+                else:
+                    self.log(f"Generate failed {pid}: {error}", "ERROR")
+                return False, token_expired
+
         except Exception as e:
-            self.log(f"Image error {pid}: {e}", "ERROR")
-            if 'unauthorized' in str(e).lower() or '401' in str(e):
+            error_str = str(e).lower()
+            token_expired = 'expired' in error_str or 'unauthorized' in error_str or '401' in error_str or 'authentication' in error_str
+            if token_expired:
+                self.log(f"Token het han cho {pid}", "WARN")
                 profile.token = ""
-            return False
+            else:
+                self.log(f"Image error {pid}: {e}", "ERROR")
+            return False, token_expired
     
     def generate_images_parallel(self, prompts: List[Dict]) -> Dict:
         """
@@ -531,22 +586,41 @@ class SmartEngine:
             lock = threading.Lock()
             
             def worker(worker_id: int, profile: Resource, prompt_list: List[Dict]):
+                current_profile = profile
+
                 for pd in prompt_list:
                     if self.stop_flag:
                         break
-                    
+
                     pid = pd.get('id', '')
                     self.log(f"[W{worker_id}] {pid}...")
-                    
+
                     # Refresh token if needed
-                    if not profile.token:
-                        if not self.refresh_token_if_needed(profile):
-                            with lock:
-                                failed_in_round.append(pd)
-                            continue
-                    
-                    success = self.generate_single_image(pd, profile)
-                    
+                    if not current_profile.token:
+                        # Try to find another profile with valid token first
+                        other_profile = self._get_other_valid_profile(current_profile)
+                        if other_profile:
+                            self.log(f"[W{worker_id}] Chuyen sang profile khac", "INFO")
+                            current_profile = other_profile
+                        else:
+                            # No other profile, try to refresh current one
+                            self.log(f"[W{worker_id}] Tat ca token het han, dang lay moi...", "WARN")
+                            if not self.refresh_token_if_needed(current_profile):
+                                with lock:
+                                    failed_in_round.append(pd)
+                                continue
+
+                    success, token_expired = self.generate_single_image(pd, current_profile)
+
+                    if token_expired:
+                        # Token expired, try another profile
+                        other_profile = self._get_other_valid_profile(current_profile)
+                        if other_profile:
+                            self.log(f"[W{worker_id}] Token het han, thu profile khac...", "WARN")
+                            current_profile = other_profile
+                            # Retry with new profile
+                            success, _ = self.generate_single_image(pd, current_profile)
+
                     with lock:
                         if success:
                             done_in_round.append(pd)
@@ -554,7 +628,7 @@ class SmartEngine:
                         else:
                             failed_in_round.append(pd)
                             self.log(f"[W{worker_id}] {pid}: FAIL", "WARN")
-                    
+
                     time.sleep(self.delay)
             
             # Start threads
@@ -655,6 +729,9 @@ class SmartEngine:
         self.log(f"  DeepSeek keys: {len(self.deepseek_keys)}")
         self.log(f"  Groq keys: {len(self.groq_keys)}")
         self.log(f"  Gemini keys: {len(self.gemini_keys)}")
+
+        # Refresh expired tokens at startup
+        self.refresh_expired_tokens()
 
         # === 2. SONG SONG: Token + SRT + Prompts ===
         self.log("[STEP 2] SONG SONG: Token + SRT + Prompts...")
