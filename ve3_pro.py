@@ -1992,35 +1992,69 @@ class UnixVoiceToVideo:
 # MAIN
 # ============================================================================
 
-def hide_console():
-    """Hide console window on Windows."""
-    if sys.platform == "win32":
-        try:
-            import ctypes
-            ctypes.windll.user32.ShowWindow(
-                ctypes.windll.kernel32.GetConsoleWindow(), 0
-            )
-        except:
-            pass
+def setup_file_logging():
+    """
+    Setup logging to file for debugging.
+    All output goes to logs/app.log
+    """
+    log_dir = ROOT_DIR / "logs"
+    log_dir.mkdir(exist_ok=True)
+    log_file = log_dir / "app.log"
+
+    # Rotate log if too big (> 5MB)
+    if log_file.exists() and log_file.stat().st_size > 5 * 1024 * 1024:
+        old_log = log_dir / "app.old.log"
+        if old_log.exists():
+            old_log.unlink()
+        log_file.rename(old_log)
+
+    # Open log file
+    try:
+        log_handle = open(log_file, 'a', encoding='utf-8')
+
+        # Write startup marker
+        log_handle.write(f"\n{'='*60}\n")
+        log_handle.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] APP STARTED\n")
+        log_handle.write(f"{'='*60}\n")
+        log_handle.flush()
+
+        return log_handle
+    except:
+        return None
 
 
-def fix_stdio():
+def fix_stdio(log_handle=None):
     """
     Fix stdout/stderr when running without console (pythonw.exe).
-    This prevents 'NoneType has no attribute write' errors.
+    Redirect to log file if available, otherwise devnull.
     """
     if sys.stdout is None:
-        sys.stdout = open(os.devnull, 'w')
+        sys.stdout = log_handle if log_handle else open(os.devnull, 'w')
     if sys.stderr is None:
-        sys.stderr = open(os.devnull, 'w')
+        sys.stderr = log_handle if log_handle else open(os.devnull, 'w')
 
 
 def main():
     """Entry point."""
-    fix_stdio()  # Fix stdio FIRST before anything else
-    hide_console()
-    app = UnixVoiceToVideo()
-    app.run()
+    # Setup file logging first
+    log_handle = setup_file_logging()
+
+    # Fix stdio (for pythonw.exe)
+    fix_stdio(log_handle)
+
+    # Print startup info (goes to console AND log file)
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] Starting Uni-x Voice to Video...")
+    print(f"Python: {sys.executable}")
+    print(f"Working dir: {os.getcwd()}")
+
+    try:
+        app = UnixVoiceToVideo()
+        app.run()
+    except Exception as e:
+        print(f"[ERROR] App crashed: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
 
 
 if __name__ == "__main__":

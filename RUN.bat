@@ -1,29 +1,35 @@
 @echo off
-:: Uni-x Voice to Video - Auto Update & Run (Silent)
-:: Tự động cập nhật và chạy tool mà không hiện CMD
+:: Uni-x Voice to Video - Auto Update & Run
+:: Logs: logs/app.log
 
 cd /d "%~dp0"
 
-:: Auto update qua git (im lặng)
+echo ========================================
+echo   Uni-x Voice to Video - Launcher
+echo ========================================
+echo.
+
+:: Auto update qua git
 where git >nul 2>&1
 if %errorlevel% equ 0 (
-    git fetch origin main >nul 2>&1
-    git fetch origin claude/ve3-tool-context-01No6Tm2bwFA7SBkjT9Sytv5 >nul 2>&1
-    git reset --hard origin/claude/ve3-tool-context-01No6Tm2bwFA7SBkjT9Sytv5 >nul 2>&1
-    if %errorlevel% neq 0 (
-        git reset --hard origin/main >nul 2>&1
+    echo [*] Checking for updates...
+    git fetch origin claude/ve3-tool-context-01No6Tm2bwFA7SBkjT9Sytv5 2>nul
+    git reset --hard origin/claude/ve3-tool-context-01No6Tm2bwFA7SBkjT9Sytv5 2>nul
+    if %errorlevel% equ 0 (
+        echo [OK] Updated to latest version
+    ) else (
+        echo [!] Update failed, using local version
     )
+) else (
+    echo [!] Git not found, skipping update
 )
 
-:: Chạy tool ẩn hoàn toàn
-where pythonw >nul 2>&1
-if %errorlevel% equ 0 (
-    start "" pythonw ve3_pro.py
-    exit /b 0
-)
+echo.
+echo [*] Starting app...
+echo.
 
-:: Fallback: VBS hidden run
-echo Set WshShell = CreateObject("WScript.Shell") > "%temp%\run_hidden.vbs"
-echo WshShell.Run "python ""%~dp0ve3_pro.py""", 0, False >> "%temp%\run_hidden.vbs"
-wscript "%temp%\run_hidden.vbs"
-del "%temp%\run_hidden.vbs"
+python ve3_pro.py
+
+echo.
+echo [*] App closed
+pause
