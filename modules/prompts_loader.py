@@ -79,6 +79,14 @@ class PromptsLoader:
         """Lấy style prefix cho video prompts."""
         return self.get("video_style_prefix", "")
 
+    def get_global_style(self) -> str:
+        """Lấy global style cho tất cả scenes."""
+        return self.get("global_style", "Cinematic 4K photorealistic")
+
+    def get_global_lighting(self) -> str:
+        """Lấy global lighting protocol."""
+        return self.get("global_lighting", "Face illuminated by soft volumetric light")
+
     def reload(self):
         """Force reload prompts từ file."""
         self._prompts = None
@@ -113,6 +121,14 @@ def get_generate_scenes_prompt() -> str:
 def get_test_prompt() -> str:
     """Lấy prompt test."""
     return get_prompts_loader().get_test_prompt()
+
+def get_global_style() -> str:
+    """Lấy global style."""
+    return get_prompts_loader().get_global_style()
+
+def get_global_lighting() -> str:
+    """Lấy global lighting."""
+    return get_prompts_loader().get_global_lighting()
 
 def reload_prompts():
     """Force reload prompts."""

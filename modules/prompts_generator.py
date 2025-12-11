@@ -23,7 +23,11 @@ from modules.excel_manager import (
     Character,
     Scene
 )
-from modules.prompts_loader import get_analyze_story_prompt, get_generate_scenes_prompt
+from modules.prompts_loader import (
+    get_analyze_story_prompt,
+    get_generate_scenes_prompt,
+    get_global_style
+)
 
 
 # ============================================================================
@@ -454,11 +458,13 @@ class PromptGenerator:
         
         # Step 1: Phân tích nhân vật
         self.logger.info("Phân tích nhân vật qua Gemini...")
-        characters = self._analyze_characters(full_story)
-        
+        characters, context_lock = self._analyze_characters(full_story)
+
         if not characters:
             self.logger.error("Không thể phân tích nhân vật")
             return False
+
+        self.logger.info(f"Context lock: {context_lock[:100]}..." if context_lock else "No context lock")
         
         # Lưu nhân vật vào Excel
         for char in characters:
@@ -480,7 +486,7 @@ class PromptGenerator:
             batch = scenes_data[i:i + batch_size]
             self.logger.info(f"Xử lý batch {i // batch_size + 1}/{(len(scenes_data) - 1) // batch_size + 1}")
             
-            scene_prompts = self._generate_scene_prompts(characters, batch)
+            scene_prompts = self._generate_scene_prompts(characters, batch, context_lock)
             all_scene_prompts.extend(scene_prompts)
             
             # Rate limiting
@@ -506,58 +512,71 @@ class PromptGenerator:
         
         return True
     
-    def _analyze_characters(self, story_text: str) -> List[Character]:
+    def _analyze_characters(self, story_text: str) -> tuple:
         """
         Phân tích truyện và trích xuất nhân vật.
-        
+
         Args:
             story_text: Toàn bộ nội dung truyện
-            
+
         Returns:
-            List các Character objects
+            Tuple (List[Character], context_lock: str)
         """
         # Load prompt từ config/prompts.yaml
         prompt_template = get_analyze_story_prompt()
         prompt = prompt_template.format(story_text=story_text[:8000])
-        
+
         try:
             response = self._generate_content(prompt, temperature=0.5)
-            
+
             # Parse JSON từ response
             json_data = self._extract_json(response)
-            
+
             if not json_data or "characters" not in json_data:
                 self.logger.error(f"Invalid characters response: {response[:500]}")
-                return []
-            
+                return [], ""
+
+            # Extract context_lock (new in v2.0)
+            context_lock = json_data.get("context_lock", "")
+
             characters = []
             for char_data in json_data["characters"]:
+                # Support both old format (english_prompt) and new format (portrait_prompt, character_lock)
+                english_prompt = char_data.get("english_prompt", "")
+                if not english_prompt:
+                    # Try new format fields
+                    english_prompt = char_data.get("portrait_prompt", "")
+                    if english_prompt == "DO_NOT_GENERATE":
+                        english_prompt = char_data.get("child_text_lock", "")
+
                 characters.append(Character(
                     id=char_data.get("id", ""),
                     role=char_data.get("role", "supporting"),
                     name=char_data.get("name", ""),
-                    english_prompt=char_data.get("english_prompt", ""),
-                    vietnamese_prompt=char_data.get("vietnamese_prompt", ""),
+                    english_prompt=english_prompt,
+                    vietnamese_prompt=char_data.get("vietnamese_prompt", char_data.get("vietnamese_description", "")),
                 ))
-            
-            return characters
-            
+
+            return characters, context_lock
+
         except Exception as e:
             self.logger.error(f"Failed to analyze characters: {e}")
-            return []
+            return [], ""
     
     def _generate_scene_prompts(
         self,
         characters: List[Character],
-        scenes_data: List[Dict[str, Any]]
+        scenes_data: List[Dict[str, Any]],
+        context_lock: str = ""
     ) -> List[Dict[str, str]]:
         """
         Tạo prompts cho một batch scenes.
-        
+
         Args:
             characters: Danh sách nhân vật
             scenes_data: Danh sách scene data
-            
+            context_lock: Context lock string từ phân tích nhân vật
+
         Returns:
             List các dict chứa img_prompt và video_prompt
         """
@@ -566,7 +585,7 @@ class PromptGenerator:
             f"- {char.id} ({char.role}): {char.name}\n  Appearance: {char.english_prompt}"
             for char in characters
         ])
-        
+
         # Format thông tin scenes
         scenes_info = "\n".join([
             f"Scene {s['scene_id']} (SRT {s['srt_start']}-{s['srt_end']}):\n  \"{s['text'][:300]}...\""
@@ -574,13 +593,27 @@ class PromptGenerator:
             f"Scene {s['scene_id']} (SRT {s['srt_start']}-{s['srt_end']}):\n  \"{s['text']}\""
             for s in scenes_data
         ])
-        
+
+        # Load global style từ config
+        global_style = get_global_style()
+
         # Load prompt từ config/prompts.yaml
         prompt_template = get_generate_scenes_prompt()
-        prompt = prompt_template.format(
-            characters_info=characters_info,
-            scenes_info=scenes_info
-        )
+
+        # Try to format with all variables (v2.0 format)
+        try:
+            prompt = prompt_template.format(
+                characters_info=characters_info,
+                scenes_info=scenes_info,
+                context_lock=context_lock or "Modern setting, natural lighting",
+                global_style=global_style
+            )
+        except KeyError:
+            # Fallback to old format (v1.0)
+            prompt = prompt_template.format(
+                characters_info=characters_info,
+                scenes_info=scenes_info
+            )
         
         try:
             response = self._generate_content(prompt, temperature=0.6)
