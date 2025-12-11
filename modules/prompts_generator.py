@@ -697,6 +697,12 @@ class PromptGenerator:
         
         # Lưu scenes vào Excel
         for scene_data, prompts in zip(scenes_data, all_scene_prompts):
+            # Convert lists to JSON strings for storage
+            chars_used = prompts.get("characters_used", [])
+            ref_files = prompts.get("reference_files", [])
+            chars_str = json.dumps(chars_used) if isinstance(chars_used, list) else str(chars_used)
+            refs_str = json.dumps(ref_files) if isinstance(ref_files, list) else str(ref_files)
+
             scene = Scene(
                 scene_id=scene_data["scene_id"],
                 srt_start=scene_data["srt_start"],
@@ -705,7 +711,10 @@ class PromptGenerator:
                 img_prompt=prompts.get("img_prompt", ""),
                 video_prompt=prompts.get("video_prompt", ""),
                 status_img="pending",
-                status_vid="pending"
+                status_vid="pending",
+                characters_used=chars_str,
+                location_used=prompts.get("location_used", ""),
+                reference_files=refs_str
             )
             workbook.add_scene(scene)
         
@@ -805,25 +814,27 @@ class PromptGenerator:
         """
         locations = locations or []
 
-        # Format thông tin nhân vật (v5.0 format)
+        # Format thông tin nhân vật (v5.0 format) - include character_lock for AI to copy
         characters_info = "\n".join([
-            f"- {char.id} ({char.role}): {char.name}\n"
-            f"  character_lock: {char.english_prompt}\n"
-            f"  reference_file: {char.id}.jpg"
+            f"- ID: {char.id}\n"
+            f"  Name: {char.name} ({char.role})\n"
+            f"  character_lock: \"{char.english_prompt}\"\n"
+            f"  reference_file: {char.id}.png"
             for char in characters
         ])
 
-        # Format thông tin locations (v5.0 format)
+        # Format thông tin locations (v5.0 format) - include location_lock for AI to copy
         if locations:
             locations_info = "\n".join([
-                f"- {loc.id}: {loc.name}\n"
-                f"  location_lock: {loc.location_lock}\n"
+                f"- ID: {loc.id}\n"
+                f"  Name: {loc.name}\n"
+                f"  location_lock: \"{loc.location_lock}\"\n"
                 f"  lighting: {loc.lighting_default}\n"
-                f"  reference_file: {loc.id}.jpg"
+                f"  reference_file: {loc.id}.png"
                 for loc in locations
             ])
         else:
-            locations_info = "Use locations appropriate for each scene context"
+            locations_info = "(No location references - describe locations based on story context)"
 
         # Format thông tin scenes (pacing_script format)
         pacing_script = "\n".join([
@@ -879,18 +890,28 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
             
             # Match prompts với scenes
             prompts_map = {s["scene_id"]: s for s in json_data["scenes"]}
-            
+
             result = []
             for scene_data in scenes_data:
                 scene_id = scene_data["scene_id"]
                 if scene_id in prompts_map:
+                    scene_result = prompts_map[scene_id]
                     result.append({
-                        "img_prompt": prompts_map[scene_id].get("img_prompt", ""),
-                        "video_prompt": prompts_map[scene_id].get("video_prompt", "")
+                        "img_prompt": scene_result.get("img_prompt", ""),
+                        "video_prompt": scene_result.get("video_prompt", ""),
+                        "characters_used": scene_result.get("characters_used", []),
+                        "location_used": scene_result.get("location_used", ""),
+                        "reference_files": scene_result.get("reference_files", [])
                     })
                 else:
-                    result.append({"img_prompt": "", "video_prompt": ""})
-            
+                    result.append({
+                        "img_prompt": "",
+                        "video_prompt": "",
+                        "characters_used": [],
+                        "location_used": "",
+                        "reference_files": []
+                    })
+
             return result
             
         except Exception as e:

@@ -36,25 +36,20 @@ analyze_story: |
 
   ## NHIEM VU:
 
-  ### A. PACING & SLICING (Chia script thanh scenes)
-  - Moi scene: 8-20 tu
-  - [NARRATIVE]: 8-12 tu (binh thuong)
-  - [EMPHASIS]: 13-16 tu (quan trong)
-  - [PIVOTAL]: 17-20 tu (cao trao)
-  - Neu co bao luc/action phuc tap: TACH thanh 2 scene (Cause + Effect)
+  ### A. CHARACTER BIBLE (QUAN TRONG NHAT - Trich xuat TAT CA nhan vat)
+  - PHAI tim va liet ke TAT CA nhan vat xuat hien trong truyen (chinh + phu)
+  - Moi nhan vat can co:
+    * portrait_prompt: Anh chan dung (white background, neutral face, studio lighting)
+    * character_lock: Mo ta CHI TIET de paste vao scene (PHAI co: tuoi, gioi tinh, toc, mat, da, TRANG PHUC)
 
-  ### B. CHARACTER BIBLE (Tao reference cho nhan vat)
-  Moi nhan vat can:
-  - portrait_prompt: Anh reference (white background, neutral face, studio lighting)
-  - character_lock: Mo ta ngan gon de paste vao moi scene
+  ### B. LOCATION BIBLE (Trich xuat TAT CA boi canh)
+  - PHAI tim va liet ke TAT CA dia diem/boi canh trong truyen
+  - Moi location can:
+    * location_prompt: Anh boi canh (empty, no people)
+    * location_lock: Mo ta CHI TIET de paste vao scene
 
-  ### C. LOCATION BIBLE (Tao reference cho boi canh)
-  Moi location can:
-  - location_prompt: Anh reference boi canh (empty, no people)
-  - location_lock: Mo ta ngan gon de paste vao moi scene
-
-  ### D. KEY OBJECTS (Cac vat the quan trong)
-  - object_prompt: Anh reference vat the
+  ### C. KEY OBJECTS (Vat the quan trong neu co)
+  - Chi liet ke neu co vat the dac biet trong truyen
 
   ## OUTPUT FORMAT - PURE JSON (khong markdown):
 
@@ -62,18 +57,11 @@ analyze_story: |
     "production_info": {{
       "title": "Ten cau chuyen",
       "genre": "Drama/Comedy/etc",
-      "total_scenes": 15,
       "total_characters": 3,
       "total_locations": 2
     }},
 
     "global_style": "Cinematic, 4K photorealistic, shot on Arri Alexa, soft film grain, High Key Lighting, Balanced Exposure, well-lit, soft fill light, no crushing shadows, highly detailed texture, professional color grading",
-
-    "pacing_script": [
-      {{"id": 1, "type": "NARRATIVE", "text": "Original text segment here", "word_count": 10}},
-      {{"id": 2, "type": "EMPHASIS", "text": "Another segment with more words", "word_count": 14}},
-      {{"id": 3, "type": "PIVOTAL", "text": "The climactic moment of the story unfolds dramatically", "word_count": 18}}
-    ],
 
     "characters": [
       {{
@@ -81,30 +69,33 @@ analyze_story: |
         "name": "Minh",
         "role": "main",
         "age": 32,
+        "gender": "male",
         "is_child": false,
-        "filename": "nv1.jpg",
+        "filename": "nv1.png",
         "portrait_prompt": "A cinematic portrait, straight-on medium close-up shot on 85mm portrait lens. Subject is a 32-year-old Vietnamese man with short black side-parted hair, oval face, double eyelids, light tan skin. Looking directly at camera with completely neutral expression. Bright, even studio lighting, fully illuminated face. Pure white studio background. Wearing plain navy polo shirt. 8K, sharp focus, high fidelity portraiture, photorealistic.",
-        "character_lock": "32-year-old Vietnamese man with short black side-parted hair, oval face, light tan skin"
+        "character_lock": "Minh, 32-year-old Vietnamese man with short black side-parted hair, oval face, light tan skin, wearing navy blue polo shirt and dark gray slacks"
       }},
       {{
         "id": "nv2",
         "name": "Lan",
         "role": "supporting",
         "age": 30,
+        "gender": "female",
         "is_child": false,
-        "filename": "nv2.jpg",
+        "filename": "nv2.png",
         "portrait_prompt": "A cinematic portrait, straight-on medium close-up shot on 85mm portrait lens. Subject is a 30-year-old Vietnamese woman with long straight black center-parted hair, round face, fair skin, rosy cheeks. Looking directly at camera with completely neutral expression. Bright, even studio lighting, fully illuminated face. Pure white studio background. Wearing cream-colored blouse. 8K, sharp focus, high fidelity portraiture, photorealistic.",
-        "character_lock": "30-year-old Vietnamese woman with long straight black center-parted hair, round face, fair skin"
+        "character_lock": "Lan, 30-year-old Vietnamese woman with long straight black center-parted hair, round face, fair skin, wearing cream-colored blouse and light pink cardigan"
       }},
       {{
-        "id": "nv_child",
+        "id": "nvc1",
         "name": "Bao",
         "role": "supporting",
         "age": 8,
+        "gender": "male",
         "is_child": true,
         "filename": "NONE",
         "portrait_prompt": "DO_NOT_GENERATE",
-        "character_lock": "8-year-old Vietnamese boy with short black hair, round chubby face"
+        "character_lock": "Bao, 8-year-old Vietnamese boy with short black hair, round chubby face, wearing blue school uniform"
       }}
     ],
 
@@ -112,17 +103,17 @@ analyze_story: |
       {{
         "id": "loc1",
         "name": "Phong khach",
-        "filename": "loc1.jpg",
+        "filename": "loc1.png",
         "location_prompt": "Interior wide shot of modern Vietnamese apartment living room. Empty room, no people. Beige leather sofa, wooden coffee table, large window with city view, warm afternoon sunlight streaming in, minimalist decor, potted plants, cream-colored walls. Cinematic, 4K photorealistic, well-lit, soft natural lighting. 8K, architectural photography style.",
-        "location_lock": "Modern apartment living room, beige sofa, wooden coffee table, large window with city view, warm afternoon sunlight",
+        "location_lock": "Modern apartment living room, beige leather sofa, wooden coffee table, large window with city view, cream-colored walls, warm afternoon sunlight",
         "lighting_default": "Warm natural window light from the right"
       }},
       {{
         "id": "loc2",
         "name": "Van phong",
-        "filename": "loc2.jpg",
+        "filename": "loc2.png",
         "location_prompt": "Interior wide shot of corporate office space. Empty room, no people. Glass partitions, fluorescent ceiling lights, computer monitors on desks, ergonomic office chairs, neutral gray carpet, modern minimalist design. Cinematic, 4K photorealistic, well-lit. 8K, architectural photography style.",
-        "location_lock": "Corporate office space, glass partitions, fluorescent lights, computer monitors, gray carpet",
+        "location_lock": "Corporate office space, glass partitions, fluorescent ceiling lights, computer monitors on desks, gray carpet, modern minimalist design",
         "lighting_default": "Cool blue-white fluorescent overhead lighting"
       }}
     ],
@@ -131,17 +122,23 @@ analyze_story: |
       {{
         "id": "obj1",
         "name": "Wedding Ring",
-        "filename": "obj1.jpg",
+        "filename": "obj1.png",
         "object_prompt": "Extreme macro close-up of a simple gold wedding band with slight wear marks, sitting on white marble surface. Soft diffused studio lighting from above. Shallow depth of field. 8K, product photography style, photorealistic."
       }}
     ]
   }}
 
-  ## QUY TAC:
-  1. portrait_prompt: PHAI co "Pure white studio background", "neutral expression", "looking directly at camera"
-  2. location_prompt: PHAI co "Empty room, no people"
-  3. Tre em (is_child=true): portrait_prompt = "DO_NOT_GENERATE", filename = "NONE"
-  4. Chi tra ve JSON thuan, KHONG co markdown code block
+  ## QUY TAC BAT BUOC:
+  1. PHAI trich xuat TAT CA nhan vat duoc nhac den trong truyen (ke ca chi xuat hien 1 lan)
+  2. PHAI trich xuat TAT CA boi canh/dia diem duoc nhac den trong truyen
+  3. character_lock PHAI co: Ten + Tuoi + Gioi tinh + Dac diem khuon mat + Toc + Da + TRANG PHUC
+  4. location_lock PHAI co: Loai dia diem + Cac vat the chinh + Anh sang
+  5. portrait_prompt: PHAI co "Pure white studio background", "neutral expression", "looking directly at camera"
+  6. location_prompt: PHAI co "Empty room, no people"
+  7. Tre em (is_child=true): portrait_prompt = "DO_NOT_GENERATE", filename = "NONE"
+  8. ID format: nv1, nv2, nv3... (nhan vat), nvc1, nvc2... (tre em), loc1, loc2... (boi canh)
+  9. filename DUNG .png (KHONG DUNG .jpg)
+  10. Chi tra ve JSON thuan, KHONG co markdown code block
 
 # =============================================================================
 # STEP 3: SCENE PRODUCTION (Tao prompt cho tung scene)
@@ -151,35 +148,47 @@ analyze_story: |
 # =============================================================================
 
 generate_scenes: |
-  Ban la AI Production Director. Tao visual prompt cho tung scene trong cau chuyen.
+  Ban la AI Production Director. Tao visual prompt cho tung scene, SU DUNG ANH THAM CHIEU (reference images).
 
   ## NGUYEN TAC BAT BUOC:
 
   ### 1. MOI SCENE = 1 ANH:
-  - Moi dong trong PACING_SCRIPT = 1 scene
-  - scene_id tuong ung voi so thu tu dong
+  - Moi scene trong input = 1 scene output
+  - scene_id tuong ung voi so thu tu
 
-  ### 2. VISUAL CLARITY PROTOCOL:
+  ### 2. SU DUNG THAM CHIEU (QUAN TRONG NHAT):
+  - **character_lock**: COPY NGUYEN VAN vao img_prompt khi nhan vat xuat hien
+  - **location_lock**: COPY NGUYEN VAN vao img_prompt lam background
+  - **reference_files**: LIET KE tat ca file tham chieu duoc dung (nv1.png, loc1.png...)
+  - KHONG tu nghĩ ra mo ta moi - PHAI dung dung character_lock va location_lock da cho
+
+  ### 3. VISUAL CLARITY PROTOCOL:
   - LUON them: "Face illuminated by soft volumetric light, clear facial features, high visibility"
   - Dat SAU mo ta nhan vat, TRUOC mo ta boi canh
 
-  ### 3. GLOBAL STYLE INJECTION:
-  - Ket thuc moi img_prompt bang: "Cinematic, 4K photorealistic, shot on Arri Alexa, soft film grain, High Key Lighting, Balanced Exposure, well-lit, soft fill light, no crushing shadows, highly detailed texture, professional color grading"
+  ### 4. GLOBAL STYLE INJECTION:
+  - Ket thuc moi img_prompt bang global_style string
 
-  ### 4. COMPLETE SCENE INDEPENDENCE:
-  - Moi scene PHAI doc lap 100%, doc hieu ma khong can doc scene khac
+  ### 5. COMPLETE SCENE INDEPENDENCE:
+  - Moi scene PHAI doc lap 100%
   - KHONG viet "same as Scene X" hay "nhu truoc"
-  - Mo ta DAY DU: character + outfit + location + lighting trong MOI scene
+  - Mo ta DAY DU: character_lock + outfit + location_lock + lighting trong MOI scene
 
-  ### 5. CAMERA VARIETY:
+  ### 6. CAMERA VARIETY:
   - Luan phien goc may: Eye-level, Low angle, High angle, OTS, Close-up
   - KHONG 3 scene lien tiep cung goc may
 
   ## INPUT DATA:
   **GLOBAL_STYLE:** {global_style}
-  **CHARACTERS:** {characters_info}
-  **LOCATIONS:** {locations_info}
-  **SCENES:** {scenes_info}
+
+  **CHARACTERS (Dung character_lock nguyen van):**
+  {characters_info}
+
+  **LOCATIONS (Dung location_lock nguyen van):**
+  {locations_info}
+
+  **SCENES (Noi dung can tao prompt):**
+  {scenes_info}
 
   ## OUTPUT FORMAT - JSON ARRAY:
 
@@ -189,17 +198,26 @@ generate_scenes: |
     "scenes": [
       {{
         "scene_id": 1,
-        "img_prompt": "Scene 1: Eye-level, 85mm portrait lens. Minh, a 32-year-old Vietnamese man with short black side-parted hair, oval face, light tan skin, wearing navy blue polo shirt. Face illuminated by soft volumetric light, clear facial features, high visibility. He stands by the window looking out pensively. Modern apartment living room, beige sofa, wooden coffee table, warm afternoon sunlight. Cinematic, 4K photorealistic, shot on Arri Alexa, soft film grain, High Key Lighting, Balanced Exposure, well-lit, soft fill light, no crushing shadows, highly detailed texture, professional color grading.",
+        "characters_used": ["nv1"],
+        "location_used": "loc1",
+        "reference_files": ["nv1.png", "loc1.png"],
+        "img_prompt": "Scene 1: Eye-level, 85mm portrait lens. Minh, 32-year-old Vietnamese man with short black side-parted hair, oval face, light tan skin, wearing navy blue polo shirt. Face illuminated by soft volumetric light, clear facial features, high visibility. He stands by the window looking out pensively. Modern apartment living room, beige sofa, wooden coffee table, large window with city view, warm afternoon sunlight. Cinematic, 4K photorealistic, shot on Arri Alexa, soft film grain, High Key Lighting, Balanced Exposure, well-lit, soft fill light, no crushing shadows, highly detailed texture, professional color grading.",
         "video_prompt": "Slow dolly in. Minh remains still, gazing out the window. Dust particles float in the sunlight."
       }},
       {{
         "scene_id": 2,
-        "img_prompt": "Scene 2: Over-the-shoulder shot, 50mm lens. In sharp focus: Minh sitting on beige sofa, speaking with engaged expression. Face illuminated by soft volumetric light, clear facial features. In soft focus foreground: back of head of Lan, a 30-year-old Vietnamese woman with long black hair. Two people facing each other. Modern apartment living room, warm afternoon window light. Cinematic, 4K photorealistic, shot on Arri Alexa, soft film grain, High Key Lighting, Balanced Exposure, well-lit, soft fill light, no crushing shadows, highly detailed texture, professional color grading.",
+        "characters_used": ["nv1", "nv2"],
+        "location_used": "loc1",
+        "reference_files": ["nv1.png", "nv2.png", "loc1.png"],
+        "img_prompt": "Scene 2: Over-the-shoulder shot, 50mm lens. In sharp focus: Minh, 32-year-old Vietnamese man with short black side-parted hair, oval face, light tan skin, sitting on beige sofa, speaking with engaged expression. Face illuminated by soft volumetric light, clear facial features. In soft focus foreground: back of head of Lan, 30-year-old Vietnamese woman with long straight black center-parted hair, round face, fair skin. Two people facing each other. Modern apartment living room, beige sofa, wooden coffee table, large window with city view, warm afternoon window light. Cinematic, 4K photorealistic, shot on Arri Alexa, soft film grain, High Key Lighting, Balanced Exposure, well-lit, soft fill light, no crushing shadows, highly detailed texture, professional color grading.",
         "video_prompt": "Static shot with subtle handheld drift. Minh gestures while speaking."
       }},
       {{
         "scene_id": 3,
-        "img_prompt": "Scene 3: Close-up, 100mm macro lens. Minh's hands clenching into fists, wedding ring visible, knuckles whitening. Face illuminated by soft volumetric light. Modern apartment living room, warm afternoon lighting. Cinematic, 4K photorealistic, shot on Arri Alexa, soft film grain, High Key Lighting, Balanced Exposure, well-lit, soft fill light, no crushing shadows, highly detailed texture, professional color grading.",
+        "characters_used": ["nv1"],
+        "location_used": "loc1",
+        "reference_files": ["nv1.png", "loc1.png"],
+        "img_prompt": "Scene 3: Close-up, 100mm macro lens. Minh's hands clenching into fists, wedding ring visible, knuckles whitening. Modern apartment living room, warm afternoon lighting. Cinematic, 4K photorealistic, shot on Arri Alexa, soft film grain, High Key Lighting, Balanced Exposure, well-lit, soft fill light, no crushing shadows, highly detailed texture, professional color grading.",
         "video_prompt": "The hands slowly tighten into fists, knuckles whitening with tension."
       }}
     ]
@@ -213,12 +231,15 @@ generate_scenes: |
   - Action: Tracking shot, Wide with movement
 
   ## CHECKLIST TRUOC KHI OUTPUT:
-  - scene_id la INTEGER (1, 2, 3...) khong phai string
-  - img_prompt bat dau bang "Scene [number]: "
-  - img_prompt ket thuc bang global style
-  - Character mo ta day du (tuoi, toc, mat, da, trang phuc)
-  - "Face illuminated by soft volumetric light" co trong prompt
-  - Khong co 3+ scene lien tiep cung shot type
+  - [ ] scene_id la INTEGER (1, 2, 3...) khong phai string
+  - [ ] characters_used: list cac nhan vat ID xuat hien (["nv1", "nv2"])
+  - [ ] location_used: ID boi canh ("loc1")
+  - [ ] reference_files: tat ca file tham chieu (["nv1.png", "nv2.png", "loc1.png"])
+  - [ ] img_prompt COPY character_lock NGUYEN VAN tu input (khong tu viet lai)
+  - [ ] img_prompt COPY location_lock NGUYEN VAN tu input (khong tu viet lai)
+  - [ ] img_prompt ket thuc bang global style
+  - [ ] "Face illuminated by soft volumetric light" co trong prompt
+  - [ ] Khong co 3+ scene lien tiep cung shot type
 
   OUTPUT: JSON object voi key "scenes", KHONG co markdown code block.
 

@@ -42,6 +42,9 @@ SCENES_COLUMNS = [
     "video_path",       # Path đến video đã tạo
     "status_img",       # Trạng thái ảnh (pending/done/error)
     "status_vid",       # Trạng thái video (pending/done/error)
+    "characters_used",  # JSON list nhân vật trong scene (["nv1", "nv2"])
+    "location_used",    # ID bối cảnh ("loc1")
+    "reference_files",  # JSON list file tham chiếu (["nv1.png", "loc1.png"])
 ]
 
 
@@ -153,7 +156,7 @@ class Location:
 
 class Scene:
     """Đại diện cho một scene trong video."""
-    
+
     def __init__(
         self,
         scene_id: int,
@@ -165,7 +168,10 @@ class Scene:
         img_path: str = "",
         video_path: str = "",
         status_img: str = "pending",
-        status_vid: str = "pending"
+        status_vid: str = "pending",
+        characters_used: str = "",      # JSON list: ["nv1", "nv2"]
+        location_used: str = "",         # Location ID: "loc1"
+        reference_files: str = ""        # JSON list: ["nv1.png", "loc1.png"]
     ):
         self.scene_id = scene_id
         self.srt_start = srt_start
@@ -177,7 +183,10 @@ class Scene:
         self.video_path = video_path
         self.status_img = status_img
         self.status_vid = status_vid
-    
+        self.characters_used = characters_used
+        self.location_used = location_used
+        self.reference_files = reference_files
+
     def to_dict(self) -> Dict[str, Any]:
         """Chuyển đổi thành dictionary."""
         return {
@@ -191,8 +200,11 @@ class Scene:
             "video_path": self.video_path,
             "status_img": self.status_img,
             "status_vid": self.status_vid,
+            "characters_used": self.characters_used,
+            "location_used": self.location_used,
+            "reference_files": self.reference_files,
         }
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Scene":
         """Tạo Scene từ dictionary."""
@@ -207,6 +219,9 @@ class Scene:
             video_path=str(data.get("video_path", "")),
             status_img=str(data.get("status_img", "pending")),
             status_vid=str(data.get("status_vid", "pending")),
+            characters_used=str(data.get("characters_used", "")),
+            location_used=str(data.get("location_used", "")),
+            reference_files=str(data.get("reference_files", "")),
         )
 
 
@@ -333,6 +348,9 @@ class PromptWorkbook:
             "video_path": 30,
             "status_img": 12,
             "status_vid": 12,
+            "characters_used": 20,
+            "location_used": 15,
+            "reference_files": 30,
         }
         
         for col, column_name in enumerate(SCENES_COLUMNS, start=1):
