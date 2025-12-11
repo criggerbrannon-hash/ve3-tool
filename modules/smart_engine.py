@@ -61,6 +61,7 @@ class SmartEngine:
 
         # Resources
         self.profiles: List[Resource] = []
+        self.deepseek_keys: List[Resource] = []
         self.groq_keys: List[Resource] = []
         self.gemini_keys: List[Resource] = []
 
@@ -111,10 +112,16 @@ class SmartEngine:
             
             # Load API keys
             api = data.get('api_keys', {})
+
+            # DeepSeek (uu tien cao nhat - re va on dinh)
+            for k in api.get('deepseek', []):
+                if k and not k.startswith('THAY_BANG') and not k.startswith('sk-YOUR'):
+                    self.deepseek_keys.append(Resource(type='deepseek', value=k))
+
             for k in api.get('groq', []):
                 if k and not k.startswith('THAY_BANG') and not k.startswith('gsk_YOUR'):
                     self.groq_keys.append(Resource(type='groq', value=k))
-            
+
             for k in api.get('gemini', []):
                 if k and not k.startswith('THAY_BANG') and not k.startswith('AIzaSy_YOUR'):
                     self.gemini_keys.append(Resource(type='gemini', value=k))
@@ -217,8 +224,8 @@ class SmartEngine:
         if not self.profiles:
             missing.append("Chrome profiles (sua config/accounts.json)")
         
-        if has_voice and not self.groq_keys and not self.gemini_keys:
-            missing.append("AI API keys cho voice (Groq FREE: console.groq.com/keys)")
+        if has_voice and not self.deepseek_keys and not self.groq_keys and not self.gemini_keys:
+            missing.append("AI API keys cho voice (DeepSeek RE: platform.deepseek.com/api_keys)")
         
         if not Path(self.chrome_path).exists():
             missing.append(f"Chrome: {self.chrome_path}")
@@ -240,9 +247,13 @@ class SmartEngine:
         return None
     
     def get_available_ai_key(self) -> Optional[Resource]:
-        """Lay AI key san sang (uu tien Groq vi free)."""
+        """Lay AI key san sang (uu tien DeepSeek vi re va on dinh)."""
         with self._lock:
-            # Uu tien Groq
+            # Uu tien DeepSeek (re nhat, on dinh)
+            for k in self.deepseek_keys:
+                if k.status == 'ready' and k.fail_count < self.max_retries:
+                    return k
+            # Fallback Groq (free nhung hay rate limit)
             for k in self.groq_keys:
                 if k.status == 'ready' and k.fail_count < self.max_retries:
                     return k
@@ -268,7 +279,7 @@ class SmartEngine:
     def reset_resources(self):
         """Reset tat ca resources."""
         with self._lock:
-            for r in self.profiles + self.groq_keys + self.gemini_keys:
+            for r in self.profiles + self.deepseek_keys + self.groq_keys + self.gemini_keys:
                 r.status = 'ready'
                 r.fail_count = 0
     
@@ -383,10 +394,11 @@ class SmartEngine:
             with open(cfg_file, "r", encoding="utf-8") as f:
                 cfg = yaml.safe_load(f) or {}
         
-        # Add API keys
+        # Add API keys (thu tu uu tien: DeepSeek > Groq > Gemini)
+        cfg['deepseek_api_keys'] = [k.value for k in self.deepseek_keys if k.status != 'exhausted']
         cfg['groq_api_keys'] = [k.value for k in self.groq_keys if k.status != 'exhausted']
         cfg['gemini_api_keys'] = [k.value for k in self.gemini_keys if k.status != 'exhausted']
-        cfg['preferred_provider'] = 'groq'
+        cfg['preferred_provider'] = 'deepseek' if self.deepseek_keys else 'groq'
         
         # Retry with different keys
         for attempt in range(self.max_retries):
@@ -640,6 +652,7 @@ class SmartEngine:
 
         valid_tokens = self.get_valid_token_count()
         self.log(f"  Profiles: {len(self.profiles)} ({valid_tokens} tokens da co)")
+        self.log(f"  DeepSeek keys: {len(self.deepseek_keys)}")
         self.log(f"  Groq keys: {len(self.groq_keys)}")
         self.log(f"  Gemini keys: {len(self.gemini_keys)}")
 

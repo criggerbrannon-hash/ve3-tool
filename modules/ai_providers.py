@@ -3,6 +3,7 @@ VE3 Tool - Free AI Providers
 ============================
 Cac AI provider mien phi de thay the Gemini:
 - Groq (mien phi, rat nhanh)
+- DeepSeek (re, chat nhat)
 - OpenRouter (nhieu model mien phi)
 - Google AI Studio (Gemini mien phi)
 """
@@ -22,6 +23,78 @@ class AIProvider:
     api_key: str
     model: str
     endpoint: str
+
+
+class DeepSeekClient:
+    """
+    DeepSeek API Client - Re va manh!
+
+    Dang ky: https://platform.deepseek.com/api_keys
+    Models:
+    - deepseek-chat (tot nhat cho chat/reasoning)
+    - deepseek-coder (tot cho code)
+
+    Gia: ~$0.14/1M input tokens, ~$0.28/1M output tokens (rat re!)
+    """
+
+    ENDPOINT = "https://api.deepseek.com/v1/chat/completions"
+
+    MODELS = [
+        "deepseek-chat",      # Best for general use
+        "deepseek-reasoner",  # For complex reasoning
+    ]
+
+    def __init__(self, api_key: str, model: str = None):
+        self.api_key = api_key
+        self.model = model or self.MODELS[0]
+
+    def generate(
+        self,
+        prompt: str,
+        system_prompt: str = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096
+    ) -> Optional[str]:
+        """Generate text."""
+
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+
+        data = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens
+        }
+
+        try:
+            resp = requests.post(
+                self.ENDPOINT,
+                headers=headers,
+                json=data,
+                timeout=120
+            )
+
+            if resp.status_code == 200:
+                result = resp.json()
+                return result["choices"][0]["message"]["content"]
+            elif resp.status_code == 429:
+                print(f"DeepSeek rate limit, waiting...")
+                return None
+            else:
+                print(f"[DeepSeek Error] {resp.status_code}: {resp.text[:200]}")
+                return None
+
+        except Exception as e:
+            print(f"[DeepSeek Error] {e}")
+            return None
     
 
 class GroqClient:
@@ -261,27 +334,33 @@ class MultiAIClient:
     
     def _init_clients(self):
         """Khoi tao cac clients."""
-        
-        # Groq (uu tien vi nhanh nhat)
+
+        # DeepSeek (uu tien vi re va on dinh)
+        deepseek_keys = self.config.get("deepseek_api_keys", [])
+        for key in deepseek_keys:
+            if key and key.strip():
+                self.clients.append(("deepseek", DeepSeekClient(key.strip())))
+
+        # Groq (nhanh nhat, mien phi nhung hay rate limit)
         groq_keys = self.config.get("groq_api_keys", [])
         for key in groq_keys:
             if key and key.strip():
                 self.clients.append(("groq", GroqClient(key.strip())))
-        
+
         # OpenRouter
         openrouter_keys = self.config.get("openrouter_api_keys", [])
         for key in openrouter_keys:
             if key and key.strip():
                 self.clients.append(("openrouter", OpenRouterClient(key.strip())))
-        
+
         # Gemini
         gemini_keys = self.config.get("gemini_api_keys", [])
         for key in gemini_keys:
             if key and key.strip():
                 self.clients.append(("gemini", GeminiClient(key.strip())))
-        
+
         # Sap xep theo preferred_provider
-        preferred = self.config.get("preferred_provider", "groq")
+        preferred = self.config.get("preferred_provider", "deepseek")
         self.clients.sort(key=lambda x: 0 if x[0] == preferred else 1)
     
     def generate(
