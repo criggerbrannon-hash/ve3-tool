@@ -175,12 +175,13 @@ class MultiAIClient:
             "max_tokens": max_tokens
         }
 
-        self.logger.debug(f"Calling DeepSeek API (key #{self.deepseek_index + 1})...")
+        print(f"[DeepSeek] Dang goi API... (prompt: {len(prompt)} ky tu, cho 60-120s)")
 
-        resp = requests.post(self.DEEPSEEK_URL, headers=headers, json=data, timeout=120)
+        resp = requests.post(self.DEEPSEEK_URL, headers=headers, json=data, timeout=180)
 
         if resp.status_code == 200:
             result = resp.json()
+            print(f"[DeepSeek] Thanh cong!")
             return result["choices"][0]["message"]["content"]
         else:
             raise requests.RequestException(f"DeepSeek API error {resp.status_code}: {resp.text[:200]}")
