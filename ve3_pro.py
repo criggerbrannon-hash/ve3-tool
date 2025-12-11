@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 """
-VE3 Tool Pro v2.0
+VE3 Tool Pro v2.1
 =================
 Beautiful, Smart, Powerful
 1 Click: Voice → Images
+
+v2.1 Updates:
+- Improved UI layout (scrollable controls)
+- Preview tab: edit prompts, regenerate images
+- Prompts tab: inline editing
+- Settings: token management, prompt templates
 """
 
 import os
@@ -16,7 +22,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Optional
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, simpledialog
 
 # Setup
 ROOT_DIR = Path(__file__).parent
@@ -35,8 +41,8 @@ except:
 
 class VE3ToolPro:
     """VE3 Tool Pro - Beautiful GUI."""
-    
-    VERSION = "2.0"
+
+    VERSION = "2.1"
     
     def __init__(self):
         self.root = tk.Tk()
@@ -121,177 +127,219 @@ class VE3ToolPro:
         self.create_preview(right_panel)
     
     def create_controls(self, parent):
-        """Create left control panel."""
-        
+        """Create left control panel with scrollable area."""
+
+        # Create canvas with scrollbar for scrollable controls
+        canvas = tk.Canvas(parent, highlightthickness=0, bg='#f0f0f0')
+        scrollbar = ttk.Scrollbar(parent, orient=tk.VERTICAL, command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+
+        canvas.create_window((0, 0), window=scrollable_frame, anchor=tk.NW, width=335)
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        # Enable mouse wheel scrolling
+        def on_mousewheel(event):
+            canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        canvas.bind_all("<MouseWheel>", on_mousewheel)
+
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
         # === HEADER ===
-        header = ttk.Frame(parent)
-        header.pack(fill=tk.X, pady=(0, 15))
-        
+        header = ttk.Frame(scrollable_frame)
+        header.pack(fill=tk.X, pady=(0, 15), padx=5)
+
         ttk.Label(header, text="🎨 VE3 Tool", style='Title.TLabel').pack(anchor=tk.W)
         ttk.Label(header, text="Voice → Images (1 Click)", style='Subtitle.TLabel').pack(anchor=tk.W)
-        
+
         # === 1. INPUT ===
-        input_frame = ttk.LabelFrame(parent, text=" 📁 Đầu vào ", padding=10)
-        input_frame.pack(fill=tk.X, pady=(0, 10))
-        
+        input_frame = ttk.LabelFrame(scrollable_frame, text=" 📁 Đầu vào ", padding=10)
+        input_frame.pack(fill=tk.X, pady=(0, 10), padx=5)
+
         # Mode selection
         mode_row = ttk.Frame(input_frame)
         mode_row.pack(fill=tk.X, pady=(0, 8))
-        
-        ttk.Radiobutton(mode_row, text="📄 File đơn", variable=self.input_mode, 
+
+        ttk.Radiobutton(mode_row, text="📄 File đơn", variable=self.input_mode,
                         value="file", command=self.on_mode_change).pack(side=tk.LEFT)
         ttk.Radiobutton(mode_row, text="📂 Thư mục", variable=self.input_mode,
                         value="folder", command=self.on_mode_change).pack(side=tk.LEFT, padx=15)
-        
+
         # Path row
         path_row = ttk.Frame(input_frame)
         path_row.pack(fill=tk.X)
-        
+
         self.path_entry = ttk.Entry(path_row, textvariable=self.input_path, font=('Consolas', 9))
         self.path_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
-        
+
         ttk.Button(path_row, text="Chọn...", width=8, command=self.browse_input).pack(side=tk.LEFT)
-        
+
         # Input info
-        self.input_info_label = ttk.Label(input_frame, text="Hỗ trợ: .mp3, .wav, .xlsx", 
+        self.input_info_label = ttk.Label(input_frame, text="Hỗ trợ: .mp3, .wav, .xlsx",
                                           foreground='gray', font=('Segoe UI', 9))
         self.input_info_label.pack(anchor=tk.W, pady=(5, 0))
-        
+
         # === 2. START BUTTON ===
         self.start_btn = tk.Button(
-            parent, text="▶  BẮT ĐẦU", 
+            scrollable_frame, text="▶  BẮT ĐẦU",
             font=('Segoe UI', 14, 'bold'),
             bg='#2ecc71', fg='white', activebackground='#27ae60',
             relief=tk.FLAT, cursor='hand2',
             command=self.start_processing
         )
-        self.start_btn.pack(fill=tk.X, pady=10, ipady=12)
-        
+        self.start_btn.pack(fill=tk.X, pady=10, ipady=12, padx=5)
+
         # Stop button
         self.stop_btn = tk.Button(
-            parent, text="⏹  Dừng",
+            scrollable_frame, text="⏹  Dừng",
             font=('Segoe UI', 10),
             bg='#e74c3c', fg='white', activebackground='#c0392b',
             relief=tk.FLAT, state=tk.DISABLED,
             command=self.stop_processing
         )
-        self.stop_btn.pack(fill=tk.X, pady=(0, 10))
-        
+        self.stop_btn.pack(fill=tk.X, pady=(0, 10), padx=5)
+
         # === 3. PROGRESS ===
-        progress_frame = ttk.LabelFrame(parent, text=" 📊 Tiến độ ", padding=10)
-        progress_frame.pack(fill=tk.X, pady=(0, 10))
-        
+        progress_frame = ttk.LabelFrame(scrollable_frame, text=" 📊 Tiến độ ", padding=10)
+        progress_frame.pack(fill=tk.X, pady=(0, 10), padx=5)
+
         self.progress_var = tk.DoubleVar()
         self.progress_bar = ttk.Progressbar(progress_frame, variable=self.progress_var, maximum=100)
         self.progress_bar.pack(fill=tk.X, pady=(0, 5))
-        
+
         self.progress_label = ttk.Label(progress_frame, text="Sẵn sàng", font=('Segoe UI', 10, 'bold'))
         self.progress_label.pack(anchor=tk.W)
-        
+
         self.progress_detail = ttk.Label(progress_frame, text="", foreground='gray')
         self.progress_detail.pack(anchor=tk.W)
-        
+
         # === 4. RESOURCES ===
-        res_frame = ttk.LabelFrame(parent, text=" 🔧 Tài nguyên ", padding=10)
-        res_frame.pack(fill=tk.X, pady=(0, 10))
-        
+        res_frame = ttk.LabelFrame(scrollable_frame, text=" 🔧 Tài nguyên ", padding=10)
+        res_frame.pack(fill=tk.X, pady=(0, 10), padx=5)
+
         self.res_profiles = ttk.Label(res_frame, text="👤 Profiles: 0")
         self.res_profiles.pack(anchor=tk.W)
-        
+
         self.res_groq = ttk.Label(res_frame, text="🔑 Groq: 0")
         self.res_groq.pack(anchor=tk.W)
-        
+
         self.res_gemini = ttk.Label(res_frame, text="🔑 Gemini: 0")
         self.res_gemini.pack(anchor=tk.W)
-        
-        # Config buttons
+
+        # Config buttons row 1
         btn_row = ttk.Frame(res_frame)
         btn_row.pack(fill=tk.X, pady=(8, 0))
-        
+
         ttk.Button(btn_row, text="⚙️ Cài đặt", command=self.open_settings).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(btn_row, text="🔄 Reload", command=self.reload_config).pack(side=tk.LEFT)
-        
+
         # === 5. QUICK ACTIONS ===
-        actions_frame = ttk.LabelFrame(parent, text=" ⚡ Thao tác nhanh ", padding=10)
-        actions_frame.pack(fill=tk.X)
-        
+        actions_frame = ttk.LabelFrame(scrollable_frame, text=" ⚡ Thao tác nhanh ", padding=10)
+        actions_frame.pack(fill=tk.X, pady=(0, 10), padx=5)
+
         ttk.Button(actions_frame, text="📂 Mở Output", command=self.open_output_folder).pack(fill=tk.X, pady=(0, 5))
         ttk.Button(actions_frame, text="🔑 Lấy Token thủ công", command=self.get_token_manual).pack(fill=tk.X, pady=(0, 5))
+        ttk.Button(actions_frame, text="📝 Sửa Prompts Template", command=self.open_prompts_editor).pack(fill=tk.X, pady=(0, 5))
         ttk.Button(actions_frame, text="📋 Mở Config", command=self.open_config_file).pack(fill=tk.X)
     
     def create_preview(self, parent):
         """Create right preview panel."""
-        
+
         # Notebook for tabs
-        notebook = ttk.Notebook(parent)
-        notebook.pack(fill=tk.BOTH, expand=True)
-        
+        self.notebook = ttk.Notebook(parent)
+        self.notebook.pack(fill=tk.BOTH, expand=True)
+
         # === TAB 1: PREVIEW ===
-        preview_tab = ttk.Frame(notebook, padding=10)
-        notebook.add(preview_tab, text="  🖼️ Preview  ")
-        
+        preview_tab = ttk.Frame(self.notebook, padding=10)
+        self.notebook.add(preview_tab, text="  🖼️ Preview  ")
+
         # Top: Character & Scene selection
         select_row = ttk.Frame(preview_tab)
         select_row.pack(fill=tk.X, pady=(0, 10))
-        
+
         ttk.Label(select_row, text="Nhân vật:", font=('Segoe UI', 10, 'bold')).pack(side=tk.LEFT)
         self.char_combo = ttk.Combobox(select_row, state='readonly', width=20)
         self.char_combo.pack(side=tk.LEFT, padx=(5, 20))
         self.char_combo.bind('<<ComboboxSelected>>', self.on_char_selected)
-        
+
         ttk.Label(select_row, text="Scene:", font=('Segoe UI', 10, 'bold')).pack(side=tk.LEFT)
         self.scene_combo = ttk.Combobox(select_row, state='readonly', width=20)
         self.scene_combo.pack(side=tk.LEFT, padx=(5, 20))
         self.scene_combo.bind('<<ComboboxSelected>>', self.on_scene_selected)
-        
+
         ttk.Button(select_row, text="🔄 Refresh", command=self.refresh_preview).pack(side=tk.RIGHT)
-        
-        # Main preview area (3 columns)
+
+        # Main preview area (2 columns)
         preview_main = ttk.Frame(preview_tab)
         preview_main.pack(fill=tk.BOTH, expand=True)
-        
+
         # Column 1: Character
         char_col = ttk.LabelFrame(preview_main, text=" 👤 Nhân vật ", padding=5)
         char_col.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
-        
+
         self.char_image_label = ttk.Label(char_col, text="Chưa có", anchor=tk.CENTER, background='#ecf0f1')
         self.char_image_label.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
-        
-        self.char_prompt_text = tk.Text(char_col, height=4, wrap=tk.WORD, font=('Segoe UI', 9), bg='#f9f9f9')
-        self.char_prompt_text.pack(fill=tk.X)
-        
-        # Column 2: Reference (optional)
-        ref_col = ttk.LabelFrame(preview_main, text=" 🎨 Tham chiếu ", padding=5)
-        ref_col.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5)
-        
-        self.ref_image_label = ttk.Label(ref_col, text="(Tùy chọn)", anchor=tk.CENTER, background='#ecf0f1')
-        self.ref_image_label.pack(fill=tk.BOTH, expand=True)
-        
-        # Column 3: Result
-        result_col = ttk.LabelFrame(preview_main, text=" ✨ Kết quả ", padding=5)
+
+        # Character prompt with edit
+        ttk.Label(char_col, text="Prompt:", font=('Segoe UI', 9, 'bold')).pack(anchor=tk.W)
+        self.char_prompt_text = tk.Text(char_col, height=3, wrap=tk.WORD, font=('Segoe UI', 9), bg='#f9f9f9')
+        self.char_prompt_text.pack(fill=tk.X, pady=(0, 5))
+
+        # Character action buttons
+        char_btn_row = ttk.Frame(char_col)
+        char_btn_row.pack(fill=tk.X)
+        ttk.Button(char_btn_row, text="💾 Lưu", width=8, command=self.save_char_prompt).pack(side=tk.LEFT, padx=(0, 3))
+        ttk.Button(char_btn_row, text="🔄 Tạo lại", width=10, command=self.regenerate_char_image).pack(side=tk.LEFT)
+        self.char_status_label = ttk.Label(char_btn_row, text="", foreground='gray')
+        self.char_status_label.pack(side=tk.RIGHT)
+
+        # Column 2: Scene Result
+        result_col = ttk.LabelFrame(preview_main, text=" ✨ Scene ", padding=5)
         result_col.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(5, 0))
-        
+
         self.result_image_label = ttk.Label(result_col, text="Chưa có", anchor=tk.CENTER, background='#ecf0f1')
         self.result_image_label.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
-        
-        self.result_prompt_text = tk.Text(result_col, height=4, wrap=tk.WORD, font=('Segoe UI', 9), bg='#f9f9f9')
-        self.result_prompt_text.pack(fill=tk.X)
-        
-        # Bottom: Scene thumbnails
-        thumb_frame = ttk.LabelFrame(preview_tab, text=" 📋 Tất cả Scenes ", padding=5)
+
+        # Scene prompt with edit
+        ttk.Label(result_col, text="Prompt:", font=('Segoe UI', 9, 'bold')).pack(anchor=tk.W)
+        self.result_prompt_text = tk.Text(result_col, height=3, wrap=tk.WORD, font=('Segoe UI', 9), bg='#f9f9f9')
+        self.result_prompt_text.pack(fill=tk.X, pady=(0, 5))
+
+        # Scene action buttons
+        scene_btn_row = ttk.Frame(result_col)
+        scene_btn_row.pack(fill=tk.X)
+        ttk.Button(scene_btn_row, text="💾 Lưu", width=8, command=self.save_scene_prompt).pack(side=tk.LEFT, padx=(0, 3))
+        ttk.Button(scene_btn_row, text="🔄 Tạo lại", width=10, command=self.regenerate_scene_image).pack(side=tk.LEFT)
+        self.scene_status_label = ttk.Label(scene_btn_row, text="", foreground='gray')
+        self.scene_status_label.pack(side=tk.RIGHT)
+
+        # Bottom: Scene thumbnails with status
+        thumb_frame = ttk.LabelFrame(preview_tab, text=" 📋 Tất cả Scenes (click để xem) ", padding=5)
         thumb_frame.pack(fill=tk.X, pady=(10, 0))
-        
+
+        # Progress info
+        self.thumb_progress = ttk.Label(thumb_frame, text="", font=('Segoe UI', 9))
+        self.thumb_progress.pack(anchor=tk.W, pady=(0, 3))
+
         # Scrollable canvas for thumbnails
-        self.thumb_canvas = tk.Canvas(thumb_frame, height=90, bg='white')
+        self.thumb_canvas = tk.Canvas(thumb_frame, height=100, bg='white')
         self.thumb_canvas.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        
+
         thumb_scroll = ttk.Scrollbar(thumb_frame, orient=tk.HORIZONTAL, command=self.thumb_canvas.xview)
         thumb_scroll.pack(side=tk.BOTTOM, fill=tk.X)
         self.thumb_canvas.configure(xscrollcommand=thumb_scroll.set)
+
+        # Bind click on thumbnails
+        self.thumb_canvas.bind("<Button-1>", self.on_thumb_click)
         
         # === TAB 2: LOG ===
-        log_tab = ttk.Frame(notebook, padding=10)
-        notebook.add(log_tab, text="  📝 Log  ")
+        log_tab = ttk.Frame(self.notebook, padding=10)
+        self.notebook.add(log_tab, text="  📝 Log  ")
         
         self.log_text = tk.Text(log_tab, wrap=tk.WORD, font=('Consolas', 9), bg='#1e1e1e', fg='#d4d4d4')
         self.log_text.pack(fill=tk.BOTH, expand=True)
@@ -308,38 +356,75 @@ class VE3ToolPro:
         ttk.Button(log_btn_row, text="💾 Lưu", command=self.save_log).pack(side=tk.LEFT)
         
         # === TAB 3: PROMPTS ===
-        prompts_tab = ttk.Frame(notebook, padding=10)
-        notebook.add(prompts_tab, text="  📄 Prompts  ")
-        
+        prompts_tab = ttk.Frame(self.notebook, padding=10)
+        self.notebook.add(prompts_tab, text="  📄 Prompts  ")
+
+        # Instructions
+        ttk.Label(prompts_tab, text="Double-click để sửa prompt, Enter để lưu",
+                  foreground='gray', font=('Segoe UI', 9)).pack(anchor=tk.W, pady=(0, 5))
+
         # Characters table
         char_lf = ttk.LabelFrame(prompts_tab, text=" 👥 Nhân vật ", padding=5)
         char_lf.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
-        
+
+        # Char treeview with scrollbar
+        char_tree_frame = ttk.Frame(char_lf)
+        char_tree_frame.pack(fill=tk.BOTH, expand=True)
+
         cols = ('id', 'prompt', 'status')
-        self.char_tree = ttk.Treeview(char_lf, columns=cols, show='headings', height=5)
+        self.char_tree = ttk.Treeview(char_tree_frame, columns=cols, show='headings', height=5)
         self.char_tree.heading('id', text='ID')
-        self.char_tree.heading('prompt', text='Prompt')
-        self.char_tree.heading('status', text='Status')
+        self.char_tree.heading('prompt', text='Prompt (double-click để sửa)')
+        self.char_tree.heading('status', text='Trạng thái')
         self.char_tree.column('id', width=80)
-        self.char_tree.column('prompt', width=500)
+        self.char_tree.column('prompt', width=450)
         self.char_tree.column('status', width=80)
-        self.char_tree.pack(fill=tk.BOTH, expand=True)
-        
+        self.char_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        char_scroll = ttk.Scrollbar(char_tree_frame, orient=tk.VERTICAL, command=self.char_tree.yview)
+        char_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.char_tree.configure(yscrollcommand=char_scroll.set)
+
+        # Bind double-click to edit
+        self.char_tree.bind('<Double-1>', self.on_char_tree_double_click)
+
+        # Character buttons
+        char_btn_row = ttk.Frame(char_lf)
+        char_btn_row.pack(fill=tk.X, pady=(5, 0))
+        ttk.Button(char_btn_row, text="🔄 Tạo lại ảnh đã chọn", command=self.regenerate_selected_char).pack(side=tk.LEFT)
+
         # Scenes table
         scene_lf = ttk.LabelFrame(prompts_tab, text=" 🎬 Scenes ", padding=5)
         scene_lf.pack(fill=tk.BOTH, expand=True)
-        
+
+        # Scene treeview with scrollbar
+        scene_tree_frame = ttk.Frame(scene_lf)
+        scene_tree_frame.pack(fill=tk.BOTH, expand=True)
+
         cols2 = ('id', 'time', 'prompt', 'status')
-        self.scene_tree = ttk.Treeview(scene_lf, columns=cols2, show='headings', height=10)
+        self.scene_tree = ttk.Treeview(scene_tree_frame, columns=cols2, show='headings', height=8)
         self.scene_tree.heading('id', text='ID')
         self.scene_tree.heading('time', text='Thời gian')
-        self.scene_tree.heading('prompt', text='Prompt')
-        self.scene_tree.heading('status', text='Status')
+        self.scene_tree.heading('prompt', text='Prompt (double-click để sửa)')
+        self.scene_tree.heading('status', text='Trạng thái')
         self.scene_tree.column('id', width=60)
-        self.scene_tree.column('time', width=100)
-        self.scene_tree.column('prompt', width=420)
+        self.scene_tree.column('time', width=80)
+        self.scene_tree.column('prompt', width=390)
         self.scene_tree.column('status', width=80)
-        self.scene_tree.pack(fill=tk.BOTH, expand=True)
+        self.scene_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        scene_scroll = ttk.Scrollbar(scene_tree_frame, orient=tk.VERTICAL, command=self.scene_tree.yview)
+        scene_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.scene_tree.configure(yscrollcommand=scene_scroll.set)
+
+        # Bind double-click to edit
+        self.scene_tree.bind('<Double-1>', self.on_scene_tree_double_click)
+
+        # Scene buttons
+        scene_btn_row = ttk.Frame(scene_lf)
+        scene_btn_row.pack(fill=tk.X, pady=(5, 0))
+        ttk.Button(scene_btn_row, text="🔄 Tạo lại ảnh đã chọn", command=self.regenerate_selected_scene).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(scene_btn_row, text="🔄 Tạo lại tất cả chưa xong", command=self.regenerate_all_pending).pack(side=tk.LEFT)
     
     # ========== ACTIONS ==========
     
@@ -915,73 +1000,149 @@ class VE3ToolPro:
         if path:
             name = Path(path).stem
             self.current_project_dir = PROJECTS_DIR / name
-        
+
         if not self.current_project_dir or not self.current_project_dir.exists():
             self.log("Chưa có project để preview")
             return
-        
+
         self.log(f"Loading preview from: {self.current_project_dir}")
-        
-        # Load characters
+
+        # Get all IDs from Excel (not just those with images)
+        all_chars = []
+        all_scenes = []
+
+        prompts_dir = self.current_project_dir / "prompts"
+        excel_files = list(prompts_dir.glob("*_prompts.xlsx")) if prompts_dir.exists() else []
+
+        if excel_files:
+            try:
+                import openpyxl
+                wb = openpyxl.load_workbook(excel_files[0], read_only=True)
+
+                for sheet in wb.sheetnames:
+                    ws = wb[sheet]
+                    headers = [c.value for c in ws[1]]
+
+                    # Find ID column
+                    id_col = None
+                    for i, h in enumerate(headers or []):
+                        if h and 'id' in str(h).lower():
+                            id_col = i
+                            break
+
+                    if id_col is None:
+                        continue
+
+                    for row in ws.iter_rows(min_row=2, values_only=True):
+                        if row and len(row) > id_col and row[id_col]:
+                            pid = str(row[id_col]).strip()
+                            if pid.startswith('nv'):
+                                if pid not in all_chars:
+                                    all_chars.append(pid)
+                            elif pid:
+                                if pid not in all_scenes:
+                                    all_scenes.append(pid)
+
+                wb.close()
+            except Exception as e:
+                self.log(f"Error reading Excel: {e}", "ERROR")
+
+        # Fall back to files if no Excel data
         nv_dir = self.current_project_dir / "nv"
-        chars = []
-        if nv_dir.exists():
-            chars = sorted([c.stem for c in nv_dir.glob("*.png")])
-        
-        self.char_combo['values'] = chars
-        if chars:
-            self.char_combo.set(chars[0])
-            self.on_char_selected()
-        
-        # Load scenes
         img_dir = self.current_project_dir / "img"
-        scenes = []
-        if img_dir.exists():
-            scenes = sorted([s.stem for s in img_dir.glob("*.png")])
-        
-        self.scene_combo['values'] = scenes
-        if scenes:
-            self.scene_combo.set(scenes[0])
+
+        if not all_chars and nv_dir.exists():
+            all_chars = sorted([c.stem for c in nv_dir.glob("*.png")])
+
+        if not all_scenes and img_dir.exists():
+            all_scenes = sorted([s.stem for s in img_dir.glob("*.png")])
+
+        # Sort scenes by ID (numeric part)
+        def sort_key(s):
+            try:
+                return int(''.join(filter(str.isdigit, s)))
+            except:
+                return 0
+        all_scenes.sort(key=sort_key)
+
+        # Update combos
+        self.char_combo['values'] = all_chars
+        if all_chars:
+            self.char_combo.set(all_chars[0])
+            self.on_char_selected()
+
+        self.scene_combo['values'] = all_scenes
+        if all_scenes:
+            self.scene_combo.set(all_scenes[0])
             self.on_scene_selected()
-        
-        # Update thumbnails
-        self.update_thumbnails(scenes)
-        
+
+        # Update thumbnails (show all scenes, including pending)
+        self.update_thumbnails(all_scenes)
+
         # Update prompts tab
         self.update_prompts_tab()
-        
-        self.log(f"Preview: {len(chars)} nhân vật, {len(scenes)} scenes", "OK")
+
+        done_chars = len(list(nv_dir.glob("*.png"))) if nv_dir.exists() else 0
+        done_scenes = len(list(img_dir.glob("*.png"))) if img_dir.exists() else 0
+        self.log(f"Preview: {done_chars}/{len(all_chars)} nhân vật, {done_scenes}/{len(all_scenes)} scenes", "OK")
     
     def update_thumbnails(self, scene_ids: List[str]):
-        """Update scene thumbnails."""
+        """Update scene thumbnails with progress status."""
         self.thumb_canvas.delete("all")
-        
-        if not HAS_PIL or not self.current_project_dir:
+
+        if not self.current_project_dir:
+            self.thumb_progress.config(text="")
             return
-        
+
         img_dir = self.current_project_dir / "img"
+        nv_dir = self.current_project_dir / "nv"
+
+        # Count progress
+        total_scenes = len(scene_ids)
+        done_scenes = sum(1 for sid in scene_ids if (img_dir / f"{sid}.png").exists())
+
+        # Count characters too
+        char_pngs = list(nv_dir.glob("*.png")) if nv_dir.exists() else []
+
+        self.thumb_progress.config(
+            text=f"Scenes: {done_scenes}/{total_scenes} ✅  |  Nhân vật: {len(char_pngs)}",
+            foreground='#27ae60' if done_scenes == total_scenes else '#f39c12'
+        )
+
+        if not HAS_PIL:
+            return
+
         x = 5
-        
         self._thumb_photos = []  # Keep references
-        
-        for sid in scene_ids[:20]:  # Max 20 thumbnails
+        self._thumb_scene_ids = scene_ids  # Store for click handling
+
+        for sid in scene_ids[:30]:  # Max 30 thumbnails
             img_path = img_dir / f"{sid}.png"
-            if not img_path.exists():
-                continue
-            
-            try:
-                img = Image.open(img_path)
-                img.thumbnail((80, 80), Image.Resampling.LANCZOS)
-                photo = ImageTk.PhotoImage(img)
-                self._thumb_photos.append(photo)
-                
-                self.thumb_canvas.create_image(x, 5, anchor=tk.NW, image=photo)
-                self.thumb_canvas.create_text(x + 40, 85, text=sid, font=('Segoe UI', 7))
-                x += 90
-            except:
-                pass
-        
-        self.thumb_canvas.configure(scrollregion=(0, 0, x, 100))
+
+            if img_path.exists():
+                try:
+                    img = Image.open(img_path)
+                    img.thumbnail((80, 80), Image.Resampling.LANCZOS)
+                    photo = ImageTk.PhotoImage(img)
+                    self._thumb_photos.append(photo)
+
+                    self.thumb_canvas.create_image(x, 5, anchor=tk.NW, image=photo)
+                    # Green border for done
+                    self.thumb_canvas.create_rectangle(x-1, 4, x+81, 86, outline='#27ae60', width=2)
+                except:
+                    # Placeholder for failed load
+                    self.thumb_canvas.create_rectangle(x, 5, x+80, 85, fill='#bdc3c7', outline='#7f8c8d')
+                    self.thumb_canvas.create_text(x+40, 45, text="?", font=('Segoe UI', 16))
+            else:
+                # Placeholder for pending
+                self.thumb_canvas.create_rectangle(x, 5, x+80, 85, fill='#ecf0f1', outline='#f39c12', width=2)
+                self.thumb_canvas.create_text(x+40, 40, text="⏳", font=('Segoe UI', 16))
+
+            # Scene ID label
+            self.thumb_canvas.create_text(x + 40, 92, text=sid, font=('Segoe UI', 7))
+            x += 90
+
+        self.thumb_canvas.configure(scrollregion=(0, 0, x, 105))
     
     def update_prompts_tab(self):
         """Update prompts treeviews."""
@@ -1062,34 +1223,469 @@ class VE3ToolPro:
         if not self.profiles:
             messagebox.showerror("Lỗi", "Chưa có Chrome profile!\n\nThêm vào config/accounts.json")
             return
-        
+
         self.log("🔑 Đang lấy token thủ công...")
-        
+
         def worker():
             try:
                 from modules.auto_token import ChromeAutoToken
-                
+
                 extractor = ChromeAutoToken(
                     chrome_path=self.chrome_path,
                     profile_path=self.profiles[0]
                 )
-                
+
                 def log_cb(msg):
                     self.root.after(0, lambda: self.log(msg))
-                
+
                 token, proj_id, error = extractor.extract_token(callback=log_cb)
-                
+
                 if token:
                     self.root.after(0, lambda: self.log(f"✅ Token: {token[:40]}...", "OK"))
                     self.root.after(0, lambda: messagebox.showinfo("OK", "Đã lấy được token!"))
                 else:
                     self.root.after(0, lambda: self.log(f"❌ {error}", "ERROR"))
-                    
+
             except Exception as e:
                 self.root.after(0, lambda: self.log(f"Lỗi: {e}", "ERROR"))
-        
+
         threading.Thread(target=worker, daemon=True).start()
-    
+
+    # ========== PREVIEW ACTIONS ==========
+
+    def save_char_prompt(self):
+        """Save edited character prompt to Excel."""
+        char_id = self.char_combo.get()
+        if not char_id or not self.current_project_dir:
+            return
+
+        new_prompt = self.char_prompt_text.get(1.0, tk.END).strip()
+        if self._update_prompt_in_excel(char_id, new_prompt):
+            self.char_status_label.config(text="✅ Đã lưu", foreground='green')
+            self.log(f"Đã lưu prompt cho {char_id}", "OK")
+        else:
+            self.char_status_label.config(text="❌ Lỗi", foreground='red')
+
+    def save_scene_prompt(self):
+        """Save edited scene prompt to Excel."""
+        scene_id = self.scene_combo.get()
+        if not scene_id or not self.current_project_dir:
+            return
+
+        new_prompt = self.result_prompt_text.get(1.0, tk.END).strip()
+        if self._update_prompt_in_excel(scene_id, new_prompt):
+            self.scene_status_label.config(text="✅ Đã lưu", foreground='green')
+            self.log(f"Đã lưu prompt cho {scene_id}", "OK")
+        else:
+            self.scene_status_label.config(text="❌ Lỗi", foreground='red')
+
+    def _update_prompt_in_excel(self, item_id: str, new_prompt: str) -> bool:
+        """Update prompt in Excel file."""
+        if not self.current_project_dir:
+            return False
+
+        prompts_dir = self.current_project_dir / "prompts"
+        excel_files = list(prompts_dir.glob("*_prompts.xlsx"))
+
+        if not excel_files:
+            self.log("Không tìm thấy file Excel", "ERROR")
+            return False
+
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(excel_files[0])
+
+            for sheet in wb.sheetnames:
+                ws = wb[sheet]
+                headers = [c.value for c in ws[1]]
+
+                # Find columns
+                id_col = prompt_col = None
+                for i, h in enumerate(headers or []):
+                    if h is None:
+                        continue
+                    h_lower = str(h).lower()
+                    if 'id' in h_lower and id_col is None:
+                        id_col = i + 1  # openpyxl is 1-indexed
+                    if 'english' in h_lower and 'prompt' in h_lower:
+                        prompt_col = i + 1
+                    elif h_lower == 'img_prompt' and prompt_col is None:
+                        prompt_col = i + 1
+                    elif 'prompt' in h_lower and prompt_col is None and 'video' not in h_lower and 'viet' not in h_lower:
+                        prompt_col = i + 1
+
+                if id_col is None or prompt_col is None:
+                    continue
+
+                for row_num in range(2, ws.max_row + 1):
+                    cell_id = ws.cell(row=row_num, column=id_col).value
+                    if str(cell_id).strip() == item_id:
+                        ws.cell(row=row_num, column=prompt_col).value = new_prompt
+                        wb.save(excel_files[0])
+                        wb.close()
+                        return True
+
+            wb.close()
+        except Exception as e:
+            self.log(f"Error updating Excel: {e}", "ERROR")
+            return False
+
+        return False
+
+    def regenerate_char_image(self):
+        """Regenerate character image with current prompt."""
+        char_id = self.char_combo.get()
+        if not char_id or not self.current_project_dir:
+            messagebox.showwarning("Chưa chọn", "Vui lòng chọn nhân vật cần tạo lại")
+            return
+
+        prompt = self.char_prompt_text.get(1.0, tk.END).strip()
+        if not prompt:
+            messagebox.showwarning("Thiếu prompt", "Prompt không được để trống")
+            return
+
+        self._regenerate_single_image(char_id, prompt, is_char=True)
+
+    def regenerate_scene_image(self):
+        """Regenerate scene image with current prompt."""
+        scene_id = self.scene_combo.get()
+        if not scene_id or not self.current_project_dir:
+            messagebox.showwarning("Chưa chọn", "Vui lòng chọn scene cần tạo lại")
+            return
+
+        prompt = self.result_prompt_text.get(1.0, tk.END).strip()
+        if not prompt:
+            messagebox.showwarning("Thiếu prompt", "Prompt không được để trống")
+            return
+
+        self._regenerate_single_image(scene_id, prompt, is_char=False)
+
+    def _regenerate_single_image(self, item_id: str, prompt: str, is_char: bool = False):
+        """Regenerate a single image."""
+        if not self.profiles:
+            messagebox.showerror("Lỗi", "Chưa có Chrome profile!")
+            return
+
+        self.log(f"🔄 Đang tạo lại ảnh: {item_id}...")
+
+        def worker():
+            try:
+                from modules.smart_engine import SmartEngine
+
+                engine = SmartEngine()
+
+                # Get token
+                token, proj_id = engine.get_token_for_profile(self.profiles[0])
+                if not token:
+                    self.root.after(0, lambda: self.log(f"❌ Không lấy được token", "ERROR"))
+                    return
+
+                # Generate image
+                from modules.flow_generator import FlowImageGenerator
+                generator = FlowImageGenerator()
+
+                # Determine output path
+                if is_char:
+                    output_path = self.current_project_dir / "nv" / f"{item_id}.png"
+                else:
+                    output_path = self.current_project_dir / "img" / f"{item_id}.png"
+
+                # Backup old image
+                if output_path.exists():
+                    backup = output_path.with_suffix('.bak.png')
+                    shutil.copy(output_path, backup)
+
+                success = generator.generate_and_save(
+                    prompt=prompt,
+                    output_path=str(output_path),
+                    token=token,
+                    project_id=proj_id
+                )
+
+                if success:
+                    self.root.after(0, lambda: self.log(f"✅ Đã tạo lại: {item_id}", "OK"))
+                    self.root.after(0, self.refresh_preview)
+                else:
+                    self.root.after(0, lambda: self.log(f"❌ Lỗi tạo ảnh: {item_id}", "ERROR"))
+
+            except Exception as e:
+                self.root.after(0, lambda: self.log(f"Lỗi: {e}", "ERROR"))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def on_thumb_click(self, event):
+        """Handle click on thumbnail canvas."""
+        # Calculate which thumbnail was clicked
+        x = self.thumb_canvas.canvasx(event.x)
+        idx = int(x // 90)
+
+        # Use stored scene IDs
+        if hasattr(self, '_thumb_scene_ids') and idx < len(self._thumb_scene_ids):
+            self.scene_combo.set(self._thumb_scene_ids[idx])
+            self.on_scene_selected()
+
+    # ========== PROMPTS TAB ACTIONS ==========
+
+    def on_char_tree_double_click(self, event):
+        """Handle double-click on character tree to edit prompt."""
+        item = self.char_tree.selection()
+        if not item:
+            return
+
+        values = self.char_tree.item(item[0], 'values')
+        char_id = values[0]
+
+        # Get full prompt from Excel
+        full_prompt = self.get_prompt_for_id(char_id)
+
+        # Open edit dialog
+        new_prompt = self._show_prompt_edit_dialog(f"Sửa prompt: {char_id}", full_prompt)
+
+        if new_prompt is not None and new_prompt != full_prompt:
+            if self._update_prompt_in_excel(char_id, new_prompt):
+                self.log(f"Đã cập nhật prompt: {char_id}", "OK")
+                self.update_prompts_tab()
+
+    def on_scene_tree_double_click(self, event):
+        """Handle double-click on scene tree to edit prompt."""
+        item = self.scene_tree.selection()
+        if not item:
+            return
+
+        values = self.scene_tree.item(item[0], 'values')
+        scene_id = values[0]
+
+        # Get full prompt from Excel
+        full_prompt = self.get_prompt_for_id(scene_id)
+
+        # Open edit dialog
+        new_prompt = self._show_prompt_edit_dialog(f"Sửa prompt: {scene_id}", full_prompt)
+
+        if new_prompt is not None and new_prompt != full_prompt:
+            if self._update_prompt_in_excel(scene_id, new_prompt):
+                self.log(f"Đã cập nhật prompt: {scene_id}", "OK")
+                self.update_prompts_tab()
+
+    def _show_prompt_edit_dialog(self, title: str, current_prompt: str) -> Optional[str]:
+        """Show dialog to edit a prompt."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title(title)
+        dialog.geometry("600x300")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        result = [None]
+
+        ttk.Label(dialog, text="Chỉnh sửa prompt:", font=('Segoe UI', 10, 'bold')).pack(anchor=tk.W, padx=10, pady=(10, 5))
+
+        text = tk.Text(dialog, wrap=tk.WORD, font=('Segoe UI', 10), height=10)
+        text.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        text.insert(tk.END, current_prompt)
+
+        def on_save():
+            result[0] = text.get(1.0, tk.END).strip()
+            dialog.destroy()
+
+        def on_cancel():
+            dialog.destroy()
+
+        btn_row = ttk.Frame(dialog)
+        btn_row.pack(fill=tk.X, padx=10, pady=10)
+        ttk.Button(btn_row, text="💾 Lưu", command=on_save).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(btn_row, text="Hủy", command=on_cancel).pack(side=tk.LEFT)
+
+        dialog.wait_window()
+        return result[0]
+
+    def regenerate_selected_char(self):
+        """Regenerate image for selected character in tree."""
+        item = self.char_tree.selection()
+        if not item:
+            messagebox.showwarning("Chưa chọn", "Vui lòng chọn nhân vật trong danh sách")
+            return
+
+        values = self.char_tree.item(item[0], 'values')
+        char_id = values[0]
+        prompt = self.get_prompt_for_id(char_id)
+
+        if prompt:
+            self._regenerate_single_image(char_id, prompt, is_char=True)
+
+    def regenerate_selected_scene(self):
+        """Regenerate image for selected scene in tree."""
+        item = self.scene_tree.selection()
+        if not item:
+            messagebox.showwarning("Chưa chọn", "Vui lòng chọn scene trong danh sách")
+            return
+
+        values = self.scene_tree.item(item[0], 'values')
+        scene_id = values[0]
+        prompt = self.get_prompt_for_id(scene_id)
+
+        if prompt:
+            self._regenerate_single_image(scene_id, prompt, is_char=False)
+
+    def regenerate_all_pending(self):
+        """Regenerate all pending (not done) images."""
+        if not self.current_project_dir:
+            return
+
+        # Collect pending items
+        pending = []
+
+        img_dir = self.current_project_dir / "img"
+        nv_dir = self.current_project_dir / "nv"
+
+        for item in self.char_tree.get_children():
+            values = self.char_tree.item(item, 'values')
+            if values[2] == "⏳":  # Status is pending
+                char_id = values[0]
+                prompt = self.get_prompt_for_id(char_id)
+                if prompt:
+                    pending.append((char_id, prompt, True))
+
+        for item in self.scene_tree.get_children():
+            values = self.scene_tree.item(item, 'values')
+            if values[3] == "⏳":  # Status is pending
+                scene_id = values[0]
+                prompt = self.get_prompt_for_id(scene_id)
+                if prompt:
+                    pending.append((scene_id, prompt, False))
+
+        if not pending:
+            messagebox.showinfo("Thông báo", "Tất cả ảnh đã hoàn thành!")
+            return
+
+        if not messagebox.askyesno("Xác nhận", f"Tạo lại {len(pending)} ảnh chưa xong?"):
+            return
+
+        self.log(f"🔄 Bắt đầu tạo lại {len(pending)} ảnh...")
+
+        def worker():
+            try:
+                from modules.smart_engine import SmartEngine
+                from modules.flow_generator import FlowImageGenerator
+
+                engine = SmartEngine()
+                generator = FlowImageGenerator()
+
+                for i, (item_id, prompt, is_char) in enumerate(pending):
+                    self.root.after(0, lambda id=item_id, n=i+1, t=len(pending):
+                        self.log(f"[{n}/{t}] Đang tạo: {id}..."))
+
+                    # Get token
+                    profile = self.profiles[i % len(self.profiles)]
+                    token, proj_id = engine.get_token_for_profile(profile)
+
+                    if not token:
+                        self.root.after(0, lambda id=item_id:
+                            self.log(f"❌ Không có token cho {id}", "ERROR"))
+                        continue
+
+                    # Output path
+                    if is_char:
+                        output_path = nv_dir / f"{item_id}.png"
+                    else:
+                        output_path = img_dir / f"{item_id}.png"
+
+                    success = generator.generate_and_save(
+                        prompt=prompt,
+                        output_path=str(output_path),
+                        token=token,
+                        project_id=proj_id
+                    )
+
+                    if success:
+                        self.root.after(0, lambda id=item_id:
+                            self.log(f"✅ Xong: {id}", "OK"))
+                    else:
+                        self.root.after(0, lambda id=item_id:
+                            self.log(f"❌ Lỗi: {id}", "ERROR"))
+
+                self.root.after(0, lambda: self.log("🎉 Hoàn tất tạo lại ảnh!", "OK"))
+                self.root.after(0, self.refresh_preview)
+
+            except Exception as e:
+                self.root.after(0, lambda: self.log(f"Lỗi: {e}", "ERROR"))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    # ========== PROMPTS TEMPLATE EDITOR ==========
+
+    def open_prompts_editor(self):
+        """Open prompts template editor dialog."""
+        prompts_file = CONFIG_DIR / "prompts.yaml"
+
+        if not prompts_file.exists():
+            messagebox.showwarning("Không tìm thấy", "File prompts.yaml không tồn tại")
+            return
+
+        win = tk.Toplevel(self.root)
+        win.title("📝 Sửa Prompts Template")
+        win.geometry("900x700")
+        win.transient(self.root)
+
+        # Instructions
+        ttk.Label(win, text="Chỉnh sửa các prompt template cho AI. Lưu ý: Thay đổi sẽ ảnh hưởng đến project mới.",
+                  foreground='gray').pack(anchor=tk.W, padx=10, pady=(10, 5))
+
+        # Text editor with scrollbar
+        editor_frame = ttk.Frame(win)
+        editor_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        text = tk.Text(editor_frame, wrap=tk.NONE, font=('Consolas', 10), bg='#1e1e1e', fg='#d4d4d4',
+                       insertbackground='white')
+        text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        y_scroll = ttk.Scrollbar(editor_frame, orient=tk.VERTICAL, command=text.yview)
+        y_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        x_scroll = ttk.Scrollbar(win, orient=tk.HORIZONTAL, command=text.xview)
+        x_scroll.pack(fill=tk.X, padx=10)
+
+        text.configure(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
+
+        # Load content
+        try:
+            with open(prompts_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+            text.insert(tk.END, content)
+        except Exception as e:
+            text.insert(tk.END, f"# Error loading file: {e}")
+
+        def save_prompts():
+            try:
+                new_content = text.get(1.0, tk.END)
+                with open(prompts_file, 'w', encoding='utf-8') as f:
+                    f.write(new_content)
+
+                # Reload prompts
+                try:
+                    from modules.prompts_loader import reload_prompts
+                    reload_prompts()
+                except:
+                    pass
+
+                messagebox.showinfo("OK", "Đã lưu prompts.yaml")
+                self.log("Đã cập nhật prompts template", "OK")
+            except Exception as e:
+                messagebox.showerror("Lỗi", f"Không thể lưu: {e}")
+
+        def open_in_editor():
+            if sys.platform == "win32":
+                os.startfile(str(prompts_file))
+            else:
+                import subprocess
+                subprocess.Popen(["xdg-open", str(prompts_file)])
+
+        # Buttons
+        btn_row = ttk.Frame(win)
+        btn_row.pack(fill=tk.X, padx=10, pady=10)
+
+        ttk.Button(btn_row, text="💾 Lưu", command=save_prompts).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(btn_row, text="📂 Mở bằng Editor", command=open_in_editor).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(btn_row, text="Đóng", command=win.destroy).pack(side=tk.RIGHT)
+
     # ========== RUN ==========
     
     def run(self):
