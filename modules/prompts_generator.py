@@ -2,7 +2,7 @@
 VE3 Tool - Prompts Generator Module
 ===================================
 Sử dụng AI API để phân tích SRT và tạo prompts cho ảnh/video.
-Hỗ trợ: Groq (free, fast), Gemini, OpenRouter
+Hỗ trợ: DeepSeek (rẻ), Groq (free), Gemini
 """
 
 import json
@@ -31,39 +31,43 @@ from modules.prompts_loader import (
 
 
 # ============================================================================
-# MULTI AI CLIENT (Groq + Gemini + OpenRouter)
+# MULTI AI CLIENT (DeepSeek + Groq + Gemini)
 # ============================================================================
 
 class MultiAIClient:
     """
     Client hỗ trợ nhiều AI providers.
-    Ưu tiên: Groq (free) > Gemini > OpenRouter
+    Ưu tiên: DeepSeek (rẻ) > Groq (free) > Gemini
     """
-    
+
+    DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
     GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
     GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta"
-    
+
     def __init__(self, config: dict):
         """
         Config format:
         {
+            "deepseek_api_keys": ["key1"],
             "groq_api_keys": ["key1", "key2"],
             "gemini_api_keys": ["key1"],
             "gemini_models": ["gemini-2.0-flash"],
-            "preferred_provider": "groq"
+            "preferred_provider": "deepseek"
         }
         """
         self.config = config
+        self.deepseek_keys = [k for k in config.get("deepseek_api_keys", []) if k and k.strip()]
         self.groq_keys = [k for k in config.get("groq_api_keys", []) if k and k.strip()]
         self.gemini_keys = [k for k in config.get("gemini_api_keys", []) if k and k.strip()]
         self.gemini_models = config.get("gemini_models", ["gemini-2.0-flash", "gemini-1.5-flash"])
-        
+
+        self.deepseek_index = 0
         self.groq_index = 0
         self.gemini_key_index = 0
         self.gemini_model_index = 0
-        
+
         self.logger = get_logger("multi_ai")
-    
+
     def generate_content(
         self,
         prompt: str,
@@ -72,10 +76,34 @@ class MultiAIClient:
         max_retries: int = 5
     ) -> str:
         """Generate content using available AI providers."""
-        
+
         last_error = None
-        
-        # Try Groq first (free and fast)
+
+        # Try DeepSeek first (cheap and stable)
+        if self.deepseek_keys:
+            for attempt in range(max_retries):
+                try:
+                    result = self._call_deepseek(prompt, temperature, max_tokens)
+                    if result:
+                        return result
+                except Exception as e:
+                    last_error = e
+                    error_str = str(e).lower()
+
+                    if "rate" in error_str or "429" in error_str:
+                        self.logger.warning("DeepSeek rate limit, trying next key...")
+                        self.deepseek_index = (self.deepseek_index + 1) % len(self.deepseek_keys)
+                        time.sleep(5)
+                        continue
+                    elif "invalid" in error_str or "unauthorized" in error_str:
+                        self.logger.warning("DeepSeek key invalid, trying next...")
+                        self.deepseek_index = (self.deepseek_index + 1) % len(self.deepseek_keys)
+                        continue
+                    else:
+                        self.logger.error(f"DeepSeek error: {e}")
+                        break
+
+        # Fallback to Groq (free but rate limited)
         if self.groq_keys:
             for attempt in range(max_retries):
                 try:
@@ -85,7 +113,7 @@ class MultiAIClient:
                 except Exception as e:
                     last_error = e
                     error_str = str(e).lower()
-                    
+
                     if "rate" in error_str or "429" in error_str:
                         self.logger.warning("Groq rate limit, trying next key...")
                         self.groq_index = (self.groq_index + 1) % len(self.groq_keys)
@@ -98,7 +126,7 @@ class MultiAIClient:
                     else:
                         self.logger.error(f"Groq error: {e}")
                         break
-        
+
         # Fallback to Gemini
         if self.gemini_keys:
             for attempt in range(max_retries):
@@ -109,7 +137,7 @@ class MultiAIClient:
                 except Exception as e:
                     last_error = e
                     error_str = str(e).lower()
-                    
+
                     if "leaked" in error_str:
                         self.logger.error("Gemini key leaked! Using next key...")
                         self.gemini_key_index = (self.gemini_key_index + 1) % len(self.gemini_keys)
@@ -126,31 +154,57 @@ class MultiAIClient:
                     else:
                         self.logger.error(f"Gemini error: {e}")
                         break
-        
+
         if last_error:
             raise last_error
         raise RuntimeError("No AI providers available")
-    
-    def _call_groq(self, prompt: str, temperature: float, max_tokens: int) -> str:
-        """Call Groq API."""
-        api_key = self.groq_keys[self.groq_index]
-        
+
+    def _call_deepseek(self, prompt: str, temperature: float, max_tokens: int) -> str:
+        """Call DeepSeek API."""
+        api_key = self.deepseek_keys[self.deepseek_index]
+
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
-        
+
+        data = {
+            "model": "deepseek-chat",
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": temperature,
+            "max_tokens": max_tokens
+        }
+
+        self.logger.debug(f"Calling DeepSeek API (key #{self.deepseek_index + 1})...")
+
+        resp = requests.post(self.DEEPSEEK_URL, headers=headers, json=data, timeout=120)
+
+        if resp.status_code == 200:
+            result = resp.json()
+            return result["choices"][0]["message"]["content"]
+        else:
+            raise requests.RequestException(f"DeepSeek API error {resp.status_code}: {resp.text[:200]}")
+
+    def _call_groq(self, prompt: str, temperature: float, max_tokens: int) -> str:
+        """Call Groq API."""
+        api_key = self.groq_keys[self.groq_index]
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+
         data = {
             "model": "llama-3.3-70b-versatile",
             "messages": [{"role": "user", "content": prompt}],
             "temperature": temperature,
             "max_tokens": max_tokens
         }
-        
+
         self.logger.debug(f"Calling Groq API (key #{self.groq_index + 1})...")
-        
+
         resp = requests.post(self.GROQ_URL, headers=headers, json=data, timeout=120)
-        
+
         if resp.status_code == 200:
             result = resp.json()
             return result["choices"][0]["message"]["content"]
