@@ -785,7 +785,7 @@ class VE3ToolPro:
         except Exception as e:
             import traceback
             traceback.print_exc()
-            self.root.after(0, lambda: self.log(f"Lỗi: {e}", "ERROR"))
+            self.root.after(0, lambda err=e: self.log(f"Lỗi: {err}", "ERROR"))
             self.root.after(0, lambda: messagebox.showerror("Lỗi", str(e)))
         finally:
             self._running = False
@@ -848,7 +848,7 @@ class VE3ToolPro:
         except Exception as e:
             import traceback
             traceback.print_exc()
-            self.root.after(0, lambda: self.log(f"Lỗi: {e}", "ERROR"))
+            self.root.after(0, lambda err=e: self.log(f"Lỗi: {err}", "ERROR"))
         finally:
             self._running = False
             self.root.after(0, self._reset_ui)
@@ -1247,7 +1247,7 @@ class VE3ToolPro:
                     self.root.after(0, lambda: self.log(f"❌ {error}", "ERROR"))
 
             except Exception as e:
-                self.root.after(0, lambda: self.log(f"Lỗi: {e}", "ERROR"))
+                self.root.after(0, lambda err=e: self.log(f"Lỗi: {err}", "ERROR"))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1409,7 +1409,7 @@ class VE3ToolPro:
                     self.root.after(0, lambda: self.log(f"❌ Lỗi tạo ảnh: {item_id}", "ERROR"))
 
             except Exception as e:
-                self.root.after(0, lambda: self.log(f"Lỗi: {e}", "ERROR"))
+                self.root.after(0, lambda err=e: self.log(f"Lỗi: {err}", "ERROR"))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1606,7 +1606,7 @@ class VE3ToolPro:
                 self.root.after(0, self.refresh_preview)
 
             except Exception as e:
-                self.root.after(0, lambda: self.log(f"Lỗi: {e}", "ERROR"))
+                self.root.after(0, lambda err=e: self.log(f"Lỗi: {err}", "ERROR"))
 
         threading.Thread(target=worker, daemon=True).start()
 
