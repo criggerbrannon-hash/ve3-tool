@@ -21,6 +21,7 @@ from modules.utils import (
 from modules.excel_manager import (
     PromptWorkbook,
     Character,
+    Location,
     Scene
 )
 from modules.prompts_loader import (
@@ -637,37 +638,57 @@ class PromptGenerator:
         # Tạo full story text để phân tích nhân vật
         full_story = " ".join([e.text for e in srt_entries])
         
-        # Step 1: Phân tích nhân vật
-        self.logger.info("Phân tích nhân vật qua Gemini...")
-        characters, context_lock = self._analyze_characters(full_story)
+        # Step 1: Phân tích nhân vật + bối cảnh (v5.0)
+        self.logger.info("Phân tích nhân vật và bối cảnh...")
+        characters, locations, context_lock, global_style = self._analyze_characters(full_story)
 
         if not characters:
             self.logger.error("Không thể phân tích nhân vật")
             return False
 
-        self.logger.info(f"Context lock: {context_lock[:100]}..." if context_lock else "No context lock")
-        
+        self.logger.info(f"Tìm thấy {len(characters)} nhân vật, {len(locations)} bối cảnh")
+        if context_lock:
+            self.logger.info(f"Context lock: {context_lock[:100]}...")
+
         # Lưu nhân vật vào Excel
         for char in characters:
             char.image_file = f"{char.id}.png"
             char.status = "pending"
             workbook.add_character(char)
-        
+
+        # Lưu locations (TODO: add workbook.add_location method)
+        # Tạm thời lưu như characters với id bắt đầu bằng "loc"
+        for loc in locations:
+            loc_char = Character(
+                id=loc.id,
+                role="location",
+                name=loc.name,
+                english_prompt=loc.english_prompt,
+                vietnamese_prompt=loc.location_lock,
+                image_file=f"{loc.id}.png",
+                status="pending"
+            )
+            workbook.add_character(loc_char)
+
         workbook.save()
-        self.logger.info(f"Đã lưu {len(characters)} nhân vật")
-        
+        self.logger.info(f"Đã lưu {len(characters)} nhân vật + {len(locations)} bối cảnh")
+
         # Step 2: Tạo prompts cho từng batch scenes
         self.logger.info("Tạo prompts cho scenes...")
-        
+
         # Chia scenes thành batches để tránh vượt quá context limit
         batch_size = 10
         all_scene_prompts = []
-        
+
         for i in range(0, len(scenes_data), batch_size):
             batch = scenes_data[i:i + batch_size]
             self.logger.info(f"Xử lý batch {i // batch_size + 1}/{(len(scenes_data) - 1) // batch_size + 1}")
-            
-            scene_prompts = self._generate_scene_prompts(characters, batch, context_lock)
+
+            scene_prompts = self._generate_scene_prompts(
+                characters, batch, context_lock,
+                locations=locations,
+                global_style_override=global_style
+            )
             all_scene_prompts.extend(scene_prompts)
             
             # Rate limiting
@@ -695,13 +716,13 @@ class PromptGenerator:
     
     def _analyze_characters(self, story_text: str) -> tuple:
         """
-        Phân tích truyện và trích xuất nhân vật.
+        Phân tích truyện và trích xuất nhân vật + bối cảnh.
 
         Args:
             story_text: Toàn bộ nội dung truyện
 
         Returns:
-            Tuple (List[Character], context_lock: str)
+            Tuple (List[Character], List[Location], context_lock: str, global_style: str)
         """
         # Load prompt từ config/prompts.yaml
         prompt_template = get_analyze_story_prompt()
@@ -715,20 +736,22 @@ class PromptGenerator:
 
             if not json_data or "characters" not in json_data:
                 self.logger.error(f"Invalid characters response: {response[:500]}")
-                return [], ""
+                return [], [], "", ""
 
-            # Extract context_lock (new in v2.0)
+            # Extract context_lock and global_style (v5.0 format)
             context_lock = json_data.get("context_lock", "")
+            global_style = json_data.get("global_style", "")
 
+            # Extract characters
             characters = []
             for char_data in json_data["characters"]:
-                # Support both old format (english_prompt) and new format (portrait_prompt, character_lock)
+                # Support both old format (english_prompt) and new format (portrait_prompt)
                 english_prompt = char_data.get("english_prompt", "")
                 if not english_prompt:
-                    # Try new format fields
                     english_prompt = char_data.get("portrait_prompt", "")
                     if english_prompt == "DO_NOT_GENERATE":
-                        english_prompt = char_data.get("child_text_lock", "")
+                        # Tre em - dung character_lock thay vi portrait
+                        english_prompt = char_data.get("character_lock", "")
 
                 characters.append(Character(
                     id=char_data.get("id", ""),
@@ -738,17 +761,34 @@ class PromptGenerator:
                     vietnamese_prompt=char_data.get("vietnamese_prompt", char_data.get("vietnamese_description", "")),
                 ))
 
-            return characters, context_lock
+            # Extract locations (v5.0 format)
+            locations = []
+            for loc_data in json_data.get("locations", []):
+                english_prompt = loc_data.get("location_prompt", loc_data.get("english_prompt", ""))
+
+                locations.append(Location(
+                    id=loc_data.get("id", ""),
+                    name=loc_data.get("name", ""),
+                    english_prompt=english_prompt,
+                    location_lock=loc_data.get("location_lock", ""),
+                    lighting_default=loc_data.get("lighting_default", ""),
+                    image_file=loc_data.get("filename", ""),
+                ))
+
+            self.logger.info(f"Extracted {len(characters)} characters, {len(locations)} locations")
+            return characters, locations, context_lock, global_style
 
         except Exception as e:
             self.logger.error(f"Failed to analyze characters: {e}")
-            return [], ""
+            return [], [], "", ""
     
     def _generate_scene_prompts(
         self,
         characters: List[Character],
         scenes_data: List[Dict[str, Any]],
-        context_lock: str = ""
+        context_lock: str = "",
+        locations: List[Location] = None,
+        global_style_override: str = ""
     ) -> List[Dict[str, str]]:
         """
         Tạo prompts cho một batch scenes.
@@ -757,38 +797,52 @@ class PromptGenerator:
             characters: Danh sách nhân vật
             scenes_data: Danh sách scene data
             context_lock: Context lock string từ phân tích nhân vật
+            locations: Danh sách locations
+            global_style_override: Global style từ AI (nếu có)
 
         Returns:
             List các dict chứa img_prompt và video_prompt
         """
-        # Format thông tin nhân vật
+        locations = locations or []
+
+        # Format thông tin nhân vật (v5.0 format)
         characters_info = "\n".join([
-            f"- {char.id} ({char.role}): {char.name}\n  Appearance: {char.english_prompt}"
+            f"- {char.id} ({char.role}): {char.name}\n"
+            f"  character_lock: {char.english_prompt}\n"
+            f"  reference_file: {char.id}.jpg"
             for char in characters
         ])
 
-        # Format thông tin scenes
-        scenes_info = "\n".join([
-            f"Scene {s['scene_id']} (SRT {s['srt_start']}-{s['srt_end']}):\n  \"{s['text'][:300]}...\""
-            if len(s['text']) > 300 else
-            f"Scene {s['scene_id']} (SRT {s['srt_start']}-{s['srt_end']}):\n  \"{s['text']}\""
+        # Format thông tin locations (v5.0 format)
+        if locations:
+            locations_info = "\n".join([
+                f"- {loc.id}: {loc.name}\n"
+                f"  location_lock: {loc.location_lock}\n"
+                f"  lighting: {loc.lighting_default}\n"
+                f"  reference_file: {loc.id}.jpg"
+                for loc in locations
+            ])
+        else:
+            locations_info = "Use locations appropriate for each scene context"
+
+        # Format thông tin scenes (pacing_script format)
+        pacing_script = "\n".join([
+            f"{s['scene_id']}. \"{s['text']}\""
             for s in scenes_data
         ])
 
-        # Load global style từ config
-        global_style = get_global_style()
+        # Load global style - uu tien tu AI response
+        global_style = global_style_override or get_global_style()
 
         # Load prompt từ config/prompts.yaml
         prompt_template = get_generate_scenes_prompt()
 
-        # Format locations info from characters (nếu có)
-        locations_info = "Use locations appropriate for each scene context"
-
-        # Try to format with all variables (v3.0 format)
+        # Try to format with all variables (v5.0 format)
         try:
             prompt = prompt_template.format(
                 characters_info=characters_info,
-                scenes_info=scenes_info,
+                scenes_info=pacing_script,  # for backwards compat
+                pacing_script=pacing_script,
                 context_lock=context_lock or "Modern setting, natural lighting",
                 global_style=global_style,
                 locations_info=locations_info
