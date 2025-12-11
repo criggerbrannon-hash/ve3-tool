@@ -1909,7 +1909,13 @@ class UnixVoiceToVideo:
     def _on_item_selected(self, item_id: str):
         """Update detail panel when an item is selected."""
         self._current_item_id = item_id
-        self._current_item_type = "char" if item_id.startswith('nv') else "scene"
+        # Identify item type: char (nv*), loc (loc*), or scene
+        if item_id.startswith('nv'):
+            self._current_item_type = "char"
+        elif item_id.startswith('loc'):
+            self._current_item_type = "loc"
+        else:
+            self._current_item_type = "scene"
 
         if not self.current_project_dir:
             return
@@ -1919,14 +1925,15 @@ class UnixVoiceToVideo:
         self.detail_prompt_text.delete(1.0, tk.END)
         self.detail_prompt_text.insert(tk.END, full_prompt)
 
-        # Load images
-        if self._current_item_type == "char":
-            # Character: only result image
-            self.ref_image_label.config(image='', text="N/A (nhân vật)")
+        # Load images based on item type
+        if self._current_item_type in ("char", "loc"):
+            # Character/Location: reference images stored in nv/
+            label_text = "N/A (nhân vật)" if self._current_item_type == "char" else "N/A (bối cảnh)"
+            self.ref_image_label.config(image='', text=label_text)
             img_path = self.current_project_dir / "nv" / f"{item_id}.png"
             self.load_image_to_label(img_path, self.result_image_label, (200, 200))
         else:
-            # Scene: reference (character) + result image
+            # Scene: reference (character/location) + result image
             # Try to find character reference in prompt
             ref_char = self._find_ref_char_in_prompt(full_prompt)
             if ref_char:

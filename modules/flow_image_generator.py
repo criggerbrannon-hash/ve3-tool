@@ -6,12 +6,14 @@ Tích hợp Google Flow API vào pipeline để tự động tạo ảnh từ Ex
 Workflow:
 1. Đọc Excel prompts (characters + scenes sheets)
 2. Tạo ảnh NV (nhân vật) trước - lưu vào thư mục nv/
-3. Tạo ảnh scenes sau - lưu vào thư mục img/
+3. Tạo ảnh scenes sau - lưu vào thư mục img/ với REFERENCE IMAGES từ nv/
 4. Cập nhật Excel với đường dẫn ảnh và status
 """
 
 import os
 import time
+import json
+import base64
 import yaml
 from pathlib import Path
 from typing import Optional, List, Dict, Tuple, Any
@@ -112,7 +114,76 @@ class FlowImageGenerator:
                 return files[0]
         
         return None
-    
+
+    def _load_image_as_base64(self, image_path: Path) -> Optional[str]:
+        """
+        Load ảnh từ file và convert sang base64.
+
+        Args:
+            image_path: Path đến file ảnh
+
+        Returns:
+            Base64 encoded string hoặc None nếu lỗi
+        """
+        try:
+            if not image_path.exists():
+                self._log(f"  ⚠️  Reference image not found: {image_path}")
+                return None
+
+            with open(image_path, "rb") as f:
+                img_data = f.read()
+
+            b64_data = base64.b64encode(img_data).decode("utf-8")
+            self._log(f"  ✓ Loaded reference: {image_path.name} ({len(img_data) / 1024:.1f}KB)")
+            return b64_data
+
+        except Exception as e:
+            self._log(f"  ❌ Error loading {image_path}: {e}")
+            return None
+
+    def _get_reference_images(self, reference_files: str) -> List[str]:
+        """
+        Load tất cả reference images từ danh sách files.
+
+        Args:
+            reference_files: JSON string hoặc comma-separated string của file names
+                           Ví dụ: '["nv1.png", "loc1.png"]' hoặc 'nv1.png, loc1.png'
+
+        Returns:
+            List of base64 encoded images
+        """
+        if not reference_files:
+            return []
+
+        # Parse reference files
+        file_list = []
+        try:
+            # Try JSON format first
+            parsed = json.loads(reference_files)
+            if isinstance(parsed, list):
+                file_list = parsed
+            elif isinstance(parsed, str):
+                file_list = [parsed]
+        except (json.JSONDecodeError, TypeError):
+            # Fallback to comma-separated
+            file_list = [f.strip() for f in str(reference_files).split(",") if f.strip()]
+
+        if not file_list:
+            return []
+
+        self._log(f"  📎 Loading {len(file_list)} reference images: {file_list}")
+
+        # Load each reference image from nv/ folder (all reference images are in nv/)
+        base64_images = []
+        for filename in file_list:
+            # Reference images are always in nv/ folder
+            img_path = self.nv_path / filename
+            b64 = self._load_image_as_base64(img_path)
+            if b64:
+                base64_images.append(b64)
+
+        return base64_images
+
     def generate_character_images(
         self,
         excel_path: Optional[Path] = None,
@@ -296,35 +367,60 @@ class FlowImageGenerator:
                 "img_prompt": headers.index("img_prompt") if "img_prompt" in headers else -1,
                 "img_path": headers.index("img_path") if "img_path" in headers else -1,
                 "status_img": headers.index("status_img") if "status_img" in headers else -1,
+                "reference_files": headers.index("reference_files") if "reference_files" in headers else -1,
+                "characters_used": headers.index("characters_used") if "characters_used" in headers else -1,
+                "location_used": headers.index("location_used") if "location_used" in headers else -1,
             }
-            
+
             if col_idx["img_prompt"] == -1:
                 return 0, 0, ["Column 'img_prompt' not found"]
-            
+
             # Process each scene
             for row_num, row in enumerate(ws.iter_rows(min_row=2), start=2):
                 scene_id = row[col_idx["scene_id"]].value if col_idx["scene_id"] >= 0 else row_num - 1
-                
+
                 # Filter by scene range
                 if isinstance(scene_id, int):
                     if scene_id < start_scene:
                         continue
                     if end_scene is not None and scene_id > end_scene:
                         break
-                
+
                 prompt = row[col_idx["img_prompt"]].value
                 img_path_val = row[col_idx["img_path"]].value if col_idx["img_path"] >= 0 else None
                 status = row[col_idx["status_img"]].value if col_idx["status_img"] >= 0 else "pending"
-                
+
+                # Get reference files for this scene (IMPORTANT for consistent characters/locations)
+                reference_files = ""
+                if col_idx["reference_files"] >= 0:
+                    reference_files = row[col_idx["reference_files"]].value or ""
+
+                # Fallback: build reference_files from characters_used and location_used
+                if not reference_files:
+                    ref_list = []
+                    if col_idx["characters_used"] >= 0:
+                        chars_used = row[col_idx["characters_used"]].value or ""
+                        try:
+                            chars = json.loads(chars_used) if chars_used.startswith("[") else [c.strip() for c in chars_used.split(",") if c.strip()]
+                            ref_list.extend([f"{c}.png" for c in chars])
+                        except:
+                            pass
+                    if col_idx["location_used"] >= 0:
+                        loc_used = row[col_idx["location_used"]].value or ""
+                        if loc_used:
+                            ref_list.append(f"{loc_used}.png")
+                    if ref_list:
+                        reference_files = json.dumps(ref_list)
+
                 if not prompt:
                     continue
-                
+
                 self.stats["scenes_total"] += 1
-                
+
                 # Generate filename
                 filename = f"scene_{scene_id:03d}"
                 output_file = self.img_path / f"{filename}.png"
-                
+
                 # Check if already done
                 if output_file.exists() and not overwrite:
                     if status == "done":
@@ -332,17 +428,24 @@ class FlowImageGenerator:
                         success_count += 1
                         self.stats["scenes_success"] += 1
                         continue
-                
+
                 self._log(f"\n🎬 Generating image for Scene {scene_id}")
                 self._log(f"   Prompt: {prompt[:100]}...")
-                
-                # Generate image
+
+                # Load reference images (IMPORTANT: maintains character/location consistency)
+                image_inputs = self._get_reference_images(reference_files)
+
+                # Generate image WITH reference images (maintains character/location consistency)
+                if image_inputs:
+                    self._log(f"   🖼️  Using {len(image_inputs)} reference images for consistency")
+
                 success, images, error = self.flow_client.generate_images(
                     prompt=prompt,
                     count=1,
-                    aspect_ratio=self.aspect_ratio
+                    aspect_ratio=self.aspect_ratio,
+                    image_inputs=image_inputs if image_inputs else None
                 )
-                
+
                 if success and images:
                     # Download image
                     downloaded = self.flow_client.download_image(
