@@ -600,20 +600,33 @@ class PromptGenerator:
         # Load prompt từ config/prompts.yaml
         prompt_template = get_generate_scenes_prompt()
 
-        # Try to format with all variables (v2.0 format)
+        # Format locations info from characters (nếu có)
+        locations_info = "Use locations appropriate for each scene context"
+
+        # Try to format with all variables (v3.0 format)
         try:
             prompt = prompt_template.format(
                 characters_info=characters_info,
                 scenes_info=scenes_info,
                 context_lock=context_lock or "Modern setting, natural lighting",
-                global_style=global_style
+                global_style=global_style,
+                locations_info=locations_info
             )
-        except KeyError:
-            # Fallback to old format (v1.0)
-            prompt = prompt_template.format(
-                characters_info=characters_info,
-                scenes_info=scenes_info
-            )
+        except KeyError as e:
+            # Fallback to simpler format
+            self.logger.warning(f"Template format error: {e}, using simple format")
+            prompt = f"""Create image prompts for these scenes:
+
+Characters:
+{characters_info}
+
+Scenes:
+{scenes_info}
+
+Context: {context_lock or "Modern setting"}
+Style: {global_style}
+
+Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": "..."}}]}}"""
         
         try:
             response = self._generate_content(prompt, temperature=0.6)
