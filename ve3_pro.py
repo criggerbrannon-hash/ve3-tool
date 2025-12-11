@@ -2004,8 +2004,20 @@ def hide_console():
             pass
 
 
+def fix_stdio():
+    """
+    Fix stdout/stderr when running without console (pythonw.exe).
+    This prevents 'NoneType has no attribute write' errors.
+    """
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, 'w')
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, 'w')
+
+
 def main():
     """Entry point."""
+    fix_stdio()  # Fix stdio FIRST before anything else
     hide_console()
     app = UnixVoiceToVideo()
     app.run()

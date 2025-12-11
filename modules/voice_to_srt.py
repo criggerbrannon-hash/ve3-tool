@@ -4,10 +4,23 @@ VE3 Tool - Voice to SRT Module
 Chuyển đổi file audio thành file subtitle SRT sử dụng Whisper.
 """
 
+import os
+import sys
 from pathlib import Path
 from typing import Optional, Dict, Any
 
 from modules.utils import get_logger, format_srt_time
+
+
+# Fix stdout/stderr for pythonw.exe (no console)
+def _fix_stdio():
+    """Ensure stdout/stderr are valid file objects."""
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, 'w')
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, 'w')
+
+_fix_stdio()
 
 
 # ============================================================================
