@@ -251,7 +251,7 @@ generate_scenes: |
 # =============================================================================
 
 smart_divide_scenes: |
-  Ban la AI Director. Chia cau chuyen thanh cac SCENE de tao anh minh hoa.
+  Ban la AI Director. Chia cau chuyen thanh cac SCENE de tao anh minh hoa NHU PHIM THAT.
 
   ## INPUT - SRT voi timestamps:
   ---
@@ -259,41 +259,65 @@ smart_divide_scenes: |
   ---
 
   ## NHIEM VU:
-  Chia noi dung thanh cac SCENE, moi scene la 1 KHOANH KHAC HINH ANH duy nhat.
+  Chia noi dung thanh cac SCENE, moi scene toi da 8 giay, SU DUNG GOC MAY KHAC NHAU nhu phim.
 
   ## NGUYEN TAC CHIA SCENE:
 
-  ### 1. MOI SCENE = 1 ANH DUY NHAT
-  - Scene phai the hien duoc bang 1 buc anh tinh
-  - Neu co 2 hanh dong khac nhau → TACH thanh 2 scene
-  - Neu co chuyen doi dia diem → TACH thanh scene moi
-  - Neu co chuyen doi nhan vat chinh → TACH thanh scene moi
+  ### 1. KHONG CO SCENE NAO > 8 GIAY
+  - Neu 1 noi dung dai 30 giay → CHIA thanh 4+ scene voi goc may khac nhau
+  - Moi scene = 1 goc may cu the
+  - KHONG de 1 anh hien thi qua 8 giay
 
-  ### 2. THOI LUONG LINH HOAT (toi da 8 giay)
-  - Hanh dong nhanh: 2-4 giay
-  - Hoi thoai/ket noi: 4-6 giay
-  - Canh thiet lap/cam xuc: 6-8 giay
-  - KHONG BAO GIO > 8 giay
+  ### 2. NOI DUNG DAI → DOI GOC MAY (NHU PHIM)
+  Neu SRT entry dai (>8s), chia theo ky thuat phim:
 
-  ### 3. GIU NGUYEN TIMESTAMPS TU SRT
-  - start_time va end_time PHAI lay tu SRT goc
-  - Khong duoc tu nghĩ ra timestamps
+  Vi du: "Anh ay buoc vao phong va ngoi xuong" (20 giay)
+  → Scene 1 [0-6s]: Wide shot - Anh ay mo cua buoc vao
+  → Scene 2 [6-12s]: Medium shot - Anh ay di qua phong
+  → Scene 3 [12-17s]: Over-shoulder - Anh ay nhin sofa
+  → Scene 4 [17-20s]: Close-up - Anh ay ngoi xuong, ve mat met moi
 
-  ### 4. VI DU CHIA SCENE:
+  ### 3. SHOT ROTATION (DA DANG GOC MAY)
+  - Wide/Establishing → Medium → Close-up → OTS → Wide...
+  - KHONG 2 scene lien tiep cung goc may
+  - Moi scene PHAI ghi ro shot_type
 
-  SRT goc:
+  ### 4. CHIA THEO HANH DONG/CAM XUC
+  - Hanh dong moi → Scene moi
+  - Cam xuc moi → Scene moi (close-up)
+  - Dia diem moi → Scene moi (wide establishing)
+  - Nhan vat moi → Scene moi
+
+  ### 5. GIU NGUYEN TIMESTAMPS TU SRT
+  - Chia nho timestamps nhung PHAI nam trong khoang SRT goc
+  - Tong thoi luong cac scene = thoi luong SRT goc
+
+  ## VI DU CHIA SCENE:
+
+  ### Vi du 1: Noi dung ngan (5s) - Giu nguyen
   ```
-  1. [00:00:00 -> 00:00:03] "Anh ay buoc vao phong"
-  2. [00:00:03 -> 00:00:06] "va ngoi xuong ghe"
-  3. [00:00:06 -> 00:00:10] "Roi bat dau khoc"
+  SRT: 1. [00:00:00 -> 00:00:05] "Co ay cuoi"
+  → Scene 1 [00:00:00 -> 00:00:05]: Close-up - Co ay cuoi tuoi
   ```
 
-  Chia thanh 3 scene (vi 3 hanh dong khac nhau):
-  - Scene 1: "Anh ay buoc vao phong" [00:00:00 -> 00:00:03] (3s)
-  - Scene 2: "va ngoi xuong ghe" [00:00:03 -> 00:00:06] (3s)
-  - Scene 3: "Roi bat dau khoc" [00:00:06 -> 00:00:10] (4s)
+  ### Vi du 2: Noi dung dai (25s) - Chia thanh 4 scene
+  ```
+  SRT: 2. [00:00:05 -> 00:00:30] "Anh ay dung day, di ra cua, nhin lai lan cuoi roi buoc di"
 
-  KHONG gop lai thanh 1 scene 10s!
+  → Scene 2 [00:00:05 -> 00:00:11]: Medium shot - Anh ay dung day tu ghe (6s)
+  → Scene 3 [00:00:11 -> 00:00:18]: Wide shot - Anh ay di ve phia cua (7s)
+  → Scene 4 [00:00:18 -> 00:00:24]: Over-shoulder - Anh ay dung lai nhin lai (6s)
+  → Scene 5 [00:00:24 -> 00:00:30]: Wide shot - Anh ay buoc ra cua, bong dang xa dan (6s)
+  ```
+
+  ### Vi du 3: Hoi thoai dai (20s) - Doi goc may
+  ```
+  SRT: 3. [00:00:30 -> 00:00:50] "Ho noi chuyen ve tuong lai, ve nhung uoc mo chua thanh"
+
+  → Scene 6 [00:00:30 -> 00:00:37]: Two-shot - Hai nguoi ngoi doi dien (7s)
+  → Scene 7 [00:00:37 -> 00:00:44]: Close-up nhan vat A - Noi chuyen (7s)
+  → Scene 8 [00:00:44 -> 00:00:50]: Close-up nhan vat B - Lang nghe (6s)
+  ```
 
   ## OUTPUT FORMAT - JSON:
 
@@ -304,39 +328,54 @@ smart_divide_scenes: |
       {{
         "scene_id": 1,
         "start_time": "00:00:00",
-        "end_time": "00:00:03",
-        "duration_seconds": 3,
+        "end_time": "00:00:05",
+        "duration_seconds": 5,
         "srt_indices": [1],
-        "text": "Anh ay buoc vao phong",
-        "visual_moment": "Nguoi dan ong buoc qua cua vao phong khach"
+        "shot_type": "Close-up",
+        "text": "Co ay cuoi",
+        "visual_moment": "Close-up khuon mat co gai dang cuoi tuoi, anh mat long lanh"
       }},
       {{
         "scene_id": 2,
-        "start_time": "00:00:03",
-        "end_time": "00:00:06",
-        "duration_seconds": 3,
+        "start_time": "00:00:05",
+        "end_time": "00:00:11",
+        "duration_seconds": 6,
         "srt_indices": [2],
-        "text": "va ngoi xuong ghe",
-        "visual_moment": "Nguoi dan ong ngoi xuong sofa, ve mat met moi"
+        "shot_type": "Medium shot",
+        "text": "Anh ay dung day",
+        "visual_moment": "Medium shot - Nguoi dan ong tu tu dung len tu ghe"
       }},
       {{
         "scene_id": 3,
-        "start_time": "00:00:06",
-        "end_time": "00:00:10",
-        "duration_seconds": 4,
-        "srt_indices": [3],
-        "text": "Roi bat dau khoc",
-        "visual_moment": "Can canh khuon mat nguoi dan ong, nuoc mat chay xuong"
+        "start_time": "00:00:11",
+        "end_time": "00:00:18",
+        "duration_seconds": 7,
+        "srt_indices": [2],
+        "shot_type": "Wide shot",
+        "text": "di ra cua",
+        "visual_moment": "Wide shot - Nguoi dan ong di cham rai ve phia cua"
       }}
     ]
   }}
 
+  ## SHOT TYPES CO THE DUNG:
+  - Wide shot / Establishing shot (24mm) - Toan canh
+  - Medium shot (50mm) - Nua nguoi
+  - Close-up (85mm) - Can mat
+  - Extreme close-up (100mm) - Chi tiet
+  - Over-the-shoulder (OTS) - Qua vai
+  - Two-shot - 2 nguoi trong khung hinh
+  - Low angle - Goc thap (quyen luc)
+  - High angle - Goc cao (yeu the)
+  - Dutch angle - Goc nghieng (cang thang)
+
   ## CHECKLIST:
-  - [ ] Moi scene chi the hien 1 khoanh khac hinh anh
-  - [ ] Khong co scene nao > 8 giay
-  - [ ] Timestamps lay tu SRT goc (khong tu nghĩ ra)
-  - [ ] visual_moment mo ta ngan gon canh se ve
-  - [ ] srt_indices chua danh sach cac SRT entry thuoc scene nay
+  - [ ] KHONG co scene nao > 8 giay
+  - [ ] Noi dung dai (>8s) da duoc chia thanh nhieu scene
+  - [ ] Moi scene co shot_type khac nhau
+  - [ ] Khong 2 scene lien tiep cung shot_type
+  - [ ] Timestamps chinh xac, nam trong khoang SRT goc
+  - [ ] visual_moment mo ta ro goc may + hanh dong
 
   OUTPUT: JSON object, KHONG co markdown code block.
 
