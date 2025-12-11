@@ -1,28 +1,30 @@
 # =============================================================================
-# VE3 TOOL - PROMPTS CONFIGURATION v2.0 (ENHANCED)
+# UNI-X VOICE TO VIDEO - PROMPTS CONFIGURATION v3.0 (CINEMATIC)
 # =============================================================================
-# Phiên bản nâng cấp với các kỹ thuật chuyên nghiệp:
-# - Context Injection (Anti-hallucination)
-# - Outfit Consistency Lock
-# - Lighting Override Protocol
-# - Spatial Positioning
-# - Safety Rules cho trẻ em
-# - Negative Prompts
+# Phiên bản tối ưu cho làm phim:
+# - Đồng nhất nhân vật qua tất cả các cảnh (Character Consistency)
+# - Ảnh reference chất lượng cao với tiêu chuẩn rõ ràng
+# - Đa dạng góc máy như phim chuyên nghiệp
+# - Bối cảnh (Setting) được định nghĩa và tái sử dụng
+# - Mỗi shot là 1 frame phim với composition riêng
 # =============================================================================
 
 # =============================================================================
-# PHẦN 1: GLOBAL STYLE DEFINITIONS (QUAN TRỌNG - DÙNG CHO MỌI SCENE)
+# PHẦN 1: GLOBAL CINEMATIC STYLE
 # =============================================================================
 
 global_style: |
   Cinematic 4K photorealistic, shot on Arri Alexa Mini LF,
-  shallow depth of field, soft film grain, natural color grading,
-  high dynamic range, balanced exposure, professional lighting,
-  sharp focus on subject, no crushing shadows, highly detailed textures.
+  anamorphic lens flare, shallow depth of field, film grain texture,
+  Hollywood color grading, high dynamic range, professional three-point lighting,
+  razor sharp focus on subject, cinematic aspect ratio 2.39:1,
+  highly detailed textures, volumetric atmosphere.
 
 global_lighting: |
-  Face illuminated by soft volumetric light, clear facial features,
-  high visibility, catch light in eyes, subtle rim lighting for depth separation.
+  Face illuminated by soft key light with subtle fill,
+  rim light for subject separation, catch light in eyes,
+  motivated lighting matching scene environment,
+  no crushed blacks, visible shadow detail.
 
 negative_prompt_base: |
   cartoon, 3d render, anime, illustration, painting, drawing,
@@ -30,190 +32,266 @@ negative_prompt_base: |
   mutation, deformed, ugly, blurry, low resolution, overexposed,
   underexposed, very dark image, heavy shadows, obscured face,
   extra limbs, missing limbs, floating limbs, disconnected limbs,
-  duplicate characters, clone, disfigured, gross proportions.
+  duplicate characters, clone, disfigured, gross proportions,
+  inconsistent character appearance, wrong clothing, wrong hair color.
 
 # =============================================================================
-# PHẦN 2: PROMPT PHÂN TÍCH NHÂN VẬT (NÂNG CẤP)
+# PHẦN 2: PHÂN TÍCH CÂU CHUYỆN - TẠO TẤT CẢ NHÂN VẬT
 # =============================================================================
 # Variables: {story_text}
 # =============================================================================
 
 analyze_story: |
-  Bạn là AI Production Director chuyên phân tích kịch bản và tạo Character Reference cho AI image/video generation.
+  Bạn là AI Film Director chuyên pre-production cho phim điện ảnh.
+  Nhiệm vụ: Phân tích kịch bản và tạo Character Bible + Location Bible để đảm bảo TÍNH NHẤT QUÁN 100%.
 
-  ## INPUT - NỘI DUNG CÂU CHUYỆN:
+  ## INPUT - KỊCH BẢN:
   ---
   {story_text}
   ---
 
-  ## NHIỆM VỤ CHÍNH:
+  ## NHIỆM VỤ 1: XÁC ĐỊNH TẤT CẢ NHÂN VẬT
 
-  ### BƯỚC 1: PHÂN TÍCH BỐI CẢNH TOÀN CỤC
-  Xác định và tạo [CONTEXT_LOCK] - chuỗi mô tả setting cố định:
-  - Địa điểm chính (Interior/Exterior, loại không gian)
-  - Thời gian trong ngày (Morning/Afternoon/Evening/Night)
-  - Thời tiết/Ánh sáng môi trường
-  - Thời đại/Phong cách (Modern/Vintage/Rural/Urban)
-
-  ### BƯỚC 2: PHÂN TÍCH NHÂN VẬT
+  **QUAN TRỌNG:** Phải liệt kê TẤT CẢ nhân vật xuất hiện trong câu chuyện, kể cả:
+  - Nhân vật chính (narrator, protagonist)
+  - Nhân vật phụ quan trọng
+  - Nhân vật phụ ít quan trọng
+  - Nhân vật chỉ được nhắc đến/xuất hiện 1-2 lần
+  - Nhóm người (nếu là nhóm cụ thể lặp lại)
 
   **Quy tắc ID:**
-  - Nhân vật chính (narrator/main): ID = "nvc"
-  - Nhân vật phụ: ID = "nvp1", "nvp2", ... (tối đa 5)
+  - Nhân vật chính: "nv1"
+  - Nhân vật phụ: "nv2", "nv3", "nv4"... (theo thứ tự xuất hiện)
+  - KHÔNG giới hạn số lượng - tạo cho TẤT CẢ
 
-  **Với MỖI nhân vật, tạo:**
+  ## NHIỆM VỤ 2: TẠO REFERENCE IMAGE PROMPT
 
-  A) **PORTRAIT PROMPT** (để gen ảnh reference):
-  Cấu trúc BẮT BUỘC theo thứ tự:
-  ```
-  (Shot type) + (Lens) + (Subject description) + (Face features) + (Hair) + (Skin) + (Expression) + (Lighting) + (Background) + (Technical)
-  ```
+  **Tiêu chuẩn ảnh Reference để AI nhận diện:**
 
-  B) **[OUTFIT_LOCK]** - Mô tả trang phục cố định:
-  ```
-  wearing [chi tiết quần áo], [phụ kiện], [màu sắc cụ thể]
-  ```
+  PHẢI có các yếu tố sau theo THỨ TỰ:
+  1. **Shot type**: "Passport-style headshot" hoặc "Upper body portrait"
+  2. **Background**: "Pure white studio background #FFFFFF"
+  3. **Lighting**: "Flat even studio lighting, no shadows"
+  4. **Face detail**: Mô tả cụ thể: hình dạng mặt, mắt, mũi, môi
+  5. **Hair**: Màu, kiểu, độ dài, texture
+  6. **Skin**: Tông da, đặc điểm (tàn nhang, nốt ruồi...)
+  7. **Age markers**: Nếp nhăn, độ già trẻ
+  8. **Expression**: "Neutral expression, looking directly at camera"
+  9. **Clothing**: Outfit đơn giản, màu sắc cụ thể
+  10. **Technical**: "8K, sharp focus, studio photography, no artistic effects"
 
-  C) **[CHARACTER_LOCK]** - Chuỗi mô tả ngắn để paste vào mọi scene:
-  ```
-  [Tuổi]-year-old [ethnicity] [gender] with [hair], [face features], [outfit lock]
-  ```
+  **Tại sao cần Pure White Background?**
+  - AI image generators (như Ideogram) dễ dàng nhận diện subject
+  - Khi dùng làm reference, AI sẽ focus vào face/body features
+  - Không bị nhiễu bởi background phức tạp
 
-  ### BƯỚC 3: XÁC ĐỊNH KEY OBJECTS (nếu có)
-  Các vật thể quan trọng xuất hiện nhiều lần (xe, nhà, đồ vật đặc biệt...)
+  ## NHIỆM VỤ 3: TẠO CHARACTER LOCK
 
-  ## QUY TẮC AN TOÀN (BẮT BUỘC):
+  **[CHARACTER_LOCK]** - Chuỗi ngắn gọn để paste vào MỌI scene prompt:
+  Format: "[Age] [ethnicity] [gender] with [hair description], [key face feature], wearing [outfit]"
 
-  **Nếu nhân vật là TRẺ EM (< 14 tuổi):**
-  - KHÔNG tạo portrait prompt chi tiết cho khuôn mặt
-  - Thay bằng [CHILD_TEXT_LOCK]: "a [age]-year-old [ethnicity] child with [hair color] [hair style], wearing [outfit]"
-  - Đánh dấu: "is_child": true
+  Ví dụ: "35-year-old Vietnamese man with short black hair and goatee, wearing gray business suit"
+
+  ## NHIỆM VỤ 4: XÁC ĐỊNH LOCATIONS/SETTINGS
+
+  Liệt kê TẤT CẢ các địa điểm xuất hiện trong câu chuyện.
+  Mỗi location cần:
+  - ID: "loc1", "loc2"...
+  - Tên: "Phòng khách nhà Minh", "Văn phòng công ty"...
+  - Description: Mô tả chi tiết để dùng lại trong scene prompts
 
   ## OUTPUT FORMAT - JSON:
 
   {{
-    "context_lock": "Interior modern suburban house, daytime, soft natural window light, contemporary American setting",
+    "story_analysis": {{
+      "genre": "Drama/Comedy/Action/etc",
+      "time_period": "Modern/1990s/etc",
+      "mood": "Warm/Dark/Tense/etc",
+      "total_characters": 5,
+      "total_locations": 3
+    }},
+
+    "context_lock": "Modern Vietnamese urban setting, 2024, natural indoor/outdoor lighting matching time of day",
+
+    "locations": [
+      {{
+        "id": "loc1",
+        "name": "Phòng khách căn hộ",
+        "description": "Modern Vietnamese apartment living room, beige sofa, wooden coffee table, large window with city view, warm afternoon sunlight, minimalist decor, potted plants",
+        "lighting_default": "Warm natural window light from the right"
+      }},
+      {{
+        "id": "loc2",
+        "name": "Văn phòng công ty",
+        "description": "Corporate office space, glass partitions, fluorescent ceiling lights, computer monitors, office chairs, neutral gray carpet, cool blue-white lighting"
+      }}
+    ],
 
     "characters": [
       {{
-        "id": "nvc",
+        "id": "nv1",
         "role": "main",
-        "name": "Tên trong truyện",
-        "is_child": false,
+        "name": "Minh",
         "age_range": "30-35",
-        "gender": "female",
+        "gender": "male",
+        "ethnicity": "Vietnamese",
+        "is_child": false,
 
-        "portrait_prompt": "Cinematic portrait, straight-on medium close-up, 85mm f/1.8 lens. Subject is a 32-year-old Caucasian woman with long wavy chestnut brown hair, oval face, soft green eyes with subtle crow's feet, natural pink lips, fair skin with light freckles on cheeks. Expression is neutral and calm, looking directly at camera. Face illuminated by soft diffused studio light, catch light in eyes. Clean neutral gray background. 8K, sharp focus, high fidelity portraiture, photorealistic.",
+        "portrait_prompt": "Passport-style headshot portrait. Pure white studio background #FFFFFF. Flat even studio lighting with no shadows. Subject is a 32-year-old Vietnamese man with an oval face shape, double eyelids, straight nose with slightly wide nostrils, medium-thick lips. Short black hair, side-parted, clean cut. Light tan skin tone, clean-shaven. Neutral expression, looking directly at camera. Wearing a plain navy blue polo shirt. 8K resolution, ultra sharp focus, professional ID photo style, no artistic effects, photorealistic.",
 
-        "outfit_lock": "wearing a cream-colored knit cardigan over a white cotton blouse, simple gold pendant necklace",
+        "character_lock": "32-year-old Vietnamese man with short black side-parted hair, oval face, wearing navy polo shirt",
 
-        "character_lock": "32-year-old Caucasian woman with long wavy chestnut brown hair, oval face, soft green eyes, wearing a cream-colored knit cardigan over a white cotton blouse, simple gold pendant necklace",
+        "outfit_variations": [
+          "navy blue polo shirt",
+          "white dress shirt with sleeves rolled up",
+          "gray casual t-shirt"
+        ],
 
-        "vietnamese_description": "Phụ nữ 32 tuổi, tóc nâu hạt dẻ dài gợn sóng, mắt xanh lá dịu dàng, mặc cardigan kem và áo sơ mi trắng"
+        "vietnamese_description": "Nam 32 tuổi, tóc đen ngắn chải lệch, mặt trái xoan, da ngăm nhẹ"
       }},
       {{
-        "id": "nvp1",
+        "id": "nv2",
         "role": "supporting",
-        "name": "Tên nhân vật phụ",
-        "is_child": true,
-        "age_range": "7-8",
+        "name": "Lan",
+        "age_range": "28-32",
         "gender": "female",
+        "ethnicity": "Vietnamese",
+        "is_child": false,
 
-        "portrait_prompt": "DO_NOT_GENERATE",
+        "portrait_prompt": "Passport-style headshot portrait. Pure white studio background #FFFFFF. Flat even studio lighting with no shadows. Subject is a 30-year-old Vietnamese woman with a round face shape, single eyelids, small nose, full lips with natural pink color. Long straight black hair past shoulders, center-parted. Fair skin tone with slight rosy cheeks. Neutral expression, looking directly at camera. Wearing a simple cream-colored blouse. 8K resolution, ultra sharp focus, professional ID photo style, no artistic effects, photorealistic.",
 
-        "child_text_lock": "a 7-year-old Caucasian girl with blonde pigtails tied with pink ribbons, wearing a light blue summer dress with white polka dots and white sneakers",
+        "character_lock": "30-year-old Vietnamese woman with long straight black hair, round face, wearing cream blouse",
 
-        "outfit_lock": "wearing a light blue summer dress with white polka dots and white sneakers",
+        "outfit_variations": [
+          "cream-colored blouse",
+          "light pink cardigan over white top",
+          "navy blue office dress"
+        ],
 
-        "character_lock": "USE_CHILD_TEXT_LOCK",
+        "vietnamese_description": "Nữ 30 tuổi, tóc đen dài thẳng, mặt tròn, da trắng hồng"
+      }},
+      {{
+        "id": "nv3",
+        "role": "supporting",
+        "name": "Bà Hương",
+        "age_range": "55-60",
+        "gender": "female",
+        "ethnicity": "Vietnamese",
+        "is_child": false,
 
-        "vietnamese_description": "Bé gái 7 tuổi, tóc vàng buộc 2 bím với nơ hồng, váy xanh chấm bi trắng"
+        "portrait_prompt": "Passport-style upper body portrait. Pure white studio background #FFFFFF. Flat even studio lighting with no shadows. Subject is a 58-year-old Vietnamese woman with an oval face, visible smile lines around eyes and mouth, slightly drooping eyelids, gentle expression. Short permed gray-black hair. Medium skin tone with age spots on cheeks. Neutral warm expression, looking directly at camera. Wearing a traditional ao ba ba in muted brown color. 8K resolution, ultra sharp focus, professional portrait style, no artistic effects, photorealistic.",
+
+        "character_lock": "58-year-old Vietnamese woman with short gray-black permed hair, warm face with smile lines, wearing brown ao ba ba",
+
+        "vietnamese_description": "Bà 58 tuổi, tóc ngắn uốn đen xám, mặt hiền với nếp nhăn cười"
       }}
     ],
 
     "key_objects": [
       {{
         "id": "obj1",
-        "name": "family photo frame",
-        "prompt": "Extreme close-up macro shot, 100mm lens. A weathered wooden photo frame, 5x7 inches, containing a faded family photograph. Scratches and wear marks visible on the frame edges. Soft warm lighting from the left. Shallow depth of field. 8K detail, photorealistic."
+        "name": "Chiếc nhẫn cưới",
+        "prompt": "Extreme macro close-up. A simple gold wedding band with slight wear marks, sitting on white marble surface. Soft diffused lighting from above. Shallow depth of field. 8K detail, photorealistic jewelry photography."
       }}
     ]
   }}
 
-  ## LƯU Ý QUAN TRỌNG:
-  - portrait_prompt phải ĐỦ CHI TIẾT để AI tạo ảnh nhất quán qua nhiều lần gen
-  - Luôn specify: lens, lighting, angle, background
-  - Ethnicity mặc định: Caucasian/White (trừ khi truyện chỉ định khác)
-  - Chỉ trả về JSON thuần, không có markdown code block hay text giải thích
+  ## QUY TẮC QUAN TRỌNG:
+  1. TẤT CẢ portrait_prompt PHẢI có "Pure white studio background #FFFFFF"
+  2. TẤT CẢ portrait_prompt PHẢI có "Flat even studio lighting with no shadows"
+  3. TẤT CẢ portrait_prompt PHẢI có "Neutral expression, looking directly at camera"
+  4. character_lock phải NGẮN GỌN nhưng ĐỦ để nhận diện
+  5. Ethnicity mặc định: Vietnamese (trừ khi truyện chỉ định khác)
+  6. Chỉ trả về JSON thuần, không markdown code block
 
 # =============================================================================
-# PHẦN 3: PROMPT TẠO SCENE (NÂNG CẤP TOÀN DIỆN)
+# PHẦN 3: TẠO SCENE PROMPTS - CINEMATIC SHOTS
 # =============================================================================
-# Variables: {characters_info}, {scenes_info}, {context_lock}, {global_style}
+# Variables: {characters_info}, {scenes_info}, {context_lock}, {global_style}, {locations_info}
 # =============================================================================
 
 generate_scenes: |
-  Bạn là AI Production Director chuyên tạo cinematic prompts cho AI image-to-video generation (Veo 3).
+  Bạn là AI Film Director chuyên tạo shot list cho phim điện ảnh.
+  Mỗi scene prompt = 1 shot phim với composition, góc máy, và mood riêng biệt.
 
-  ## GLOBAL VARIABLES (PASTE VÀO MỌI SCENE):
-
+  ## GLOBAL CONTEXT:
   **[CONTEXT_LOCK]:** {context_lock}
-
   **[GLOBAL_STYLE]:** {global_style}
+  **[LOCATIONS]:** {locations_info}
 
-  **[LIGHTING_PROTOCOL]:** Face illuminated by soft volumetric light, clear facial features, high visibility, catch light in eyes.
-
-  ## THÔNG TIN NHÂN VẬT ĐÃ ĐỊNH NGHĨA:
+  ## THÔNG TIN NHÂN VẬT (ĐÃ CÓ REFERENCE IMAGES):
   {characters_info}
 
-  ## DANH SÁCH SCENE CẦN TẠO PROMPT:
+  ## DANH SÁCH CẢNH CẦN TẠO SHOT:
   {scenes_info}
 
   ---
 
-  ## NGUYÊN TẮC BẮT BUỘC:
+  ## NGUYÊN TẮC CINEMATIC:
 
-  ### 1. GOLDEN RULE - 1:1 CONSISTENCY
-  - 1 Scene Input = 1 Scene Output (KHÔNG gộp, KHÔNG tách)
+  ### 1. MỖI SCENE = 1 SHOT PHIM RIÊNG BIỆT
+  - KHÔNG được 2 scene liền nhau có cùng góc máy + shot type
+  - Phải có sự chuyển đổi visual giữa các shot (như trong phim thật)
+  - Think like a cinematographer: "Shot này nói gì? Góc máy nào truyền tải emotion?"
 
-  ### 2. PROMPT STRUCTURE (THEO THỨ TỰ NÀY):
+  ### 2. SHOT TYPE ROTATION (luân phiên để không nhàm chán):
+
+  | Scene Emotion | Recommended Shots |
+  |---------------|-------------------|
+  | Establishing/Intro | Wide Shot (WS), Extreme Wide (EWS) |
+  | Dialogue | Medium Shot (MS), Over-the-Shoulder (OTS) |
+  | Emotion/Reaction | Close-up (CU), Medium Close-up (MCU) |
+  | Tension/Drama | Dutch Angle, Low Angle, ECU on eyes/hands |
+  | Action | Tracking shot, Wide with movement |
+  | Intimate | Shallow DOF close-up, Two-shot |
+
+  ### 3. CAMERA ANGLE VARIETY (QUAN TRỌNG):
+
+  Trong mỗi 5 scenes liên tiếp, PHẢI có ÍT NHẤT:
+  - 1 Eye-level shot
+  - 1 Low angle OR High angle shot
+  - 1 Over-the-shoulder (nếu có dialogue)
+  - 1 Wide establishing shot
+
+  **Ý nghĩa góc máy:**
+  - Eye-level: Neutral, viewer = observer
+  - Low angle (nhìn lên): Subject có power, heroic, imposing
+  - High angle (nhìn xuống): Subject vulnerable, small, overwhelmed
+  - Dutch tilt (nghiêng): Unease, tension, something wrong
+  - Over-the-shoulder: Connection, conversation, POV of one character
+  - Bird's eye: God view, pattern, isolation
+
+  ### 4. CHARACTER CONSISTENCY (CỰC KỲ QUAN TRỌNG):
+
+  Mỗi scene prompt PHẢI chứa CHÍNH XÁC character_lock của nhân vật xuất hiện.
+
+  **Format khi có nhân vật:**
   ```
-  (Camera angle + Lens) → (Character với outfit_lock) → (Lighting Protocol) → (Action/Pose) → (Context Lock) → (Global Style)
+  [Shot type] + [Lens] + [Character_lock CHÍNH XÁC] + [Action/Pose] + [Location description] + [Lighting] + [Mood] + [Technical]
   ```
 
-  ### 3. SPATIAL POSITIONING (nếu có 2+ nhân vật):
-  - Phải mô tả VỊ TRÍ TƯƠNG ĐỐI: "on the left", "in the foreground", "behind", "facing each other"
-  - Phải nêu SỐ LƯỢNG: "Two people in frame", "Three figures visible"
+  **Ví dụ ĐÚNG:**
+  "Medium close-up, 50mm lens. A 32-year-old Vietnamese man with short black side-parted hair, oval face, wearing navy polo shirt. He is sitting at a desk, looking pensively out the window. Modern office space with glass partitions and computer monitors. Soft blue-white fluorescent lighting from above, natural window light from the left creating gentle rim light. Contemplative mood. Cinematic 4K photorealistic, shallow depth of field, film grain."
 
-  ### 4. CAMERA ANGLES (chọn phù hợp với cảm xúc):
-  - Eye-level: Neutral, conversational
-  - Low angle: Power, dominance, heroic
-  - High angle: Vulnerability, weakness
-  - Dutch tilt: Tension, unease
-  - Over-the-shoulder (OTS): Conversation, connection
+  **Ví dụ SAI (thiếu chi tiết nhân vật):**
+  "A man sitting at desk looking out window." ← KHÔNG ĐƯỢC, thiếu character_lock
 
-  ### 5. SHOT TYPES:
-  - Extreme Close-up (ECU): Eyes, hands, objects - Emotion focus
-  - Close-up (CU): Face - Emotion, reaction
-  - Medium Close-up (MCU): Head + shoulders - Dialogue
-  - Medium Shot (MS): Waist up - Action + context
-  - Full Shot (FS): Entire body - Movement, location
-  - Wide Shot (WS): Environment dominant - Establishing
+  ### 5. REFERENCE FILE USAGE:
 
-  ### 6. SAFETY RULES CHO TRẺ EM:
-  Nếu scene có trẻ em trong tình huống tiêu cực (sợ hãi, khóc, đau):
-  - KHÔNG mô tả khuôn mặt trực tiếp
-  - Thay bằng SAFE SHOTS:
-    * "Shot from behind, showing the back of the child's head"
-    * "Over-the-shoulder view from behind the child"
-    * "Close-up on small hands gripping [object]"
-    * "POV shot from the child's perspective looking up at [adult]"
+  Khi scene có nhân vật, field "reference_files" phải liệt kê ảnh reference cần dùng.
+  Ví dụ: scene có nv1 và nv2 → reference_files: ["nv1.png", "nv2.png"]
 
-  ### 7. AUTO-SPLIT CHO HÀNH ĐỘNG PHỨC TẠP:
-  Nếu scene có hành động cause-effect (đánh, ngã, ném...):
-  - Tách thành 2 prompts riêng trong cùng scene_id
-  - Part A: Hành động khởi đầu
-  - Part B: Kết quả/Phản ứng
+  ### 6. SPATIAL POSITIONING (khi 2+ nhân vật):
+
+  PHẢI mô tả vị trí cụ thể:
+  - "In the foreground on the left: [character 1]. In the background on the right: [character 2]"
+  - "Two people facing each other across a table"
+  - "Three people standing in a row, from left to right: [char1], [char2], [char3]"
+
+  ### 7. LIGHTING CONSISTENCY:
+
+  Các scene trong cùng location phải có lighting tương tự (trừ khi time of day thay đổi).
+  Sử dụng lighting_default từ location description.
 
   ---
 
@@ -223,242 +301,163 @@ generate_scenes: |
     "scenes": [
       {{
         "scene_id": 1,
-        "scene_type": "NARRATIVE",
-        "characters_in_scene": ["nvc"],
-        "reference_files": ["nvc.png"],
+        "scene_type": "ESTABLISHING",
+        "shot_type": "Wide Shot",
+        "camera_angle": "Eye-level",
+        "lens": "24mm wide angle",
+        "location_id": "loc1",
+        "characters_in_scene": ["nv1"],
+        "reference_files": ["nv1.png"],
 
-        "img_prompt": "Eye-level medium close-up, 50mm lens. A 32-year-old Caucasian woman with long wavy chestnut brown hair, oval face, soft green eyes, wearing a cream-colored knit cardigan over a white cotton blouse, simple gold pendant necklace. Face illuminated by soft volumetric light, clear facial features, catch light in eyes. She gazes out the window with a wistful expression, one hand touching the glass. Interior modern suburban house, daytime, soft natural window light filtering through sheer curtains, contemporary American setting. Cinematic 4K photorealistic, shot on Arri Alexa Mini LF, shallow depth of field, soft film grain, natural color grading, high dynamic range.",
+        "img_prompt": "Wide establishing shot, 24mm anamorphic lens. Interior of modern Vietnamese apartment living room. A 32-year-old Vietnamese man with short black side-parted hair, oval face, wearing navy polo shirt, standing by the large window looking out at the city. Beige sofa and wooden coffee table in foreground. Warm golden hour sunlight streaming through window, creating long shadows. Contemplative atmosphere. Cinematic 4K photorealistic, anamorphic lens flare, shallow depth of field with sharp focus on subject, film grain texture, 2.39:1 aspect ratio.",
 
-        "video_prompt": "Gentle slow push-in camera movement toward the woman's face. She slowly turns her head from the window to look toward camera. Her expression shifts from contemplative to slightly hopeful. Soft dust particles float in the window light. Subtle movement of curtain fabric. 4 seconds duration, smooth cinematic motion.",
+        "video_prompt": "Slow dolly in from wide to medium shot. Camera gently moves forward, revealing more of the man's face. Dust particles float in the sunlight. Subtle movement of curtains. 4 seconds, smooth cinematic motion.",
 
         "technical_specs": {{
-          "aspect_ratio": "16:9",
-          "shot_type": "Medium Close-up",
+          "aspect_ratio": "2.39:1",
+          "shot_type": "Wide Shot",
           "camera_angle": "Eye-level",
-          "lens": "50mm",
-          "duration": "4s"
+          "lens": "24mm",
+          "movement": "Dolly in"
         }},
 
-        "negative_prompt": "cartoon, 3d render, anime, text, watermark, bad anatomy, distorted face, mutation, deformed, blurry, low resolution, overexposed, underexposed, very dark image, heavy shadows, obscured face, extra limbs, duplicate"
+        "director_notes": "Opening shot - establish location and mood before dialogue begins",
+
+        "negative_prompt": "cartoon, anime, wrong face, different hair, wrong clothing, multiple people when only one specified, blurry, dark shadows"
       }},
       {{
         "scene_id": 2,
-        "scene_type": "PIVOTAL",
-        "characters_in_scene": ["nvc", "nvp1"],
-        "reference_files": ["nvc.png"],
-        "child_text_injection": "a 7-year-old Caucasian girl with blonde pigtails tied with pink ribbons, wearing a light blue summer dress with white polka dots",
+        "scene_type": "DIALOGUE",
+        "shot_type": "Over-the-shoulder",
+        "camera_angle": "Eye-level",
+        "lens": "50mm",
+        "location_id": "loc1",
+        "characters_in_scene": ["nv1", "nv2"],
+        "reference_files": ["nv1.png", "nv2.png"],
 
-        "img_prompt": "Eye-level medium shot, 35mm lens. Two people in frame. In the foreground on the left: a 32-year-old Caucasian woman with long wavy chestnut brown hair wearing a cream-colored knit cardigan. In the background on the right: a 7-year-old Caucasian girl with blonde pigtails tied with pink ribbons, wearing a light blue summer dress with white polka dots, shown from behind with back of head visible. Face of adult illuminated by soft volumetric light, clear facial features. The woman kneels down reaching toward the child. Interior modern suburban house living room, daytime, warm natural light, contemporary American setting. Cinematic 4K photorealistic, shot on Arri Alexa Mini LF, shallow depth of field, soft film grain.",
+        "img_prompt": "Over-the-shoulder shot from behind nv2, 50mm lens. In sharp focus: A 32-year-old Vietnamese man with short black side-parted hair, oval face, wearing navy polo shirt, sitting on beige sofa, speaking with engaged expression. In soft focus foreground: back of head and shoulder of a 30-year-old Vietnamese woman with long straight black hair. Living room setting with warm afternoon light from window on the left. Intimate conversational mood. Cinematic 4K photorealistic, shallow depth of field f/2.0, subject separation, film grain.",
 
-        "video_prompt": "Static camera with subtle handheld drift. The woman slowly opens her arms. The child (seen from behind) takes small steps forward. Gentle swaying of the child's dress. Soft focus shift from child to woman's emotional face. 5 seconds duration, intimate emotional moment.",
+        "video_prompt": "Static shot with subtle handheld drift. The man gestures while speaking, occasional glances away then back. Natural micro-movements. 5 seconds, documentary intimacy.",
 
         "technical_specs": {{
-          "aspect_ratio": "16:9",
-          "shot_type": "Medium Shot",
+          "aspect_ratio": "2.39:1",
+          "shot_type": "Over-the-shoulder",
           "camera_angle": "Eye-level",
-          "lens": "35mm",
-          "duration": "5s"
+          "lens": "50mm",
+          "movement": "Static with drift"
         }},
 
-        "negative_prompt": "cartoon, 3d render, anime, text, watermark, bad anatomy, distorted face, mutation, deformed, blurry, child's face visible, front view of child face, very dark image, heavy shadows"
+        "director_notes": "Reverse shot follows - cut to nv2's reaction",
+
+        "negative_prompt": "wrong characters, different hair color, different clothing, missing person, extra people"
       }}
     ]
   }}
 
   ## CHECKLIST TRƯỚC KHI OUTPUT:
-  ✓ Mỗi img_prompt có đầy đủ: Camera + Character (với outfit) + Lighting Protocol + Action + Context + Style?
-  ✓ Không còn placeholder [...] hay [INSERT...]?
-  ✓ Trẻ em trong tình huống tiêu cực đã dùng Safe Shot?
-  ✓ Scene có 2+ người đã mô tả vị trí tương đối?
-  ✓ video_prompt mô tả chuyển động CỤ THỂ (không chung chung)?
+  ✓ Mỗi scene có góc máy/shot type KHÁC với scene trước và sau?
+  ✓ Character_lock được paste CHÍNH XÁC vào img_prompt?
+  ✓ reference_files liệt kê đúng nhân vật trong scene?
+  ✓ Location description consistent với locations đã định nghĩa?
+  ✓ Không có 3+ scenes liên tiếp cùng shot type?
 
-  Chỉ trả về JSON thuần, không có markdown code block.
+  Chỉ trả về JSON thuần, không markdown code block.
 
 # =============================================================================
-# PHẦN 4: NARRATOR SCENES (5 BIẾN THỂ CHO NHÂN VẬT CHÍNH)
-# =============================================================================
-# Variables: {main_character_info}
+# PHẦN 4: NARRATOR SCENES (TALKING HEAD VARIATIONS)
 # =============================================================================
 
 generate_narrator_scenes: |
-  Bạn là AI Production Director. Tạo 5 static image variations cho Main Narrator để dùng xen kẽ trong video.
+  Tạo 5 biến thể talking head cho nhân vật chính (narrator) với outfits và locations khác nhau.
 
-  ## THÔNG TIN NHÂN VẬT CHÍNH:
+  ## THÔNG TIN NHÂN VẬT:
   {main_character_info}
 
   ## YÊU CẦU:
-  - Subject: Nhân vật chính (narrator)
-  - Framing: Upper-body portrait (vai, cánh tay, khuỷu tay visible)
-  - Expression: Calm, reflective, natural storytelling expression
-  - **5 OUTFITS KHÁC NHAU** (mỗi variation 1 outfit unique)
-  - **5 INDOOR SETTINGS KHÁC NHAU** (KHÔNG outdoor/thiên nhiên)
+  - 5 unique outfits
+  - 5 unique indoor settings
+  - Consistent character appearance (chỉ đổi quần áo và background)
+  - Expression: Calm, engaging, storytelling
 
-  ## INDOOR SETTINGS GỢI Ý:
-  - Living room với sofa
-  - Kitchen với đảo bếp
-  - Bedroom cạnh cửa sổ
-  - Home office/Study với kệ sách
-  - Dining room
-
-  ## OUTPUT FORMAT - JSON:
-
-  {{
-    "narrator_scenes": [
-      {{
-        "variation": 1,
-        "setting": "Living room",
-        "outfit": "Soft gray cashmere sweater, delicate silver earrings",
-        "prompt": "Cinematic medium shot, 85mm f/2 lens. A 32-year-old Caucasian woman with long wavy chestnut brown hair, oval face, soft green eyes. Face illuminated by soft volumetric light, clear facial features, catch light in eyes. She is wearing a soft gray cashmere sweater and delicate silver earrings. Sitting comfortably on a beige linen sofa in a modern living room. Expression is calm, warm, and reflective, as if sharing a personal story. Soft natural window light from the left. Bokeh background with blurred indoor plants and family photos. Cinematic 4K photorealistic, shot on Arri Alexa, shallow depth of field, warm color grading.",
-        "negative_prompt": "cartoon, anime, outdoor, nature background, dark shadows, obscured face"
-      }},
-      {{
-        "variation": 2,
-        "setting": "Kitchen",
-        "outfit": "White linen blouse with rolled sleeves, small gold hoop earrings",
-        "prompt": "..."
-      }},
-      {{
-        "variation": 3,
-        "setting": "Bedroom by window",
-        "outfit": "Dusty rose silk blouse, pearl stud earrings",
-        "prompt": "..."
-      }},
-      {{
-        "variation": 4,
-        "setting": "Home office with bookshelves",
-        "outfit": "Navy blue fitted blazer over cream top, thin gold necklace",
-        "prompt": "..."
-      }},
-      {{
-        "variation": 5,
-        "setting": "Dining room",
-        "outfit": "Olive green wrap top, wooden beaded bracelet",
-        "prompt": "..."
-      }}
-    ]
-  }}
-
-  Chỉ trả về JSON thuần.
+  ## OUTPUT: JSON với 5 narrator_scenes, mỗi scene có prompt đầy đủ.
 
 # =============================================================================
-# PHẦN 5: THUMBNAIL GENERATION
-# =============================================================================
-# Variables: {main_character_info}, {thumbnail_text}
-# =============================================================================
-
-generate_thumbnail: |
-  Bạn là AI Production Director. Tạo High-Impact Thumbnail cho video.
-
-  ## NHÂN VẬT CHÍNH:
-  {main_character_info}
-
-  ## THUMBNAIL TEXT/CONTEXT:
-  {thumbnail_text}
-
-  ## QUY TẮC BẮT BUỘC:
-  1. **SOLO SHOT ONLY** - Chỉ nhân vật chính, KHÔNG có người khác
-  2. **BRIGHT LIGHTING** - Mặt và background phải sáng rõ, dễ nhìn trên thumbnail nhỏ
-  3. **STRONG EMOTION** - Expression phải rõ ràng, đọc được ở kích thước nhỏ
-  4. **HIGH CONTRAST** - Subject phải nổi bật khỏi background
-  5. **COMPOSITION** - Centered hoặc rule-of-thirds, để space cho text overlay
-
-  ## OUTPUT FORMAT - JSON:
-
-  {{
-    "thumbnail": {{
-      "visual_concept": "Giải thích ngắn tại sao chọn expression/pose này",
-      "emotion": "Primary emotion to convey",
-
-      "prompt": "High-impact YouTube thumbnail shot, 85mm portrait lens. A 32-year-old Caucasian woman with long wavy chestnut brown hair, oval face, soft green eyes, wearing [outfit]. SOLO SHOT, no other people in frame. Her expression is [specific emotion] - [describe facial details: eyebrows, eyes, mouth]. Face and background brightly lit with soft white key light and fill light, no harsh shadows, high visibility. Clean blurred background in [color] tones with subtle bokeh. Subject positioned slightly off-center leaving space on [left/right] for text. Cinematic 4K, sharp focus on face, shallow depth of field, vibrant colors, high contrast.",
-
-      "technical_specs": {{
-        "aspect_ratio": "16:9",
-        "shot_type": "Close-up or Medium Close-up",
-        "composition": "Off-center with text space",
-        "lighting": "High-key, bright, no shadows on face"
-      }},
-
-      "negative_prompt": "multiple people, dark shadows, obscured face, underexposed, low contrast, blurry, text, watermark, busy background, cluttered"
-    }}
-  }}
-
-  Chỉ trả về JSON thuần.
-
-# =============================================================================
-# PHẦN 6: STYLE PREFIXES (GIỮ NGUYÊN NHƯNG NÂNG CẤP)
-# =============================================================================
-
-style_prefix: |
-  Cinematic 4K photorealistic, shot on Arri Alexa Mini LF, shallow depth of field,
-  soft film grain, natural color grading, high dynamic range, balanced exposure,
-  face illuminated by soft volumetric light, clear facial features,
-
-video_style_prefix: |
-  Smooth cinematic motion, professional footage, natural movement,
-  subtle camera drift, atmospheric,
-
-# =============================================================================
-# PHẦN 7: NEGATIVE PROMPTS LIBRARY
-# =============================================================================
-
-negative_prompts:
-  standard: |
-    cartoon, 3d render, anime, illustration, painting, drawing,
-    text, watermark, logo, signature, bad anatomy, distorted face,
-    mutation, deformed, ugly, blurry, low resolution, overexposed,
-    underexposed, very dark image, heavy shadows, obscured face
-
-  portrait: |
-    cartoon, anime, 3d render, bad anatomy, distorted face, asymmetrical face,
-    mutation, deformed, ugly, blurry, low resolution, overexposed,
-    underexposed, dark shadows on face, obscured features, extra limbs,
-    watermark, text, busy background
-
-  scene_with_child: |
-    cartoon, anime, 3d render, child's face in distress visible,
-    front view of crying child, scared child face visible,
-    bad anatomy, distorted, blurry, dark image, text, watermark
-
-  thumbnail: |
-    multiple people, crowd, group shot, dark shadows, obscured face,
-    underexposed, low contrast, blurry, text in image, watermark,
-    busy cluttered background, boring composition, flat lighting
-
-# =============================================================================
-# PHẦN 8: CAMERA & LENS REFERENCE
+# PHẦN 5: CAMERA & LENS REFERENCE
 # =============================================================================
 
 camera_reference:
+  shot_types:
+    "Extreme Wide Shot (EWS)": "Environment dominant, tiny subject - Establishing, scale"
+    "Wide Shot (WS)": "Full body + environment - Establishing, movement"
+    "Full Shot (FS)": "Full body, less environment - Introduction, action"
+    "Medium Wide (MWS)": "Knees up - Walking, group shots"
+    "Medium Shot (MS)": "Waist up - Standard dialogue, action"
+    "Medium Close-up (MCU)": "Chest up - Dialogue, emotion"
+    "Close-up (CU)": "Face fills frame - Emotion, reaction"
+    "Extreme Close-up (ECU)": "Part of face/detail - Intensity, detail"
+    "Over-the-shoulder (OTS)": "Behind one person looking at another - Conversation"
+    "Two-shot": "Two people in frame - Relationship, dialogue"
+    "POV": "Camera is character's eyes - Immersion"
+
   lenses:
-    "24mm": "Wide angle - Establishing shots, environments, dramatic distortion"
-    "35mm": "Standard wide - Full body, 2+ characters, context + subject balance"
-    "50mm": "Standard - Medium shots, natural perspective, versatile"
-    "85mm": "Portrait - Close-ups, beautiful bokeh, facial details, interviews"
-    "100mm+": "Telephoto - Extreme close-ups, compressed background, isolation"
+    "14-24mm": "Ultra wide - Dramatic distortion, environments, vertigo"
+    "24mm": "Wide - Establishing, environments with context"
+    "35mm": "Wide normal - Full body, groups, natural perspective"
+    "50mm": "Normal - Natural look, versatile, dialogue"
+    "85mm": "Portrait - Beautiful bokeh, face detail, interviews"
+    "100-135mm": "Telephoto - Compressed background, isolation, stalker POV"
 
   angles:
-    "Eye-level": "Neutral, relatable, conversational - DEFAULT choice"
-    "Low angle": "Power, dominance, heroic, imposing"
-    "High angle": "Vulnerability, weakness, submission, overview"
-    "Dutch tilt": "Unease, tension, psychological disturbance"
-    "Bird's eye": "Omniscient view, patterns, scale"
-    "Worm's eye": "Extreme power, monumentality"
+    "Eye-level": "Neutral, we are equal to character"
+    "Low angle (looking up)": "Subject has power, heroic, threatening"
+    "High angle (looking down)": "Subject is weak, vulnerable, trapped"
+    "Dutch angle (tilted)": "Unease, disorientation, something wrong"
+    "Bird's eye": "God view, seeing patterns, detachment"
+    "Worm's eye": "Extreme low, monumental, child's POV"
 
   movements:
-    "Static": "Stable, observational, documentary feel"
-    "Push-in": "Increasing tension, focus, revelation"
-    "Pull-out": "Reveal context, isolation, ending"
-    "Pan": "Follow action, reveal space horizontally"
-    "Tilt": "Reveal height, power dynamics"
-    "Tracking": "Follow subject, immersive, dynamic"
-    "Handheld drift": "Subtle life, documentary authenticity"
+    "Static": "No movement - Stable, observational"
+    "Pan": "Horizontal rotation - Following action, revealing space"
+    "Tilt": "Vertical rotation - Revealing height, power dynamics"
+    "Dolly in": "Moving toward - Increasing tension, focus"
+    "Dolly out": "Moving away - Revealing, isolation, ending"
+    "Tracking": "Following subject - Energy, immersion"
+    "Crane": "Vertical + horizontal - Epic reveals, transitions"
+    "Handheld": "Subtle shake - Documentary feel, urgency, intimacy"
 
 # =============================================================================
-# PHẦN 9: TEST PROMPT CHO TOKEN EXTRACTION
+# PHẦN 6: NEGATIVE PROMPTS LIBRARY
+# =============================================================================
+
+negative_prompts:
+  character_scene: |
+    wrong face, different character, inconsistent appearance,
+    wrong hair color, wrong hair style, wrong clothing, wrong outfit,
+    extra people, missing character, duplicate character,
+    cartoon, anime, 3d render, illustration,
+    bad anatomy, distorted face, mutation, deformed,
+    blurry, low resolution, overexposed, underexposed,
+    text, watermark, logo
+
+  reference_portrait: |
+    background elements, complex background, colored background,
+    shadows on face, artistic lighting, dramatic lighting,
+    expression other than neutral, looking away from camera,
+    cartoon, anime, painting, illustration,
+    blurry, low resolution, bad anatomy
+
+  establishing_shot: |
+    people not specified, wrong number of people,
+    indoor when outdoor specified, outdoor when indoor specified,
+    wrong time of day, wrong lighting,
+    cartoon, anime, blurry, text, watermark
+
+# =============================================================================
+# PHẦN 7: TEST PROMPT
 # =============================================================================
 
 test_prompt: "beautiful sunset over ocean, golden hour, dramatic clouds, cinematic 4K"
 
 # =============================================================================
-# END OF CONFIGURATION
+# END OF CONFIGURATION v3.0
 # =============================================================================
