@@ -835,6 +835,7 @@ class PromptGenerator:
 
                 scenes_data.append({
                     "scene_id": scene.get("scene_id", len(scenes_data) + 1),
+                    "story_beat": scene.get("story_beat", ""),  # Nhịp kể chuyện
                     "start_time": start_str,
                     "end_time": end_str,
                     "duration_seconds": scene.get("duration_seconds", 5),
@@ -906,9 +907,10 @@ class PromptGenerator:
         else:
             locations_info = "(No location references - describe locations based on story context)"
 
-        # Format thông tin scenes (include shot_type and visual_moment)
+        # Format thông tin scenes (include story_beat, shot_type and visual_moment)
         pacing_script = "\n".join([
             f"{s['scene_id']}. [{s.get('shot_type', 'Medium shot')}] \"{s['text']}\"\n"
+            f"   Story beat: {s.get('story_beat', 'N/A')}\n"
             f"   Visual: {s.get('visual_moment', s['text'])}"
             for s in scenes_data
         ])
