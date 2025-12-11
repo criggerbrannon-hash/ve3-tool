@@ -433,11 +433,11 @@ class SmartEngine:
             with open(cfg_file, "r", encoding="utf-8") as f:
                 cfg = yaml.safe_load(f) or {}
         
-        # Add API keys (thu tu uu tien: DeepSeek > Groq > Gemini)
-        cfg['deepseek_api_keys'] = [k.value for k in self.deepseek_keys if k.status != 'exhausted']
-        cfg['groq_api_keys'] = [k.value for k in self.groq_keys if k.status != 'exhausted']
+        # Add API keys (thu tu uu tien: Gemini > Groq > DeepSeek)
         cfg['gemini_api_keys'] = [k.value for k in self.gemini_keys if k.status != 'exhausted']
-        cfg['preferred_provider'] = 'deepseek' if self.deepseek_keys else 'groq'
+        cfg['groq_api_keys'] = [k.value for k in self.groq_keys if k.status != 'exhausted']
+        cfg['deepseek_api_keys'] = [k.value for k in self.deepseek_keys if k.status != 'exhausted']
+        cfg['preferred_provider'] = 'gemini' if self.gemini_keys else ('groq' if self.groq_keys else 'deepseek')
         
         # Retry with different keys
         for attempt in range(self.max_retries):

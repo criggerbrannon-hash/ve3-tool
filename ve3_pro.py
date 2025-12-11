@@ -96,6 +96,7 @@ class UnixVoiceToVideo:
         self.profiles: List[str] = []
         self.groq_keys: List[str] = []
         self.gemini_keys: List[str] = []
+        self.deepseek_keys: List[str] = []
         self.chrome_path = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
         
         # State
@@ -382,11 +383,15 @@ class UnixVoiceToVideo:
         self.res_profiles = ttk.Label(res_frame, text="👤 Profiles: 0")
         self.res_profiles.pack(anchor=tk.W)
 
+        # API keys (theo thu tu uu tien)
+        self.res_gemini = ttk.Label(res_frame, text="🔑 Gemini: 0")
+        self.res_gemini.pack(anchor=tk.W)
+
         self.res_groq = ttk.Label(res_frame, text="🔑 Groq: 0")
         self.res_groq.pack(anchor=tk.W)
 
-        self.res_gemini = ttk.Label(res_frame, text="🔑 Gemini: 0")
-        self.res_gemini.pack(anchor=tk.W)
+        self.res_deepseek = ttk.Label(res_frame, text="🔑 DeepSeek: 0")
+        self.res_deepseek.pack(anchor=tk.W)
 
         # Config buttons row 1
         btn_row = ttk.Frame(res_frame)
@@ -646,11 +651,15 @@ class UnixVoiceToVideo:
     
     def update_resource_display(self):
         """Update resource display."""
-        self.res_profiles.config(text=f"👤 Profiles: {len(self.profiles)}" + 
+        self.res_profiles.config(text=f"👤 Profiles: {len(self.profiles)}" +
                                  (" ✅" if self.profiles else " ⚠️"))
+        # API keys theo thu tu uu tien
+        self.res_gemini.config(text=f"🔑 Gemini: {len(self.gemini_keys)}" +
+                              (" ✅" if self.gemini_keys else ""))
         self.res_groq.config(text=f"🔑 Groq: {len(self.groq_keys)}" +
                             (" ✅" if self.groq_keys else ""))
-        self.res_gemini.config(text=f"🔑 Gemini: {len(self.gemini_keys)}")
+        self.res_deepseek.config(text=f"🔑 DeepSeek: {len(self.deepseek_keys)}" +
+                                (" ✅" if self.deepseek_keys else ""))
     
     # ========== CONFIG ==========
     
@@ -675,12 +684,14 @@ class UnixVoiceToVideo:
                 if path and not path.startswith('THAY_BANG') and Path(path).exists():
                     self.profiles.append(path)
             
-            # API keys
+            # API keys (thu tu uu tien: Gemini > Groq > DeepSeek)
             api = data.get('api_keys', {})
-            self.groq_keys = [k for k in api.get('groq', []) 
-                            if k and not k.startswith('THAY_BANG')]
             self.gemini_keys = [k for k in api.get('gemini', [])
                               if k and not k.startswith('THAY_BANG')]
+            self.groq_keys = [k for k in api.get('groq', [])
+                            if k and not k.startswith('THAY_BANG')]
+            self.deepseek_keys = [k for k in api.get('deepseek', [])
+                                if k and not k.startswith('THAY_BANG')]
             
         except Exception as e:
             print(f"Load config error: {e}")
@@ -692,8 +703,11 @@ class UnixVoiceToVideo:
         default = {
             "_README": [
                 "=== VE3 TOOL CONFIG ===",
-                "Điền thông tin Chrome profiles và API keys vào đây",
-                "Groq API FREE: https://console.groq.com/keys"
+                "Dien thong tin Chrome profiles va API keys vao day",
+                "Thu tu uu tien API: Gemini > Groq > DeepSeek",
+                "Gemini: https://aistudio.google.com/app/apikey",
+                "Groq (FREE): https://console.groq.com/keys",
+                "DeepSeek: https://platform.deepseek.com/api_keys"
             ],
             "chrome_path": r"C:\Program Files\Google\Chrome\Application\chrome.exe",
             "chrome_profiles": [
@@ -701,8 +715,9 @@ class UnixVoiceToVideo:
                 "THAY_BANG_DUONG_DAN_PROFILE_2"
             ],
             "api_keys": {
-                "groq": ["THAY_BANG_GROQ_KEY"],
-                "gemini": []
+                "gemini": [],
+                "groq": [],
+                "deepseek": []
             },
             "settings": {
                 "parallel": 2,
@@ -753,22 +768,144 @@ class UnixVoiceToVideo:
         api_tab = ttk.Frame(notebook, padding=15)
         notebook.add(api_tab, text="  🔑 API Keys  ")
 
-        ttk.Label(api_tab, text="Groq Keys (FREE):", font=('Segoe UI', 11, 'bold')).pack(anchor=tk.W)
-        groq_link = ttk.Label(api_tab, text="🔗 console.groq.com/keys",
+        # Scroll frame for API keys
+        api_canvas = tk.Canvas(api_tab, highlightthickness=0)
+        api_scrollbar = ttk.Scrollbar(api_tab, orient="vertical", command=api_canvas.yview)
+        api_scroll_frame = ttk.Frame(api_canvas)
+
+        api_scroll_frame.bind("<Configure>", lambda e: api_canvas.configure(scrollregion=api_canvas.bbox("all")))
+        api_canvas.create_window((0, 0), window=api_scroll_frame, anchor="nw")
+        api_canvas.configure(yscrollcommand=api_scrollbar.set)
+
+        # Header with priority note
+        ttk.Label(api_scroll_frame, text="Thu tu uu tien: Gemini > Groq > DeepSeek",
+                  foreground='gray', font=('Segoe UI', 9, 'italic')).pack(anchor=tk.W, pady=(0, 10))
+
+        # Store entry references for saving
+        api_entries = {}
+
+        # 1. Gemini (highest priority)
+        ttk.Label(api_scroll_frame, text="1. Gemini Keys (Uu tien cao nhat):",
+                  font=('Segoe UI', 10, 'bold')).pack(anchor=tk.W)
+        gem_link = ttk.Label(api_scroll_frame, text="🔗 aistudio.google.com/app/apikey",
+                             foreground='blue', cursor='hand2')
+        gem_link.pack(anchor=tk.W)
+        gem_link.bind('<Button-1>', lambda e: webbrowser.open("https://aistudio.google.com/app/apikey"))
+
+        gem_entry = tk.Text(api_scroll_frame, height=2, font=('Consolas', 9), wrap=tk.WORD)
+        gem_entry.pack(fill=tk.X, pady=(5, 10))
+        gem_entry.insert(tk.END, '\n'.join(self.gemini_keys))
+        api_entries['gemini'] = gem_entry
+
+        # 2. Groq (second priority)
+        ttk.Label(api_scroll_frame, text="2. Groq Keys (FREE, nhanh):",
+                  font=('Segoe UI', 10, 'bold')).pack(anchor=tk.W)
+        groq_link = ttk.Label(api_scroll_frame, text="🔗 console.groq.com/keys",
                              foreground='blue', cursor='hand2')
         groq_link.pack(anchor=tk.W)
         groq_link.bind('<Button-1>', lambda e: webbrowser.open("https://console.groq.com/keys"))
 
-        groq_list = tk.Listbox(api_tab, height=3, font=('Consolas', 9))
-        groq_list.pack(fill=tk.X, pady=(5, 10))
-        for k in self.groq_keys:
-            groq_list.insert(tk.END, k[:40] + "..." if len(k) > 40 else k)
+        groq_entry = tk.Text(api_scroll_frame, height=2, font=('Consolas', 9), wrap=tk.WORD)
+        groq_entry.pack(fill=tk.X, pady=(5, 10))
+        groq_entry.insert(tk.END, '\n'.join(self.groq_keys))
+        api_entries['groq'] = groq_entry
 
-        ttk.Label(api_tab, text="Gemini Keys:", font=('Segoe UI', 11, 'bold')).pack(anchor=tk.W)
-        gem_list = tk.Listbox(api_tab, height=3, font=('Consolas', 9))
-        gem_list.pack(fill=tk.X, pady=(5, 0))
-        for k in self.gemini_keys:
-            gem_list.insert(tk.END, k[:40] + "..." if len(k) > 40 else k)
+        # 3. DeepSeek (lowest priority, cheapest)
+        ttk.Label(api_scroll_frame, text="3. DeepSeek Keys (Re, cham):",
+                  font=('Segoe UI', 10, 'bold')).pack(anchor=tk.W)
+        ds_link = ttk.Label(api_scroll_frame, text="🔗 platform.deepseek.com/api_keys",
+                           foreground='blue', cursor='hand2')
+        ds_link.pack(anchor=tk.W)
+        ds_link.bind('<Button-1>', lambda e: webbrowser.open("https://platform.deepseek.com/api_keys"))
+
+        ds_entry = tk.Text(api_scroll_frame, height=2, font=('Consolas', 9), wrap=tk.WORD)
+        ds_entry.pack(fill=tk.X, pady=(5, 10))
+        ds_entry.insert(tk.END, '\n'.join(self.deepseek_keys))
+        api_entries['deepseek'] = ds_entry
+
+        ttk.Label(api_scroll_frame, text="(Moi key 1 dong, Enter de xuong dong)",
+                  foreground='gray', font=('Segoe UI', 8)).pack(anchor=tk.W)
+
+        # Buttons
+        btn_frame = ttk.Frame(api_scroll_frame)
+        btn_frame.pack(fill=tk.X, pady=(10, 0))
+
+        def save_api_keys():
+            """Save API keys to accounts.json."""
+            try:
+                config_file = CONFIG_DIR / "accounts.json"
+                with open(config_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+
+                # Update API keys
+                if 'api_keys' not in data:
+                    data['api_keys'] = {}
+
+                for key_type, entry in api_entries.items():
+                    text = entry.get("1.0", tk.END).strip()
+                    keys = [k.strip() for k in text.split('\n') if k.strip()]
+                    data['api_keys'][key_type] = keys
+
+                with open(config_file, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, indent=4, ensure_ascii=False)
+
+                self.reload_config()
+                messagebox.showinfo("OK", "Da luu API keys!")
+            except Exception as e:
+                messagebox.showerror("Loi", f"Khong the luu: {e}")
+
+        def test_api_keys():
+            """Test all API keys."""
+            win.config(cursor="wait")
+            win.update()
+
+            results = []
+
+            # Test Gemini
+            for i, key in enumerate(self.gemini_keys):
+                try:
+                    from modules.ai_providers import GeminiClient
+                    client = GeminiClient(key)
+                    r = client.generate("Say OK", max_tokens=10)
+                    status = "OK" if r else "FAIL"
+                except Exception as e:
+                    status = f"FAIL: {str(e)[:30]}"
+                results.append(f"Gemini #{i+1}: {status}")
+
+            # Test Groq
+            for i, key in enumerate(self.groq_keys):
+                try:
+                    from modules.ai_providers import GroqClient
+                    client = GroqClient(key)
+                    r = client.generate("Say OK", max_tokens=10)
+                    status = "OK" if r else "FAIL"
+                except Exception as e:
+                    status = f"FAIL: {str(e)[:30]}"
+                results.append(f"Groq #{i+1}: {status}")
+
+            # Test DeepSeek
+            for i, key in enumerate(self.deepseek_keys):
+                try:
+                    from modules.ai_providers import DeepSeekClient
+                    client = DeepSeekClient(key)
+                    r = client.generate("Say OK", max_tokens=10)
+                    status = "OK" if r else "FAIL"
+                except Exception as e:
+                    status = f"FAIL: {str(e)[:30]}"
+                results.append(f"DeepSeek #{i+1}: {status}")
+
+            win.config(cursor="")
+
+            if results:
+                messagebox.showinfo("Ket qua Test", '\n'.join(results))
+            else:
+                messagebox.showwarning("Chua co key", "Chua co API key nao de test!")
+
+        ttk.Button(btn_frame, text="💾 Luu API Keys", command=save_api_keys).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(btn_frame, text="🧪 Test APIs", command=test_api_keys).pack(side=tk.LEFT)
+
+        api_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        api_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
         # Tab 3: Token
         token_tab = ttk.Frame(notebook, padding=15)
@@ -904,15 +1041,16 @@ class UnixVoiceToVideo:
         
         # Check AI keys for voice
         ext = Path(path).suffix.lower() if Path(path).is_file() else ""
-        if ext in ['.mp3', '.wav'] and not self.groq_keys and not self.gemini_keys:
+        has_ai_keys = self.gemini_keys or self.groq_keys or self.deepseek_keys
+        if ext in ['.mp3', '.wav'] and not has_ai_keys:
             result = messagebox.askyesno(
-                "Thiếu AI API Key",
-                "Cần Groq hoặc Gemini API key để xử lý voice!\n\n"
-                "Groq API hoàn toàn FREE.\n"
-                "Mở trang Groq để lấy key?"
+                "Thieu AI API Key",
+                "Can Gemini, Groq hoac DeepSeek API key de xu ly voice!\n\n"
+                "Thu tu uu tien: Gemini > Groq (FREE) > DeepSeek\n\n"
+                "Mo Cai dat de nhap API keys?"
             )
             if result:
-                webbrowser.open("https://console.groq.com/keys")
+                self.open_settings()
             return
         
         # Start

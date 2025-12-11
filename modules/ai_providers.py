@@ -333,35 +333,31 @@ class MultiAIClient:
         self._init_clients()
     
     def _init_clients(self):
-        """Khoi tao cac clients."""
+        """Khoi tao cac clients theo thu tu uu tien: Gemini > Groq > DeepSeek."""
 
-        # DeepSeek (uu tien vi re va on dinh)
-        deepseek_keys = self.config.get("deepseek_api_keys", [])
-        for key in deepseek_keys:
-            if key and key.strip():
-                self.clients.append(("deepseek", DeepSeekClient(key.strip())))
-
-        # Groq (nhanh nhat, mien phi nhung hay rate limit)
-        groq_keys = self.config.get("groq_api_keys", [])
-        for key in groq_keys:
-            if key and key.strip():
-                self.clients.append(("groq", GroqClient(key.strip())))
-
-        # OpenRouter
-        openrouter_keys = self.config.get("openrouter_api_keys", [])
-        for key in openrouter_keys:
-            if key and key.strip():
-                self.clients.append(("openrouter", OpenRouterClient(key.strip())))
-
-        # Gemini
+        # 1. Gemini (chat luong cao nhat, nhanh nhat)
         gemini_keys = self.config.get("gemini_api_keys", [])
         for key in gemini_keys:
             if key and key.strip():
                 self.clients.append(("gemini", GeminiClient(key.strip())))
 
-        # Sap xep theo preferred_provider
-        preferred = self.config.get("preferred_provider", "deepseek")
-        self.clients.sort(key=lambda x: 0 if x[0] == preferred else 1)
+        # 2. Groq (nhanh, mien phi nhung hay rate limit)
+        groq_keys = self.config.get("groq_api_keys", [])
+        for key in groq_keys:
+            if key and key.strip():
+                self.clients.append(("groq", GroqClient(key.strip())))
+
+        # 3. DeepSeek (re, on dinh, nhung cham)
+        deepseek_keys = self.config.get("deepseek_api_keys", [])
+        for key in deepseek_keys:
+            if key and key.strip():
+                self.clients.append(("deepseek", DeepSeekClient(key.strip())))
+
+        # 4. OpenRouter (backup)
+        openrouter_keys = self.config.get("openrouter_api_keys", [])
+        for key in openrouter_keys:
+            if key and key.strip():
+                self.clients.append(("openrouter", OpenRouterClient(key.strip())))
     
     def generate(
         self,

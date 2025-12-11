@@ -37,7 +37,7 @@ from modules.prompts_loader import (
 class MultiAIClient:
     """
     Client hỗ trợ nhiều AI providers.
-    Ưu tiên: DeepSeek (rẻ) > Groq (free) > Gemini
+    Ưu tiên: Gemini (chất lượng cao) > Groq (nhanh) > DeepSeek (rẻ, chậm)
     """
 
     DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
@@ -75,11 +75,69 @@ class MultiAIClient:
         max_tokens: int = 8192,
         max_retries: int = 5
     ) -> str:
-        """Generate content using available AI providers."""
+        """Generate content using available AI providers.
+        Priority: Gemini (best quality) > Groq (fast) > DeepSeek (cheap, slow)
+        """
 
         last_error = None
 
-        # Try DeepSeek first (cheap and stable)
+        # 1. Try Gemini first (best quality, fastest)
+        if self.gemini_keys:
+            for attempt in range(max_retries):
+                try:
+                    print(f"[Gemini] Dang goi API (attempt {attempt + 1})...")
+                    result = self._call_gemini(prompt, temperature, max_tokens)
+                    if result:
+                        print(f"[Gemini] Thanh cong!")
+                        return result
+                except Exception as e:
+                    last_error = e
+                    error_str = str(e).lower()
+
+                    if "leaked" in error_str:
+                        self.logger.error("Gemini key leaked! Using next key...")
+                        self.gemini_key_index = (self.gemini_key_index + 1) % len(self.gemini_keys)
+                        continue
+                    elif "429" in error_str or "quota" in error_str:
+                        self.logger.warning("Gemini quota exceeded, trying next key...")
+                        self.gemini_key_index = (self.gemini_key_index + 1) % len(self.gemini_keys)
+                        time.sleep(5)
+                        continue
+                    elif "404" in error_str:
+                        self.logger.warning("Gemini model not found, trying next...")
+                        self.gemini_model_index = (self.gemini_model_index + 1) % len(self.gemini_models)
+                        continue
+                    else:
+                        self.logger.error(f"Gemini error: {e}")
+                        break
+
+        # 2. Fallback to Groq (fast, free but rate limited)
+        if self.groq_keys:
+            for attempt in range(max_retries):
+                try:
+                    print(f"[Groq] Dang goi API (attempt {attempt + 1})...")
+                    result = self._call_groq(prompt, temperature, max_tokens)
+                    if result:
+                        print(f"[Groq] Thanh cong!")
+                        return result
+                except Exception as e:
+                    last_error = e
+                    error_str = str(e).lower()
+
+                    if "rate" in error_str or "429" in error_str:
+                        self.logger.warning("Groq rate limit, trying next key...")
+                        self.groq_index = (self.groq_index + 1) % len(self.groq_keys)
+                        time.sleep(5)
+                        continue
+                    elif "invalid" in error_str or "unauthorized" in error_str:
+                        self.logger.warning("Groq key invalid, trying next...")
+                        self.groq_index = (self.groq_index + 1) % len(self.groq_keys)
+                        continue
+                    else:
+                        self.logger.error(f"Groq error: {e}")
+                        break
+
+        # 3. Fallback to DeepSeek (cheap, stable but slow)
         if self.deepseek_keys:
             for attempt in range(max_retries):
                 try:
@@ -101,58 +159,6 @@ class MultiAIClient:
                         continue
                     else:
                         self.logger.error(f"DeepSeek error: {e}")
-                        break
-
-        # Fallback to Groq (free but rate limited)
-        if self.groq_keys:
-            for attempt in range(max_retries):
-                try:
-                    result = self._call_groq(prompt, temperature, max_tokens)
-                    if result:
-                        return result
-                except Exception as e:
-                    last_error = e
-                    error_str = str(e).lower()
-
-                    if "rate" in error_str or "429" in error_str:
-                        self.logger.warning("Groq rate limit, trying next key...")
-                        self.groq_index = (self.groq_index + 1) % len(self.groq_keys)
-                        time.sleep(5)
-                        continue
-                    elif "invalid" in error_str or "unauthorized" in error_str:
-                        self.logger.warning("Groq key invalid, trying next...")
-                        self.groq_index = (self.groq_index + 1) % len(self.groq_keys)
-                        continue
-                    else:
-                        self.logger.error(f"Groq error: {e}")
-                        break
-
-        # Fallback to Gemini
-        if self.gemini_keys:
-            for attempt in range(max_retries):
-                try:
-                    result = self._call_gemini(prompt, temperature, max_tokens)
-                    if result:
-                        return result
-                except Exception as e:
-                    last_error = e
-                    error_str = str(e).lower()
-
-                    if "leaked" in error_str:
-                        self.logger.error("Gemini key leaked! Using next key...")
-                        self.gemini_key_index = (self.gemini_key_index + 1) % len(self.gemini_keys)
-                        continue
-                    elif "429" in error_str or "quota" in error_str:
-                        self.logger.warning("Gemini quota exceeded, trying next...")
-                        self.gemini_key_index = (self.gemini_key_index + 1) % len(self.gemini_keys)
-                        time.sleep(10)
-                        continue
-                    elif "404" in error_str:
-                        self.logger.warning("Gemini model not found, trying next...")
-                        self.gemini_model_index = (self.gemini_model_index + 1) % len(self.gemini_models)
-                        continue
-                    else:
-                        self.logger.error(f"Gemini error: {e}")
                         break
 
         if last_error:
