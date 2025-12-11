@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """
-VE3 Tool Pro v2.2
-=================
+Uni-x Voice to Video v2.3
+=========================
 Beautiful, Smart, Powerful
-1 Click: Voice → Images
+1 Click: Voice → Video Images
+
+v2.3 Updates:
+- Rebranded to Uni-x Voice to Video
+- New color scheme and logo
+- Hide console window on Windows
 
 v2.2 Updates:
 - Unified Preview & Edit tab (combined preview + prompts)
@@ -25,6 +30,8 @@ import shutil
 import threading
 import webbrowser
 import time
+import io
+import urllib.request
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Optional
@@ -46,19 +53,40 @@ except:
     HAS_PIL = False
 
 
-class VE3ToolPro:
-    """VE3 Tool Pro - Beautiful GUI."""
+class UnixVoiceToVideo:
+    """Uni-x Voice to Video - Beautiful GUI."""
 
-    VERSION = "2.2"
-    
+    VERSION = "2.3"
+    APP_NAME = "Uni-x Voice to Video"
+    LOGO_URL = "https://cdn-new.topcv.vn/unsafe/https://static.topcv.vn/company_logos/682bdc2e715781747704878.jpg"
+
+    # Color scheme - Modern Purple/Blue gradient theme
+    COLORS = {
+        'primary': '#6366f1',      # Indigo
+        'primary_dark': '#4f46e5', # Darker indigo
+        'secondary': '#8b5cf6',    # Purple
+        'accent': '#06b6d4',       # Cyan
+        'success': '#10b981',      # Emerald
+        'warning': '#f59e0b',      # Amber
+        'error': '#ef4444',        # Red
+        'bg': '#0f172a',           # Slate 900
+        'bg_light': '#1e293b',     # Slate 800
+        'bg_card': '#334155',      # Slate 700
+        'text': '#f8fafc',         # Slate 50
+        'text_muted': '#94a3b8',   # Slate 400
+    }
+
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("VE3 Tool Pro")
+        self.root.title(self.APP_NAME)
         self.root.geometry("1280x800")
         self.root.minsize(1100, 700)
-        
-        # Config background
-        self.root.configure(bg='#f0f0f0')
+
+        # Set icon from URL
+        self._set_icon()
+
+        # Config background - dark theme
+        self.root.configure(bg=self.COLORS['bg'])
         
         # Variables
         self.input_mode = tk.StringVar(value="file")
@@ -98,27 +126,141 @@ class VE3ToolPro:
         
         # Initial state
         self.update_resource_display()
-    
+
+    def _set_icon(self):
+        """Set application icon from URL."""
+        if not HAS_PIL:
+            return
+        try:
+            # Download icon
+            with urllib.request.urlopen(self.LOGO_URL, timeout=5) as response:
+                img_data = response.read()
+            img = Image.open(io.BytesIO(img_data))
+            img = img.resize((64, 64), Image.Resampling.LANCZOS)
+            self._icon_photo = ImageTk.PhotoImage(img)
+            self.root.iconphoto(True, self._icon_photo)
+        except Exception as e:
+            print(f"Could not load icon: {e}")
+
     def setup_styles(self):
-        """Setup ttk styles."""
+        """Setup ttk styles with modern dark theme."""
         style = ttk.Style()
-        
-        # Use clam theme
+
+        # Use clam theme as base
         style.theme_use('clam')
-        
-        # Custom fonts
-        style.configure('.', font=('Segoe UI', 10))
-        style.configure('Title.TLabel', font=('Segoe UI', 20, 'bold'), foreground='#2c3e50')
-        style.configure('Subtitle.TLabel', font=('Segoe UI', 11), foreground='#7f8c8d')
-        style.configure('Section.TLabelframe.Label', font=('Segoe UI', 10, 'bold'))
-        style.configure('Big.TButton', font=('Segoe UI', 14, 'bold'), padding=(20, 15))
-        style.configure('Status.TLabel', font=('Segoe UI', 9))
-        style.configure('Card.TFrame', background='white')
-        
-        # Map colors
-        style.map('Big.TButton',
-            background=[('active', '#27ae60'), ('!active', '#2ecc71')],
-            foreground=[('active', 'white'), ('!active', 'white')])
+
+        C = self.COLORS
+
+        # Configure main theme colors
+        style.configure('.',
+            font=('Segoe UI', 10),
+            background=C['bg_light'],
+            foreground=C['text'])
+
+        # Title style
+        style.configure('Title.TLabel',
+            font=('Segoe UI', 22, 'bold'),
+            foreground=C['primary'],
+            background=C['bg_light'])
+        style.configure('Subtitle.TLabel',
+            font=('Segoe UI', 11),
+            foreground=C['text_muted'],
+            background=C['bg_light'])
+
+        style.configure('Section.TLabelframe.Label',
+            font=('Segoe UI', 10, 'bold'),
+            foreground=C['accent'],
+            background=C['bg_light'])
+
+        style.configure('TLabelframe',
+            background=C['bg_light'],
+            bordercolor=C['bg_card'])
+
+        style.configure('TFrame', background=C['bg_light'])
+        style.configure('TLabel', background=C['bg_light'], foreground=C['text'])
+
+        # Button styles
+        style.configure('TButton',
+            font=('Segoe UI', 10),
+            background=C['bg_card'],
+            foreground=C['text'],
+            borderwidth=0,
+            padding=(10, 6))
+        style.map('TButton',
+            background=[('active', C['primary']), ('pressed', C['primary_dark'])],
+            foreground=[('active', 'white')])
+
+        style.configure('Accent.TButton',
+            font=('Segoe UI', 10, 'bold'),
+            background=C['primary'],
+            foreground='white')
+        style.map('Accent.TButton',
+            background=[('active', C['primary_dark'])])
+
+        style.configure('Big.TButton',
+            font=('Segoe UI', 14, 'bold'),
+            padding=(20, 15))
+
+        style.configure('Status.TLabel',
+            font=('Segoe UI', 9),
+            background=C['bg_light'])
+
+        # Entry style
+        style.configure('TEntry',
+            fieldbackground=C['bg_card'],
+            foreground=C['text'],
+            insertcolor=C['text'])
+
+        # Combobox
+        style.configure('TCombobox',
+            fieldbackground=C['bg_card'],
+            background=C['bg_card'],
+            foreground=C['text'])
+
+        # Notebook (tabs)
+        style.configure('TNotebook',
+            background=C['bg'],
+            borderwidth=0)
+        style.configure('TNotebook.Tab',
+            background=C['bg_card'],
+            foreground=C['text_muted'],
+            padding=(15, 8),
+            font=('Segoe UI', 10))
+        style.map('TNotebook.Tab',
+            background=[('selected', C['primary'])],
+            foreground=[('selected', 'white')])
+
+        # Treeview
+        style.configure('Treeview',
+            background=C['bg_card'],
+            foreground=C['text'],
+            fieldbackground=C['bg_card'],
+            borderwidth=0)
+        style.configure('Treeview.Heading',
+            background=C['bg_light'],
+            foreground=C['accent'],
+            font=('Segoe UI', 9, 'bold'))
+        style.map('Treeview',
+            background=[('selected', C['primary'])],
+            foreground=[('selected', 'white')])
+
+        # Progressbar
+        style.configure('TProgressbar',
+            background=C['primary'],
+            troughcolor=C['bg_card'],
+            borderwidth=0,
+            thickness=8)
+
+        # Scrollbar
+        style.configure('TScrollbar',
+            background=C['bg_card'],
+            troughcolor=C['bg_light'],
+            borderwidth=0)
+
+        # Radiobutton
+        style.configure('TRadiobutton',
+            background=C['bg_light'],
+            foreground=C['text'])
     
     def create_ui(self):
         """Create main UI layout."""
@@ -142,8 +284,10 @@ class VE3ToolPro:
     def create_controls(self, parent):
         """Create left control panel with scrollable area."""
 
+        C = self.COLORS
+
         # Create canvas with scrollbar for scrollable controls
-        canvas = tk.Canvas(parent, highlightthickness=0, bg='#f0f0f0')
+        canvas = tk.Canvas(parent, highlightthickness=0, bg=C['bg_light'])
         scrollbar = ttk.Scrollbar(parent, orient=tk.VERTICAL, command=canvas.yview)
         scrollable_frame = ttk.Frame(canvas)
 
@@ -167,8 +311,8 @@ class VE3ToolPro:
         header = ttk.Frame(scrollable_frame)
         header.pack(fill=tk.X, pady=(0, 15), padx=5)
 
-        ttk.Label(header, text="🎨 VE3 Tool", style='Title.TLabel').pack(anchor=tk.W)
-        ttk.Label(header, text="Voice → Images (1 Click)", style='Subtitle.TLabel').pack(anchor=tk.W)
+        ttk.Label(header, text="🎬 Uni-x", style='Title.TLabel').pack(anchor=tk.W)
+        ttk.Label(header, text="Voice → Video (1 Click)", style='Subtitle.TLabel').pack(anchor=tk.W)
 
         # === 1. INPUT ===
         input_frame = ttk.LabelFrame(scrollable_frame, text=" 📁 Đầu vào ", padding=10)
@@ -201,7 +345,7 @@ class VE3ToolPro:
         self.start_btn = tk.Button(
             scrollable_frame, text="▶  BẮT ĐẦU",
             font=('Segoe UI', 14, 'bold'),
-            bg='#2ecc71', fg='white', activebackground='#27ae60',
+            bg=C['primary'], fg='white', activebackground=C['primary_dark'],
             relief=tk.FLAT, cursor='hand2',
             command=self.start_processing
         )
@@ -211,7 +355,7 @@ class VE3ToolPro:
         self.stop_btn = tk.Button(
             scrollable_frame, text="⏹  Dừng",
             font=('Segoe UI', 10),
-            bg='#e74c3c', fg='white', activebackground='#c0392b',
+            bg=C['error'], fg='white', activebackground='#dc2626',
             relief=tk.FLAT, state=tk.DISABLED,
             command=self.stop_processing
         )
@@ -774,7 +918,7 @@ class VE3ToolPro:
         # Start
         self._running = True
         self._stop = False
-        self.start_btn.config(state=tk.DISABLED, bg='#95a5a6')
+        self.start_btn.config(state=tk.DISABLED, bg=self.COLORS['bg_card'])
         self.stop_btn.config(state=tk.NORMAL)
 
         # Start auto-refresh for preview
@@ -930,7 +1074,7 @@ class VE3ToolPro:
         """Reset UI after processing."""
         self._running = False
         self._stop_auto_refresh()
-        self.start_btn.config(state=tk.NORMAL, bg='#2ecc71')
+        self.start_btn.config(state=tk.NORMAL, bg=self.COLORS['primary'])
         self.stop_btn.config(state=tk.DISABLED)
         # Final refresh
         self.refresh_preview()
@@ -1863,7 +2007,7 @@ def hide_console():
 def main():
     """Entry point."""
     hide_console()
-    app = VE3ToolPro()
+    app = UnixVoiceToVideo()
     app.run()
 
 
