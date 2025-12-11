@@ -1380,11 +1380,17 @@ class UnixVoiceToVideo:
                             continue
 
                         prompt = str(row[prompt_col] or "")[:80] + "..." if prompt_col and len(row) > prompt_col else ""
-                        is_char = pid.startswith('nv')
-                        item_type = "NV" if is_char else "Scene"
+                        # Characters (nv*) and Locations (loc*) are reference images -> save in nv/
+                        is_reference = pid.startswith('nv') or pid.startswith('loc')
+                        if pid.startswith('nv'):
+                            item_type = "NV"
+                        elif pid.startswith('loc'):
+                            item_type = "LOC"
+                        else:
+                            item_type = "Scene"
 
-                        # Check status
-                        if is_char:
+                        # Check status - reference images in nv/, scene images in img/
+                        if is_reference:
                             img_path = nv_dir / f"{pid}.png"
                         else:
                             img_path = img_dir / f"{pid}.png"
@@ -1396,15 +1402,22 @@ class UnixVoiceToVideo:
             except Exception as e:
                 self.log(f"Error reading Excel: {e}", "ERROR")
 
-        # Sort: chars first, then scenes by ID
+        # Sort: reference images (nv*, loc*) first, then scenes by ID
         def sort_key(item):
             pid = item[0]
-            is_char = pid.startswith('nv')
+            is_reference = pid.startswith('nv') or pid.startswith('loc')
             try:
                 num = int(''.join(filter(str.isdigit, pid)))
             except:
                 num = 999
-            return (0 if is_char else 1, num)
+            # Sort order: nv (0), loc (1), scenes (2)
+            if pid.startswith('nv'):
+                order = 0
+            elif pid.startswith('loc'):
+                order = 1
+            else:
+                order = 2
+            return (order, num)
 
         all_items.sort(key=sort_key)
 
@@ -1961,8 +1974,9 @@ class UnixVoiceToVideo:
             messagebox.showwarning("Thiếu prompt", "Prompt không được để trống")
             return
 
-        is_char = self._current_item_type == "char"
-        self._regenerate_single_image(self._current_item_id, prompt, is_char=is_char)
+        # Characters and Locations are reference images -> save in nv/
+        is_reference = self._current_item_type in ("char", "loc")
+        self._regenerate_single_image(self._current_item_id, prompt, is_char=is_reference)
 
     def regenerate_all_pending(self):
         """Regenerate all pending (not done) images."""
@@ -1980,10 +1994,12 @@ class UnixVoiceToVideo:
             # values = (id, type, prompt, status)
             if len(values) >= 4 and values[3] == "⏳":  # Status is pending
                 item_id = values[0]
-                is_char = str(values[1]).upper() == "NV"
+                # Characters (NV) and Locations (LOC) are reference images -> save in nv/
+                item_type = str(values[1]).upper()
+                is_reference = item_type in ("NV", "LOC")
                 prompt = self.get_prompt_for_id(item_id)
                 if prompt:
-                    pending.append((item_id, prompt, is_char))
+                    pending.append((item_id, prompt, is_reference))
 
         if not pending:
             messagebox.showinfo("Thông báo", "Tất cả ảnh đã hoàn thành!")
@@ -2002,7 +2018,7 @@ class UnixVoiceToVideo:
                 engine = SmartEngine()
                 generator = FlowImageGenerator()
 
-                for i, (item_id, prompt, is_char) in enumerate(pending):
+                for i, (item_id, prompt, is_reference) in enumerate(pending):
                     self.root.after(0, lambda id=item_id, n=i+1, t=len(pending):
                         self.log(f"[{n}/{t}] Đang tạo: {id}..."))
 
@@ -2015,8 +2031,8 @@ class UnixVoiceToVideo:
                             self.log(f"❌ Không có token cho {id}", "ERROR"))
                         continue
 
-                    # Output path
-                    if is_char:
+                    # Output path - reference images (nv*, loc*) in nv/, scenes in img/
+                    if is_reference:
                         output_path = nv_dir / f"{item_id}.png"
                     else:
                         output_path = img_dir / f"{item_id}.png"

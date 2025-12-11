@@ -646,14 +646,15 @@ class PromptGenerator:
             char.status = "pending"
             workbook.add_character(char)
 
-        # Lưu locations
+        # Lưu locations (as Character with role="location")
         for loc in locations:
             loc_char = Character(
                 id=loc.id,
                 role="location",
                 name=loc.name,
-                english_prompt=loc.english_prompt,
-                vietnamese_prompt=loc.location_lock,
+                english_prompt=loc.english_prompt,  # location_prompt - for generating reference image
+                character_lock=loc.location_lock,   # location_lock - for scene prompts (IMPORTANT!)
+                vietnamese_prompt=loc.location_lock,  # Keep for backwards compat
                 image_file=f"{loc.id}.png",
                 status="pending"
             )
@@ -749,19 +750,21 @@ class PromptGenerator:
             # Extract characters
             characters = []
             for char_data in json_data["characters"]:
-                # Support both old format (english_prompt) and new format (portrait_prompt)
-                english_prompt = char_data.get("english_prompt", "")
-                if not english_prompt:
-                    english_prompt = char_data.get("portrait_prompt", "")
-                    if english_prompt == "DO_NOT_GENERATE":
-                        # Tre em - dung character_lock thay vi portrait
-                        english_prompt = char_data.get("character_lock", "")
+                # portrait_prompt = full prompt for generating reference image (white background)
+                # character_lock = short description for scene prompts (IMPORTANT!)
+                portrait_prompt = char_data.get("portrait_prompt", char_data.get("english_prompt", ""))
+                character_lock = char_data.get("character_lock", "")
+
+                # For children (DO_NOT_GENERATE), use character_lock for both
+                if portrait_prompt == "DO_NOT_GENERATE":
+                    portrait_prompt = character_lock
 
                 characters.append(Character(
                     id=char_data.get("id", ""),
                     role=char_data.get("role", "supporting"),
                     name=char_data.get("name", ""),
-                    english_prompt=english_prompt,
+                    english_prompt=portrait_prompt,  # For reference image generation
+                    character_lock=character_lock,    # For scene prompts (IMPORTANT!)
                     vietnamese_prompt=char_data.get("vietnamese_prompt", char_data.get("vietnamese_description", "")),
                 ))
 
@@ -885,11 +888,12 @@ class PromptGenerator:
         """
         locations = locations or []
 
-        # Format thông tin nhân vật (v5.0 format) - include character_lock for AI to copy
+        # Format thông tin nhân vật (v5.0 format) - use character_lock for scene prompts
+        # IMPORTANT: character_lock is the short description for scenes, NOT english_prompt (portrait_prompt)
         characters_info = "\n".join([
             f"- ID: {char.id}\n"
             f"  Name: {char.name} ({char.role})\n"
-            f"  character_lock: \"{char.english_prompt}\"\n"
+            f"  character_lock: \"{char.character_lock or char.english_prompt}\"\n"
             f"  reference_file: {char.id}.png"
             for char in characters
         ])

@@ -22,9 +22,10 @@ from modules.utils import get_logger
 # Cột cho sheet Characters
 CHARACTERS_COLUMNS = [
     "id",               # ID nhân vật (nvc, nvp1, nvp2, ...)
-    "role",             # Vai trò (main/supporting)
+    "role",             # Vai trò (main/supporting/location)
     "name",             # Tên nhân vật trong truyện
-    "english_prompt",   # Prompt tiếng Anh mô tả ngoại hình
+    "english_prompt",   # Prompt tiếng Anh cho ảnh tham chiếu (portrait_prompt)
+    "character_lock",   # Mô tả ngắn để paste vào scene prompts (QUAN TRỌNG!)
     "vietnamese_prompt", # Prompt tiếng Việt (nếu cần)
     "image_file",       # Tên file ảnh tham chiếu (nvc.png, nvp1.png, ...)
     "status",           # Trạng thái (pending/done/error)
@@ -54,13 +55,14 @@ SCENES_COLUMNS = [
 
 class Character:
     """Đại diện cho một nhân vật trong truyện."""
-    
+
     def __init__(
         self,
         id: str,
         role: str = "supporting",
         name: str = "",
         english_prompt: str = "",
+        character_lock: str = "",
         vietnamese_prompt: str = "",
         image_file: str = "",
         status: str = "pending"
@@ -68,11 +70,12 @@ class Character:
         self.id = id
         self.role = role
         self.name = name
-        self.english_prompt = english_prompt
+        self.english_prompt = english_prompt  # portrait_prompt - for generating reference image
+        self.character_lock = character_lock  # short description for scene prompts
         self.vietnamese_prompt = vietnamese_prompt
         self.image_file = image_file
         self.status = status
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Chuyển đổi thành dictionary."""
         return {
@@ -80,11 +83,12 @@ class Character:
             "role": self.role,
             "name": self.name,
             "english_prompt": self.english_prompt,
+            "character_lock": self.character_lock,
             "vietnamese_prompt": self.vietnamese_prompt,
             "image_file": self.image_file,
             "status": self.status,
         }
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Character":
         """Tạo Character từ dictionary."""
@@ -93,6 +97,7 @@ class Character:
             role=str(data.get("role", "supporting")),
             name=str(data.get("name", "")),
             english_prompt=str(data.get("english_prompt", "")),
+            character_lock=str(data.get("character_lock", "")),
             vietnamese_prompt=str(data.get("vietnamese_prompt", "")),
             image_file=str(data.get("image_file", "")),
             status=str(data.get("status", "pending")),
@@ -312,6 +317,7 @@ class PromptWorkbook:
             "role": 12,
             "name": 20,
             "english_prompt": 60,
+            "character_lock": 50,
             "vietnamese_prompt": 40,
             "image_file": 15,
             "status": 10,
