@@ -27,6 +27,7 @@ from modules.excel_manager import (
 from modules.prompts_loader import (
     get_analyze_story_prompt,
     get_generate_scenes_prompt,
+    get_smart_divide_scenes_prompt,
     get_global_style
 )
 
@@ -625,20 +626,11 @@ class PromptGenerator:
             return False
         
         self.logger.info(f"Tìm thấy {len(srt_entries)} SRT entries")
-        
-        # Gom thành scenes
-        scenes_data = group_srt_into_scenes(
-            srt_entries,
-            min_duration=self.min_scene_duration,
-            max_duration=self.max_scene_duration
-        )
-        
-        self.logger.info(f"Gom thành {len(scenes_data)} scenes")
-        
-        # Tạo full story text để phân tích nhân vật
+
+        # Tạo full story text để phân tích
         full_story = " ".join([e.text for e in srt_entries])
-        
-        # Step 1: Phân tích nhân vật + bối cảnh (v5.0)
+
+        # Step 1: Phân tích nhân vật + bối cảnh TRƯỚC
         self.logger.info("Phân tích nhân vật và bối cảnh...")
         characters, locations, context_lock, global_style = self._analyze_characters(full_story)
 
@@ -647,8 +639,6 @@ class PromptGenerator:
             return False
 
         self.logger.info(f"Tìm thấy {len(characters)} nhân vật, {len(locations)} bối cảnh")
-        if context_lock:
-            self.logger.info(f"Context lock: {context_lock[:100]}...")
 
         # Lưu nhân vật vào Excel
         for char in characters:
@@ -656,8 +646,7 @@ class PromptGenerator:
             char.status = "pending"
             workbook.add_character(char)
 
-        # Lưu locations (TODO: add workbook.add_location method)
-        # Tạm thời lưu như characters với id bắt đầu bằng "loc"
+        # Lưu locations
         for loc in locations:
             loc_char = Character(
                 id=loc.id,
@@ -673,7 +662,13 @@ class PromptGenerator:
         workbook.save()
         self.logger.info(f"Đã lưu {len(characters)} nhân vật + {len(locations)} bối cảnh")
 
-        # Step 2: Tạo prompts cho từng batch scenes
+        # Step 2: Chia scene THÔNG MINH theo nội dung (không theo thời gian)
+        self.logger.info("Chia scene theo nội dung (AI Smart Division)...")
+        scenes_data = self._smart_divide_scenes(srt_entries)
+
+        self.logger.info(f"Chia thành {len(scenes_data)} scenes")
+
+        # Step 3: Tạo prompts cho từng batch scenes
         self.logger.info("Tạo prompts cho scenes...")
 
         # Chia scenes thành batches để tránh vượt quá context limit
@@ -790,7 +785,81 @@ class PromptGenerator:
         except Exception as e:
             self.logger.error(f"Failed to analyze characters: {e}")
             return [], [], "", ""
-    
+
+    def _smart_divide_scenes(self, srt_entries: List) -> List[Dict[str, Any]]:
+        """
+        Chia scene thông minh theo nội dung thay vì theo thời gian.
+
+        Args:
+            srt_entries: List các SrtEntry từ file SRT
+
+        Returns:
+            List các scene data với: scene_id, start_time, end_time, text, srt_start, srt_end
+        """
+        # Format SRT entries với timestamps cho AI
+        srt_with_timestamps = "\n".join([
+            f"{e.index}. [{format_srt_time(e.start_time)} -> {format_srt_time(e.end_time)}] \"{e.text}\""
+            for e in srt_entries
+        ])
+
+        # Load prompt từ config/prompts.yaml
+        prompt_template = get_smart_divide_scenes_prompt()
+        if not prompt_template:
+            self.logger.warning("Smart divide prompt not found, falling back to time-based division")
+            return self._fallback_time_based_division(srt_entries)
+
+        prompt = prompt_template.format(srt_with_timestamps=srt_with_timestamps)
+
+        try:
+            self.logger.info("AI đang phân tích nội dung để chia scene...")
+            response = self._generate_content(prompt, temperature=0.4, max_tokens=16000)
+
+            # Parse JSON từ response
+            json_data = self._extract_json(response)
+
+            if not json_data or "scenes" not in json_data:
+                self.logger.warning(f"Invalid smart divide response, falling back to time-based")
+                return self._fallback_time_based_division(srt_entries)
+
+            # Convert AI output to internal format
+            scenes_data = []
+            for scene in json_data["scenes"]:
+                # Parse timestamps
+                start_str = scene.get("start_time", "00:00:00")
+                end_str = scene.get("end_time", "00:00:00")
+
+                # Get SRT indices
+                srt_indices = scene.get("srt_indices", [])
+                srt_start = min(srt_indices) if srt_indices else 1
+                srt_end = max(srt_indices) if srt_indices else 1
+
+                scenes_data.append({
+                    "scene_id": scene.get("scene_id", len(scenes_data) + 1),
+                    "start_time": start_str,
+                    "end_time": end_str,
+                    "duration_seconds": scene.get("duration_seconds", 5),
+                    "text": scene.get("text", ""),
+                    "visual_moment": scene.get("visual_moment", ""),
+                    "srt_start": srt_start,
+                    "srt_end": srt_end,
+                })
+
+            self.logger.info(f"AI chia thành {len(scenes_data)} scenes theo nội dung")
+            return scenes_data
+
+        except Exception as e:
+            self.logger.error(f"Smart divide failed: {e}, falling back to time-based")
+            return self._fallback_time_based_division(srt_entries)
+
+    def _fallback_time_based_division(self, srt_entries: List) -> List[Dict[str, Any]]:
+        """Fallback: chia scene theo thời gian khi AI không hoạt động."""
+        from modules.utils import group_srt_into_scenes
+        return group_srt_into_scenes(
+            srt_entries,
+            min_duration=self.min_scene_duration,
+            max_duration=self.max_scene_duration
+        )
+
     def _generate_scene_prompts(
         self,
         characters: List[Character],

@@ -244,6 +244,103 @@ generate_scenes: |
   OUTPUT: JSON object voi key "scenes", KHONG co markdown code block.
 
 # =============================================================================
+# STEP 2.5: SMART SCENE DIVISION (Chia scene theo noi dung)
+# =============================================================================
+# Input: {srt_with_timestamps} - SRT entries voi timestamps
+# Output: JSON array cua scenes duoc chia theo noi dung
+# =============================================================================
+
+smart_divide_scenes: |
+  Ban la AI Director. Chia cau chuyen thanh cac SCENE de tao anh minh hoa.
+
+  ## INPUT - SRT voi timestamps:
+  ---
+  {srt_with_timestamps}
+  ---
+
+  ## NHIEM VU:
+  Chia noi dung thanh cac SCENE, moi scene la 1 KHOANH KHAC HINH ANH duy nhat.
+
+  ## NGUYEN TAC CHIA SCENE:
+
+  ### 1. MOI SCENE = 1 ANH DUY NHAT
+  - Scene phai the hien duoc bang 1 buc anh tinh
+  - Neu co 2 hanh dong khac nhau → TACH thanh 2 scene
+  - Neu co chuyen doi dia diem → TACH thanh scene moi
+  - Neu co chuyen doi nhan vat chinh → TACH thanh scene moi
+
+  ### 2. THOI LUONG LINH HOAT (toi da 8 giay)
+  - Hanh dong nhanh: 2-4 giay
+  - Hoi thoai/ket noi: 4-6 giay
+  - Canh thiet lap/cam xuc: 6-8 giay
+  - KHONG BAO GIO > 8 giay
+
+  ### 3. GIU NGUYEN TIMESTAMPS TU SRT
+  - start_time va end_time PHAI lay tu SRT goc
+  - Khong duoc tu nghĩ ra timestamps
+
+  ### 4. VI DU CHIA SCENE:
+
+  SRT goc:
+  ```
+  1. [00:00:00 -> 00:00:03] "Anh ay buoc vao phong"
+  2. [00:00:03 -> 00:00:06] "va ngoi xuong ghe"
+  3. [00:00:06 -> 00:00:10] "Roi bat dau khoc"
+  ```
+
+  Chia thanh 3 scene (vi 3 hanh dong khac nhau):
+  - Scene 1: "Anh ay buoc vao phong" [00:00:00 -> 00:00:03] (3s)
+  - Scene 2: "va ngoi xuong ghe" [00:00:03 -> 00:00:06] (3s)
+  - Scene 3: "Roi bat dau khoc" [00:00:06 -> 00:00:10] (4s)
+
+  KHONG gop lai thanh 1 scene 10s!
+
+  ## OUTPUT FORMAT - JSON:
+
+  {{
+    "total_scenes": 15,
+    "total_duration": "02:30",
+    "scenes": [
+      {{
+        "scene_id": 1,
+        "start_time": "00:00:00",
+        "end_time": "00:00:03",
+        "duration_seconds": 3,
+        "srt_indices": [1],
+        "text": "Anh ay buoc vao phong",
+        "visual_moment": "Nguoi dan ong buoc qua cua vao phong khach"
+      }},
+      {{
+        "scene_id": 2,
+        "start_time": "00:00:03",
+        "end_time": "00:00:06",
+        "duration_seconds": 3,
+        "srt_indices": [2],
+        "text": "va ngoi xuong ghe",
+        "visual_moment": "Nguoi dan ong ngoi xuong sofa, ve mat met moi"
+      }},
+      {{
+        "scene_id": 3,
+        "start_time": "00:00:06",
+        "end_time": "00:00:10",
+        "duration_seconds": 4,
+        "srt_indices": [3],
+        "text": "Roi bat dau khoc",
+        "visual_moment": "Can canh khuon mat nguoi dan ong, nuoc mat chay xuong"
+      }}
+    ]
+  }}
+
+  ## CHECKLIST:
+  - [ ] Moi scene chi the hien 1 khoanh khac hinh anh
+  - [ ] Khong co scene nao > 8 giay
+  - [ ] Timestamps lay tu SRT goc (khong tu nghĩ ra)
+  - [ ] visual_moment mo ta ngan gon canh se ve
+  - [ ] srt_indices chua danh sach cac SRT entry thuoc scene nay
+
+  OUTPUT: JSON object, KHONG co markdown code block.
+
+# =============================================================================
 # CAMERA REFERENCE
 # =============================================================================
 

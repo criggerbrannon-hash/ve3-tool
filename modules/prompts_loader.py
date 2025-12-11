@@ -130,6 +130,10 @@ def get_global_lighting() -> str:
     """Lấy global lighting."""
     return get_prompts_loader().get_global_lighting()
 
+def get_smart_divide_scenes_prompt() -> str:
+    """Lấy prompt chia scene thông minh theo nội dung."""
+    return get_prompts_loader().get("smart_divide_scenes", "")
+
 def reload_prompts():
     """Force reload prompts."""
     get_prompts_loader().reload()
