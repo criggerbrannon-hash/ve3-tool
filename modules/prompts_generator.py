@@ -38,13 +38,15 @@ class MultiAIClient:
     """
     Client hỗ trợ nhiều AI providers.
     Ưu tiên: Gemini (chất lượng cao) > Groq (nhanh) > DeepSeek (rẻ, chậm)
+
+    Tự động test và loại bỏ API keys không hoạt động khi khởi tạo.
     """
 
     DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
     GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
     GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta"
 
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, auto_filter: bool = True):
         """
         Config format:
         {
@@ -52,13 +54,14 @@ class MultiAIClient:
             "groq_api_keys": ["key1", "key2"],
             "gemini_api_keys": ["key1"],
             "gemini_models": ["gemini-2.0-flash"],
-            "preferred_provider": "deepseek"
         }
+
+        auto_filter: Tự động test và loại bỏ API keys không hoạt động
         """
         self.config = config
-        self.deepseek_keys = [k for k in config.get("deepseek_api_keys", []) if k and k.strip()]
-        self.groq_keys = [k for k in config.get("groq_api_keys", []) if k and k.strip()]
         self.gemini_keys = [k for k in config.get("gemini_api_keys", []) if k and k.strip()]
+        self.groq_keys = [k for k in config.get("groq_api_keys", []) if k and k.strip()]
+        self.deepseek_keys = [k for k in config.get("deepseek_api_keys", []) if k and k.strip()]
         self.gemini_models = config.get("gemini_models", ["gemini-2.0-flash", "gemini-1.5-flash"])
 
         self.deepseek_index = 0
@@ -68,15 +71,116 @@ class MultiAIClient:
 
         self.logger = get_logger("multi_ai")
 
+        # Auto filter exhausted APIs at startup
+        if auto_filter:
+            self._filter_working_apis()
+
+    def _filter_working_apis(self):
+        """Test và loại bỏ API keys không hoạt động."""
+        print("\n[API Filter] Dang kiem tra API keys...")
+
+        # Test Gemini keys
+        working_gemini = []
+        for i, key in enumerate(self.gemini_keys):
+            print(f"  Testing Gemini key #{i+1}...", end=" ")
+            if self._test_gemini_key(key):
+                print("OK")
+                working_gemini.append(key)
+            else:
+                print("SKIP (quota/error)")
+
+        # Test Groq keys
+        working_groq = []
+        for i, key in enumerate(self.groq_keys):
+            print(f"  Testing Groq key #{i+1}...", end=" ")
+            if self._test_groq_key(key):
+                print("OK")
+                working_groq.append(key)
+            else:
+                print("SKIP (rate limit/error)")
+
+        # Test DeepSeek keys
+        working_deepseek = []
+        for i, key in enumerate(self.deepseek_keys):
+            print(f"  Testing DeepSeek key #{i+1}...", end=" ")
+            if self._test_deepseek_key(key):
+                print("OK")
+                working_deepseek.append(key)
+            else:
+                print("SKIP (error)")
+
+        # Update with working keys only
+        self.gemini_keys = working_gemini
+        self.groq_keys = working_groq
+        self.deepseek_keys = working_deepseek
+
+        total_working = len(working_gemini) + len(working_groq) + len(working_deepseek)
+        print(f"[API Filter] Ket qua: {len(working_gemini)} Gemini, {len(working_groq)} Groq, {len(working_deepseek)} DeepSeek")
+
+        if total_working == 0:
+            print("[API Filter] CANH BAO: Khong co API key nao hoat dong!")
+        else:
+            # Show priority order
+            if working_gemini:
+                print(f"[API Filter] Se dung: Gemini (uu tien)")
+            elif working_groq:
+                print(f"[API Filter] Se dung: Groq (uu tien)")
+            elif working_deepseek:
+                print(f"[API Filter] Se dung: DeepSeek")
+
+    def _test_gemini_key(self, key: str) -> bool:
+        """Test Gemini key với request nhỏ."""
+        try:
+            model = self.gemini_models[0] if self.gemini_models else "gemini-2.0-flash"
+            url = f"{self.GEMINI_URL}/models/{model}:generateContent?key={key}"
+            payload = {
+                "contents": [{"parts": [{"text": "Say OK"}]}],
+                "generationConfig": {"maxOutputTokens": 5}
+            }
+            resp = requests.post(url, json=payload, timeout=10)
+            return resp.status_code == 200
+        except:
+            return False
+
+    def _test_groq_key(self, key: str) -> bool:
+        """Test Groq key với request nhỏ."""
+        try:
+            headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+            data = {
+                "model": "llama-3.3-70b-versatile",
+                "messages": [{"role": "user", "content": "Say OK"}],
+                "max_tokens": 5
+            }
+            resp = requests.post(self.GROQ_URL, headers=headers, json=data, timeout=10)
+            return resp.status_code == 200
+        except:
+            return False
+
+    def _test_deepseek_key(self, key: str) -> bool:
+        """Test DeepSeek key với request nhỏ."""
+        try:
+            headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+            data = {
+                "model": "deepseek-chat",
+                "messages": [{"role": "user", "content": "Say OK"}],
+                "max_tokens": 5
+            }
+            resp = requests.post(self.DEEPSEEK_URL, headers=headers, json=data, timeout=15)
+            return resp.status_code == 200
+        except:
+            return False
+
     def generate_content(
         self,
         prompt: str,
         temperature: float = 0.7,
         max_tokens: int = 8192,
-        max_retries: int = 5
+        max_retries: int = 3
     ) -> str:
         """Generate content using available AI providers.
         Priority: Gemini (best quality) > Groq (fast) > DeepSeek (cheap, slow)
+
+        Chi thu cac API da duoc filter la hoat dong.
         """
 
         last_error = None
@@ -95,16 +199,22 @@ class MultiAIClient:
                     error_str = str(e).lower()
 
                     if "leaked" in error_str:
-                        self.logger.error("Gemini key leaked! Using next key...")
-                        self.gemini_key_index = (self.gemini_key_index + 1) % len(self.gemini_keys)
-                        continue
+                        self.logger.error("Gemini key leaked! Removing...")
+                        if self.gemini_keys:
+                            self.gemini_keys.pop(self.gemini_key_index)
+                            if self.gemini_keys:
+                                self.gemini_key_index = self.gemini_key_index % len(self.gemini_keys)
+                        break  # Move to next provider
                     elif "429" in error_str or "quota" in error_str:
-                        self.logger.warning("Gemini quota exceeded, trying next key...")
-                        self.gemini_key_index = (self.gemini_key_index + 1) % len(self.gemini_keys)
-                        time.sleep(5)
+                        self.logger.warning("Gemini quota exceeded, removing key...")
+                        if self.gemini_keys:
+                            self.gemini_keys.pop(self.gemini_key_index)
+                            if self.gemini_keys:
+                                self.gemini_key_index = self.gemini_key_index % len(self.gemini_keys)
+                            else:
+                                break  # No more keys, move to next provider
                         continue
                     elif "404" in error_str:
-                        self.logger.warning("Gemini model not found, trying next...")
                         self.gemini_model_index = (self.gemini_model_index + 1) % len(self.gemini_models)
                         continue
                     else:
@@ -127,11 +237,16 @@ class MultiAIClient:
                     if "rate" in error_str or "429" in error_str:
                         self.logger.warning("Groq rate limit, trying next key...")
                         self.groq_index = (self.groq_index + 1) % len(self.groq_keys)
-                        time.sleep(5)
+                        time.sleep(3)
                         continue
                     elif "invalid" in error_str or "unauthorized" in error_str:
-                        self.logger.warning("Groq key invalid, trying next...")
-                        self.groq_index = (self.groq_index + 1) % len(self.groq_keys)
+                        self.logger.warning("Groq key invalid, removing...")
+                        if self.groq_keys:
+                            self.groq_keys.pop(self.groq_index)
+                            if self.groq_keys:
+                                self.groq_index = self.groq_index % len(self.groq_keys)
+                            else:
+                                break
                         continue
                     else:
                         self.logger.error(f"Groq error: {e}")
@@ -151,11 +266,16 @@ class MultiAIClient:
                     if "rate" in error_str or "429" in error_str:
                         self.logger.warning("DeepSeek rate limit, trying next key...")
                         self.deepseek_index = (self.deepseek_index + 1) % len(self.deepseek_keys)
-                        time.sleep(5)
+                        time.sleep(3)
                         continue
                     elif "invalid" in error_str or "unauthorized" in error_str:
-                        self.logger.warning("DeepSeek key invalid, trying next...")
-                        self.deepseek_index = (self.deepseek_index + 1) % len(self.deepseek_keys)
+                        self.logger.warning("DeepSeek key invalid, removing...")
+                        if self.deepseek_keys:
+                            self.deepseek_keys.pop(self.deepseek_index)
+                            if self.deepseek_keys:
+                                self.deepseek_index = self.deepseek_index % len(self.deepseek_keys)
+                            else:
+                                break
                         continue
                     else:
                         self.logger.error(f"DeepSeek error: {e}")
@@ -163,7 +283,7 @@ class MultiAIClient:
 
         if last_error:
             raise last_error
-        raise RuntimeError("No AI providers available")
+        raise RuntimeError("Khong co API provider nao hoat dong!")
 
     def _call_deepseek(self, prompt: str, temperature: float, max_tokens: int) -> str:
         """Call DeepSeek API."""

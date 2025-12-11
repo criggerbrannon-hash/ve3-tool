@@ -315,49 +315,113 @@ class GeminiClient:
 class MultiAIClient:
     """
     Client ho tro nhieu AI providers.
-    Tu dong chuyen sang provider khac neu gap loi.
+    Tu dong test va loai bo API khong hoat dong khi khoi tao.
+    Thu tu uu tien: Gemini > Groq > DeepSeek > OpenRouter
     """
-    
-    def __init__(self, config: Dict[str, Any]):
+
+    def __init__(self, config: Dict[str, Any], auto_filter: bool = True):
         """
         Config format:
         {
-            "groq_api_keys": ["key1", "key2"],
-            "openrouter_api_keys": ["key1"],
             "gemini_api_keys": ["key1", "key2"],
-            "preferred_provider": "groq"  # groq, openrouter, gemini
+            "groq_api_keys": ["key1", "key2"],
+            "deepseek_api_keys": ["key1"],
+            "openrouter_api_keys": ["key1"],
         }
+
+        auto_filter: Tu dong test va loai bo API khong hoat dong
         """
         self.config = config
         self.clients = []
-        self._init_clients()
-    
-    def _init_clients(self):
+        self._init_clients(auto_filter)
+
+    def _test_client(self, name: str, client) -> bool:
+        """Test 1 client voi request nho."""
+        try:
+            result = client.generate("Say OK", max_tokens=5)
+            return result is not None
+        except:
+            return False
+
+    def _init_clients(self, auto_filter: bool = True):
         """Khoi tao cac clients theo thu tu uu tien: Gemini > Groq > DeepSeek."""
+
+        if auto_filter:
+            print("\n[API Filter] Dang kiem tra API keys...")
 
         # 1. Gemini (chat luong cao nhat, nhanh nhat)
         gemini_keys = self.config.get("gemini_api_keys", [])
-        for key in gemini_keys:
+        for i, key in enumerate(gemini_keys):
             if key and key.strip():
-                self.clients.append(("gemini", GeminiClient(key.strip())))
+                client = GeminiClient(key.strip())
+                if auto_filter:
+                    print(f"  Testing Gemini key #{i+1}...", end=" ")
+                    if self._test_client("gemini", client):
+                        print("OK")
+                        self.clients.append(("gemini", client))
+                    else:
+                        print("SKIP (quota/error)")
+                else:
+                    self.clients.append(("gemini", client))
 
         # 2. Groq (nhanh, mien phi nhung hay rate limit)
         groq_keys = self.config.get("groq_api_keys", [])
-        for key in groq_keys:
+        for i, key in enumerate(groq_keys):
             if key and key.strip():
-                self.clients.append(("groq", GroqClient(key.strip())))
+                client = GroqClient(key.strip())
+                if auto_filter:
+                    print(f"  Testing Groq key #{i+1}...", end=" ")
+                    if self._test_client("groq", client):
+                        print("OK")
+                        self.clients.append(("groq", client))
+                    else:
+                        print("SKIP (rate limit/error)")
+                else:
+                    self.clients.append(("groq", client))
 
         # 3. DeepSeek (re, on dinh, nhung cham)
         deepseek_keys = self.config.get("deepseek_api_keys", [])
-        for key in deepseek_keys:
+        for i, key in enumerate(deepseek_keys):
             if key and key.strip():
-                self.clients.append(("deepseek", DeepSeekClient(key.strip())))
+                client = DeepSeekClient(key.strip())
+                if auto_filter:
+                    print(f"  Testing DeepSeek key #{i+1}...", end=" ")
+                    if self._test_client("deepseek", client):
+                        print("OK")
+                        self.clients.append(("deepseek", client))
+                    else:
+                        print("SKIP (error)")
+                else:
+                    self.clients.append(("deepseek", client))
 
         # 4. OpenRouter (backup)
         openrouter_keys = self.config.get("openrouter_api_keys", [])
-        for key in openrouter_keys:
+        for i, key in enumerate(openrouter_keys):
             if key and key.strip():
-                self.clients.append(("openrouter", OpenRouterClient(key.strip())))
+                client = OpenRouterClient(key.strip())
+                if auto_filter:
+                    print(f"  Testing OpenRouter key #{i+1}...", end=" ")
+                    if self._test_client("openrouter", client):
+                        print("OK")
+                        self.clients.append(("openrouter", client))
+                    else:
+                        print("SKIP (error)")
+                else:
+                    self.clients.append(("openrouter", client))
+
+        if auto_filter:
+            # Count by provider type
+            counts = {}
+            for name, _ in self.clients:
+                counts[name] = counts.get(name, 0) + 1
+            print(f"[API Filter] Ket qua: {counts.get('gemini', 0)} Gemini, {counts.get('groq', 0)} Groq, {counts.get('deepseek', 0)} DeepSeek")
+
+            if not self.clients:
+                print("[API Filter] CANH BAO: Khong co API key nao hoat dong!")
+            else:
+                first_provider = self.clients[0][0] if self.clients else None
+                if first_provider:
+                    print(f"[API Filter] Se dung: {first_provider.capitalize()} (uu tien)")
     
     def generate(
         self,
@@ -365,54 +429,59 @@ class MultiAIClient:
         system_prompt: str = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
-        retry_count: int = 3
+        retry_count: int = 2
     ) -> Optional[str]:
         """
-        Generate text, tu dong retry voi provider khac neu loi.
+        Generate text, tu dong chuyen sang provider khac neu loi.
+        Chi thu cac API da duoc filter la hoat dong.
         """
-        
+
         if not self.clients:
-            print("[MultiAI] Khong co AI provider nao duoc cau hinh!")
+            print("[MultiAI] Khong co AI provider nao hoat dong!")
             return None
-        
+
         errors = []
-        
-        for name, client in self.clients:
+        clients_to_remove = []
+
+        for idx, (name, client) in enumerate(self.clients):
             for attempt in range(retry_count):
                 try:
-                    print(f"[MultiAI] Trying {name} (attempt {attempt + 1})...")
-                    
+                    print(f"[MultiAI] {name.capitalize()} (attempt {attempt + 1})...")
+
                     result = client.generate(
                         prompt=prompt,
                         system_prompt=system_prompt,
                         temperature=temperature,
                         max_tokens=max_tokens
                     )
-                    
+
                     if result:
                         return result
-                    
+
                 except Exception as e:
-                    error_msg = str(e)
-                    errors.append(f"{name}: {error_msg}")
-                    
-                    # Neu la loi key leaked, bo qua key nay
-                    if "leaked" in error_msg.lower():
-                        print(f"[MultiAI] {name} key leaked, skipping...")
+                    error_msg = str(e).lower()
+                    errors.append(f"{name}: {str(e)[:50]}")
+
+                    # Loi nghiem trong - xoa client nay
+                    if "leaked" in error_msg or "quota" in error_msg or "unauthorized" in error_msg:
+                        print(f"[MultiAI] {name} khong dung duoc, bo qua...")
+                        clients_to_remove.append(idx)
                         break
-                    
-                    # Rate limit - doi va thu lai
-                    if "rate" in error_msg.lower() or "429" in error_msg:
-                        print(f"[MultiAI] Rate limit, waiting 30s...")
-                        time.sleep(30)
-                        continue
-                
-                # Doi giua cac attempt
-                time.sleep(2)
-            
-            # Chuyen sang provider tiep theo
-        
-        print(f"[MultiAI] All providers failed: {errors}")
+
+                    # Rate limit - chuyen sang provider khac ngay
+                    if "rate" in error_msg or "429" in error_msg:
+                        print(f"[MultiAI] {name} rate limit, chuyen provider...")
+                        break
+
+                time.sleep(1)
+
+        # Xoa cac client khong dung duoc
+        for idx in reversed(clients_to_remove):
+            if idx < len(self.clients):
+                self.clients.pop(idx)
+
+        if errors:
+            print(f"[MultiAI] Tat ca providers failed")
         return None
     
     def get_available_providers(self) -> List[str]:
