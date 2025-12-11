@@ -561,8 +561,8 @@ class PromptGenerator:
         self.gemini = GeminiClient(api_keys=api_keys, models=models)
         
         # Scene grouping settings
-        self.min_scene_duration = settings.get("min_scene_duration", 15)
-        self.max_scene_duration = settings.get("max_scene_duration", 25)
+        self.min_scene_duration = settings.get("min_scene_duration", 3)  # Min 3s
+        self.max_scene_duration = settings.get("max_scene_duration", 8)  # Max 8s per scene
     
     def _generate_content(self, prompt: str, temperature: float = 0.7, max_tokens: int = 8192) -> str:
         """Generate content using available AI providers."""
@@ -855,8 +855,11 @@ class PromptGenerator:
 Characters:
 {characters_info}
 
+Locations:
+{locations_info}
+
 Scenes:
-{scenes_info}
+{pacing_script}
 
 Context: {context_lock or "Modern setting"}
 Style: {global_style}
