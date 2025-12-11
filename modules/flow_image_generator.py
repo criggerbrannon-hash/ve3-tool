@@ -178,6 +178,11 @@ class FlowImageGenerator:
         if not file_list:
             return []
 
+        # Check if nv_path is available
+        if not self.nv_path:
+            self._log(f"  ⚠️  Cannot load reference images: nv_path not set")
+            return []
+
         self._log(f"  📎 Loading {len(file_list)} reference images: {file_list}")
 
         # Load each reference image from nv/ folder (all reference images are in nv/)

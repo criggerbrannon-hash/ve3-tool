@@ -890,10 +890,30 @@ class PromptGenerator:
 
         # Format thông tin nhân vật (v5.0 format) - use character_lock for scene prompts
         # IMPORTANT: character_lock is the short description for scenes, NOT english_prompt (portrait_prompt)
+        # NEVER use portrait_prompt (english_prompt) for scenes - it has "white studio background"!
+        def get_char_lock(char):
+            """Get character_lock, extract from english_prompt if needed (remove white background)."""
+            if char.character_lock and char.character_lock.strip():
+                return char.character_lock
+            # Fallback: extract basic description from english_prompt (remove studio/background refs)
+            if char.english_prompt:
+                prompt = char.english_prompt
+                # Remove studio background references
+                for phrase in ["Pure white studio background", "white studio background",
+                               "Bright, even studio lighting", "studio lighting",
+                               "Looking directly at camera", "neutral expression",
+                               "8K, sharp focus", "high fidelity portraiture"]:
+                    prompt = prompt.replace(phrase, "").replace(phrase.lower(), "")
+                # Clean up
+                prompt = " ".join(prompt.split())  # Remove extra spaces
+                if len(prompt) > 20:  # Only use if meaningful
+                    return prompt
+            return f"{char.name} ({char.role})"  # Ultimate fallback
+
         characters_info = "\n".join([
             f"- ID: {char.id}\n"
             f"  Name: {char.name} ({char.role})\n"
-            f"  character_lock: \"{char.character_lock or char.english_prompt}\"\n"
+            f"  character_lock: \"{get_char_lock(char)}\"\n"
             f"  reference_file: {char.id}.png"
             for char in characters
         ])
