@@ -223,34 +223,6 @@ class SmartEngine:
         profile_name = Path(profile.value).name
         return self.media_name_cache.get(profile_name, {}).get(image_id, "")
 
-    def find_profile_with_media_names(self, required_ids: List[str]) -> Optional['Resource']:
-        """
-        Tim profile co TAT CA media_names can thiet.
-
-        Args:
-            required_ids: List image_ids can co (vd: ["nv1", "loc1"])
-
-        Returns:
-            Profile co du media_names, hoac None
-        """
-        if not required_ids:
-            return None
-
-        # Tim trong tat ca profiles (headless + chrome)
-        all_profiles = self.headless_accounts + self.profiles
-
-        for profile in all_profiles:
-            profile_name = Path(profile.value).name
-            profile_cache = self.media_name_cache.get(profile_name, {})
-
-            # Check profile co token va co TAT CA media_names can thiet
-            if profile.token:
-                has_all = all(img_id in profile_cache for img_id in required_ids)
-                if has_all:
-                    return profile
-
-        return None
-
     def set_cached_media_name(self, profile: 'Resource', image_id: str, media_name: str):
         """Luu media_name vao cache."""
         profile_name = Path(profile.value).name
@@ -775,57 +747,35 @@ class SmartEngine:
 
     def generate_images_parallel(self, prompts: List[Dict]) -> Dict:
         """
-        Tao anh SONG SONG - OPTIMIZED VERSION.
-        Su dung ThreadPoolExecutor de tan dung toi da CPU/GPU.
-        Dam bao tat ca prompts deu duoc tao - retry neu fail.
+        Tao anh - DUNG 1 PROFILE DUY NHAT.
+        Dam bao media_name consistent (cung token tao ref va scene).
 
-        STRATEGY:
-        1. Tao TAT CA nv/loc images truoc (bang 1 profile) de co media_names
-        2. Sau do tao scene images (chi dinh profile co media_names phu hop)
+        DON GIAN & AN TOAN:
+        - 1 voice = 1 profile
+        - Tat ca anh (nv/loc + scenes) dung chung 1 profile
+        - media_name luon valid vi cung token
         """
-        # Separate nv/loc images from scene images
-        ref_prompts = [p for p in prompts if p.get('id', '').startswith('nv') or p.get('id', '').startswith('loc')]
-        scene_prompts = [p for p in prompts if p not in ref_prompts]
+        self.log(f"=== TAO {len(prompts)} ANH (1 PROFILE) ===")
 
-        self.log(f"=== TAO {len(prompts)} ANH (ref: {len(ref_prompts)}, scene: {len(scene_prompts)}) ===")
+        # Sort: nv/loc truoc, scene sau (de co media_name khi tao scene)
+        def sort_key(p):
+            pid = p.get('id', '')
+            if pid.startswith('nv'):
+                return (0, pid)  # nv first
+            elif pid.startswith('loc'):
+                return (1, pid)  # loc second
+            else:
+                return (2, pid)  # scenes last
 
-        # === PHASE 1: Tao TAT CA reference images truoc (dung 1 profile chinh) ===
-        if ref_prompts:
-            self.log(f"=== PHASE 1: Tao {len(ref_prompts)} reference images (nv/loc) ===")
-            ref_results = self._generate_images_batch(ref_prompts, use_single_profile=True)
-            self.log(f"=== PHASE 1 DONE: {ref_results['success']} OK, {ref_results['failed']} FAIL ===")
+        sorted_prompts = sorted(prompts, key=sort_key)
 
-            # Neu co ref image fail, van tiep tuc voi scene images
-            if ref_results['failed'] > 0:
-                self.log(f"WARNING: {ref_results['failed']} reference images failed!", "WARN")
-        else:
-            ref_results = {"success": 0, "failed": 0}
+        return self._generate_images_single_profile(sorted_prompts)
 
-        # === PHASE 2: Tao scene images (smart assign to profile co media_names) ===
-        if scene_prompts:
-            self.log(f"=== PHASE 2: Tao {len(scene_prompts)} scene images ===")
-            scene_results = self._generate_images_batch(scene_prompts, use_single_profile=False)
-            self.log(f"=== PHASE 2 DONE: {scene_results['success']} OK, {scene_results['failed']} FAIL ===")
-        else:
-            scene_results = {"success": 0, "failed": 0}
-
-        # Combine results
-        return {
-            "success": ref_results["success"] + scene_results["success"],
-            "failed": ref_results["failed"] + scene_results["failed"],
-            "pending": ref_results.get("pending", []) + scene_results.get("pending", [])
-        }
-
-    def _generate_images_batch(self, prompts: List[Dict], use_single_profile: bool = False) -> Dict:
+    def _generate_images_single_profile(self, prompts: List[Dict]) -> Dict:
         """
-        Internal: Tao batch images.
-
-        Args:
-            prompts: List prompts can tao
-            use_single_profile: True = dung 1 profile cho tat ca (cho nv/loc)
+        Tao TAT CA images bang 1 PROFILE DUY NHAT.
+        Don gian, an toan, media_name luon consistent.
         """
-        self.log(f"[Batch] {len(prompts)} images, single_profile={use_single_profile}")
-
         results = {"success": 0, "failed": 0, "pending": list(prompts)}
 
         # Loop until all done or no resources left
@@ -837,149 +787,79 @@ class SmartEngine:
             attempt += 1
             self.log(f"=== ROUND {attempt} - {len(results['pending'])} pending ===")
 
-            # Get all accounts with tokens (headless + chrome profiles)
+            # Get 1 profile with valid token
             all_accounts = self.headless_accounts + self.profiles
-            active_profiles = [p for p in all_accounts if p.token and p.status != 'exhausted']
+            active_profile = None
+            for p in all_accounts:
+                if p.token and p.status != 'exhausted':
+                    active_profile = p
+                    break
 
-            if not active_profiles:
+            if not active_profile:
                 self.log("Khong co account nao co token!", "WARN")
-                # Try to get more tokens
                 n = self.get_all_tokens()
                 if n == 0:
                     break
-                active_profiles = [p for p in all_accounts if p.token]
+                for p in all_accounts:
+                    if p.token:
+                        active_profile = p
+                        break
 
-            if not active_profiles:
+            if not active_profile:
                 break
 
-            # Prepare tasks: (prompt_data, profile)
+            profile_name = Path(active_profile.value).name
+            self.log(f"Dung profile: {profile_name}")
+
+            # Process images sequentially with 1 profile
             pending = results["pending"]
             results["pending"] = []
+            done_count = 0
 
-            # === PROFILE ASSIGNMENT STRATEGY ===
-            if use_single_profile:
-                # PHASE 1 (nv/loc): Dung 1 profile chinh de media_names consistent
-                primary_profile = active_profiles[0]
-                n_workers = 1  # Chi dung 1 profile de dam bao consistency
-                self.log(f"[Single Profile] Dung profile: {Path(primary_profile.value).name}")
-
-                tasks = [(p, primary_profile) for p in pending]
-            else:
-                # PHASE 2 (scenes): Smart assign based on references
-                n_workers = min(len(active_profiles), len(results["pending"]))
-                self.log(f"Su dung {n_workers} workers ({len(active_profiles)} tokens)")
-
-                tasks = []
-                for i, prompt_data in enumerate(pending):
-                    pid = prompt_data.get('id', '')
-                    reference_files = prompt_data.get('reference_files', '')
-
-                    # Default: round-robin
-                    assigned_profile = active_profiles[i % len(active_profiles)]
-
-                    # SMART: Tim profile co media_names cho references
-                    if reference_files:
-                        # Parse reference_files
-                        try:
-                            parsed = json.loads(reference_files)
-                            file_list = parsed if isinstance(parsed, list) else [parsed]
-                        except:
-                            file_list = [f.strip() for f in str(reference_files).split(",") if f.strip()]
-
-                        # Extract image_ids (vd: ["nv1", "loc1"])
-                        required_ids = [Path(f).stem for f in file_list]
-
-                        # Tim profile co TAT CA media_names can thiet
-                        matching_profile = self.find_profile_with_media_names(required_ids)
-                        if matching_profile:
-                            assigned_profile = matching_profile
-                            self.log(f"  [{pid}] -> Profile co refs: {Path(assigned_profile.value).name}")
-                        else:
-                            self.log(f"  [{pid}] -> No profile has refs {required_ids}", "WARN")
-
-                    tasks.append((prompt_data, assigned_profile))
-
-            # Results tracking
-            done_in_round = []
-            failed_in_round = []
-            lock = threading.Lock()
-
-            def process_single_image(task: Tuple[Dict, Resource]) -> Tuple[Dict, bool]:
-                """Process single image and return (prompt_data, success)."""
-                prompt_data, profile = task
-                pid = prompt_data.get('id', '')
-
+            for prompt_data in pending:
                 if self.stop_flag:
-                    return (prompt_data, False)
+                    results["pending"].append(prompt_data)
+                    continue
 
+                pid = prompt_data.get('id', '')
                 self.log(f"[{pid}] Dang tao...")
 
-                # Check token valid
-                current_profile = profile
-                if not current_profile.token:
-                    # Try to find another profile with valid token
-                    other_profile = self._get_other_valid_profile(current_profile)
-                    if other_profile:
-                        current_profile = other_profile
-                    else:
-                        self.log(f"[{pid}] Khong co token valid!", "WARN")
-                        return (prompt_data, False)
+                # Check token still valid
+                if not active_profile.token:
+                    self.log(f"[{pid}] Token het han, dung lai!", "WARN")
+                    results["pending"].append(prompt_data)
+                    # Add remaining to pending
+                    idx = pending.index(prompt_data)
+                    results["pending"].extend(pending[idx+1:])
+                    break
 
-                success, token_expired = self.generate_single_image(prompt_data, current_profile)
+                success, token_expired = self.generate_single_image(prompt_data, active_profile)
 
                 if token_expired:
-                    # Token expired, try another profile
-                    current_profile.token = ""
-                    other_profile = self._get_other_valid_profile(current_profile)
-                    if other_profile:
-                        self.log(f"[{pid}] Token het han, thu profile khac...", "WARN")
-                        success, _ = self.generate_single_image(prompt_data, other_profile)
+                    active_profile.token = ""
+                    self.log(f"[{pid}] Token het han!", "WARN")
+                    results["pending"].append(prompt_data)
+                    # Add remaining to pending
+                    idx = pending.index(prompt_data)
+                    results["pending"].extend(pending[idx+1:])
+                    break
 
                 if success:
                     self.log(f"[{pid}] OK!", "OK")
+                    done_count += 1
+                    results["success"] += 1
                 else:
                     self.log(f"[{pid}] FAIL", "WARN")
+                    results["pending"].append(prompt_data)
 
-                return (prompt_data, success)
+                # Small delay
+                time.sleep(self.delay)
 
-            # Use ThreadPoolExecutor for maximum parallelism
-            self.log(f"[ThreadPool] Khoi dong {n_workers} workers...")
+                # Progress log
+                if done_count % 5 == 0:
+                    self.log(f"[Progress] {done_count}/{len(pending)}")
 
-            with ThreadPoolExecutor(max_workers=n_workers) as executor:
-                # Submit all tasks
-                futures = {executor.submit(process_single_image, task): task for task in tasks}
-
-                # Process as completed
-                completed = 0
-                for future in as_completed(futures):
-                    try:
-                        prompt_data, success = future.result()
-                        completed += 1
-
-                        with lock:
-                            if success:
-                                done_in_round.append(prompt_data)
-                            else:
-                                failed_in_round.append(prompt_data)
-
-                        # Progress log
-                        if completed % 5 == 0 or completed == len(tasks):
-                            self.log(f"[Progress] {completed}/{len(tasks)} ({len(done_in_round)} OK)")
-
-                    except Exception as e:
-                        self.log(f"[ThreadPool] Error: {e}", "ERROR")
-                        task = futures[future]
-                        with lock:
-                            failed_in_round.append(task[0])
-
-                    # Small delay between images
-                    time.sleep(self.delay)
-
-            # Update results
-            results["success"] += len(done_in_round)
-            results["pending"] = failed_in_round
-
-            self.log(f"Round {attempt}: +{len(done_in_round)} OK, {len(failed_in_round)} pending")
+            self.log(f"Round {attempt}: +{done_count} OK, {len(results['pending'])} pending")
 
             # If still have pending, wait a bit before retry
             if results["pending"]:
