@@ -40,7 +40,7 @@ from modules.prompts_loader import (
 class MultiAIClient:
     """
     Client hỗ trợ nhiều AI providers.
-    Ưu tiên: Gemini (chất lượng cao) > Groq (nhanh) > DeepSeek (rẻ, chậm)
+    Ưu tiên: Gemini (chất lượng cao) > Groq (nhanh) > DeepSeek (rẻ, chậm) > Ollama (local)
 
     Tự động test và loại bỏ API keys không hoạt động khi khởi tạo.
     """
@@ -48,6 +48,7 @@ class MultiAIClient:
     DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
     GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
     GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta"
+    OLLAMA_URL = "http://localhost:11434/api/generate"  # Local Ollama
 
     def __init__(self, config: dict, auto_filter: bool = True):
         """
@@ -57,6 +58,7 @@ class MultiAIClient:
             "groq_api_keys": ["key1", "key2"],
             "gemini_api_keys": ["key1"],
             "gemini_models": ["gemini-2.0-flash"],
+            "ollama_model": "qwen2.5:7b",  # Optional: local model
         }
 
         auto_filter: Tự động test và loại bỏ API keys không hoạt động
@@ -66,6 +68,10 @@ class MultiAIClient:
         self.groq_keys = [k for k in config.get("groq_api_keys", []) if k and k.strip()]
         self.deepseek_keys = [k for k in config.get("deepseek_api_keys", []) if k and k.strip()]
         self.gemini_models = config.get("gemini_models", ["gemini-2.0-flash", "gemini-1.5-flash"])
+
+        # Ollama local model
+        self.ollama_model = config.get("ollama_model", "qwen2.5:7b")
+        self.ollama_available = False
 
         self.deepseek_index = 0
         self.groq_index = 0
@@ -117,11 +123,21 @@ class MultiAIClient:
         self.groq_keys = working_groq
         self.deepseek_keys = working_deepseek
 
-        total_working = len(working_gemini) + len(working_groq) + len(working_deepseek)
-        print(f"[API Filter] Ket qua: {len(working_gemini)} Gemini, {len(working_groq)} Groq, {len(working_deepseek)} DeepSeek")
+        # Test Ollama (local fallback)
+        print(f"  Testing Ollama ({self.ollama_model})...", end=" ")
+        if self._test_ollama():
+            print("OK (local)")
+            self.ollama_available = True
+        else:
+            print("NOT AVAILABLE (cai dat: ollama pull " + self.ollama_model + ")")
+            self.ollama_available = False
 
-        if total_working == 0:
-            print("[API Filter] CANH BAO: Khong co API key nao hoat dong!")
+        total_working = len(working_gemini) + len(working_groq) + len(working_deepseek)
+        ollama_str = ", Ollama: OK" if self.ollama_available else ""
+        print(f"[API Filter] Ket qua: {len(working_gemini)} Gemini, {len(working_groq)} Groq, {len(working_deepseek)} DeepSeek{ollama_str}")
+
+        if total_working == 0 and not self.ollama_available:
+            print("[API Filter] CANH BAO: Khong co API nao hoat dong! Cai Ollama de dung offline.")
         else:
             # Show priority order
             if working_gemini:
@@ -130,6 +146,8 @@ class MultiAIClient:
                 print(f"[API Filter] Se dung: Groq (uu tien)")
             elif working_deepseek:
                 print(f"[API Filter] Se dung: DeepSeek")
+            elif self.ollama_available:
+                print(f"[API Filter] Se dung: Ollama (local)")
 
     def _test_gemini_key(self, key: str) -> bool:
         """Test Gemini key với request nhỏ."""
@@ -169,6 +187,19 @@ class MultiAIClient:
                 "max_tokens": 5
             }
             resp = requests.post(self.DEEPSEEK_URL, headers=headers, json=data, timeout=15)
+            return resp.status_code == 200
+        except:
+            return False
+
+    def _test_ollama(self) -> bool:
+        """Test Ollama local server."""
+        try:
+            data = {
+                "model": self.ollama_model,
+                "prompt": "Say OK",
+                "stream": False
+            }
+            resp = requests.post(self.OLLAMA_URL, json=data, timeout=30)
             return resp.status_code == 200
         except:
             return False
@@ -284,9 +315,25 @@ class MultiAIClient:
                         self.logger.error(f"DeepSeek error: {e}")
                         break
 
+        # 4. Fallback to Ollama (local, free, offline)
+        if self.ollama_available:
+            for attempt in range(max_retries):
+                try:
+                    print(f"[Ollama] Dang goi local model ({self.ollama_model})...")
+                    result = self._call_ollama(prompt, temperature)
+                    if result:
+                        print(f"[Ollama] Thanh cong!")
+                        return result
+                except Exception as e:
+                    last_error = e
+                    self.logger.error(f"Ollama error: {e}")
+                    if attempt < max_retries - 1:
+                        time.sleep(2)
+                    continue
+
         if last_error:
             raise last_error
-        raise RuntimeError("Khong co API provider nao hoat dong!")
+        raise RuntimeError("Khong co API provider nao hoat dong! Cai Ollama: ollama pull qwen2.5:7b")
 
     def _call_deepseek(self, prompt: str, temperature: float, max_tokens: int) -> str:
         """Call DeepSeek API."""
@@ -367,6 +414,30 @@ class MultiAIClient:
             return result["candidates"][0]["content"]["parts"][0]["text"]
         else:
             raise requests.RequestException(f"Gemini API error {resp.status_code}: {resp.text[:300]}")
+
+    def _call_ollama(self, prompt: str, temperature: float) -> str:
+        """Call Ollama local API."""
+        data = {
+            "model": self.ollama_model,
+            "prompt": prompt,
+            "stream": False,
+            "options": {
+                "temperature": temperature,
+                "num_predict": 8192,  # Max tokens
+            }
+        }
+
+        self.logger.debug(f"Calling Ollama API: model={self.ollama_model}")
+        print(f"[Ollama] Dang xu ly... (co the mat 1-5 phut tuy cau hinh may)")
+
+        # Ollama can be slow, increase timeout
+        resp = requests.post(self.OLLAMA_URL, json=data, timeout=600)
+
+        if resp.status_code == 200:
+            result = resp.json()
+            return result.get("response", "")
+        else:
+            raise requests.RequestException(f"Ollama API error {resp.status_code}: {resp.text[:200]}")
 
 
 # ============================================================================
