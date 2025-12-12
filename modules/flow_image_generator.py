@@ -156,6 +156,43 @@ class FlowImageGenerator:
 
         self._log(f"✅ Uploaded {uploaded} character references")
         return uploaded
+
+    def _auto_upload_existing_characters(self) -> int:
+        """
+        Tự động upload ảnh character có sẵn khi chưa có trong cache.
+        Được gọi tự động trước khi generate scenes.
+
+        Returns:
+            Số lượng references đã upload thành công
+        """
+        if not self.nv_path.exists():
+            return 0
+
+        uploaded = 0
+        for img_path in self.nv_path.glob("*.png"):
+            char_id = img_path.stem  # nv01.png -> nv01
+
+            # Skip nếu đã có trong cache
+            if char_id in self.character_references:
+                continue
+
+            self._log(f"  📤 Uploading {char_id}: {img_path.name}...")
+
+            success, img_input, error = self.flow_client.upload_image(img_path)
+
+            if success and img_input:
+                # Tạo GeneratedImage object để lưu vào cache
+                ref_image = GeneratedImage(
+                    media_name=img_input.name,
+                    local_path=img_path
+                )
+                self.character_references[char_id] = ref_image
+                self._log(f"  ✅ {char_id}: Got media_name")
+                uploaded += 1
+            else:
+                self._log(f"  ❌ {char_id}: Upload failed - {error}")
+
+        return uploaded
     
     def _find_excel_file(self) -> Optional[Path]:
         """Tìm file Excel prompts trong thư mục project."""
@@ -377,6 +414,12 @@ class FlowImageGenerator:
             # Log reference status
             if self.use_character_references and self.character_references:
                 self._log(f"📌 Using {len(self.character_references)} character references")
+            elif self.use_character_references:
+                # Nếu chưa có references trong cache, tự động upload ảnh có sẵn
+                self._log("📌 No references in cache, checking for existing character images...")
+                self._auto_upload_existing_characters()
+                if self.character_references:
+                    self._log(f"📌 Uploaded {len(self.character_references)} character references")
 
             # Process each scene
             for row_num, row in enumerate(ws.iter_rows(min_row=2), start=2):
