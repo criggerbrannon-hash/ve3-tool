@@ -34,8 +34,11 @@ CHARACTERS_COLUMNS = [
 # Cột cho sheet Scenes
 SCENES_COLUMNS = [
     "scene_id",         # ID scene (1, 2, 3, ...)
-    "srt_start",        # Index bắt đầu trong SRT
-    "srt_end",          # Index kết thúc trong SRT
+    "start_time",       # Thời gian bắt đầu (HH:MM:SS,mmm) - cho video editing
+    "end_time",         # Thời gian kết thúc (HH:MM:SS,mmm) - cho video editing
+    "duration",         # Độ dài (giây) - để kiểm tra nhanh
+    "srt_start",        # Index bắt đầu trong SRT (số thứ tự câu)
+    "srt_end",          # Index kết thúc trong SRT (số thứ tự câu)
     "srt_text",         # Nội dung text của scene
     "img_prompt",       # Prompt tạo ảnh
     "video_prompt",     # Prompt tạo video
@@ -165,6 +168,9 @@ class Scene:
     def __init__(
         self,
         scene_id: int,
+        start_time: str = "",           # HH:MM:SS,mmm - thời gian bắt đầu
+        end_time: str = "",             # HH:MM:SS,mmm - thời gian kết thúc
+        duration: float = 0.0,          # Độ dài (giây)
         srt_start: int = 0,
         srt_end: int = 0,
         srt_text: str = "",
@@ -179,6 +185,9 @@ class Scene:
         reference_files: str = ""        # JSON list: ["nv1.png", "loc1.png"]
     ):
         self.scene_id = scene_id
+        self.start_time = start_time
+        self.end_time = end_time
+        self.duration = duration
         self.srt_start = srt_start
         self.srt_end = srt_end
         self.srt_text = srt_text
@@ -196,6 +205,9 @@ class Scene:
         """Chuyển đổi thành dictionary."""
         return {
             "scene_id": self.scene_id,
+            "start_time": self.start_time,
+            "end_time": self.end_time,
+            "duration": self.duration,
             "srt_start": self.srt_start,
             "srt_end": self.srt_end,
             "srt_text": self.srt_text,
@@ -213,8 +225,19 @@ class Scene:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Scene":
         """Tạo Scene từ dictionary."""
+        # Parse duration - có thể là string hoặc float
+        duration_val = data.get("duration", 0)
+        if isinstance(duration_val, str):
+            try:
+                duration_val = float(duration_val) if duration_val else 0.0
+            except ValueError:
+                duration_val = 0.0
+
         return cls(
             scene_id=int(data.get("scene_id", 0)),
+            start_time=str(data.get("start_time", "")),
+            end_time=str(data.get("end_time", "")),
+            duration=float(duration_val),
             srt_start=int(data.get("srt_start", 0) or 0),
             srt_end=int(data.get("srt_end", 0) or 0),
             srt_text=str(data.get("srt_text", "")),
@@ -345,6 +368,9 @@ class PromptWorkbook:
         # Điều chỉnh độ rộng cột
         column_widths = {
             "scene_id": 10,
+            "start_time": 18,       # HH:MM:SS,mmm
+            "end_time": 18,         # HH:MM:SS,mmm
+            "duration": 10,         # Số giây
             "srt_start": 10,
             "srt_end": 10,
             "srt_text": 50,

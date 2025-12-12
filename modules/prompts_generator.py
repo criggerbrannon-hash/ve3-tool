@@ -700,8 +700,16 @@ class PromptGenerator:
             chars_str = json.dumps(chars_used) if isinstance(chars_used, list) else str(chars_used)
             refs_str = json.dumps(ref_files) if isinstance(ref_files, list) else str(ref_files)
 
+            # Lấy thời gian thực từ scene_data (đã được tính trong _validate_and_split_scenes)
+            start_time = scene_data.get("start_time", "")
+            end_time = scene_data.get("end_time", "")
+            duration = scene_data.get("duration_seconds", 0)
+
             scene = Scene(
                 scene_id=scene_data["scene_id"],
+                start_time=start_time,          # Thời gian bắt đầu (HH:MM:SS,mmm)
+                end_time=end_time,              # Thời gian kết thúc (HH:MM:SS,mmm)
+                duration=round(duration, 2),    # Độ dài (giây)
                 srt_start=scene_data["srt_start"],
                 srt_end=scene_data["srt_end"],
                 srt_text=scene_data["text"][:500],  # Truncate nếu quá dài
