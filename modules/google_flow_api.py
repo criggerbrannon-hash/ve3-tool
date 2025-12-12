@@ -198,6 +198,11 @@ class GoogleFlowAPI:
 
         if image_inputs_data:
             self._log(f"Using {len(image_inputs_data)} reference image(s)")
+            # Debug: Show actual imageInputs being sent
+            for i, inp in enumerate(image_inputs_data):
+                name_preview = inp.get("name", "")[:60] if inp.get("name") else "None"
+                inp_type = inp.get("imageInputType", "")
+                self._log(f"  [{i}] name={name_preview}... type={inp_type}")
 
         # Build requests array
         requests_data = []

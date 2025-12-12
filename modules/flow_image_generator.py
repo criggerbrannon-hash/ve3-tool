@@ -478,7 +478,12 @@ class FlowImageGenerator:
                             ref_img = self.character_references[char_id]
                             if ref_img.media_name:
                                 reference_images.append(ref_img)
-                                self._log(f"   📌 Using reference: {char_id}")
+                                # Debug: Show actual media_name being used
+                                self._log(f"   📌 Using reference: {char_id} -> media_name={ref_img.media_name[:50]}...")
+                            else:
+                                self._log(f"   ⚠️ {char_id}: No media_name available!")
+                        else:
+                            self._log(f"   ⚠️ {char_id}: Not found in character_references cache")
 
                 # Generate image (with or without references)
                 success, images, error = self.flow_client.generate_images(
