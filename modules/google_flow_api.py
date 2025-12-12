@@ -29,7 +29,8 @@ class AspectRatio(Enum):
 
 class ImageModel(Enum):
     """Model tạo ảnh."""
-    GEM_PIX = "GEM_PIX"  # Default model
+    GEM_PIX = "GEM_PIX"
+    GEM_PIX_2 = "GEM_PIX_2"  # Default model - phiên bản mới hơn
 
 
 class ImageInputType(Enum):
@@ -154,7 +155,7 @@ class GoogleFlowAPI:
         prompt: str,
         count: int = 2,
         aspect_ratio: AspectRatio = AspectRatio.LANDSCAPE,
-        model: ImageModel = ImageModel.GEM_PIX,
+        model: ImageModel = ImageModel.GEM_PIX_2,
         image_inputs: Optional[List[ImageInput]] = None,
         reference_images: Optional[List[GeneratedImage]] = None
     ) -> Tuple[bool, List[GeneratedImage], str]:
