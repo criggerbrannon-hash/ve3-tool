@@ -758,25 +758,49 @@ class SmartEngine:
         # Results containers
         srt_done = [srt_path.exists()]
         prompts_done = [excel_path.exists()]
-        first_token_done = [False]
+        tokens_done = [False]
+        tokens_count = [0]
 
-        # Thread 1: Lay 1 token dau tien (neu chua co hoac het han)
-        def get_first_token():
-            if self.profiles and not self.is_token_valid(self.profiles[0]):
-                self.log("Lay token dau tien...")
-                self.get_token_for_profile(self.profiles[0])
-            else:
-                self.log("Token dau tien con valid, skip")
-            first_token_done[0] = True
+        # Thread 1: Lay TAT CA tokens (prefetch) - khong can cho SRT/Prompts
+        # Lam song song vi lay token can mouse, SRT/Prompts khong can
+        def prefetch_all_tokens():
+            """Prefetch tat ca tokens truoc khi bat dau tao anh."""
+            self.log("[PREFETCH] Bat dau lay tokens cho tat ca profiles...")
+            count = 0
 
-        # Thread 2: Lam SRT
+            for i, profile in enumerate(self.profiles):
+                if self.stop_flag:
+                    break
+
+                # Skip neu token con valid
+                if self.is_token_valid(profile):
+                    self.log(f"[PREFETCH] Profile #{i+1}: Token valid, skip")
+                    count += 1
+                    continue
+
+                self.log(f"[PREFETCH] Profile #{i+1}/{len(self.profiles)}: Dang lay token...")
+                if self.get_token_for_profile(profile):
+                    count += 1
+                    self.log(f"[PREFETCH] Profile #{i+1}: OK!")
+                else:
+                    self.log(f"[PREFETCH] Profile #{i+1}: FAIL!", "WARN")
+
+                # Delay ngan giua cac profiles
+                if i < len(self.profiles) - 1:
+                    time.sleep(0.5)
+
+            tokens_count[0] = count
+            tokens_done[0] = True
+            self.log(f"[PREFETCH] XONG: {count}/{len(self.profiles)} tokens ready")
+
+        # Thread 2: Lam SRT (khong can mouse)
         def do_srt():
             if voice_path and not srt_path.exists():
                 srt_done[0] = self.make_srt(voice_path, srt_path)
             else:
                 srt_done[0] = True
 
-        # Thread 3: Lam Prompts (sau khi SRT xong)
+        # Thread 3: Lam Prompts (sau khi SRT xong, khong can mouse)
         def do_prompts():
             # Doi SRT
             while not srt_done[0] and not self.stop_flag:
@@ -791,9 +815,9 @@ class SmartEngine:
             else:
                 prompts_done[0] = excel_path.exists()
 
-        # Start threads
-        threads = []
-        t1 = threading.Thread(target=get_first_token, daemon=True)
+        # Start threads - TAT CA CHAY SONG SONG
+        self.log("[STEP 2] SONG SONG: SRT + Prompts + Prefetch Tokens...")
+        t1 = threading.Thread(target=prefetch_all_tokens, daemon=True)
         t2 = threading.Thread(target=do_srt, daemon=True)
         t3 = threading.Thread(target=do_prompts, daemon=True)
 
@@ -814,11 +838,13 @@ class SmartEngine:
         if not prompts_done[0]:
             return {"error": "prompts_failed"}
 
-        # Check first token
+        # Check tokens (da prefetch xong)
         has_token = any(p.token for p in self.profiles)
         if not has_token:
-            self.log("Khong lay duoc token dau tien!", "ERROR")
+            self.log("Khong lay duoc token nao!", "ERROR")
             return {"error": "no_tokens"}
+
+        self.log(f"[TOKENS] Da co {tokens_count[0]}/{len(self.profiles)} tokens san sang")
 
         # === 3. LOAD PROMPTS ===
         self.log("[STEP 3] Load prompts...")
@@ -838,33 +864,11 @@ class SmartEngine:
             self.log("Tat ca anh da ton tai!", "OK")
             return {"success": 0, "failed": 0, "skipped": "all_exist"}
 
-        # === 4. SONG SONG: Tao anh + Lay them token ===
-        self.log("[STEP 4] SONG SONG: Tao anh + Lay them token...")
+        # === 4. TAO ANH (Tokens da duoc prefetch) ===
+        self.log("[STEP 4] Tao anh (tokens da san sang)...")
 
-        # Thread lay them token (background) - chi lay khi can
-        more_tokens_thread = None
-        if len(self.profiles) > 1:
-            def get_more_tokens():
-                for i, profile in enumerate(self.profiles[1:], 1):
-                    if self.stop_flag:
-                        break
-                    # Chi lay token neu chua co hoac het han
-                    if not self.is_token_valid(profile):
-                        self.log(f"[BG] Lay token #{i+1}...")
-                        self.get_token_for_profile(profile)
-                        time.sleep(0.5)
-                    else:
-                        self.log(f"[BG] Token #{i+1} con valid, skip")
-
-            more_tokens_thread = threading.Thread(target=get_more_tokens, daemon=True)
-            more_tokens_thread.start()
-
-        # Tao anh (main)
+        # Tao anh - khong can lay token nua vi da prefetch o Step 2
         results = self.generate_images_parallel(prompts)
-
-        # Doi thread lay token xong
-        if more_tokens_thread:
-            more_tokens_thread.join(timeout=5)
 
         # === 5. FINAL CHECK ===
         self.log("[STEP 5] Kiem tra ket qua...")
