@@ -65,10 +65,12 @@ class SmartEngine:
         self.groq_keys: List[Resource] = []
         self.gemini_keys: List[Resource] = []
 
-        # Settings - TOI UU TOC DO
+        # Settings - TOI UU TOC DO (PARALLEL OPTIMIZED)
         self.parallel = 20  # Tang len 20 - dung TAT CA tokens co san
-        self.delay = 0.5    # Giam tu 1s -> 0.5s giua moi anh
+        self.delay = 0.3    # Giam xuong 0.3s - may khoe chay nhanh
         self.max_retries = 3
+        self.use_threadpool = True  # Dung ThreadPoolExecutor (hieu qua hon threading.Thread)
+        self.images_per_worker = 5  # So anh moi worker xu ly truoc khi chuyen
 
         # State
         self.stop_flag = False
@@ -661,10 +663,11 @@ class SmartEngine:
 
     def generate_images_parallel(self, prompts: List[Dict]) -> Dict:
         """
-        Tao anh SONG SONG.
+        Tao anh SONG SONG - OPTIMIZED VERSION.
+        Su dung ThreadPoolExecutor de tan dung toi da CPU/GPU.
         Dam bao tat ca prompts deu duoc tao - retry neu fail.
         """
-        self.log(f"=== TAO {len(prompts)} ANH SONG SONG ===")
+        self.log(f"=== TAO {len(prompts)} ANH SONG SONG (OPTIMIZED) ===")
 
         results = {"success": 0, "failed": 0, "pending": list(prompts)}
 
@@ -695,93 +698,91 @@ class SmartEngine:
             n_workers = min(len(active_profiles), len(results["pending"]))
             self.log(f"Su dung {n_workers} workers ({len(active_profiles)} tokens)")
 
-            # Distribute prompts
+            # Prepare tasks: (prompt_data, profile)
             pending = results["pending"]
             results["pending"] = []
 
-            chunks = [[] for _ in range(n_workers)]
-            for i, p in enumerate(pending):
-                chunks[i % n_workers].append(p)
+            # Assign prompts to profiles round-robin
+            tasks = []
+            for i, prompt_data in enumerate(pending):
+                profile = active_profiles[i % len(active_profiles)]
+                tasks.append((prompt_data, profile))
 
-            # Run workers
+            # Results tracking
             done_in_round = []
             failed_in_round = []
             lock = threading.Lock()
 
-            def worker(worker_id: int, profile: Resource, prompt_list: List[Dict]):
+            def process_single_image(task: Tuple[Dict, Resource]) -> Tuple[Dict, bool]:
+                """Process single image and return (prompt_data, success)."""
+                prompt_data, profile = task
+                pid = prompt_data.get('id', '')
+
+                if self.stop_flag:
+                    return (prompt_data, False)
+
+                self.log(f"[{pid}] Dang tao...")
+
+                # Check token valid
                 current_profile = profile
+                if not current_profile.token:
+                    # Try to find another profile with valid token
+                    other_profile = self._get_other_valid_profile(current_profile)
+                    if other_profile:
+                        current_profile = other_profile
+                    else:
+                        self.log(f"[{pid}] Khong co token valid!", "WARN")
+                        return (prompt_data, False)
 
-                for pd in prompt_list:
-                    if self.stop_flag:
-                        break
+                success, token_expired = self.generate_single_image(prompt_data, current_profile)
 
-                    pid = pd.get('id', '')
-                    self.log(f"[W{worker_id}] {pid}...")
+                if token_expired:
+                    # Token expired, try another profile
+                    current_profile.token = ""
+                    other_profile = self._get_other_valid_profile(current_profile)
+                    if other_profile:
+                        self.log(f"[{pid}] Token het han, thu profile khac...", "WARN")
+                        success, _ = self.generate_single_image(prompt_data, other_profile)
 
-                    # Refresh token if needed
-                    if not current_profile.token:
-                        # Try to find another profile with valid token first
-                        other_profile = self._get_other_valid_profile(current_profile)
-                        if other_profile:
-                            self.log(f"[W{worker_id}] Chuyen sang profile khac", "INFO")
-                            current_profile = other_profile
-                        else:
-                            # No other profile, try to refresh current one
-                            self.log(f"[W{worker_id}] Tat ca token het han, dang lay moi...", "WARN")
-                            if not self.refresh_token_if_needed(current_profile):
-                                with lock:
-                                    failed_in_round.append(pd)
-                                continue
+                if success:
+                    self.log(f"[{pid}] OK!", "OK")
+                else:
+                    self.log(f"[{pid}] FAIL", "WARN")
 
-                    success, token_expired = self.generate_single_image(pd, current_profile)
+                return (prompt_data, success)
 
-                    if token_expired:
-                        # Token expired, mark as invalid
-                        current_profile.token = ""
+            # Use ThreadPoolExecutor for maximum parallelism
+            self.log(f"[ThreadPool] Khoi dong {n_workers} workers...")
 
-                        # Try another profile first
-                        other_profile = self._get_other_valid_profile(current_profile)
-                        if other_profile:
-                            self.log(f"[W{worker_id}] Token het han, chuyen sang profile khac...", "WARN")
-                            current_profile = other_profile
-                            # Retry with new profile
-                            success, _ = self.generate_single_image(pd, current_profile)
-                        else:
-                            # No other valid profile, refresh current one
-                            self.log(f"[W{worker_id}] Tat ca token het han, dang refresh...", "WARN")
-                            if self.get_token_for_profile(current_profile):
-                                # Refresh success, retry the image
-                                self.log(f"[W{worker_id}] Token moi OK, thu lai {pid}...", "INFO")
-                                success, _ = self.generate_single_image(pd, current_profile)
+            with ThreadPoolExecutor(max_workers=n_workers) as executor:
+                # Submit all tasks
+                futures = {executor.submit(process_single_image, task): task for task in tasks}
+
+                # Process as completed
+                completed = 0
+                for future in as_completed(futures):
+                    try:
+                        prompt_data, success = future.result()
+                        completed += 1
+
+                        with lock:
+                            if success:
+                                done_in_round.append(prompt_data)
                             else:
-                                self.log(f"[W{worker_id}] Khong the lay token moi!", "ERROR")
-                                success = False
+                                failed_in_round.append(prompt_data)
 
-                    with lock:
-                        if success:
-                            done_in_round.append(pd)
-                            self.log(f"[W{worker_id}] {pid}: OK!", "OK")
-                        else:
-                            failed_in_round.append(pd)
-                            self.log(f"[W{worker_id}] {pid}: FAIL", "WARN")
+                        # Progress log
+                        if completed % 5 == 0 or completed == len(tasks):
+                            self.log(f"[Progress] {completed}/{len(tasks)} ({len(done_in_round)} OK)")
 
+                    except Exception as e:
+                        self.log(f"[ThreadPool] Error: {e}", "ERROR")
+                        task = futures[future]
+                        with lock:
+                            failed_in_round.append(task[0])
+
+                    # Small delay between images
                     time.sleep(self.delay)
-
-            # Start threads
-            threads = []
-            for i in range(n_workers):
-                if chunks[i]:
-                    t = threading.Thread(
-                        target=worker,
-                        args=(i+1, active_profiles[i], chunks[i]),
-                        daemon=True
-                    )
-                    t.start()
-                    threads.append(t)
-
-            # Wait
-            for t in threads:
-                t.join()
 
             # Update results
             results["success"] += len(done_in_round)
@@ -789,9 +790,9 @@ class SmartEngine:
 
             self.log(f"Round {attempt}: +{len(done_in_round)} OK, {len(failed_in_round)} pending")
 
-            # If still have pending, wait a bit (giam tu 5s -> 2s)
+            # If still have pending, wait a bit before retry
             if results["pending"]:
-                time.sleep(2)
+                time.sleep(1)
 
         results["failed"] = len(results["pending"])
         self.log(f"=== XONG: {results['success']} OK, {results['failed']} FAIL ===")

@@ -7,9 +7,11 @@ Hỗ trợ: DeepSeek (rẻ), Groq (free), Gemini
 
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 from datetime import timedelta
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
+import threading
 
 import requests
 
@@ -78,6 +80,11 @@ class MultiAIClient:
         self.gemini_key_index = 0
         self.gemini_model_index = 0
 
+        # Parallel processing settings
+        self.max_parallel_requests = config.get("max_parallel_requests", 5)
+        self.parallel_enabled = config.get("parallel_enabled", True)
+        self._request_lock = threading.Lock()
+
         self.logger = get_logger("multi_ai")
 
         # Auto filter exhausted APIs at startup
@@ -85,66 +92,96 @@ class MultiAIClient:
             self._filter_working_apis()
 
     def _filter_working_apis(self):
-        """Test và loại bỏ API keys không hoạt động."""
-        print("\n[API Filter] Dang kiem tra API keys...")
+        """Test và loại bỏ API keys không hoạt động - PARALLEL VERSION."""
+        print("\n[API Filter] Dang kiem tra API keys (parallel)...")
 
-        # Test Gemini keys
-        working_gemini = []
-        for i, key in enumerate(self.gemini_keys):
-            print(f"  Testing Gemini key #{i+1}...", end=" ")
-            if self._test_gemini_key(key):
-                print("OK")
-                working_gemini.append(key)
-            else:
-                print("SKIP (quota/error)")
+        results = {
+            'gemini': [],
+            'groq': [],
+            'deepseek': [],
+            'ollama': False
+        }
+        results_lock = threading.Lock()
 
-        # Test Groq keys
-        working_groq = []
-        for i, key in enumerate(self.groq_keys):
-            print(f"  Testing Groq key #{i+1}...", end=" ")
-            if self._test_groq_key(key):
-                print("OK")
-                working_groq.append(key)
-            else:
-                print("SKIP (rate limit/error)")
+        def test_gemini(key_info: Tuple[int, str]) -> Tuple[str, int, str, bool]:
+            i, key = key_info
+            result = self._test_gemini_key(key)
+            return ('gemini', i, key, result)
 
-        # Test DeepSeek keys
-        working_deepseek = []
-        for i, key in enumerate(self.deepseek_keys):
-            print(f"  Testing DeepSeek key #{i+1}...", end=" ")
-            if self._test_deepseek_key(key):
-                print("OK")
-                working_deepseek.append(key)
-            else:
-                print("SKIP (error)")
+        def test_groq(key_info: Tuple[int, str]) -> Tuple[str, int, str, bool]:
+            i, key = key_info
+            result = self._test_groq_key(key)
+            return ('groq', i, key, result)
+
+        def test_deepseek(key_info: Tuple[int, str]) -> Tuple[str, int, str, bool]:
+            i, key = key_info
+            result = self._test_deepseek_key(key)
+            return ('deepseek', i, key, result)
+
+        def test_ollama() -> Tuple[str, int, str, bool]:
+            result = self._test_ollama()
+            return ('ollama', 0, '', result)
+
+        # Prepare all test tasks
+        tasks = []
+        tasks.extend([('gemini', i, key) for i, key in enumerate(self.gemini_keys)])
+        tasks.extend([('groq', i, key) for i, key in enumerate(self.groq_keys)])
+        tasks.extend([('deepseek', i, key) for i, key in enumerate(self.deepseek_keys)])
+
+        # Use ThreadPoolExecutor for parallel API testing
+        max_workers = min(len(tasks) + 1, 20)  # Max 20 parallel connections
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = []
+
+            # Submit all API tests
+            for provider, i, key in tasks:
+                if provider == 'gemini':
+                    futures.append(executor.submit(test_gemini, (i, key)))
+                elif provider == 'groq':
+                    futures.append(executor.submit(test_groq, (i, key)))
+                elif provider == 'deepseek':
+                    futures.append(executor.submit(test_deepseek, (i, key)))
+
+            # Submit Ollama test
+            futures.append(executor.submit(test_ollama))
+
+            # Process results as they complete
+            for future in as_completed(futures):
+                try:
+                    provider, idx, key, success = future.result()
+                    status = "OK" if success else "SKIP"
+
+                    if provider == 'ollama':
+                        results['ollama'] = success
+                        print(f"  Ollama ({self.ollama_model}): {'OK (local)' if success else 'NOT AVAILABLE'}")
+                    else:
+                        print(f"  {provider.capitalize()} key #{idx+1}: {status}")
+                        if success:
+                            with results_lock:
+                                results[provider].append(key)
+                except Exception as e:
+                    self.logger.error(f"API test error: {e}")
 
         # Update with working keys only
-        self.gemini_keys = working_gemini
-        self.groq_keys = working_groq
-        self.deepseek_keys = working_deepseek
+        self.gemini_keys = results['gemini']
+        self.groq_keys = results['groq']
+        self.deepseek_keys = results['deepseek']
+        self.ollama_available = results['ollama']
 
-        # Test Ollama (local fallback)
-        print(f"  Testing Ollama ({self.ollama_model})...", end=" ")
-        if self._test_ollama():
-            print("OK (local)")
-            self.ollama_available = True
-        else:
-            print("NOT AVAILABLE (cai dat: ollama pull " + self.ollama_model + ")")
-            self.ollama_available = False
-
-        total_working = len(working_gemini) + len(working_groq) + len(working_deepseek)
+        total_working = len(self.gemini_keys) + len(self.groq_keys) + len(self.deepseek_keys)
         ollama_str = ", Ollama: OK" if self.ollama_available else ""
-        print(f"[API Filter] Ket qua: {len(working_gemini)} Gemini, {len(working_groq)} Groq, {len(working_deepseek)} DeepSeek{ollama_str}")
+        print(f"[API Filter] Ket qua: {len(self.gemini_keys)} Gemini, {len(self.groq_keys)} Groq, {len(self.deepseek_keys)} DeepSeek{ollama_str}")
 
         if total_working == 0 and not self.ollama_available:
             print("[API Filter] CANH BAO: Khong co API nao hoat dong! Cai Ollama de dung offline.")
         else:
             # Show priority order
-            if working_gemini:
+            if self.gemini_keys:
                 print(f"[API Filter] Se dung: Gemini (uu tien)")
-            elif working_groq:
+            elif self.groq_keys:
                 print(f"[API Filter] Se dung: Groq (uu tien)")
-            elif working_deepseek:
+            elif self.deepseek_keys:
                 print(f"[API Filter] Se dung: DeepSeek")
             elif self.ollama_available:
                 print(f"[API Filter] Se dung: Ollama (local)")
@@ -439,6 +476,95 @@ class MultiAIClient:
         else:
             raise requests.RequestException(f"Ollama API error {resp.status_code}: {resp.text[:200]}")
 
+    def generate_batch_parallel(
+        self,
+        prompts: List[str],
+        temperature: float = 0.7,
+        max_tokens: int = 8192,
+        max_workers: int = None
+    ) -> List[str]:
+        """
+        Generate content for multiple prompts in parallel.
+
+        Args:
+            prompts: List of prompts to process
+            temperature: Temperature for generation
+            max_tokens: Max tokens per response
+            max_workers: Max parallel workers (None = auto)
+
+        Returns:
+            List of responses in same order as prompts
+        """
+        if not prompts:
+            return []
+
+        # Single prompt - no parallelization needed
+        if len(prompts) == 1:
+            return [self.generate_content(prompts[0], temperature, max_tokens)]
+
+        # Determine worker count
+        if max_workers is None:
+            # Use total available API keys as max workers
+            total_keys = len(self.gemini_keys) + len(self.groq_keys) + len(self.deepseek_keys)
+            if self.ollama_available:
+                total_keys += 1  # Ollama can handle 1 at a time
+            max_workers = min(self.max_parallel_requests, max(1, total_keys))
+
+        print(f"[Parallel] Xu ly {len(prompts)} prompts voi {max_workers} workers...")
+
+        # Results placeholder (preserve order)
+        results = [None] * len(prompts)
+        errors = []
+
+        def process_prompt(idx_prompt: Tuple[int, str]) -> Tuple[int, str, Exception]:
+            """Process single prompt and return (index, result, error)."""
+            idx, prompt = idx_prompt
+            try:
+                # Thread-safe API selection
+                with self._request_lock:
+                    pass  # Lock just to serialize index updates
+
+                result = self.generate_content(prompt, temperature, max_tokens)
+                return (idx, result, None)
+            except Exception as e:
+                return (idx, "", e)
+
+        # Execute in parallel
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [
+                executor.submit(process_prompt, (i, p))
+                for i, p in enumerate(prompts)
+            ]
+
+            # Process as completed with progress
+            completed = 0
+            for future in as_completed(futures):
+                idx, result, error = future.result()
+                completed += 1
+
+                if error:
+                    errors.append((idx, error))
+                    self.logger.warning(f"Prompt {idx+1} failed: {error}")
+                    results[idx] = ""  # Empty result for failed
+                else:
+                    results[idx] = result
+
+                print(f"[Parallel] Hoan thanh {completed}/{len(prompts)}...", end="\r")
+
+        print(f"[Parallel] Hoan thanh {len(prompts)} prompts, {len(errors)} loi")
+
+        # Retry failed prompts sequentially
+        if errors:
+            print(f"[Parallel] Retry {len(errors)} prompts that bi loi...")
+            for idx, _ in errors:
+                try:
+                    results[idx] = self.generate_content(prompts[idx], temperature, max_tokens)
+                except Exception as e:
+                    self.logger.error(f"Retry failed for prompt {idx+1}: {e}")
+                    results[idx] = ""
+
+        return results
+
 
 # ============================================================================
 # LEGACY GEMINI CLIENT (for backwards compatibility)
@@ -636,7 +762,12 @@ class PromptGenerator:
         # Scene grouping settings
         self.min_scene_duration = settings.get("min_scene_duration", 3)  # Min 3s
         self.max_scene_duration = settings.get("max_scene_duration", 8)  # Max 8s per scene
-    
+
+        # Parallel processing settings
+        self.parallel_enabled = settings.get("parallel_enabled", True)
+        self.max_parallel_batches = settings.get("max_parallel_batches", 3)  # Parallel batch processing
+        self.batch_size = settings.get("prompt_batch_size", 10)  # Scenes per batch
+
     def _generate_content(self, prompt: str, temperature: float = 0.7, max_tokens: int = 8192) -> str:
         """Generate content using available AI providers."""
         # Try MultiAIClient first
@@ -741,27 +872,78 @@ class PromptGenerator:
 
         self.logger.info(f"Chia thành {len(scenes_data)} scenes")
 
-        # Step 3: Tạo prompts cho từng batch scenes
+        # Step 3: Tạo prompts cho từng batch scenes (PARALLEL)
         self.logger.info("Tạo prompts cho scenes...")
 
         # Chia scenes thành batches để tránh vượt quá context limit
-        batch_size = 10
+        batch_size = self.batch_size
+        batches = []
+        for i in range(0, len(scenes_data), batch_size):
+            batches.append(scenes_data[i:i + batch_size])
+
+        total_batches = len(batches)
+        self.logger.info(f"Chia thanh {total_batches} batches, moi batch {batch_size} scenes")
+
         all_scene_prompts = []
 
-        for i in range(0, len(scenes_data), batch_size):
-            batch = scenes_data[i:i + batch_size]
-            self.logger.info(f"Xử lý batch {i // batch_size + 1}/{(len(scenes_data) - 1) // batch_size + 1}")
+        if self.parallel_enabled and total_batches > 1:
+            # PARALLEL PROCESSING: Process multiple batches concurrently
+            self.logger.info(f"[Parallel] Xu ly {total_batches} batches song song (max {self.max_parallel_batches} workers)...")
 
-            scene_prompts = self._generate_scene_prompts(
-                characters, batch, context_lock,
-                locations=locations,
-                global_style_override=global_style
-            )
-            all_scene_prompts.extend(scene_prompts)
-            
-            # Rate limiting
-            if i + batch_size < len(scenes_data):
-                time.sleep(2)  # Tránh rate limit
+            def process_batch(batch_info: Tuple[int, List]) -> Tuple[int, List]:
+                """Process single batch and return (batch_idx, prompts)."""
+                batch_idx, batch = batch_info
+                prompts = self._generate_scene_prompts(
+                    characters, batch, context_lock,
+                    locations=locations,
+                    global_style_override=global_style
+                )
+                return (batch_idx, prompts)
+
+            # Results placeholder (preserve order)
+            batch_results = [None] * total_batches
+
+            with ThreadPoolExecutor(max_workers=self.max_parallel_batches) as executor:
+                futures = [
+                    executor.submit(process_batch, (i, batch))
+                    for i, batch in enumerate(batches)
+                ]
+
+                # Process as completed with progress
+                completed = 0
+                for future in as_completed(futures):
+                    try:
+                        batch_idx, prompts = future.result()
+                        batch_results[batch_idx] = prompts
+                        completed += 1
+                        print(f"[Parallel] Batch {completed}/{total_batches} hoan thanh")
+                    except Exception as e:
+                        self.logger.error(f"Batch failed: {e}")
+
+            # Flatten results in order
+            for prompts in batch_results:
+                if prompts:
+                    all_scene_prompts.extend(prompts)
+                else:
+                    # Batch failed, add empty prompts
+                    self.logger.warning("Some batch failed, using empty prompts")
+
+            print(f"[Parallel] Hoan thanh {len(all_scene_prompts)} scene prompts")
+        else:
+            # SEQUENTIAL PROCESSING (fallback)
+            for i, batch in enumerate(batches):
+                self.logger.info(f"Xu ly batch {i + 1}/{total_batches}")
+
+                scene_prompts = self._generate_scene_prompts(
+                    characters, batch, context_lock,
+                    locations=locations,
+                    global_style_override=global_style
+                )
+                all_scene_prompts.extend(scene_prompts)
+
+                # Rate limiting
+                if i + 1 < total_batches:
+                    time.sleep(2)  # Tránh rate limit
         
         # Lưu scenes vào Excel
         for scene_data, prompts in zip(scenes_data, all_scene_prompts):

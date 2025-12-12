@@ -146,7 +146,13 @@ def load_settings(config_path: Path) -> Dict[str, Any]:
     settings.setdefault("flow_aspect_ratio", "landscape")
     settings.setdefault("flow_delay", 3.0)
     settings.setdefault("flow_timeout", 120)
-    
+
+    # Parallel processing defaults (for powerful machines)
+    settings.setdefault("parallel_enabled", True)  # Enable parallel processing
+    settings.setdefault("max_parallel_requests", 5)  # Max parallel API calls
+    settings.setdefault("max_parallel_batches", 3)  # Max parallel batch processing
+    settings.setdefault("prompt_batch_size", 10)  # Scenes per batch
+
     return settings
 
 
