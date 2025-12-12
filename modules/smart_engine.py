@@ -61,6 +61,7 @@ class SmartEngine:
 
         # Resources
         self.profiles: List[Resource] = []
+        self.headless_accounts: List[Resource] = []  # Headless accounts (Playwright)
         self.deepseek_keys: List[Resource] = []
         self.groq_keys: List[Resource] = []
         self.gemini_keys: List[Resource] = []
@@ -71,6 +72,7 @@ class SmartEngine:
         self.max_retries = 3
         self.use_threadpool = True  # Dung ThreadPoolExecutor (hieu qua hon threading.Thread)
         self.images_per_worker = 5  # So anh moi worker xu ly truoc khi chuyen
+        self.use_headless = True  # Uu tien headless mode (chay an)
 
         # State
         self.stop_flag = False
@@ -105,7 +107,15 @@ class SmartEngine:
 
             self.chrome_path = data.get('chrome_path', self.chrome_path)
 
-            # Load profiles
+            # Load headless accounts (KHUYÊN DÙNG - chạy ẩn)
+            for acc_id in data.get('headless_accounts', []):
+                if acc_id and not acc_id.startswith('THAY_BANG'):
+                    self.headless_accounts.append(Resource(
+                        type='headless',
+                        value=acc_id
+                    ))
+
+            # Load Chrome profiles (backup - khi headless không được)
             for i, p in enumerate(data.get('chrome_profiles', [])):
                 path = p if isinstance(p, str) else p.get('path', '')
                 # Skip placeholders
@@ -137,6 +147,7 @@ class SmartEngine:
             settings = data.get('settings', {})
             self.parallel = settings.get('parallel', 2)
             self.delay = settings.get('delay_between_images', 2)
+            self.use_headless = settings.get('use_headless', True)  # Mac dinh dung headless
 
         except Exception as e:
             self.log(f"Load config error: {e}", "ERROR")
@@ -335,11 +346,58 @@ class SmartEngine:
 
     # ========== TOKEN MANAGEMENT ==========
 
+    def get_token_headless(self, account: Resource) -> bool:
+        """
+        Lay token bang HEADLESS mode (chay an).
+        Khong mo browser window.
+        """
+        try:
+            from modules.headless_token import HeadlessTokenExtractor
+        except ImportError:
+            self.log("Chua cai Playwright! Chay: pip install playwright && playwright install chromium", "ERROR")
+            return False
+
+        self.log(f"[Headless] Lay token: {account.value}...")
+
+        try:
+            extractor = HeadlessTokenExtractor(account.value)
+
+            # Check co cookies chua
+            if not extractor.has_valid_cookies():
+                self.log(f"[Headless] {account.value} chua dang nhap!", "WARN")
+                self.log(f"  -> Chay: python -m modules.headless_token login {account.value}", "WARN")
+                return False
+
+            # Lay token (headless)
+            token, proj_id, error = extractor.extract_token(headless=True)
+
+            if token:
+                account.token = token
+                account.project_id = proj_id or ""
+                account.token_time = time.time()
+                account.status = 'ready'
+                self.log(f"[Headless] OK: {account.value} - Token OK!", "OK")
+                self.save_cached_tokens()
+                return True
+            elif error == "need_login":
+                self.log(f"[Headless] {account.value} can dang nhap lai!", "WARN")
+                self.log(f"  -> Chay: python -m modules.headless_token login {account.value}", "WARN")
+                return False
+            else:
+                account.fail_count += 1
+                self.log(f"[Headless] FAIL: {account.value} - {error}", "ERROR")
+                return False
+
+        except Exception as e:
+            account.fail_count += 1
+            self.log(f"[Headless] ERROR: {e}", "ERROR")
+            return False
+
     def get_token_for_profile(self, profile: Resource) -> bool:
-        """Lay token cho 1 profile."""
+        """Lay token cho 1 profile (Chrome visible)."""
         from modules.auto_token import ChromeAutoToken
 
-        self.log(f"Lay token: {Path(profile.value).name}...")
+        self.log(f"[Chrome] Lay token: {Path(profile.value).name}...")
 
         try:
             extractor = ChromeAutoToken(
@@ -355,49 +413,78 @@ class SmartEngine:
                 profile.project_id = proj_id or ""
                 profile.token_time = time.time()  # Luu thoi gian lay token
                 profile.status = 'ready'
-                self.log(f"OK: {Path(profile.value).name} - Token OK!", "OK")
+                self.log(f"[Chrome] OK: {Path(profile.value).name} - Token OK!", "OK")
                 self.save_cached_tokens()  # Luu ngay vao file
                 return True
             else:
                 profile.fail_count += 1
-                self.log(f"FAIL: {Path(profile.value).name} - {error}", "ERROR")
+                self.log(f"[Chrome] FAIL: {Path(profile.value).name} - {error}", "ERROR")
                 return False
 
         except Exception as e:
             profile.fail_count += 1
-            self.log(f"ERROR: {e}", "ERROR")
+            self.log(f"[Chrome] ERROR: {e}", "ERROR")
             return False
 
     def get_all_tokens(self) -> int:
-        """Lay token cho tat ca profiles (tuan tu vi can GUI)."""
+        """
+        Lay token cho tat ca accounts.
+        Uu tien: Headless (an) > Chrome profiles (visible)
+        """
         success = 0
+        total = len(self.headless_accounts) + len(self.profiles)
 
-        self.log(f"=== LAY TOKEN CHO {len(self.profiles)} PROFILES ===")
+        if total == 0:
+            self.log("Khong co account nao! Cau hinh config/accounts.json", "WARN")
+            return 0
 
-        for i, profile in enumerate(self.profiles):
-            if self.stop_flag:
-                break
+        # 1. HEADLESS ACCOUNTS (uu tien - chay AN)
+        if self.use_headless and self.headless_accounts:
+            self.log(f"=== LAY TOKEN HEADLESS ({len(self.headless_accounts)} accounts) ===")
 
-            self.log(f"[{i+1}/{len(self.profiles)}] {Path(profile.value).name}")
+            for i, account in enumerate(self.headless_accounts):
+                if self.stop_flag:
+                    break
 
-            # Check token con valid khong
-            if self.is_token_valid(profile):
-                self.log(f"  -> Da co token valid, skip")
-                success += 1
-                continue
+                self.log(f"[{i+1}/{len(self.headless_accounts)}] {account.value}")
 
-            # Token het han hoac chua co
-            if profile.token:
-                self.log(f"  -> Token het han, lay moi...")
+                if self.is_token_valid(account):
+                    self.log(f"  -> Da co token valid, skip")
+                    success += 1
+                    continue
 
-            if self.get_token_for_profile(profile):
-                success += 1
+                if self.get_token_headless(account):
+                    success += 1
 
-            # Doi giua cac profiles (giam tu 3s -> 1s)
-            if i < len(self.profiles) - 1:
-                time.sleep(1)
+                # Delay nho giua cac accounts
+                if i < len(self.headless_accounts) - 1:
+                    time.sleep(0.5)
 
-        self.log(f"=== XONG: {success}/{len(self.profiles)} tokens ===")
+        # 2. CHROME PROFILES (backup - khi headless khong du)
+        if self.profiles and (not self.use_headless or success < len(self.headless_accounts)):
+            self.log(f"=== LAY TOKEN CHROME ({len(self.profiles)} profiles) ===")
+
+            for i, profile in enumerate(self.profiles):
+                if self.stop_flag:
+                    break
+
+                self.log(f"[{i+1}/{len(self.profiles)}] {Path(profile.value).name}")
+
+                if self.is_token_valid(profile):
+                    self.log(f"  -> Da co token valid, skip")
+                    success += 1
+                    continue
+
+                if profile.token:
+                    self.log(f"  -> Token het han, lay moi...")
+
+                if self.get_token_for_profile(profile):
+                    success += 1
+
+                if i < len(self.profiles) - 1:
+                    time.sleep(1)
+
+        self.log(f"=== XONG: {success}/{total} tokens ===")
         return success
 
     def refresh_token_if_needed(self, profile: Resource) -> bool:
@@ -680,16 +767,17 @@ class SmartEngine:
             attempt += 1
             self.log(f"=== ROUND {attempt} - {len(results['pending'])} pending ===")
 
-            # Get profiles with tokens
-            active_profiles = [p for p in self.profiles if p.token and p.status != 'exhausted']
+            # Get all accounts with tokens (headless + chrome profiles)
+            all_accounts = self.headless_accounts + self.profiles
+            active_profiles = [p for p in all_accounts if p.token and p.status != 'exhausted']
 
             if not active_profiles:
-                self.log("Khong co profile nao co token!", "WARN")
+                self.log("Khong co account nao co token!", "WARN")
                 # Try to get more tokens
                 n = self.get_all_tokens()
                 if n == 0:
                     break
-                active_profiles = [p for p in self.profiles if p.token]
+                active_profiles = [p for p in all_accounts if p.token]
 
             if not active_profiles:
                 break
