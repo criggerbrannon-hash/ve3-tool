@@ -223,6 +223,34 @@ class SmartEngine:
         profile_name = Path(profile.value).name
         return self.media_name_cache.get(profile_name, {}).get(image_id, "")
 
+    def find_profile_with_media_names(self, required_ids: List[str]) -> Optional['Resource']:
+        """
+        Tim profile co TAT CA media_names can thiet.
+
+        Args:
+            required_ids: List image_ids can co (vd: ["nv1", "loc1"])
+
+        Returns:
+            Profile co du media_names, hoac None
+        """
+        if not required_ids:
+            return None
+
+        # Tim trong tat ca profiles (headless + chrome)
+        all_profiles = self.headless_accounts + self.profiles
+
+        for profile in all_profiles:
+            profile_name = Path(profile.value).name
+            profile_cache = self.media_name_cache.get(profile_name, {})
+
+            # Check profile co token va co TAT CA media_names can thiet
+            if profile.token:
+                has_all = all(img_id in profile_cache for img_id in required_ids)
+                if has_all:
+                    return profile
+
+        return None
+
     def set_cached_media_name(self, profile: 'Resource', image_id: str, media_name: str):
         """Luu media_name vao cache."""
         profile_name = Path(profile.value).name
@@ -750,8 +778,53 @@ class SmartEngine:
         Tao anh SONG SONG - OPTIMIZED VERSION.
         Su dung ThreadPoolExecutor de tan dung toi da CPU/GPU.
         Dam bao tat ca prompts deu duoc tao - retry neu fail.
+
+        STRATEGY:
+        1. Tao TAT CA nv/loc images truoc (bang 1 profile) de co media_names
+        2. Sau do tao scene images (chi dinh profile co media_names phu hop)
         """
-        self.log(f"=== TAO {len(prompts)} ANH SONG SONG (OPTIMIZED) ===")
+        # Separate nv/loc images from scene images
+        ref_prompts = [p for p in prompts if p.get('id', '').startswith('nv') or p.get('id', '').startswith('loc')]
+        scene_prompts = [p for p in prompts if p not in ref_prompts]
+
+        self.log(f"=== TAO {len(prompts)} ANH (ref: {len(ref_prompts)}, scene: {len(scene_prompts)}) ===")
+
+        # === PHASE 1: Tao TAT CA reference images truoc (dung 1 profile chinh) ===
+        if ref_prompts:
+            self.log(f"=== PHASE 1: Tao {len(ref_prompts)} reference images (nv/loc) ===")
+            ref_results = self._generate_images_batch(ref_prompts, use_single_profile=True)
+            self.log(f"=== PHASE 1 DONE: {ref_results['success']} OK, {ref_results['failed']} FAIL ===")
+
+            # Neu co ref image fail, van tiep tuc voi scene images
+            if ref_results['failed'] > 0:
+                self.log(f"WARNING: {ref_results['failed']} reference images failed!", "WARN")
+        else:
+            ref_results = {"success": 0, "failed": 0}
+
+        # === PHASE 2: Tao scene images (smart assign to profile co media_names) ===
+        if scene_prompts:
+            self.log(f"=== PHASE 2: Tao {len(scene_prompts)} scene images ===")
+            scene_results = self._generate_images_batch(scene_prompts, use_single_profile=False)
+            self.log(f"=== PHASE 2 DONE: {scene_results['success']} OK, {scene_results['failed']} FAIL ===")
+        else:
+            scene_results = {"success": 0, "failed": 0}
+
+        # Combine results
+        return {
+            "success": ref_results["success"] + scene_results["success"],
+            "failed": ref_results["failed"] + scene_results["failed"],
+            "pending": ref_results.get("pending", []) + scene_results.get("pending", [])
+        }
+
+    def _generate_images_batch(self, prompts: List[Dict], use_single_profile: bool = False) -> Dict:
+        """
+        Internal: Tao batch images.
+
+        Args:
+            prompts: List prompts can tao
+            use_single_profile: True = dung 1 profile cho tat ca (cho nv/loc)
+        """
+        self.log(f"[Batch] {len(prompts)} images, single_profile={use_single_profile}")
 
         results = {"success": 0, "failed": 0, "pending": list(prompts)}
 
@@ -779,19 +852,52 @@ class SmartEngine:
             if not active_profiles:
                 break
 
-            # DUNG TAT CA tokens co san - khong gioi han
-            n_workers = min(len(active_profiles), len(results["pending"]))
-            self.log(f"Su dung {n_workers} workers ({len(active_profiles)} tokens)")
-
             # Prepare tasks: (prompt_data, profile)
             pending = results["pending"]
             results["pending"] = []
 
-            # Assign prompts to profiles round-robin
-            tasks = []
-            for i, prompt_data in enumerate(pending):
-                profile = active_profiles[i % len(active_profiles)]
-                tasks.append((prompt_data, profile))
+            # === PROFILE ASSIGNMENT STRATEGY ===
+            if use_single_profile:
+                # PHASE 1 (nv/loc): Dung 1 profile chinh de media_names consistent
+                primary_profile = active_profiles[0]
+                n_workers = 1  # Chi dung 1 profile de dam bao consistency
+                self.log(f"[Single Profile] Dung profile: {Path(primary_profile.value).name}")
+
+                tasks = [(p, primary_profile) for p in pending]
+            else:
+                # PHASE 2 (scenes): Smart assign based on references
+                n_workers = min(len(active_profiles), len(results["pending"]))
+                self.log(f"Su dung {n_workers} workers ({len(active_profiles)} tokens)")
+
+                tasks = []
+                for i, prompt_data in enumerate(pending):
+                    pid = prompt_data.get('id', '')
+                    reference_files = prompt_data.get('reference_files', '')
+
+                    # Default: round-robin
+                    assigned_profile = active_profiles[i % len(active_profiles)]
+
+                    # SMART: Tim profile co media_names cho references
+                    if reference_files:
+                        # Parse reference_files
+                        try:
+                            parsed = json.loads(reference_files)
+                            file_list = parsed if isinstance(parsed, list) else [parsed]
+                        except:
+                            file_list = [f.strip() for f in str(reference_files).split(",") if f.strip()]
+
+                        # Extract image_ids (vd: ["nv1", "loc1"])
+                        required_ids = [Path(f).stem for f in file_list]
+
+                        # Tim profile co TAT CA media_names can thiet
+                        matching_profile = self.find_profile_with_media_names(required_ids)
+                        if matching_profile:
+                            assigned_profile = matching_profile
+                            self.log(f"  [{pid}] -> Profile co refs: {Path(assigned_profile.value).name}")
+                        else:
+                            self.log(f"  [{pid}] -> No profile has refs {required_ids}", "WARN")
+
+                    tasks.append((prompt_data, assigned_profile))
 
             # Results tracking
             done_in_round = []
