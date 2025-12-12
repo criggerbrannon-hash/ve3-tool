@@ -661,32 +661,29 @@ class SmartEngine:
                     file_list = [f.strip() for f in str(reference_files).split(",") if f.strip()]
 
                 # Tim media_name cho moi reference image
+                # LUU Y: API CHI CHAP NHAN media_name, KHONG chap nhan base64!
+                skipped_refs = []
                 for filename in file_list:
                     # Extract image_id tu filename (vd: "nv1.png" -> "nv1")
                     image_id = Path(filename).stem
 
-                    # 1. Thu lay tu cache truoc (cung profile/token)
+                    # CHI dung cached media_name - base64 KHONG hoat dong
                     cached_media_name = self.get_cached_media_name(profile, image_id)
 
                     if cached_media_name:
                         # Co trong cache -> dung luon
                         image_inputs.append(ImageInput(name=cached_media_name))
-                        self.log(f"  -> Cache hit: {image_id} -> {cached_media_name[:40]}...")
+                        self.log(f"  -> Ref OK: {image_id}")
                     else:
-                        # Khong co trong cache -> fallback to base64
-                        img_path = Path(nv_path) / filename
-                        if img_path.exists():
-                            # Option 1: Try upload (may fail with 404)
-                            # Option 2: Use base64 directly (new fallback)
-                            try:
-                                # Try base64 inline first (more likely to work)
-                                img_input = ImageInput.from_file(img_path)
-                                image_inputs.append(img_input)
-                                self.log(f"  -> Using base64 for {image_id} (no cache)")
-                            except Exception as e:
-                                self.log(f"  -> Failed to read {filename}: {e}", "WARN")
-                        else:
-                            self.log(f"  -> Reference not found: {img_path}", "WARN")
+                        # Khong co media_name -> SKIP (khong the dung base64)
+                        skipped_refs.append(image_id)
+
+                if skipped_refs:
+                    self.log(f"  -> SKIP refs (no media_name): {skipped_refs}", "WARN")
+                    self.log(f"  -> Tao anh KHONG CO reference (chua co media_name)", "WARN")
+                    # Clear image_inputs neu co bat ky ref nao thieu
+                    # Vi API yeu cau TAT CA refs phai co media_name
+                    image_inputs = []
 
                 if image_inputs:
                     self.log(f"  -> Using {len(image_inputs)} reference images for {pid}")
