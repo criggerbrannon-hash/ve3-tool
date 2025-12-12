@@ -584,20 +584,18 @@ class SmartEngine:
                         image_inputs.append(ImageInput(name=cached_media_name))
                         self.log(f"  -> Cache hit: {image_id} -> {cached_media_name[:40]}...")
                     else:
-                        # Khong co trong cache -> upload de lay media_name moi
+                        # Khong co trong cache -> fallback to base64
                         img_path = Path(nv_path) / filename
                         if img_path.exists():
+                            # Option 1: Try upload (may fail with 404)
+                            # Option 2: Use base64 directly (new fallback)
                             try:
-                                success_upload, img_input, error_upload = api.upload_image(img_path)
-                                if success_upload and img_input:
-                                    image_inputs.append(img_input)
-                                    # Luu vao cache cho lan sau
-                                    self.set_cached_media_name(profile, image_id, img_input.name)
-                                    self.log(f"  -> Uploaded: {image_id} -> {img_input.name[:40]}...")
-                                else:
-                                    self.log(f"  -> Upload failed {filename}: {error_upload}", "WARN")
+                                # Try base64 inline first (more likely to work)
+                                img_input = ImageInput.from_file(img_path)
+                                image_inputs.append(img_input)
+                                self.log(f"  -> Using base64 for {image_id} (no cache)")
                             except Exception as e:
-                                self.log(f"  -> Upload error {filename}: {e}", "WARN")
+                                self.log(f"  -> Failed to read {filename}: {e}", "WARN")
                         else:
                             self.log(f"  -> Reference not found: {img_path}", "WARN")
 

@@ -43,15 +43,42 @@ class ImageInputType(Enum):
 @dataclass
 class ImageInput:
     """Input image cho reference khi generate."""
-    name: str  # Media name từ response trước đó
+    name: str = ""  # Media name từ response trước đó (preferred)
     input_type: ImageInputType = ImageInputType.REFERENCE
+    base64_data: str = ""  # Base64 image data (fallback if no name)
+    mime_type: str = "image/png"  # MIME type for base64
 
-    def to_dict(self) -> Dict[str, str]:
+    def to_dict(self) -> Dict[str, Any]:
         """Convert sang dict format cho API."""
-        return {
-            "name": self.name,
+        result = {
             "imageInputType": self.input_type.value
         }
+        if self.name:
+            # Prefer media_name reference
+            result["name"] = self.name
+        elif self.base64_data:
+            # Fallback: try inline base64 (may not work but worth trying)
+            result["rawImageBytes"] = self.base64_data
+            result["mimeType"] = self.mime_type
+        return result
+
+    @classmethod
+    def from_file(cls, file_path: Path, input_type: ImageInputType = ImageInputType.REFERENCE) -> 'ImageInput':
+        """Create ImageInput from local file with base64 data."""
+        import base64
+        with open(file_path, 'rb') as f:
+            data = base64.b64encode(f.read()).decode('utf-8')
+
+        suffix = file_path.suffix.lower()
+        mime_types = {
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".webp": "image/webp"
+        }
+        mime = mime_types.get(suffix, "image/png")
+
+        return cls(name="", input_type=input_type, base64_data=data, mime_type=mime)
 
 
 @dataclass
@@ -202,7 +229,8 @@ class GoogleFlowAPI:
             for i, inp in enumerate(image_inputs_data):
                 name_preview = inp.get("name", "")[:60] if inp.get("name") else "None"
                 inp_type = inp.get("imageInputType", "")
-                self._log(f"  [{i}] name={name_preview}... type={inp_type}")
+                has_b64 = "rawImageBytes" in inp
+                self._log(f"  [{i}] name={name_preview} type={inp_type} has_base64={has_b64}")
 
         # Build requests array
         requests_data = []
