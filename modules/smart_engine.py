@@ -548,10 +548,11 @@ class SmartEngine:
         is_reference_image = pid.startswith('nv') or pid.startswith('loc')
 
         try:
+            # Bat verbose cho nv/loc de debug media_name
             api = GoogleFlowAPI(
                 bearer_token=profile.token,
                 project_id=profile.project_id,
-                verbose=False
+                verbose=is_reference_image  # Verbose for reference images to debug
             )
 
             Path(output).parent.mkdir(parents=True, exist_ok=True)
@@ -612,10 +613,16 @@ class SmartEngine:
             )
 
             if success and images:
+                # === DEBUG: Xem API tra ve gi ===
+                img = images[0]
+                self.log(f"  -> DEBUG: media_name={img.media_name}, media_id={img.media_id}, workflow_id={img.workflow_id}")
+
                 # === LUU MEDIA_NAME neu la nv/loc ===
-                if is_reference_image and images[0].media_name:
-                    self.set_cached_media_name(profile, pid, images[0].media_name)
-                    self.log(f"  -> Saved media_name for {pid}: {images[0].media_name[:40]}...")
+                if is_reference_image and img.media_name:
+                    self.set_cached_media_name(profile, pid, img.media_name)
+                    self.log(f"  -> Saved media_name for {pid}: {img.media_name[:40]}...")
+                elif is_reference_image:
+                    self.log(f"  -> WARNING: No media_name returned for {pid}!", "WARN")
 
                 # Download image
                 downloaded = api.download_image(images[0], Path(output).parent, pid)

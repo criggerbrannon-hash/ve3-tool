@@ -248,9 +248,28 @@ class GoogleFlowAPI:
             
             # Parse response
             result = response.json()
-            
+
             if self.verbose:
                 self._log(f"Response: {json.dumps(result, indent=2)[:500]}")
+
+            # === DEBUG: Log raw response structure ===
+            self._log(f"=== RAW RESPONSE KEYS: {list(result.keys())}")
+            if "media" in result and result["media"]:
+                first_media = result["media"][0]
+                self._log(f"=== MEDIA[0] KEYS: {list(first_media.keys())}")
+                self._log(f"=== MEDIA[0].name: {first_media.get('name')}")
+                self._log(f"=== MEDIA[0].workflowId: {first_media.get('workflowId')}")
+                # Check nested structures
+                if "image" in first_media:
+                    img_wrapper = first_media["image"]
+                    self._log(f"=== MEDIA[0].image KEYS: {list(img_wrapper.keys())}")
+                    if "generatedImage" in img_wrapper:
+                        gen_img = img_wrapper["generatedImage"]
+                        self._log(f"=== generatedImage KEYS: {list(gen_img.keys())}")
+                        # Check for any name-like fields
+                        for k in gen_img.keys():
+                            if 'name' in k.lower() or 'media' in k.lower() or 'id' in k.lower():
+                                self._log(f"=== generatedImage.{k}: {gen_img.get(k)}")
             
             # Extract images from response
             images = self._parse_image_response(result, prompt, aspect_ratio.value)
