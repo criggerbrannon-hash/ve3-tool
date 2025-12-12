@@ -48,19 +48,23 @@ class ImageInput:
     base64_data: str = ""  # Base64 image data (fallback if no name)
     mime_type: str = "image/png"  # MIME type for base64
 
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert sang dict format cho API."""
-        result = {
-            "imageInputType": self.input_type.value
+    def to_dict(self) -> Optional[Dict[str, Any]]:
+        """Convert sang dict format cho API.
+
+        CHU Y: Google Flow API CHI CHAP NHAN media_name!
+        base64/rawImageBytes KHONG HOAT DONG - luon tra ve loi 400.
+
+        Returns:
+            Dict neu co media_name, None neu khong co
+        """
+        # CHI tra ve khi co media_name - API khong chap nhan base64!
+        if not self.name:
+            return None
+
+        return {
+            "imageInputType": self.input_type.value,
+            "name": self.name
         }
-        if self.name:
-            # Prefer media_name reference
-            result["name"] = self.name
-        elif self.base64_data:
-            # Fallback: try inline base64 (may not work but worth trying)
-            result["rawImageBytes"] = self.base64_data
-            result["mimeType"] = self.mime_type
-        return result
 
     @classmethod
     def from_file(cls, file_path: Path, input_type: ImageInputType = ImageInputType.REFERENCE) -> 'ImageInput':
@@ -210,10 +214,13 @@ class GoogleFlowAPI:
         if image_inputs:
             for img_input in image_inputs:
                 if isinstance(img_input, ImageInput):
-                    image_inputs_data.append(img_input.to_dict())
-                elif isinstance(img_input, dict):
-                    # Support dict format directly
+                    d = img_input.to_dict()
+                    if d:  # Chi add neu co media_name (to_dict tra ve None neu khong co)
+                        image_inputs_data.append(d)
+                elif isinstance(img_input, dict) and img_input.get("name"):
+                    # Support dict format - CHI khi co name (media_name)
                     image_inputs_data.append(img_input)
+                # IGNORE: strings, dicts without name - API khong chap nhan
 
         # Priority 2: Convert GeneratedImage objects to references
         if reference_images:
