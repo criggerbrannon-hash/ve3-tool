@@ -1,139 +1,134 @@
 #!/usr/bin/env python3
 """
-VE3 Tool - Video API Test Script
-================================
-Script test đơn giản để kiểm tra tạo video từ ảnh.
+VE3 Tool - Video API Test Script v2
+===================================
+Test tạo video với mediaId + token + projectId
 
 Cách dùng:
-1. Lấy token thủ công từ Network tab (ya29.xxx)
-2. Chạy script này với token và path ảnh
+1. Lấy token từ Network tab (ya29.xxx)
+2. Lấy projectId từ URL (d7e14483-3057-4b21-b5af-7d1ee2386bd0)
+3. Lấy mediaId của ảnh từ Network tab
+4. Chạy script này
 
 python test_video.py
 """
 
 import os
 import sys
+import json
 from pathlib import Path
 
 # Add modules to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from modules.google_video_api import GoogleVideoAPI, VideoAspectRatio, VideoDuration
+from modules.google_video_api import GoogleVideoAPI, VideoAspectRatio, VideoModel
 
 
 def test_video_api():
-    """Test Video API."""
+    """Test Video API với input đầy đủ."""
 
     print("""
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║                    VE3 TOOL - VIDEO API TEST                                 ║
+║                    VE3 TOOL - VIDEO API TEST v2                              ║
 ╠══════════════════════════════════════════════════════════════════════════════╣
-║  Test tạo video từ ảnh + prompt                                              ║
+║  Test tạo video từ ảnh đã có trong project                                   ║
+║                                                                              ║
+║  Cần 3 thứ từ Network tab:                                                   ║
+║  1. Bearer Token (ya29.xxx)                                                  ║
+║  2. Project ID (từ URL)                                                      ║
+║  3. Media ID của ảnh                                                         ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 """)
 
     # === 1. Nhập Token ===
     print("📋 BƯỚC 1: Nhập Bearer Token")
-    print("   (Lấy từ Network tab khi tạo video trên labs.google)")
-    print("   Token bắt đầu bằng 'ya29.'")
+    print("   (Copy từ Network tab -> authorization header)")
     print()
-
-    token = input("   Nhập token: ").strip()
+    token = input("   Token (ya29.xxx): ").strip()
 
     if not token:
         print("❌ Token không được để trống!")
         return
 
-    if not token.startswith("ya29."):
-        print("⚠️  Warning: Token thường bắt đầu bằng 'ya29.'")
-
-    # === 2. Chọn ảnh ===
+    # === 2. Nhập Project ID ===
     print()
-    print("🖼️  BƯỚC 2: Chọn ảnh nguồn")
+    print("📋 BƯỚC 2: Nhập Project ID")
+    print("   (Từ URL: https://labs.google/fx/vi/tools/flow/project/[PROJECT_ID])")
+    print()
+    project_id = input("   Project ID: ").strip()
 
-    # Tìm ảnh trong thư mục nv hoặc img
-    default_images = []
-    for pattern in ["PROJECTS/*/nv/*.png", "PROJECTS/*/img/*.png", "nv/*.png", "img/*.png"]:
-        default_images.extend(Path(".").glob(pattern))
-
-    if default_images:
-        print("   Tìm thấy các ảnh:")
-        for i, img in enumerate(default_images[:10], 1):
-            print(f"   {i}. {img}")
-        print()
-
-        choice = input("   Chọn số hoặc nhập path khác: ").strip()
-
-        if choice.isdigit() and 1 <= int(choice) <= len(default_images):
-            image_path = default_images[int(choice) - 1]
-        else:
-            image_path = Path(choice)
-    else:
-        image_path = Path(input("   Nhập path đến ảnh: ").strip())
-
-    if not image_path.exists():
-        print(f"❌ Không tìm thấy ảnh: {image_path}")
+    if not project_id:
+        print("❌ Project ID không được để trống!")
         return
 
-    print(f"   ✓ Đã chọn: {image_path}")
-
-    # === 3. Nhập Prompt ===
+    # === 3. Nhập Media ID ===
     print()
-    print("📝 BƯỚC 3: Nhập video prompt")
-    print("   (Mô tả chuyển động, hiệu ứng...)")
+    print("📋 BƯỚC 3: Nhập Media ID của ảnh")
+    print("   (Lấy từ payload khi tạo video -> referenceImages -> mediaId)")
     print()
+    media_id = input("   Media ID: ").strip()
 
-    default_prompt = "gentle camera movement, soft wind blowing hair, cinematic lighting"
+    if not media_id:
+        print("❌ Media ID không được để trống!")
+        return
+
+    # === 4. Nhập Prompt ===
+    print()
+    print("📝 BƯỚC 4: Nhập video prompt")
+    default_prompt = "gentle camera movement, soft lighting, cinematic"
     prompt = input(f"   Prompt [{default_prompt}]: ").strip()
-
     if not prompt:
         prompt = default_prompt
 
-    # === 4. Test Connection ===
+    # === 5. Tạo API client ===
     print()
-    print("🔗 Đang test kết nối...")
+    print("🔗 Khởi tạo API client...")
 
-    api = GoogleVideoAPI(bearer_token=token, verbose=True)
+    api = GoogleVideoAPI(
+        bearer_token=token,
+        project_id=project_id,
+        verbose=True
+    )
 
+    # === 6. Test connection ===
+    print()
+    print("🔗 Test kết nối...")
     success, msg = api.test_connection()
     print(f"   {msg}")
 
     if not success:
-        print("❌ Kết nối thất bại. Kiểm tra lại token.")
+        print("❌ Kết nối thất bại!")
         return
 
-    # === 5. Tạo Video ===
+    # === 7. Tạo video ===
     print()
     print("🎬 Bắt đầu tạo video...")
-    print(f"   Ảnh: {image_path}")
+    print(f"   Project: {project_id}")
+    print(f"   Media ID: {media_id[:30]}...")
     print(f"   Prompt: {prompt}")
     print()
 
-    # Tạo output dir
-    output_dir = Path("./output/videos")
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Generate video
-    success, operation_id, error = api.generate_video(
+    success, scene_id, error = api.generate_video(
         prompt=prompt,
-        image_path=image_path,
+        media_id=media_id,
         aspect_ratio=VideoAspectRatio.LANDSCAPE,
-        duration=VideoDuration.SHORT
+        model=VideoModel.VEO_3_FAST
     )
 
     if not success:
         print(f"❌ Lỗi tạo video: {error}")
         return
 
-    print(f"   ✓ Operation ID: {operation_id}")
+    print(f"   ✓ Scene ID: {scene_id}")
 
-    # === 6. Chờ hoàn thành ===
+    # === 8. Poll status ===
     print()
-    print("⏳ Đang chờ video hoàn thành (có thể mất 1-5 phút)...")
+    print("⏳ Đang chờ video hoàn thành...")
+    print("   (Có thể mất 1-5 phút)")
 
     success, video, error = api.wait_for_video(
-        operation_id=operation_id,
-        max_wait=300,  # 5 phút
+        operation_id=scene_id,
+        max_wait=300,
         poll_interval=5
     )
 
@@ -141,55 +136,73 @@ def test_video_api():
         print(f"❌ Lỗi: {error}")
         return
 
-    # === 7. Download ===
+    # === 9. Download ===
     print()
     print("📥 Đang download video...")
+
+    output_dir = Path("./output/videos")
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     video_path = api.download_video(
         video=video,
         output_dir=output_dir,
-        filename=f"test_{image_path.stem}"
+        filename=f"video_{scene_id[:8]}"
     )
 
     if video_path:
         print()
         print("=" * 60)
-        print(f"✅ THÀNH CÔNG!")
-        print(f"   Video saved: {video_path}")
+        print("✅ THÀNH CÔNG!")
+        print(f"   Video: {video_path}")
         print("=" * 60)
     else:
         print("❌ Download thất bại")
+        if video and video.url:
+            print(f"   Video URL: {video.url}")
 
 
-def test_with_args():
-    """Test với arguments từ command line."""
-    if len(sys.argv) >= 4:
+def quick_test():
+    """Quick test với command line args."""
+    if len(sys.argv) >= 5:
         token = sys.argv[1]
-        image_path = sys.argv[2]
-        prompt = sys.argv[3]
+        project_id = sys.argv[2]
+        media_id = sys.argv[3]
+        prompt = sys.argv[4]
 
         print(f"Token: {token[:30]}...")
-        print(f"Image: {image_path}")
+        print(f"Project: {project_id}")
+        print(f"Media ID: {media_id[:30]}...")
         print(f"Prompt: {prompt}")
 
-        api = GoogleVideoAPI(bearer_token=token, verbose=True)
-
-        output_dir = Path("./output/videos")
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        success, video_path, error = api.generate_and_download(
-            prompt=prompt,
-            image_path=Path(image_path),
-            output_dir=output_dir
+        api = GoogleVideoAPI(
+            bearer_token=token,
+            project_id=project_id,
+            verbose=True
         )
 
-        if success:
-            print(f"\n✅ Video saved: {video_path}")
+        # Generate
+        success, scene_id, error = api.generate_video(
+            prompt=prompt,
+            media_id=media_id
+        )
+
+        if not success:
+            print(f"❌ Error: {error}")
+            return
+
+        # Wait
+        success, video, error = api.wait_for_video(scene_id, max_wait=300)
+
+        if success and video:
+            output_dir = Path("./output/videos")
+            output_dir.mkdir(parents=True, exist_ok=True)
+            video_path = api.download_video(video, output_dir)
+            print(f"✅ Video: {video_path}")
         else:
-            print(f"\n❌ Error: {error}")
+            print(f"❌ Error: {error}")
     else:
         test_video_api()
 
 
 if __name__ == "__main__":
-    test_with_args()
+    quick_test()

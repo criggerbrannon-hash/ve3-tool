@@ -30,10 +30,10 @@ class VideoAspectRatio(Enum):
     SQUARE = "VIDEO_ASPECT_RATIO_SQUARE"          # 1:1
 
 
-class VideoDuration(Enum):
-    """Thời lượng video."""
-    SHORT = "VIDEO_DURATION_SHORT"    # ~4 giây
-    LONG = "VIDEO_DURATION_LONG"      # ~8 giây
+class VideoModel(Enum):
+    """Model tạo video."""
+    VEO_3_FAST = "veo_3_0_r2v_fast_ultra"  # Veo 3.0 fast
+    VEO_3 = "veo_3_0_r2v"                   # Veo 3.0 standard
 
 
 @dataclass
@@ -203,56 +203,73 @@ class GoogleVideoAPI:
     def generate_video(
         self,
         prompt: str,
+        media_id: Optional[str] = None,
         image_path: Optional[Path] = None,
-        image_base64: Optional[str] = None,
         aspect_ratio: VideoAspectRatio = VideoAspectRatio.LANDSCAPE,
-        duration: VideoDuration = VideoDuration.SHORT
+        model: VideoModel = VideoModel.VEO_3_FAST,
+        seed: Optional[int] = None
     ) -> Tuple[bool, Optional[str], str]:
         """
         Bắt đầu tạo video từ prompt và ảnh.
 
         Args:
             prompt: Text prompt mô tả chuyển động video
-            image_path: Path đến ảnh nguồn
-            image_base64: Base64 encoded image (nếu không có image_path)
+            media_id: Media ID của ảnh đã upload (ưu tiên)
+            image_path: Path đến ảnh nguồn (nếu không có media_id)
             aspect_ratio: Tỷ lệ khung hình
-            duration: Thời lượng video
+            model: Video model (Veo 3.0)
+            seed: Random seed
 
         Returns:
-            Tuple[success, operation_id, error_message]
+            Tuple[success, operation_id/scene_id, error_message]
         """
         self._log(f"Generating video with prompt: {prompt[:50]}...")
 
-        # Prepare image
-        if image_path:
-            image_b64 = self.image_to_base64(image_path)
-            if not image_b64:
-                return False, None, "Cannot read image"
-        elif image_base64:
-            image_b64 = image_base64
-        else:
-            return False, None, "No image provided"
+        # Nếu có image_path nhưng không có media_id, cần upload trước
+        if not media_id and image_path:
+            self._log("Uploading image first...")
+            success, media_id, error = self.upload_image(image_path)
+            if not success:
+                return False, None, f"Image upload failed: {error}"
 
-        # Build request payload
-        # Note: Cấu trúc này có thể cần điều chỉnh theo API thực tế
+        if not media_id:
+            return False, None, "No media_id or image provided"
+
+        # Generate random seed if not provided
+        if seed is None:
+            import random
+            seed = random.randint(1, 99999)
+
+        # Generate scene ID
+        scene_id = str(uuid.uuid4())
+
+        # Build request payload theo cấu trúc thực tế của Google Labs
         payload = {
+            "clientContext": {
+                "sessionId": self.session_id,
+                "projectId": self.project_id,
+                "tool": "PINHOLE",
+                "userPaygateTier": "PAYGATE_TIER_TWO"
+            },
             "requests": [{
-                "clientContext": {
-                    "sessionId": self.session_id,
-                    "projectId": self.project_id,
-                    "tool": "FLOW"
+                "aspectRatio": aspect_ratio.value,
+                "metadata": {
+                    "sceneId": scene_id
                 },
-                "prompt": prompt,
-                "imageInputs": [{
-                    "encodedImage": image_b64
+                "referenceImages": [{
+                    "imageUsageType": "IMAGE_USAGE_TYPE_ASSET",
+                    "mediaId": media_id
                 }],
-                "videoAspectRatio": aspect_ratio.value,
-                "videoDuration": duration.value
+                "seed": seed,
+                "textInput": {
+                    "prompt": prompt
+                },
+                "videoModelKey": model.value
             }]
         }
 
-        # Generate endpoint
-        url = f"{self.BASE_URL}/v1/projects/{self.project_id}/flowMedia:batchGenerateVideos"
+        # Endpoint tạo video
+        url = f"{self.BASE_URL}/v1/video:batchAsyncGenerateVideoReferenceImages"
 
         self._log(f"POST {url}")
 
@@ -279,23 +296,21 @@ class GoogleVideoAPI:
             if self.verbose:
                 self._log(f"Response: {json.dumps(result, indent=2)[:500]}")
 
-            # Extract operation ID for polling
-            operation_id = (
-                result.get("operationId") or
-                result.get("name") or
-                result.get("taskId") or
-                result.get("jobId")
-            )
+            # Extract operation info
+            operations = result.get("operations", [])
+            if operations:
+                op = operations[0]
+                operation_name = op.get("operation", {}).get("name")
+                returned_scene_id = op.get("sceneId", scene_id)
 
-            if operation_id:
-                self._log(f"✓ Video generation started: {operation_id}")
-                return True, operation_id, ""
+                self._log(f"✓ Video generation started!")
+                self._log(f"  Operation: {operation_name}")
+                self._log(f"  Scene ID: {returned_scene_id}")
 
-            # Có thể video đã sẵn sàng ngay
-            if "media" in result or "videos" in result:
-                return True, "immediate", ""
+                # Trả về scene_id để poll status
+                return True, returned_scene_id, ""
 
-            return False, None, "No operation ID in response"
+            return False, None, "No operation in response"
 
         except requests.exceptions.Timeout:
             return False, None, f"Request timeout after {self.timeout}s"
@@ -310,13 +325,13 @@ class GoogleVideoAPI:
 
     def check_video_status(
         self,
-        operation_id: str
+        scene_id: str
     ) -> Tuple[str, Optional[GeneratedVideo], str]:
         """
         Kiểm tra trạng thái video generation.
 
         Args:
-            operation_id: ID từ generate_video
+            scene_id: Scene ID từ generate_video
 
         Returns:
             Tuple[status, video_result, error_message]
@@ -326,11 +341,20 @@ class GoogleVideoAPI:
         url = f"{self.BASE_URL}/v1/video:batchCheckAsyncVideoGenerationStatus"
 
         payload = {
-            "operationIds": [operation_id],
             "clientContext": {
                 "sessionId": self.session_id,
-                "projectId": self.project_id
-            }
+                "projectId": self.project_id,
+                "tool": "PINHOLE",
+                "userPaygateTier": "PAYGATE_TIER_TWO"
+            },
+            "requests": [{
+                "aspectRatio": "VIDEO_ASPECT_RATIO_LANDSCAPE",
+                "metadata": {
+                    "sceneId": scene_id
+                },
+                "referenceImages": [],
+                "textInput": {}
+            }]
         }
 
         try:
@@ -345,36 +369,74 @@ class GoogleVideoAPI:
 
             result = response.json()
 
-            # Parse status từ response
-            # Cấu trúc có thể khác - cần điều chỉnh
-            status = result.get("status", "").lower()
+            if self.verbose:
+                self._log(f"Status response: {json.dumps(result, indent=2)[:300]}")
 
-            if status in ["completed", "done", "success"]:
-                video = self._parse_video_result(result)
-                if video:
-                    return "completed", video, ""
-                return "completed", None, "Video ready but cannot parse"
+            # Parse operations
+            operations = result.get("operations", [])
 
-            elif status in ["pending", "queued"]:
+            for op in operations:
+                op_scene_id = op.get("sceneId", "")
+                status_str = op.get("status", "")
+
+                # Tìm operation match với scene_id
+                if op_scene_id == scene_id or not scene_id:
+
+                    # Check status
+                    if status_str == "MEDIA_GENERATION_STATUS_ACTIVE":
+                        return "processing", None, ""
+
+                    elif status_str == "MEDIA_GENERATION_STATUS_COMPLETE":
+                        # Video hoàn thành - lấy URL
+                        video = self._parse_video_from_operation(op)
+                        if video:
+                            return "completed", video, ""
+                        return "completed", None, "Video ready but cannot parse URL"
+
+                    elif status_str == "MEDIA_GENERATION_STATUS_FAILED":
+                        return "failed", None, "Video generation failed"
+
+                    elif status_str == "MEDIA_GENERATION_STATUS_PENDING":
+                        return "pending", None, ""
+
+            # Không tìm thấy operation
+            if not operations:
                 return "pending", None, ""
-
-            elif status in ["processing", "running", "in_progress"]:
-                return "processing", None, ""
-
-            elif status in ["failed", "error"]:
-                error_msg = result.get("error", {}).get("message", "Unknown error")
-                return "failed", None, error_msg
-
-            # Check for results directly
-            if "videos" in result or "media" in result:
-                video = self._parse_video_result(result)
-                if video:
-                    return "completed", video, ""
 
             return "processing", None, ""
 
         except Exception as e:
             return "failed", None, f"Status check error: {str(e)}"
+
+    def _parse_video_from_operation(self, operation: Dict[str, Any]) -> Optional[GeneratedVideo]:
+        """Parse video URL từ operation response."""
+        try:
+            # Tìm media/video URL trong operation
+            media = operation.get("media", {})
+            video_url = media.get("videoUrl") or media.get("url") or media.get("fifeUrl")
+
+            if video_url:
+                return GeneratedVideo(
+                    video_id=operation.get("sceneId"),
+                    url=video_url,
+                    status="completed"
+                )
+
+            # Thử tìm trong nested structure
+            if "video" in media:
+                video_data = media["video"]
+                video_url = video_data.get("url") or video_data.get("videoUrl")
+                if video_url:
+                    return GeneratedVideo(
+                        video_id=operation.get("sceneId"),
+                        url=video_url,
+                        status="completed"
+                    )
+
+            return None
+        except Exception as e:
+            self._log(f"Parse video error: {e}")
+            return None
 
     def _parse_video_result(self, response: Dict[str, Any]) -> Optional[GeneratedVideo]:
         """Parse video từ API response."""
