@@ -696,7 +696,33 @@ class PromptGenerator:
         for scene_data, prompts in zip(scenes_data, all_scene_prompts):
             # Convert lists to JSON strings for storage
             chars_used = prompts.get("characters_used", [])
+            location_used = prompts.get("location_used", "")
             ref_files = prompts.get("reference_files", [])
+
+            # === AUTO-GENERATE reference_files nếu AI không điền ===
+            if not ref_files:
+                ref_files = []
+                # Thêm tất cả nhân vật đã dùng
+                if chars_used:
+                    if isinstance(chars_used, str):
+                        try:
+                            chars_used = json.loads(chars_used)
+                        except:
+                            chars_used = [chars_used]
+                    for char_id in chars_used:
+                        if char_id and not char_id.endswith('.png'):
+                            ref_files.append(f"{char_id}.png")
+                        elif char_id:
+                            ref_files.append(char_id)
+                # Thêm location đã dùng
+                if location_used:
+                    loc_file = f"{location_used}.png" if not location_used.endswith('.png') else location_used
+                    if loc_file not in ref_files:
+                        ref_files.append(loc_file)
+
+                if ref_files:
+                    self.logger.debug(f"Scene {scene_data['scene_id']}: Auto-generated reference_files: {ref_files}")
+
             chars_str = json.dumps(chars_used) if isinstance(chars_used, list) else str(chars_used)
             refs_str = json.dumps(ref_files) if isinstance(ref_files, list) else str(ref_files)
 
@@ -718,7 +744,7 @@ class PromptGenerator:
                 status_img="pending",
                 status_vid="pending",
                 characters_used=chars_str,
-                location_used=prompts.get("location_used", ""),
+                location_used=location_used,
                 reference_files=refs_str
             )
             workbook.add_scene(scene)
