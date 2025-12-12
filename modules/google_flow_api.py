@@ -500,26 +500,29 @@ class GoogleFlowAPI:
         output_dir: Path,
         count: int = 2,
         aspect_ratio: AspectRatio = AspectRatio.LANDSCAPE,
-        prefix: str = "flow"
+        prefix: str = "flow",
+        image_inputs: Optional[List[str]] = None
     ) -> Tuple[bool, List[Path], str]:
         """
         Tạo ảnh và download về local trong một lần gọi.
-        
+
         Args:
             prompt: Text prompt
             output_dir: Thư mục lưu ảnh
             count: Số lượng ảnh
             aspect_ratio: Tỷ lệ khung hình
             prefix: Prefix cho tên file
-            
+            image_inputs: List base64 reference images (for consistency)
+
         Returns:
             Tuple[success, list_of_paths, error_message]
         """
-        # Generate
+        # Generate with reference images
         success, images, error = self.generate_images(
             prompt=prompt,
             count=count,
-            aspect_ratio=aspect_ratio
+            aspect_ratio=aspect_ratio,
+            image_inputs=image_inputs
         )
         
         if not success:
