@@ -558,7 +558,8 @@ class GoogleFlowAPI:
     def upload_image(
         self,
         image_path: Path,
-        image_type: ImageInputType = ImageInputType.REFERENCE
+        image_type: ImageInputType = ImageInputType.REFERENCE,
+        aspect_ratio: AspectRatio = AspectRatio.LANDSCAPE
     ) -> Tuple[bool, Optional[ImageInput], str]:
         """
         Upload ảnh local lên Flow để dùng làm reference.
@@ -566,6 +567,7 @@ class GoogleFlowAPI:
         Args:
             image_path: Đường dẫn đến file ảnh local
             image_type: Loại input (REFERENCE, STYLE, SUBJECT)
+            aspect_ratio: Tỷ lệ khung hình của ảnh
 
         Returns:
             Tuple[success, ImageInput object, error_message]
@@ -595,18 +597,21 @@ class GoogleFlowAPI:
             }
             mime_type = mime_types.get(suffix, "image/png")
 
-            # Build upload request
+            # Build upload request - sử dụng ASSET_MANAGER tool
+            # Endpoint có thể là flowMedia:uploadImage hoặc media:upload
             url = f"{self.BASE_URL}/v1/projects/{self.project_id}/flowMedia:uploadImage"
 
+            # Format đúng theo Flow API
             payload = {
                 "clientContext": {
                     "sessionId": self.session_id,
-                    "projectId": self.project_id,
-                    "tool": self.TOOL_NAME
+                    "tool": "ASSET_MANAGER"  # Upload dùng ASSET_MANAGER, không phải PINHOLE
                 },
-                "image": {
-                    "encodedImage": image_b64,
-                    "mimeType": mime_type
+                "imageInput": {
+                    "aspectRatio": aspect_ratio.value,
+                    "isUserUploaded": True,
+                    "mimeType": mime_type,
+                    "rawImageBytes": image_b64
                 }
             }
 
@@ -635,18 +640,24 @@ class GoogleFlowAPI:
             if self.verbose:
                 self._log(f"Upload response: {json.dumps(result, indent=2)[:500]}")
 
-            # Extract name from response
+            # Extract name from response - thử nhiều format khác nhau
             media_name = None
 
-            # Try different response formats
-            if "media" in result:
+            # Format 1: Direct name field
+            if "name" in result:
+                media_name = result["name"]
+            # Format 2: media array
+            elif "media" in result:
                 media = result["media"]
                 if isinstance(media, list) and len(media) > 0:
                     media_name = media[0].get("name")
                 elif isinstance(media, dict):
                     media_name = media.get("name")
-            elif "name" in result:
-                media_name = result["name"]
+            # Format 3: imageInput response
+            elif "imageInput" in result:
+                img_input = result["imageInput"]
+                media_name = img_input.get("name") or img_input.get("mediaName")
+            # Format 4: mediaName field
             elif "mediaName" in result:
                 media_name = result["mediaName"]
 
@@ -654,6 +665,8 @@ class GoogleFlowAPI:
                 self._log(f"✓ Upload successful, media_name: {media_name[:50]}...")
                 return True, ImageInput(name=media_name, input_type=image_type), ""
             else:
+                # Log full response for debugging
+                self._log(f"Response without media_name: {json.dumps(result)[:300]}")
                 return False, None, "Upload succeeded but no media name in response"
 
         except requests.exceptions.Timeout:
