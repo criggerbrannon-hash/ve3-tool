@@ -7,6 +7,7 @@ Hỗ trợ: DeepSeek (rẻ), Groq (free), Gemini
 
 import json
 import time
+from datetime import timedelta
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
@@ -850,11 +851,90 @@ class PromptGenerator:
                 })
 
             self.logger.info(f"AI chia thành {len(scenes_data)} scenes theo nội dung")
-            return scenes_data
+
+            # POST-VALIDATION: Chia lại những scene vượt quá max_duration (8s)
+            validated_scenes = self._validate_and_split_scenes(scenes_data, srt_entries)
+            if len(validated_scenes) != len(scenes_data):
+                self.logger.info(f"Post-validation: {len(scenes_data)} -> {len(validated_scenes)} scenes (split long scenes)")
+
+            return validated_scenes
 
         except Exception as e:
             self.logger.error(f"Smart divide failed: {e}, falling back to time-based")
             return self._fallback_time_based_division(srt_entries)
+
+    def _validate_and_split_scenes(self, scenes_data: List[Dict], srt_entries: List) -> List[Dict[str, Any]]:
+        """
+        Validate và chia lại những scene vượt quá max_duration.
+
+        Args:
+            scenes_data: List scenes từ AI
+            srt_entries: List SrtEntry gốc
+
+        Returns:
+            List scenes đã được validate và split nếu cần
+        """
+        # Build lookup table: srt_index -> SrtEntry
+        srt_lookup = {e.index: e for e in srt_entries}
+
+        validated = []
+        scene_counter = 1
+
+        for scene in scenes_data:
+            # Tính duration thực tế từ srt_start và srt_end
+            srt_start = scene.get("srt_start", 1)
+            srt_end = scene.get("srt_end", srt_start)
+
+            # Lấy các SRT entries trong range này
+            scene_entries = [srt_lookup[i] for i in range(srt_start, srt_end + 1) if i in srt_lookup]
+
+            if not scene_entries:
+                # Không tìm thấy entries, giữ nguyên
+                scene["scene_id"] = scene_counter
+                validated.append(scene)
+                scene_counter += 1
+                continue
+
+            # Tính duration thực tế
+            actual_start = scene_entries[0].start_time
+            actual_end = scene_entries[-1].end_time
+            actual_duration = (actual_end - actual_start).total_seconds()
+
+            if actual_duration <= self.max_scene_duration:
+                # Duration OK, giữ nguyên
+                scene["scene_id"] = scene_counter
+                scene["start_time"] = format_srt_time(actual_start)
+                scene["end_time"] = format_srt_time(actual_end)
+                scene["duration_seconds"] = actual_duration
+                validated.append(scene)
+                scene_counter += 1
+            else:
+                # Duration vượt quá max, cần chia nhỏ
+                self.logger.warning(f"Scene {scene.get('scene_id')} duration={actual_duration:.1f}s > {self.max_scene_duration}s, splitting...")
+
+                # Sử dụng group_srt_into_scenes để chia theo thời gian
+                sub_scenes = group_srt_into_scenes(
+                    scene_entries,
+                    min_duration=self.min_scene_duration,
+                    max_duration=self.max_scene_duration
+                )
+
+                for sub in sub_scenes:
+                    validated.append({
+                        "scene_id": scene_counter,
+                        "story_beat": scene.get("story_beat", ""),
+                        "start_time": format_srt_time(sub["start_time"]) if isinstance(sub["start_time"], timedelta) else sub["start_time"],
+                        "end_time": format_srt_time(sub["end_time"]) if isinstance(sub["end_time"], timedelta) else sub["end_time"],
+                        "duration_seconds": (sub["end_time"] - sub["start_time"]).total_seconds() if isinstance(sub["start_time"], timedelta) else 5,
+                        "text": sub["text"],
+                        "visual_moment": scene.get("visual_moment", sub["text"]),
+                        "shot_type": scene.get("shot_type", "Medium shot"),
+                        "srt_start": sub["srt_start"],
+                        "srt_end": sub["srt_end"],
+                    })
+                    scene_counter += 1
+
+        return validated
 
     def _fallback_time_based_division(self, srt_entries: List) -> List[Dict[str, Any]]:
         """Fallback: chia scene theo thời gian khi AI không hoạt động."""
