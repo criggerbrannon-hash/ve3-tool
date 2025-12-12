@@ -618,11 +618,15 @@ class SmartEngine:
                 self.log(f"  -> DEBUG: media_name={img.media_name}, media_id={img.media_id}, workflow_id={img.workflow_id}")
 
                 # === LUU MEDIA_NAME neu la nv/loc ===
-                if is_reference_image and img.media_name:
-                    self.set_cached_media_name(profile, pid, img.media_name)
-                    self.log(f"  -> Saved media_name for {pid}: {img.media_name[:40]}...")
-                elif is_reference_image:
-                    self.log(f"  -> WARNING: No media_name returned for {pid}!", "WARN")
+                if is_reference_image:
+                    # Thu lay media_name, fallback to workflow_id or media_id
+                    ref_id = img.media_name or img.workflow_id or img.media_id
+                    if ref_id:
+                        self.set_cached_media_name(profile, pid, ref_id)
+                        self.log(f"  -> Saved ref_id for {pid}: {ref_id[:40]}...")
+                    else:
+                        self.log(f"  -> WARNING: No identifier returned for {pid}!", "WARN")
+                        self.log(f"  -> Available: media_name={img.media_name}, workflow_id={img.workflow_id}, media_id={img.media_id}", "DEBUG")
 
                 # Download image
                 downloaded = api.download_image(images[0], Path(output).parent, pid)

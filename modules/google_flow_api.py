@@ -336,8 +336,25 @@ class GoogleFlowAPI:
                 gen_image = image_wrapper.get("generatedImage", {})
 
                 # Extract media name và workflow ID từ media_item level
-                media_name = media_item.get("name")  # Dùng làm reference sau này
+                # Thu nhieu fields khac nhau vi API co the thay doi
+                media_name = (
+                    media_item.get("name") or  # Primary field - expected format
+                    media_item.get("mediaName") or  # Alternative naming
+                    media_item.get("resourceName") or  # GCP style
+                    gen_image.get("name") or  # Inside generatedImage
+                    gen_image.get("mediaName") or
+                    gen_image.get("resourceName")
+                )
                 workflow_id = media_item.get("workflowId")
+                media_generation_id = gen_image.get("mediaGenerationId")
+
+                # Fallback: use workflowId or mediaGenerationId if no name
+                if not media_name and workflow_id:
+                    media_name = workflow_id
+                    self._log(f"  -> Using workflowId as media_name: {workflow_id[:40]}...")
+                elif not media_name and media_generation_id:
+                    media_name = media_generation_id
+                    self._log(f"  -> Using mediaGenerationId as media_name: {media_generation_id[:40]}...")
 
                 if gen_image:
                     img = GeneratedImage(
