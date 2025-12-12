@@ -19,7 +19,7 @@ from datetime import datetime
 import openpyxl
 from openpyxl import load_workbook
 
-from .google_flow_api import GoogleFlowAPI, AspectRatio
+from .google_flow_api import GoogleFlowAPI, AspectRatio, ImageInput, ImageInputType, GeneratedImage
 
 
 class FlowImageGenerator:
@@ -90,12 +90,72 @@ class FlowImageGenerator:
             "scenes_success": 0,
             "scenes_failed": 0,
         }
+
+        # Character references cache - map character_id -> GeneratedImage
+        # Dùng để reference khi tạo scene images
+        self.character_references: Dict[str, GeneratedImage] = {}
+
+        # Reference image settings
+        self.use_character_references = True  # Enable/disable reference feature
     
     def _log(self, message: str) -> None:
         """Print log message."""
         if self.verbose:
             timestamp = datetime.now().strftime("%H:%M:%S")
             print(f"[{timestamp}] {message}")
+
+    def upload_character_as_reference(
+        self,
+        char_id: str,
+        image_path: Path
+    ) -> bool:
+        """
+        Upload ảnh character có sẵn lên làm reference.
+
+        Sử dụng khi bạn đã có ảnh nhân vật và muốn dùng nó làm reference
+        mà không cần generate lại.
+
+        Args:
+            char_id: ID của nhân vật (vd: "nv01")
+            image_path: Đường dẫn đến file ảnh
+
+        Returns:
+            True nếu upload thành công
+        """
+        self._log(f"📤 Uploading {char_id} reference: {image_path}")
+
+        success, img_input, error = self.flow_client.upload_image(image_path)
+
+        if success and img_input:
+            # Tạo GeneratedImage object để lưu vào cache
+            ref_image = GeneratedImage(
+                media_name=img_input.name,
+                local_path=image_path
+            )
+            self.character_references[char_id] = ref_image
+            self._log(f"✅ Uploaded {char_id} reference successfully")
+            return True
+        else:
+            self._log(f"❌ Upload failed: {error}")
+            return False
+
+    def upload_all_existing_characters(self) -> int:
+        """
+        Upload tất cả ảnh character có sẵn trong thư mục nv/ làm reference.
+
+        Returns:
+            Số lượng references đã upload thành công
+        """
+        self._log("📤 Uploading all existing character images as references...")
+
+        uploaded = 0
+        for img_path in self.nv_path.glob("*.png"):
+            char_id = img_path.stem  # nv01.png -> nv01
+            if self.upload_character_as_reference(char_id, img_path):
+                uploaded += 1
+
+        self._log(f"✅ Uploaded {uploaded} character references")
+        return uploaded
     
     def _find_excel_file(self) -> Optional[Path]:
         """Tìm file Excel prompts trong thư mục project."""
@@ -191,14 +251,14 @@ class FlowImageGenerator:
                 
                 self._log(f"\n🎨 Generating image for character: {char_id}")
                 self._log(f"   Prompt: {prompt[:80]}...")
-                
+
                 # Generate image
                 success, images, error = self.flow_client.generate_images(
                     prompt=prompt,
                     count=1,
                     aspect_ratio=self.aspect_ratio
                 )
-                
+
                 if success and images:
                     # Download image
                     filename = image_file.replace(".png", "")
@@ -207,12 +267,18 @@ class FlowImageGenerator:
                         self.nv_path,
                         filename
                     )
-                    
+
                     if downloaded:
                         self._log(f"   ✅ Saved to: {downloaded}")
                         success_count += 1
                         self.stats["characters_success"] += 1
-                        
+
+                        # QUAN TRỌNG: Lưu reference cho character này
+                        # để dùng khi generate scenes sau
+                        if images[0].media_name:
+                            self.character_references[char_id] = images[0]
+                            self._log(f"   📌 Saved reference for {char_id}")
+
                         # Update status in Excel
                         if col_idx["status"] >= 0:
                             row[col_idx["status"]].value = "done"
@@ -297,34 +363,59 @@ class FlowImageGenerator:
                 "img_path": headers.index("img_path") if "img_path" in headers else -1,
                 "status_img": headers.index("status_img") if "status_img" in headers else -1,
             }
-            
+
+            # Tìm cột characters (có thể có nhiều tên khác nhau)
+            char_col_idx = -1
+            for i, h in enumerate(headers):
+                if h and str(h).lower() in ["characters", "character_ids", "nv_ids", "nhan_vat", "char_ids"]:
+                    char_col_idx = i
+                    break
+
             if col_idx["img_prompt"] == -1:
                 return 0, 0, ["Column 'img_prompt' not found"]
-            
+
+            # Log reference status
+            if self.use_character_references and self.character_references:
+                self._log(f"📌 Using {len(self.character_references)} character references")
+
             # Process each scene
             for row_num, row in enumerate(ws.iter_rows(min_row=2), start=2):
                 scene_id = row[col_idx["scene_id"]].value if col_idx["scene_id"] >= 0 else row_num - 1
-                
+
                 # Filter by scene range
                 if isinstance(scene_id, int):
                     if scene_id < start_scene:
                         continue
                     if end_scene is not None and scene_id > end_scene:
                         break
-                
+
                 prompt = row[col_idx["img_prompt"]].value
                 img_path_val = row[col_idx["img_path"]].value if col_idx["img_path"] >= 0 else None
                 status = row[col_idx["status_img"]].value if col_idx["status_img"] >= 0 else "pending"
-                
+
+                # Lấy danh sách character IDs cho scene này
+                scene_characters = []
+                if char_col_idx >= 0 and char_col_idx < len(row):
+                    char_value = row[char_col_idx].value
+                    if char_value:
+                        # Parse character IDs (có thể là "nv01, nv02" hoặc "nv01;nv02")
+                        char_str = str(char_value)
+                        for sep in [",", ";", "|"]:
+                            if sep in char_str:
+                                scene_characters = [c.strip() for c in char_str.split(sep)]
+                                break
+                        if not scene_characters:
+                            scene_characters = [char_str.strip()]
+
                 if not prompt:
                     continue
-                
+
                 self.stats["scenes_total"] += 1
-                
+
                 # Generate filename
                 filename = f"scene_{scene_id:03d}"
                 output_file = self.img_path / f"{filename}.png"
-                
+
                 # Check if already done
                 if output_file.exists() and not overwrite:
                     if status == "done":
@@ -332,15 +423,26 @@ class FlowImageGenerator:
                         success_count += 1
                         self.stats["scenes_success"] += 1
                         continue
-                
+
                 self._log(f"\n🎬 Generating image for Scene {scene_id}")
                 self._log(f"   Prompt: {prompt[:100]}...")
-                
-                # Generate image
+
+                # Collect reference images for this scene
+                reference_images = []
+                if self.use_character_references and scene_characters:
+                    for char_id in scene_characters:
+                        if char_id in self.character_references:
+                            ref_img = self.character_references[char_id]
+                            if ref_img.media_name:
+                                reference_images.append(ref_img)
+                                self._log(f"   📌 Using reference: {char_id}")
+
+                # Generate image (with or without references)
                 success, images, error = self.flow_client.generate_images(
                     prompt=prompt,
                     count=1,
-                    aspect_ratio=self.aspect_ratio
+                    aspect_ratio=self.aspect_ratio,
+                    reference_images=reference_images if reference_images else None
                 )
                 
                 if success and images:
