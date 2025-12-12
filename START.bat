@@ -1,16 +1,7 @@
 @echo off
-title VE3 Tool Pro
+:: Uni-x Voice to Video - Launcher
+:: Logs: logs/app.log
+
 cd /d "%~dp0"
-
-REM Check Python
-python --version >nul 2>&1
-if errorlevel 1 (
-    echo Python khong tim thay!
-    echo Vui long cai dat Python tu python.org
-    pause
-    exit /b 1
-)
-
-REM Run
 python ve3_pro.py
 pause

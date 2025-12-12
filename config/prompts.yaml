@@ -1,0 +1,433 @@
+# =============================================================================
+# UNI-X VOICE TO VIDEO - PROMPTS CONFIGURATION v5.0 (AI PRODUCTION DIRECTOR)
+# =============================================================================
+# Theo chuan AI Production Director voi 3-Step Workflow:
+# - Step 1: PACING & SLICING (segment text 8-20 words)
+# - Step 2: DIRECTOR'S VISUAL BLUEPRINT (scene direction)
+# - Step 3: PRODUCTION EXECUTION (assets + scene JSON)
+#
+# OUTPUT: JSON thuan, de parse va su dung
+# =============================================================================
+
+# =============================================================================
+# GLOBAL STYLE DEFINITION (MASTER STRING - PASTE NGUYEN VAN)
+# =============================================================================
+
+global_style_string: "Cinematic, 4K photorealistic, shot on Arri Alexa, soft film grain, High Key Lighting, Balanced Exposure, well-lit, soft fill light, no crushing shadows, highly detailed texture, professional color grading"
+
+visual_clarity_string: "Face illuminated by soft volumetric light, clear facial features, high visibility"
+
+negative_prompt_string: "cartoon, 3d render, text, watermark, bad anatomy, distorted face, very dark image, underexposed, wrong face, different character, inconsistent appearance"
+
+# =============================================================================
+# STEP 1 + 2: ANALYZE STORY (Character Bible + Location Bible + Pacing)
+# =============================================================================
+# Input: {story_text}
+# Output: JSON voi characters, locations, va pacing script
+# =============================================================================
+
+analyze_story: |
+  Ban la AI Production Director. Phan tich kich ban va tao Production Kit.
+
+  ## INPUT SCRIPT:
+  ---
+  {story_text}
+  ---
+
+  ## NHIEM VU:
+
+  ### A. CHARACTER BIBLE (QUAN TRONG NHAT - Trich xuat TAT CA nhan vat)
+  - PHAI tim va liet ke TAT CA nhan vat xuat hien trong truyen (chinh + phu)
+  - Moi nhan vat can co:
+    * portrait_prompt: Anh chan dung (white background, neutral face, studio lighting)
+    * character_lock: Mo ta CHI TIET de paste vao scene (PHAI co: tuoi, gioi tinh, toc, mat, da, TRANG PHUC)
+
+  ### B. LOCATION BIBLE (Trich xuat TAT CA boi canh)
+  - PHAI tim va liet ke TAT CA dia diem/boi canh trong truyen
+  - Moi location can:
+    * location_prompt: Anh boi canh (empty, no people)
+    * location_lock: Mo ta CHI TIET de paste vao scene
+
+  ### C. KEY OBJECTS (Vat the quan trong neu co)
+  - Chi liet ke neu co vat the dac biet trong truyen
+
+  ## OUTPUT FORMAT - PURE JSON (khong markdown):
+
+  {{
+    "production_info": {{
+      "title": "Ten cau chuyen",
+      "genre": "Drama/Comedy/etc",
+      "total_characters": 3,
+      "total_locations": 2
+    }},
+
+    "global_style": "Cinematic, 4K photorealistic, shot on Arri Alexa, soft film grain, High Key Lighting, Balanced Exposure, well-lit, soft fill light, no crushing shadows, highly detailed texture, professional color grading",
+
+    "characters": [
+      {{
+        "id": "nv1",
+        "name": "Minh",
+        "role": "main",
+        "age": 32,
+        "gender": "male",
+        "is_child": false,
+        "filename": "nv1.png",
+        "portrait_prompt": "A cinematic portrait, straight-on medium close-up shot on 85mm portrait lens. Subject is a 32-year-old Vietnamese man with short black side-parted hair, oval face, double eyelids, light tan skin. Looking directly at camera with completely neutral expression. Bright, even studio lighting, fully illuminated face. Pure white studio background. Wearing plain navy polo shirt. 8K, sharp focus, high fidelity portraiture, photorealistic.",
+        "character_lock": "Minh, 32-year-old Vietnamese man with short black side-parted hair, oval face, light tan skin, wearing navy blue polo shirt and dark gray slacks"
+      }},
+      {{
+        "id": "nv2",
+        "name": "Lan",
+        "role": "supporting",
+        "age": 30,
+        "gender": "female",
+        "is_child": false,
+        "filename": "nv2.png",
+        "portrait_prompt": "A cinematic portrait, straight-on medium close-up shot on 85mm portrait lens. Subject is a 30-year-old Vietnamese woman with long straight black center-parted hair, round face, fair skin, rosy cheeks. Looking directly at camera with completely neutral expression. Bright, even studio lighting, fully illuminated face. Pure white studio background. Wearing cream-colored blouse. 8K, sharp focus, high fidelity portraiture, photorealistic.",
+        "character_lock": "Lan, 30-year-old Vietnamese woman with long straight black center-parted hair, round face, fair skin, wearing cream-colored blouse and light pink cardigan"
+      }},
+      {{
+        "id": "nvc1",
+        "name": "Bao",
+        "role": "supporting",
+        "age": 8,
+        "gender": "male",
+        "is_child": true,
+        "filename": "NONE",
+        "portrait_prompt": "DO_NOT_GENERATE",
+        "character_lock": "Bao, 8-year-old Vietnamese boy with short black hair, round chubby face, wearing blue school uniform"
+      }}
+    ],
+
+    "locations": [
+      {{
+        "id": "loc1",
+        "name": "Phong khach",
+        "filename": "loc1.png",
+        "location_prompt": "Interior wide shot of modern Vietnamese apartment living room. Empty room, no people. Beige leather sofa, wooden coffee table, large window with city view, warm afternoon sunlight streaming in, minimalist decor, potted plants, cream-colored walls. Cinematic, 4K photorealistic, well-lit, soft natural lighting. 8K, architectural photography style.",
+        "location_lock": "Modern apartment living room, beige leather sofa, wooden coffee table, large window with city view, cream-colored walls, warm afternoon sunlight",
+        "lighting_default": "Warm natural window light from the right"
+      }},
+      {{
+        "id": "loc2",
+        "name": "Van phong",
+        "filename": "loc2.png",
+        "location_prompt": "Interior wide shot of corporate office space. Empty room, no people. Glass partitions, fluorescent ceiling lights, computer monitors on desks, ergonomic office chairs, neutral gray carpet, modern minimalist design. Cinematic, 4K photorealistic, well-lit. 8K, architectural photography style.",
+        "location_lock": "Corporate office space, glass partitions, fluorescent ceiling lights, computer monitors on desks, gray carpet, modern minimalist design",
+        "lighting_default": "Cool blue-white fluorescent overhead lighting"
+      }}
+    ],
+
+    "key_objects": [
+      {{
+        "id": "obj1",
+        "name": "Wedding Ring",
+        "filename": "obj1.png",
+        "object_prompt": "Extreme macro close-up of a simple gold wedding band with slight wear marks, sitting on white marble surface. Soft diffused studio lighting from above. Shallow depth of field. 8K, product photography style, photorealistic."
+      }}
+    ]
+  }}
+
+  ## QUY TAC BAT BUOC:
+  1. PHAI trich xuat TAT CA nhan vat duoc nhac den trong truyen (ke ca chi xuat hien 1 lan)
+  2. PHAI trich xuat TAT CA boi canh/dia diem duoc nhac den trong truyen
+  3. character_lock PHAI co: Ten + Tuoi + Gioi tinh + Dac diem khuon mat + Toc + Da + TRANG PHUC
+  4. location_lock PHAI co: Loai dia diem + Cac vat the chinh + Anh sang
+  5. portrait_prompt: PHAI co "Pure white studio background", "neutral expression", "looking directly at camera"
+  6. location_prompt: PHAI co "Empty room, no people"
+  7. Tre em (is_child=true): portrait_prompt = "DO_NOT_GENERATE", filename = "NONE"
+  8. ID format: nv1, nv2, nv3... (nhan vat), nvc1, nvc2... (tre em), loc1, loc2... (boi canh)
+  9. filename DUNG .png (KHONG DUNG .jpg)
+  10. Chi tra ve JSON thuan, KHONG co markdown code block
+
+# =============================================================================
+# STEP 3: SCENE PRODUCTION (Tao prompt cho tung scene)
+# =============================================================================
+# Input: {characters_info}, {locations_info}, {pacing_script}, {global_style}
+# Output: JSON array cua scenes
+# =============================================================================
+
+generate_scenes: |
+  Ban la AI Production Director. Tao visual prompt cho tung scene, SU DUNG ANH THAM CHIEU (reference images).
+
+  ## NGUYEN TAC BAT BUOC:
+
+  ### 1. MOI SCENE = 1 ANH:
+  - Moi scene trong input = 1 scene output
+  - scene_id tuong ung voi so thu tu
+
+  ### 2. SU DUNG THAM CHIEU (QUAN TRONG NHAT):
+  - **character_lock**: COPY NGUYEN VAN vao img_prompt khi nhan vat xuat hien
+  - **location_lock**: COPY NGUYEN VAN vao img_prompt lam background
+  - **reference_files**: LIET KE tat ca file tham chieu duoc dung (nv1.png, loc1.png...)
+  - KHONG tu nghĩ ra mo ta moi - PHAI dung dung character_lock va location_lock da cho
+
+  ### 3. VISUAL CLARITY PROTOCOL:
+  - LUON them: "Face illuminated by soft volumetric light, clear facial features, high visibility"
+  - Dat SAU mo ta nhan vat, TRUOC mo ta boi canh
+
+  ### 4. GLOBAL STYLE INJECTION:
+  - Ket thuc moi img_prompt bang global_style string
+
+  ### 5. COMPLETE SCENE INDEPENDENCE:
+  - Moi scene PHAI doc lap 100%
+  - KHONG viet "same as Scene X" hay "nhu truoc"
+  - Mo ta DAY DU: character_lock + outfit + location_lock + lighting trong MOI scene
+
+  ### 6. CAMERA VARIETY:
+  - Luan phien goc may: Eye-level, Low angle, High angle, OTS, Close-up
+  - KHONG 3 scene lien tiep cung goc may
+
+  ## INPUT DATA:
+  **GLOBAL_STYLE:** {global_style}
+
+  **CHARACTERS (Dung character_lock nguyen van):**
+  {characters_info}
+
+  **LOCATIONS (Dung location_lock nguyen van):**
+  {locations_info}
+
+  **SCENES (Noi dung can tao prompt):**
+  {scenes_info}
+
+  ## OUTPUT FORMAT - JSON ARRAY:
+
+  Tra ve JSON object voi key "scenes" chua array:
+
+  {{
+    "scenes": [
+      {{
+        "scene_id": 1,
+        "characters_used": ["nv1"],
+        "location_used": "loc1",
+        "reference_files": ["nv1.png", "loc1.png"],
+        "img_prompt": "Scene 1: Eye-level, 85mm portrait lens. Minh, 32-year-old Vietnamese man with short black side-parted hair, oval face, light tan skin, wearing navy blue polo shirt. Face illuminated by soft volumetric light, clear facial features, high visibility. He stands by the window looking out pensively. Modern apartment living room, beige sofa, wooden coffee table, large window with city view, warm afternoon sunlight. Cinematic, 4K photorealistic, shot on Arri Alexa, soft film grain, High Key Lighting, Balanced Exposure, well-lit, soft fill light, no crushing shadows, highly detailed texture, professional color grading.",
+        "video_prompt": "Slow dolly in. Minh remains still, gazing out the window. Dust particles float in the sunlight."
+      }},
+      {{
+        "scene_id": 2,
+        "characters_used": ["nv1", "nv2"],
+        "location_used": "loc1",
+        "reference_files": ["nv1.png", "nv2.png", "loc1.png"],
+        "img_prompt": "Scene 2: Over-the-shoulder shot, 50mm lens. In sharp focus: Minh, 32-year-old Vietnamese man with short black side-parted hair, oval face, light tan skin, sitting on beige sofa, speaking with engaged expression. Face illuminated by soft volumetric light, clear facial features. In soft focus foreground: back of head of Lan, 30-year-old Vietnamese woman with long straight black center-parted hair, round face, fair skin. Two people facing each other. Modern apartment living room, beige sofa, wooden coffee table, large window with city view, warm afternoon window light. Cinematic, 4K photorealistic, shot on Arri Alexa, soft film grain, High Key Lighting, Balanced Exposure, well-lit, soft fill light, no crushing shadows, highly detailed texture, professional color grading.",
+        "video_prompt": "Static shot with subtle handheld drift. Minh gestures while speaking."
+      }},
+      {{
+        "scene_id": 3,
+        "characters_used": ["nv1"],
+        "location_used": "loc1",
+        "reference_files": ["nv1.png", "loc1.png"],
+        "img_prompt": "Scene 3: Close-up, 100mm macro lens. Minh's hands clenching into fists, wedding ring visible, knuckles whitening. Modern apartment living room, warm afternoon lighting. Cinematic, 4K photorealistic, shot on Arri Alexa, soft film grain, High Key Lighting, Balanced Exposure, well-lit, soft fill light, no crushing shadows, highly detailed texture, professional color grading.",
+        "video_prompt": "The hands slowly tighten into fists, knuckles whitening with tension."
+      }}
+    ]
+  }}
+
+  ## SHOT TYPE GUIDE:
+  - Establishing/Intro: Wide Shot (24mm)
+  - Dialogue: Medium Shot (50mm), Over-the-shoulder
+  - Emotion/Reaction: Close-up (85mm), Medium Close-up
+  - Tension/Drama: Dutch Angle, Low Angle, ECU
+  - Action: Tracking shot, Wide with movement
+
+  ## CHECKLIST TRUOC KHI OUTPUT:
+  - [ ] scene_id la INTEGER (1, 2, 3...) khong phai string
+  - [ ] characters_used: list cac nhan vat ID xuat hien (["nv1", "nv2"])
+  - [ ] location_used: ID boi canh ("loc1")
+  - [ ] reference_files: tat ca file tham chieu (["nv1.png", "nv2.png", "loc1.png"])
+  - [ ] img_prompt COPY character_lock NGUYEN VAN tu input (khong tu viet lai)
+  - [ ] img_prompt COPY location_lock NGUYEN VAN tu input (khong tu viet lai)
+  - [ ] img_prompt ket thuc bang global style
+  - [ ] "Face illuminated by soft volumetric light" co trong prompt
+  - [ ] Khong co 3+ scene lien tiep cung shot type
+
+  OUTPUT: JSON object voi key "scenes", KHONG co markdown code block.
+
+# =============================================================================
+# STEP 2.5: SMART SCENE DIVISION (Chia scene theo noi dung)
+# =============================================================================
+# Input: {srt_with_timestamps} - SRT entries voi timestamps
+# Output: JSON array cua scenes duoc chia theo noi dung
+# =============================================================================
+
+smart_divide_scenes: |
+  Ban la AI Director. Chia cau chuyen thanh cac SHOT de tao anh minh hoa NHU PHIM THAT.
+
+  ## QUAN TRONG: NOI DUNG LA GOC
+
+  Hinh anh PHUC VU noi dung, KHONG PHAI nguoc lai.
+  - Truoc tien: Hieu NOI DUNG dang ke gi
+  - Sau do: Tao cac SHOT de minh hoa noi dung do
+  - 8 giay la gioi han KY THUAT (Veo 3), KHONG PHAI gioi han ke chuyen
+
+  ## INPUT - SRT voi timestamps:
+  ---
+  {srt_with_timestamps}
+  ---
+
+  ## QUY TRINH CHIA SCENE:
+
+  ### BUOC 1: XAC DINH CAC NHIP KE CHUYEN (STORY BEATS)
+  Doc noi dung va xac dinh cac khoanh khac quan trong:
+  - Moi STORY BEAT = 1 khoanh khac/su kien trong cau chuyen
+  - KHONG chia may moc theo thoi gian
+  - Chia theo Y NGHIA cua noi dung
+
+  ### BUOC 2: TAO CAC SHOT CHO MOI STORY BEAT
+  Moi story beat can bao nhieu shot?
+  - Noi dung ngan (1-8s): 1 shot la du
+  - Noi dung vua (8-16s): 2 shot, doi goc may
+  - Noi dung dai (16-24s): 3 shot, da dang goc may
+  - Noi dung rat dai (>24s): 4+ shot
+
+  ### BUOC 3: CHON GOC MAY PHU HOP
+  Moi shot chon goc may theo MUC DICH:
+  - Thiet lap boi canh → Wide shot
+  - Hanh dong chinh → Medium shot
+  - Cam xuc/phan ung → Close-up
+  - Doi thoai → OTS hoac Two-shot
+  - Chi tiet quan trong → Extreme close-up
+
+  ## VI DU THUC TE:
+
+  ### Vi du 1: Noi dung ngan - 1 shot
+  ```
+  SRT: [00:00:00 -> 00:00:05] "Co ay mim cuoi"
+
+  Story beat: Co gai mim cuoi (5s)
+  → Shot 1 [00:00:00 -> 00:00:05]: Close-up - Khuon mat co gai mim cuoi
+  ```
+
+  ### Vi du 2: Noi dung vua - 2 shots
+  ```
+  SRT: [00:00:05 -> 00:00:18] "Anh ay buoc vao phong, nhin quanh mot luot"
+
+  Story beat: Nhan vat buoc vao va quan sat (13s)
+  → Shot 2 [00:00:05 -> 00:00:11]: Wide shot - Anh ay mo cua buoc vao phong (6s)
+  → Shot 3 [00:00:11 -> 00:00:18]: Medium shot - Anh ay dung giua phong nhin quanh (7s)
+  ```
+
+  ### Vi du 3: Noi dung dai - 3 shots
+  ```
+  SRT: [00:00:18 -> 00:00:40] "Ho ngoi doi dien, bat dau tro chuyen ve nhung ky niem xua"
+
+  Story beat: Hai nguoi tro chuyen ve qua khu (22s)
+  → Shot 4 [00:00:18 -> 00:00:26]: Two-shot - Hai nguoi ngoi doi dien (8s)
+  → Shot 5 [00:00:26 -> 00:00:33]: Close-up A - Nguoi noi, ve mat hoai niem (7s)
+  → Shot 6 [00:00:33 -> 00:00:40]: Close-up B - Nguoi nghe, mat dam chieu (7s)
+  ```
+
+  ### Vi du 4: Noi dung rat dai - 4+ shots
+  ```
+  SRT: [00:00:40 -> 00:01:10] "Anh ay dung day, di cham rai ra cua so, nhin ra ngoai troi mua, roi quay lai noi loi tam biet"
+
+  Story beat: Khoanh khac chia ly (30s)
+  → Shot 7 [00:00:40 -> 00:00:47]: Medium - Anh ay dung day tu ghe (7s)
+  → Shot 8 [00:00:47 -> 00:00:55]: Wide - Anh ay di ve phia cua so (8s)
+  → Shot 9 [00:00:55 -> 00:01:02]: Close-up - Khuon mat nhin mua (7s)
+  → Shot 10 [00:01:02 -> 00:01:10]: OTS - Quay lai noi loi tam biet (8s)
+  ```
+
+  ## OUTPUT FORMAT - JSON:
+
+  {{
+    "total_shots": 10,
+    "total_duration": "01:10",
+    "story_analysis": "Cau chuyen ke ve cuoc gap go va chia ly giua hai nguoi",
+    "scenes": [
+      {{
+        "scene_id": 1,
+        "story_beat": "Co gai mim cuoi",
+        "start_time": "00:00:00",
+        "end_time": "00:00:05",
+        "duration_seconds": 5,
+        "srt_indices": [1],
+        "shot_type": "Close-up",
+        "text": "Co ay mim cuoi",
+        "visual_moment": "Close-up khuon mat co gai dang mim cuoi nhe, mat sang"
+      }},
+      {{
+        "scene_id": 2,
+        "story_beat": "Nhan vat buoc vao va quan sat",
+        "start_time": "00:00:05",
+        "end_time": "00:00:11",
+        "duration_seconds": 6,
+        "srt_indices": [2],
+        "shot_type": "Wide shot",
+        "text": "Anh ay buoc vao phong",
+        "visual_moment": "Wide shot - Nguoi dan ong mo cua buoc vao can phong"
+      }},
+      {{
+        "scene_id": 3,
+        "story_beat": "Nhan vat buoc vao va quan sat",
+        "start_time": "00:00:11",
+        "end_time": "00:00:18",
+        "duration_seconds": 7,
+        "srt_indices": [2],
+        "shot_type": "Medium shot",
+        "text": "nhin quanh mot luot",
+        "visual_moment": "Medium shot - Nguoi dan ong dung giua phong, mat nhin quanh"
+      }}
+    ]
+  }}
+
+  ## NGUYEN TAC VANG:
+
+  1. **NOI DUNG LA GOC**: Hieu noi dung truoc, chia shot sau
+  2. **KHONG MAY MOC**: Khong chia cu 8s mot lan
+  3. **Y NGHIA TRUOC**: Moi shot phai co Y NGHIA trong cau chuyen
+  4. **GOC MAY PHU HOP**: Chon goc may theo MUC DICH ke chuyen
+  5. **8s LA KY THUAT**: Gioi han cho video generation, khong phai cho storytelling
+  6. **LIEN KET**: Cac shot trong cung story beat phai lien ket voi nhau
+
+  ## SHOT TYPES:
+  - Wide shot (24mm) - Thiet lap, toan canh
+  - Medium shot (50mm) - Hanh dong chinh
+  - Close-up (85mm) - Cam xuc, phan ung
+  - Extreme close-up (100mm) - Chi tiet
+  - Over-the-shoulder - Doi thoai, goc nhin
+  - Two-shot - 2 nguoi tuong tac
+  - Low angle - Quyen luc
+  - High angle - Yeu the
+
+  ## CHECKLIST:
+  - [ ] Da hieu NOI DUNG truoc khi chia?
+  - [ ] Moi shot co Y NGHIA trong cau chuyen?
+  - [ ] Khong co shot nao > 8 giay?
+  - [ ] Goc may phu hop voi muc dich?
+  - [ ] Cac shot trong cung story beat lien ket?
+
+  OUTPUT: JSON object, KHONG co markdown code block.
+
+# =============================================================================
+# CAMERA REFERENCE
+# =============================================================================
+
+camera_reference:
+  shot_types:
+    "Extreme Wide Shot (EWS)": "Environment dominant, tiny subject"
+    "Wide Shot (WS)": "Full body + environment"
+    "Medium Shot (MS)": "Waist up"
+    "Medium Close-up (MCU)": "Chest up"
+    "Close-up (CU)": "Face fills frame"
+    "Extreme Close-up (ECU)": "Part of face/detail"
+    "Over-the-shoulder (OTS)": "Behind one person looking at another"
+    "Two-shot": "Two people in frame"
+
+  angles:
+    "Eye-level": "Neutral, viewer = observer"
+    "Low angle": "Subject has power, heroic"
+    "High angle": "Subject vulnerable, small"
+    "Dutch tilt": "Unease, tension"
+    "Over-the-shoulder": "Connection, conversation"
+
+  lenses:
+    "24mm": "Wide - Establishing, environments"
+    "35mm": "Wide normal - Full body, groups"
+    "50mm": "Normal - Dialogue, versatile"
+    "85mm": "Portrait - Face detail, interviews"
+    "100mm": "Macro - Details, hands, objects"
+
+# =============================================================================
+# END v5.0
+# =============================================================================

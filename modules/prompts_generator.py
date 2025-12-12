@@ -2,7 +2,7 @@
 VE3 Tool - Prompts Generator Module
 ===================================
 Sử dụng AI API để phân tích SRT và tạo prompts cho ảnh/video.
-Hỗ trợ: Groq (free, fast), Gemini, OpenRouter
+Hỗ trợ: DeepSeek (rẻ), Groq (free), Gemini
 """
 
 import json
@@ -21,131 +21,319 @@ from modules.utils import (
 from modules.excel_manager import (
     PromptWorkbook,
     Character,
+    Location,
     Scene
+)
+from modules.prompts_loader import (
+    get_analyze_story_prompt,
+    get_generate_scenes_prompt,
+    get_smart_divide_scenes_prompt,
+    get_global_style
 )
 
 
 # ============================================================================
-# MULTI AI CLIENT (Groq + Gemini + OpenRouter)
+# MULTI AI CLIENT (DeepSeek + Groq + Gemini)
 # ============================================================================
 
 class MultiAIClient:
     """
     Client hỗ trợ nhiều AI providers.
-    Ưu tiên: Groq (free) > Gemini > OpenRouter
+    Ưu tiên: Gemini (chất lượng cao) > Groq (nhanh) > DeepSeek (rẻ, chậm)
+
+    Tự động test và loại bỏ API keys không hoạt động khi khởi tạo.
     """
-    
+
+    DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
     GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
     GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta"
-    
-    def __init__(self, config: dict):
+
+    def __init__(self, config: dict, auto_filter: bool = True):
         """
         Config format:
         {
+            "deepseek_api_keys": ["key1"],
             "groq_api_keys": ["key1", "key2"],
             "gemini_api_keys": ["key1"],
             "gemini_models": ["gemini-2.0-flash"],
-            "preferred_provider": "groq"
         }
+
+        auto_filter: Tự động test và loại bỏ API keys không hoạt động
         """
         self.config = config
-        self.groq_keys = [k for k in config.get("groq_api_keys", []) if k and k.strip()]
         self.gemini_keys = [k for k in config.get("gemini_api_keys", []) if k and k.strip()]
+        self.groq_keys = [k for k in config.get("groq_api_keys", []) if k and k.strip()]
+        self.deepseek_keys = [k for k in config.get("deepseek_api_keys", []) if k and k.strip()]
         self.gemini_models = config.get("gemini_models", ["gemini-2.0-flash", "gemini-1.5-flash"])
-        
+
+        self.deepseek_index = 0
         self.groq_index = 0
         self.gemini_key_index = 0
         self.gemini_model_index = 0
-        
+
         self.logger = get_logger("multi_ai")
-    
+
+        # Auto filter exhausted APIs at startup
+        if auto_filter:
+            self._filter_working_apis()
+
+    def _filter_working_apis(self):
+        """Test và loại bỏ API keys không hoạt động."""
+        print("\n[API Filter] Dang kiem tra API keys...")
+
+        # Test Gemini keys
+        working_gemini = []
+        for i, key in enumerate(self.gemini_keys):
+            print(f"  Testing Gemini key #{i+1}...", end=" ")
+            if self._test_gemini_key(key):
+                print("OK")
+                working_gemini.append(key)
+            else:
+                print("SKIP (quota/error)")
+
+        # Test Groq keys
+        working_groq = []
+        for i, key in enumerate(self.groq_keys):
+            print(f"  Testing Groq key #{i+1}...", end=" ")
+            if self._test_groq_key(key):
+                print("OK")
+                working_groq.append(key)
+            else:
+                print("SKIP (rate limit/error)")
+
+        # Test DeepSeek keys
+        working_deepseek = []
+        for i, key in enumerate(self.deepseek_keys):
+            print(f"  Testing DeepSeek key #{i+1}...", end=" ")
+            if self._test_deepseek_key(key):
+                print("OK")
+                working_deepseek.append(key)
+            else:
+                print("SKIP (error)")
+
+        # Update with working keys only
+        self.gemini_keys = working_gemini
+        self.groq_keys = working_groq
+        self.deepseek_keys = working_deepseek
+
+        total_working = len(working_gemini) + len(working_groq) + len(working_deepseek)
+        print(f"[API Filter] Ket qua: {len(working_gemini)} Gemini, {len(working_groq)} Groq, {len(working_deepseek)} DeepSeek")
+
+        if total_working == 0:
+            print("[API Filter] CANH BAO: Khong co API key nao hoat dong!")
+        else:
+            # Show priority order
+            if working_gemini:
+                print(f"[API Filter] Se dung: Gemini (uu tien)")
+            elif working_groq:
+                print(f"[API Filter] Se dung: Groq (uu tien)")
+            elif working_deepseek:
+                print(f"[API Filter] Se dung: DeepSeek")
+
+    def _test_gemini_key(self, key: str) -> bool:
+        """Test Gemini key với request nhỏ."""
+        try:
+            model = self.gemini_models[0] if self.gemini_models else "gemini-2.0-flash"
+            url = f"{self.GEMINI_URL}/models/{model}:generateContent?key={key}"
+            payload = {
+                "contents": [{"parts": [{"text": "Say OK"}]}],
+                "generationConfig": {"maxOutputTokens": 5}
+            }
+            resp = requests.post(url, json=payload, timeout=10)
+            return resp.status_code == 200
+        except:
+            return False
+
+    def _test_groq_key(self, key: str) -> bool:
+        """Test Groq key với request nhỏ."""
+        try:
+            headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+            data = {
+                "model": "llama-3.3-70b-versatile",
+                "messages": [{"role": "user", "content": "Say OK"}],
+                "max_tokens": 5
+            }
+            resp = requests.post(self.GROQ_URL, headers=headers, json=data, timeout=10)
+            return resp.status_code == 200
+        except:
+            return False
+
+    def _test_deepseek_key(self, key: str) -> bool:
+        """Test DeepSeek key với request nhỏ."""
+        try:
+            headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+            data = {
+                "model": "deepseek-chat",
+                "messages": [{"role": "user", "content": "Say OK"}],
+                "max_tokens": 5
+            }
+            resp = requests.post(self.DEEPSEEK_URL, headers=headers, json=data, timeout=15)
+            return resp.status_code == 200
+        except:
+            return False
+
     def generate_content(
         self,
         prompt: str,
         temperature: float = 0.7,
         max_tokens: int = 8192,
-        max_retries: int = 5
+        max_retries: int = 3
     ) -> str:
-        """Generate content using available AI providers."""
-        
+        """Generate content using available AI providers.
+        Priority: Gemini (best quality) > Groq (fast) > DeepSeek (cheap, slow)
+
+        Chi thu cac API da duoc filter la hoat dong.
+        """
+
         last_error = None
-        
-        # Try Groq first (free and fast)
-        if self.groq_keys:
-            for attempt in range(max_retries):
-                try:
-                    result = self._call_groq(prompt, temperature, max_tokens)
-                    if result:
-                        return result
-                except Exception as e:
-                    last_error = e
-                    error_str = str(e).lower()
-                    
-                    if "rate" in error_str or "429" in error_str:
-                        self.logger.warning("Groq rate limit, trying next key...")
-                        self.groq_index = (self.groq_index + 1) % len(self.groq_keys)
-                        time.sleep(5)
-                        continue
-                    elif "invalid" in error_str or "unauthorized" in error_str:
-                        self.logger.warning("Groq key invalid, trying next...")
-                        self.groq_index = (self.groq_index + 1) % len(self.groq_keys)
-                        continue
-                    else:
-                        self.logger.error(f"Groq error: {e}")
-                        break
-        
-        # Fallback to Gemini
+
+        # 1. Try Gemini first (best quality, fastest)
         if self.gemini_keys:
             for attempt in range(max_retries):
                 try:
+                    print(f"[Gemini] Dang goi API (attempt {attempt + 1})...")
                     result = self._call_gemini(prompt, temperature, max_tokens)
                     if result:
+                        print(f"[Gemini] Thanh cong!")
                         return result
                 except Exception as e:
                     last_error = e
                     error_str = str(e).lower()
-                    
+
                     if "leaked" in error_str:
-                        self.logger.error("Gemini key leaked! Using next key...")
-                        self.gemini_key_index = (self.gemini_key_index + 1) % len(self.gemini_keys)
-                        continue
+                        self.logger.error("Gemini key leaked! Removing...")
+                        if self.gemini_keys:
+                            self.gemini_keys.pop(self.gemini_key_index)
+                            if self.gemini_keys:
+                                self.gemini_key_index = self.gemini_key_index % len(self.gemini_keys)
+                        break  # Move to next provider
                     elif "429" in error_str or "quota" in error_str:
-                        self.logger.warning("Gemini quota exceeded, trying next...")
-                        self.gemini_key_index = (self.gemini_key_index + 1) % len(self.gemini_keys)
-                        time.sleep(10)
+                        self.logger.warning("Gemini quota exceeded, removing key...")
+                        if self.gemini_keys:
+                            self.gemini_keys.pop(self.gemini_key_index)
+                            if self.gemini_keys:
+                                self.gemini_key_index = self.gemini_key_index % len(self.gemini_keys)
+                            else:
+                                break  # No more keys, move to next provider
                         continue
                     elif "404" in error_str:
-                        self.logger.warning("Gemini model not found, trying next...")
                         self.gemini_model_index = (self.gemini_model_index + 1) % len(self.gemini_models)
                         continue
                     else:
                         self.logger.error(f"Gemini error: {e}")
                         break
-        
+
+        # 2. Fallback to Groq (fast, free but rate limited)
+        if self.groq_keys:
+            for attempt in range(max_retries):
+                try:
+                    print(f"[Groq] Dang goi API (attempt {attempt + 1})...")
+                    result = self._call_groq(prompt, temperature, max_tokens)
+                    if result:
+                        print(f"[Groq] Thanh cong!")
+                        return result
+                except Exception as e:
+                    last_error = e
+                    error_str = str(e).lower()
+
+                    if "rate" in error_str or "429" in error_str:
+                        self.logger.warning("Groq rate limit, trying next key...")
+                        self.groq_index = (self.groq_index + 1) % len(self.groq_keys)
+                        time.sleep(3)
+                        continue
+                    elif "invalid" in error_str or "unauthorized" in error_str:
+                        self.logger.warning("Groq key invalid, removing...")
+                        if self.groq_keys:
+                            self.groq_keys.pop(self.groq_index)
+                            if self.groq_keys:
+                                self.groq_index = self.groq_index % len(self.groq_keys)
+                            else:
+                                break
+                        continue
+                    else:
+                        self.logger.error(f"Groq error: {e}")
+                        break
+
+        # 3. Fallback to DeepSeek (cheap, stable but slow)
+        if self.deepseek_keys:
+            for attempt in range(max_retries):
+                try:
+                    result = self._call_deepseek(prompt, temperature, max_tokens)
+                    if result:
+                        return result
+                except Exception as e:
+                    last_error = e
+                    error_str = str(e).lower()
+
+                    if "rate" in error_str or "429" in error_str:
+                        self.logger.warning("DeepSeek rate limit, trying next key...")
+                        self.deepseek_index = (self.deepseek_index + 1) % len(self.deepseek_keys)
+                        time.sleep(3)
+                        continue
+                    elif "invalid" in error_str or "unauthorized" in error_str:
+                        self.logger.warning("DeepSeek key invalid, removing...")
+                        if self.deepseek_keys:
+                            self.deepseek_keys.pop(self.deepseek_index)
+                            if self.deepseek_keys:
+                                self.deepseek_index = self.deepseek_index % len(self.deepseek_keys)
+                            else:
+                                break
+                        continue
+                    else:
+                        self.logger.error(f"DeepSeek error: {e}")
+                        break
+
         if last_error:
             raise last_error
-        raise RuntimeError("No AI providers available")
-    
-    def _call_groq(self, prompt: str, temperature: float, max_tokens: int) -> str:
-        """Call Groq API."""
-        api_key = self.groq_keys[self.groq_index]
-        
+        raise RuntimeError("Khong co API provider nao hoat dong!")
+
+    def _call_deepseek(self, prompt: str, temperature: float, max_tokens: int) -> str:
+        """Call DeepSeek API."""
+        api_key = self.deepseek_keys[self.deepseek_index]
+
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
-        
+
+        data = {
+            "model": "deepseek-chat",
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": temperature,
+            "max_tokens": max_tokens
+        }
+
+        print(f"[DeepSeek] Dang goi API... (prompt: {len(prompt)} ky tu, cho 60-120s)")
+
+        resp = requests.post(self.DEEPSEEK_URL, headers=headers, json=data, timeout=180)
+
+        if resp.status_code == 200:
+            result = resp.json()
+            print(f"[DeepSeek] Thanh cong!")
+            return result["choices"][0]["message"]["content"]
+        else:
+            raise requests.RequestException(f"DeepSeek API error {resp.status_code}: {resp.text[:200]}")
+
+    def _call_groq(self, prompt: str, temperature: float, max_tokens: int) -> str:
+        """Call Groq API."""
+        api_key = self.groq_keys[self.groq_index]
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+
         data = {
             "model": "llama-3.3-70b-versatile",
             "messages": [{"role": "user", "content": prompt}],
             "temperature": temperature,
             "max_tokens": max_tokens
         }
-        
+
         self.logger.debug(f"Calling Groq API (key #{self.groq_index + 1})...")
-        
+
         resp = requests.post(self.GROQ_URL, headers=headers, json=data, timeout=120)
-        
+
         if resp.status_code == 200:
             result = resp.json()
             return result["choices"][0]["message"]["content"]
@@ -334,101 +522,10 @@ class GeminiClient:
             raise ValueError(f"Invalid API response format: {e}")
 
 # ============================================================================
-# PROMPT TEMPLATES
+# PROMPT TEMPLATES - Loaded from config/prompts.yaml
 # ============================================================================
-
-ANALYZE_STORY_PROMPT = """
-Bạn là chuyên gia phân tích kịch bản video và tạo prompt cho AI image/video generation.
-
-Dưới đây là nội dung thoại/lời kể của một video kể chuyện:
-
----
-{story_text}
----
-
-NHIỆM VỤ:
-
-1. PHÂN TÍCH NHÂN VẬT:
-   - Xác định nhân vật chính (main character) - đặt ID là "nvc"
-   - Xác định các nhân vật phụ quan trọng - đặt ID là "nvp1", "nvp2", ... (tối đa 5 nhân vật phụ)
-   - Với mỗi nhân vật, tạo mô tả ngoại hình chi tiết bằng tiếng Anh để AI có thể tạo hình ảnh nhất quán:
-     * Giới tính, độ tuổi ước tính
-     * Đặc điểm khuôn mặt (hình dạng, da, mắt, mũi, miệng)
-     * Kiểu tóc và màu tóc
-     * Phong cách ăn mặc phù hợp với bối cảnh truyện
-     * Vibe/tính cách (nếu có thể suy ra từ truyện)
-
-2. OUTPUT FORMAT - Trả về JSON hợp lệ với cấu trúc sau:
-
-{{
-  "characters": [
-    {{
-      "id": "nvc",
-      "role": "main",
-      "name": "Tên nhân vật trong truyện",
-      "english_prompt": "Detailed appearance description in English...",
-      "vietnamese_prompt": "Mô tả tiếng Việt ngắn gọn"
-    }},
-    {{
-      "id": "nvp1",
-      "role": "supporting",
-      "name": "Tên nhân vật phụ 1",
-      "english_prompt": "...",
-      "vietnamese_prompt": "..."
-    }}
-  ]
-}}
-
-LƯU Ý:
-- english_prompt phải đủ chi tiết để AI tạo ảnh nhất quán
-- Mô tả ngoại hình đẹp, thiện cảm, phù hợp với vai trò
-- Chỉ trả về JSON, không có text giải thích khác
-"""
-
-
-GENERATE_SCENE_PROMPTS = """
-Bạn là chuyên gia tạo prompt cho AI image/video generation.
-
-THÔNG TIN NHÂN VẬT (đã định nghĩa):
-{characters_info}
-
-DANH SÁCH SCENE CẦN TẠO PROMPT:
-{scenes_info}
-
-NHIỆM VỤ:
-Với mỗi scene, tạo:
-1. img_prompt: Prompt tạo ảnh tĩnh mô tả scene
-2. video_prompt: Prompt tạo video/animation từ ảnh
-
-YÊU CẦU QUAN TRỌNG:
-- LUÔN đề cập đến sự nhất quán nhân vật bằng cách tham chiếu đến file ảnh:
-  * Nhân vật chính: "The main character must look exactly like nvc.png: same face, age, hairstyle, and clothing style."
-  * Nhân vật phụ: "Supporting character must match nvp1.png exactly."
-- Mô tả chi tiết: bối cảnh, ánh sáng, góc camera, cảm xúc
-- img_prompt: tập trung vào composition, lighting, mood
-- video_prompt: tập trung vào movement, camera motion, transitions
-- Viết hoàn toàn bằng tiếng Anh
-- Prompt phải phù hợp với style realistic/cinematic
-
-OUTPUT FORMAT - Trả về JSON:
-
-{{
-  "scenes": [
-    {{
-      "scene_id": 1,
-      "img_prompt": "...",
-      "video_prompt": "..."
-    }},
-    {{
-      "scene_id": 2,
-      "img_prompt": "...",
-      "video_prompt": "..."
-    }}
-  ]
-}}
-
-Chỉ trả về JSON, không có text khác.
-"""
+# Prompts are now loaded from external file for easy editing
+# Edit config/prompts.yaml to customize prompts without changing code
 
 
 # ============================================================================
@@ -465,8 +562,8 @@ class PromptGenerator:
         self.gemini = GeminiClient(api_keys=api_keys, models=models)
         
         # Scene grouping settings
-        self.min_scene_duration = settings.get("min_scene_duration", 15)
-        self.max_scene_duration = settings.get("max_scene_duration", 25)
+        self.min_scene_duration = settings.get("min_scene_duration", 3)  # Min 3s
+        self.max_scene_duration = settings.get("max_scene_duration", 8)  # Max 8s per scene
     
     def _generate_content(self, prompt: str, temperature: float = 0.7, max_tokens: int = 8192) -> str:
         """Generate content using available AI providers."""
@@ -529,48 +626,65 @@ class PromptGenerator:
             return False
         
         self.logger.info(f"Tìm thấy {len(srt_entries)} SRT entries")
-        
-        # Gom thành scenes
-        scenes_data = group_srt_into_scenes(
-            srt_entries,
-            min_duration=self.min_scene_duration,
-            max_duration=self.max_scene_duration
-        )
-        
-        self.logger.info(f"Gom thành {len(scenes_data)} scenes")
-        
-        # Tạo full story text để phân tích nhân vật
+
+        # Tạo full story text để phân tích
         full_story = " ".join([e.text for e in srt_entries])
-        
-        # Step 1: Phân tích nhân vật
-        self.logger.info("Phân tích nhân vật qua Gemini...")
-        characters = self._analyze_characters(full_story)
-        
+
+        # Step 1: Phân tích nhân vật + bối cảnh TRƯỚC
+        self.logger.info("Phân tích nhân vật và bối cảnh...")
+        characters, locations, context_lock, global_style = self._analyze_characters(full_story)
+
         if not characters:
             self.logger.error("Không thể phân tích nhân vật")
             return False
-        
+
+        self.logger.info(f"Tìm thấy {len(characters)} nhân vật, {len(locations)} bối cảnh")
+
         # Lưu nhân vật vào Excel
         for char in characters:
             char.image_file = f"{char.id}.png"
             char.status = "pending"
             workbook.add_character(char)
-        
+
+        # Lưu locations (as Character with role="location")
+        for loc in locations:
+            loc_char = Character(
+                id=loc.id,
+                role="location",
+                name=loc.name,
+                english_prompt=loc.english_prompt,  # location_prompt - for generating reference image
+                character_lock=loc.location_lock,   # location_lock - for scene prompts (IMPORTANT!)
+                vietnamese_prompt=loc.location_lock,  # Keep for backwards compat
+                image_file=f"{loc.id}.png",
+                status="pending"
+            )
+            workbook.add_character(loc_char)
+
         workbook.save()
-        self.logger.info(f"Đã lưu {len(characters)} nhân vật")
-        
-        # Step 2: Tạo prompts cho từng batch scenes
+        self.logger.info(f"Đã lưu {len(characters)} nhân vật + {len(locations)} bối cảnh")
+
+        # Step 2: Chia scene THÔNG MINH theo nội dung (không theo thời gian)
+        self.logger.info("Chia scene theo nội dung (AI Smart Division)...")
+        scenes_data = self._smart_divide_scenes(srt_entries)
+
+        self.logger.info(f"Chia thành {len(scenes_data)} scenes")
+
+        # Step 3: Tạo prompts cho từng batch scenes
         self.logger.info("Tạo prompts cho scenes...")
-        
+
         # Chia scenes thành batches để tránh vượt quá context limit
         batch_size = 10
         all_scene_prompts = []
-        
+
         for i in range(0, len(scenes_data), batch_size):
             batch = scenes_data[i:i + batch_size]
             self.logger.info(f"Xử lý batch {i // batch_size + 1}/{(len(scenes_data) - 1) // batch_size + 1}")
-            
-            scene_prompts = self._generate_scene_prompts(characters, batch)
+
+            scene_prompts = self._generate_scene_prompts(
+                characters, batch, context_lock,
+                locations=locations,
+                global_style_override=global_style
+            )
             all_scene_prompts.extend(scene_prompts)
             
             # Rate limiting
@@ -579,6 +693,12 @@ class PromptGenerator:
         
         # Lưu scenes vào Excel
         for scene_data, prompts in zip(scenes_data, all_scene_prompts):
+            # Convert lists to JSON strings for storage
+            chars_used = prompts.get("characters_used", [])
+            ref_files = prompts.get("reference_files", [])
+            chars_str = json.dumps(chars_used) if isinstance(chars_used, list) else str(chars_used)
+            refs_str = json.dumps(ref_files) if isinstance(ref_files, list) else str(ref_files)
+
             scene = Scene(
                 scene_id=scene_data["scene_id"],
                 srt_start=scene_data["srt_start"],
@@ -587,7 +707,10 @@ class PromptGenerator:
                 img_prompt=prompts.get("img_prompt", ""),
                 video_prompt=prompts.get("video_prompt", ""),
                 status_img="pending",
-                status_vid="pending"
+                status_vid="pending",
+                characters_used=chars_str,
+                location_used=prompts.get("location_used", ""),
+                reference_files=refs_str
             )
             workbook.add_scene(scene)
         
@@ -596,77 +719,260 @@ class PromptGenerator:
         
         return True
     
-    def _analyze_characters(self, story_text: str) -> List[Character]:
+    def _analyze_characters(self, story_text: str) -> tuple:
         """
-        Phân tích truyện và trích xuất nhân vật.
-        
+        Phân tích truyện và trích xuất nhân vật + bối cảnh.
+
         Args:
             story_text: Toàn bộ nội dung truyện
-            
+
         Returns:
-            List các Character objects
+            Tuple (List[Character], List[Location], context_lock: str, global_style: str)
         """
-        prompt = ANALYZE_STORY_PROMPT.format(story_text=story_text[:8000])
-        
+        # Load prompt từ config/prompts.yaml
+        prompt_template = get_analyze_story_prompt()
+        prompt = prompt_template.format(story_text=story_text[:8000])
+
         try:
             response = self._generate_content(prompt, temperature=0.5)
-            
+
             # Parse JSON từ response
             json_data = self._extract_json(response)
-            
+
             if not json_data or "characters" not in json_data:
                 self.logger.error(f"Invalid characters response: {response[:500]}")
-                return []
-            
+                return [], [], "", ""
+
+            # Extract context_lock and global_style (v5.0 format)
+            context_lock = json_data.get("context_lock", "")
+            global_style = json_data.get("global_style", "")
+
+            # Extract characters
             characters = []
             for char_data in json_data["characters"]:
+                # portrait_prompt = full prompt for generating reference image (white background)
+                # character_lock = short description for scene prompts (IMPORTANT!)
+                portrait_prompt = char_data.get("portrait_prompt", char_data.get("english_prompt", ""))
+                character_lock = char_data.get("character_lock", "")
+
+                # For children (DO_NOT_GENERATE), use character_lock for both
+                if portrait_prompt == "DO_NOT_GENERATE":
+                    portrait_prompt = character_lock
+
                 characters.append(Character(
                     id=char_data.get("id", ""),
                     role=char_data.get("role", "supporting"),
                     name=char_data.get("name", ""),
-                    english_prompt=char_data.get("english_prompt", ""),
-                    vietnamese_prompt=char_data.get("vietnamese_prompt", ""),
+                    english_prompt=portrait_prompt,  # For reference image generation
+                    character_lock=character_lock,    # For scene prompts (IMPORTANT!)
+                    vietnamese_prompt=char_data.get("vietnamese_prompt", char_data.get("vietnamese_description", "")),
                 ))
-            
-            return characters
-            
+
+            # Extract locations (v5.0 format)
+            locations = []
+            for loc_data in json_data.get("locations", []):
+                english_prompt = loc_data.get("location_prompt", loc_data.get("english_prompt", ""))
+
+                locations.append(Location(
+                    id=loc_data.get("id", ""),
+                    name=loc_data.get("name", ""),
+                    english_prompt=english_prompt,
+                    location_lock=loc_data.get("location_lock", ""),
+                    lighting_default=loc_data.get("lighting_default", ""),
+                    image_file=loc_data.get("filename", ""),
+                ))
+
+            self.logger.info(f"Extracted {len(characters)} characters, {len(locations)} locations")
+            return characters, locations, context_lock, global_style
+
         except Exception as e:
             self.logger.error(f"Failed to analyze characters: {e}")
-            return []
-    
+            return [], [], "", ""
+
+    def _smart_divide_scenes(self, srt_entries: List) -> List[Dict[str, Any]]:
+        """
+        Chia scene thông minh theo nội dung thay vì theo thời gian.
+
+        Args:
+            srt_entries: List các SrtEntry từ file SRT
+
+        Returns:
+            List các scene data với: scene_id, start_time, end_time, text, srt_start, srt_end
+        """
+        # Format SRT entries với timestamps cho AI
+        srt_with_timestamps = "\n".join([
+            f"{e.index}. [{format_srt_time(e.start_time)} -> {format_srt_time(e.end_time)}] \"{e.text}\""
+            for e in srt_entries
+        ])
+
+        # Load prompt từ config/prompts.yaml
+        prompt_template = get_smart_divide_scenes_prompt()
+        if not prompt_template:
+            self.logger.warning("Smart divide prompt not found, falling back to time-based division")
+            return self._fallback_time_based_division(srt_entries)
+
+        prompt = prompt_template.format(srt_with_timestamps=srt_with_timestamps)
+
+        try:
+            self.logger.info("AI đang phân tích nội dung để chia scene...")
+            response = self._generate_content(prompt, temperature=0.4, max_tokens=16000)
+
+            # Parse JSON từ response
+            json_data = self._extract_json(response)
+
+            if not json_data or "scenes" not in json_data:
+                self.logger.warning(f"Invalid smart divide response, falling back to time-based")
+                return self._fallback_time_based_division(srt_entries)
+
+            # Convert AI output to internal format
+            scenes_data = []
+            for scene in json_data["scenes"]:
+                # Parse timestamps
+                start_str = scene.get("start_time", "00:00:00")
+                end_str = scene.get("end_time", "00:00:00")
+
+                # Get SRT indices
+                srt_indices = scene.get("srt_indices", [])
+                srt_start = min(srt_indices) if srt_indices else 1
+                srt_end = max(srt_indices) if srt_indices else 1
+
+                scenes_data.append({
+                    "scene_id": scene.get("scene_id", len(scenes_data) + 1),
+                    "story_beat": scene.get("story_beat", ""),  # Nhịp kể chuyện
+                    "start_time": start_str,
+                    "end_time": end_str,
+                    "duration_seconds": scene.get("duration_seconds", 5),
+                    "text": scene.get("text", ""),
+                    "visual_moment": scene.get("visual_moment", ""),
+                    "shot_type": scene.get("shot_type", "Medium shot"),
+                    "srt_start": srt_start,
+                    "srt_end": srt_end,
+                })
+
+            self.logger.info(f"AI chia thành {len(scenes_data)} scenes theo nội dung")
+            return scenes_data
+
+        except Exception as e:
+            self.logger.error(f"Smart divide failed: {e}, falling back to time-based")
+            return self._fallback_time_based_division(srt_entries)
+
+    def _fallback_time_based_division(self, srt_entries: List) -> List[Dict[str, Any]]:
+        """Fallback: chia scene theo thời gian khi AI không hoạt động."""
+        from modules.utils import group_srt_into_scenes
+        return group_srt_into_scenes(
+            srt_entries,
+            min_duration=self.min_scene_duration,
+            max_duration=self.max_scene_duration
+        )
+
     def _generate_scene_prompts(
         self,
         characters: List[Character],
-        scenes_data: List[Dict[str, Any]]
+        scenes_data: List[Dict[str, Any]],
+        context_lock: str = "",
+        locations: List[Location] = None,
+        global_style_override: str = ""
     ) -> List[Dict[str, str]]:
         """
         Tạo prompts cho một batch scenes.
-        
+
         Args:
             characters: Danh sách nhân vật
             scenes_data: Danh sách scene data
-            
+            context_lock: Context lock string từ phân tích nhân vật
+            locations: Danh sách locations
+            global_style_override: Global style từ AI (nếu có)
+
         Returns:
             List các dict chứa img_prompt và video_prompt
         """
-        # Format thông tin nhân vật
+        locations = locations or []
+
+        # Format thông tin nhân vật (v5.0 format) - use character_lock for scene prompts
+        # IMPORTANT: character_lock is the short description for scenes, NOT english_prompt (portrait_prompt)
+        # NEVER use portrait_prompt (english_prompt) for scenes - it has "white studio background"!
+        def get_char_lock(char):
+            """Get character_lock, extract from english_prompt if needed (remove white background)."""
+            if char.character_lock and char.character_lock.strip():
+                return char.character_lock
+            # Fallback: extract basic description from english_prompt (remove studio/background refs)
+            if char.english_prompt:
+                prompt = char.english_prompt
+                # Remove studio background references
+                for phrase in ["Pure white studio background", "white studio background",
+                               "Bright, even studio lighting", "studio lighting",
+                               "Looking directly at camera", "neutral expression",
+                               "8K, sharp focus", "high fidelity portraiture"]:
+                    prompt = prompt.replace(phrase, "").replace(phrase.lower(), "")
+                # Clean up
+                prompt = " ".join(prompt.split())  # Remove extra spaces
+                if len(prompt) > 20:  # Only use if meaningful
+                    return prompt
+            return f"{char.name} ({char.role})"  # Ultimate fallback
+
         characters_info = "\n".join([
-            f"- {char.id} ({char.role}): {char.name}\n  Appearance: {char.english_prompt}"
+            f"- ID: {char.id}\n"
+            f"  Name: {char.name} ({char.role})\n"
+            f"  character_lock: \"{get_char_lock(char)}\"\n"
+            f"  reference_file: {char.id}.png"
             for char in characters
         ])
-        
-        # Format thông tin scenes
-        scenes_info = "\n".join([
-            f"Scene {s['scene_id']} (SRT {s['srt_start']}-{s['srt_end']}):\n  \"{s['text'][:300]}...\""
-            if len(s['text']) > 300 else
-            f"Scene {s['scene_id']} (SRT {s['srt_start']}-{s['srt_end']}):\n  \"{s['text']}\""
+
+        # Format thông tin locations (v5.0 format) - include location_lock for AI to copy
+        if locations:
+            locations_info = "\n".join([
+                f"- ID: {loc.id}\n"
+                f"  Name: {loc.name}\n"
+                f"  location_lock: \"{loc.location_lock}\"\n"
+                f"  lighting: {loc.lighting_default}\n"
+                f"  reference_file: {loc.id}.png"
+                for loc in locations
+            ])
+        else:
+            locations_info = "(No location references - describe locations based on story context)"
+
+        # Format thông tin scenes (include story_beat, shot_type and visual_moment)
+        pacing_script = "\n".join([
+            f"{s['scene_id']}. [{s.get('shot_type', 'Medium shot')}] \"{s['text']}\"\n"
+            f"   Story beat: {s.get('story_beat', 'N/A')}\n"
+            f"   Visual: {s.get('visual_moment', s['text'])}"
             for s in scenes_data
         ])
-        
-        prompt = GENERATE_SCENE_PROMPTS.format(
-            characters_info=characters_info,
-            scenes_info=scenes_info
-        )
+
+        # Load global style - uu tien tu AI response
+        global_style = global_style_override or get_global_style()
+
+        # Load prompt từ config/prompts.yaml
+        prompt_template = get_generate_scenes_prompt()
+
+        # Try to format with all variables (v5.0 format)
+        try:
+            prompt = prompt_template.format(
+                characters_info=characters_info,
+                scenes_info=pacing_script,  # for backwards compat
+                pacing_script=pacing_script,
+                context_lock=context_lock or "Modern setting, natural lighting",
+                global_style=global_style,
+                locations_info=locations_info
+            )
+        except KeyError as e:
+            # Fallback to simpler format
+            self.logger.warning(f"Template format error: {e}, using simple format")
+            prompt = f"""Create image prompts for these scenes:
+
+Characters:
+{characters_info}
+
+Locations:
+{locations_info}
+
+Scenes:
+{pacing_script}
+
+Context: {context_lock or "Modern setting"}
+Style: {global_style}
+
+Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": "..."}}]}}"""
         
         try:
             response = self._generate_content(prompt, temperature=0.6)
@@ -681,18 +987,28 @@ class PromptGenerator:
             
             # Match prompts với scenes
             prompts_map = {s["scene_id"]: s for s in json_data["scenes"]}
-            
+
             result = []
             for scene_data in scenes_data:
                 scene_id = scene_data["scene_id"]
                 if scene_id in prompts_map:
+                    scene_result = prompts_map[scene_id]
                     result.append({
-                        "img_prompt": prompts_map[scene_id].get("img_prompt", ""),
-                        "video_prompt": prompts_map[scene_id].get("video_prompt", "")
+                        "img_prompt": scene_result.get("img_prompt", ""),
+                        "video_prompt": scene_result.get("video_prompt", ""),
+                        "characters_used": scene_result.get("characters_used", []),
+                        "location_used": scene_result.get("location_used", ""),
+                        "reference_files": scene_result.get("reference_files", [])
                     })
                 else:
-                    result.append({"img_prompt": "", "video_prompt": ""})
-            
+                    result.append({
+                        "img_prompt": "",
+                        "video_prompt": "",
+                        "characters_used": [],
+                        "location_used": "",
+                        "reference_files": []
+                    })
+
             return result
             
         except Exception as e:

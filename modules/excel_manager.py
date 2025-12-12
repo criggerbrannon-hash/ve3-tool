@@ -22,9 +22,10 @@ from modules.utils import get_logger
 # Cột cho sheet Characters
 CHARACTERS_COLUMNS = [
     "id",               # ID nhân vật (nvc, nvp1, nvp2, ...)
-    "role",             # Vai trò (main/supporting)
+    "role",             # Vai trò (main/supporting/location)
     "name",             # Tên nhân vật trong truyện
-    "english_prompt",   # Prompt tiếng Anh mô tả ngoại hình
+    "english_prompt",   # Prompt tiếng Anh cho ảnh tham chiếu (portrait_prompt)
+    "character_lock",   # Mô tả ngắn để paste vào scene prompts (QUAN TRỌNG!)
     "vietnamese_prompt", # Prompt tiếng Việt (nếu cần)
     "image_file",       # Tên file ảnh tham chiếu (nvc.png, nvp1.png, ...)
     "status",           # Trạng thái (pending/done/error)
@@ -42,6 +43,9 @@ SCENES_COLUMNS = [
     "video_path",       # Path đến video đã tạo
     "status_img",       # Trạng thái ảnh (pending/done/error)
     "status_vid",       # Trạng thái video (pending/done/error)
+    "characters_used",  # JSON list nhân vật trong scene (["nv1", "nv2"])
+    "location_used",    # ID bối cảnh ("loc1")
+    "reference_files",  # JSON list file tham chiếu (["nv1.png", "loc1.png"])
 ]
 
 
@@ -51,13 +55,14 @@ SCENES_COLUMNS = [
 
 class Character:
     """Đại diện cho một nhân vật trong truyện."""
-    
+
     def __init__(
         self,
         id: str,
         role: str = "supporting",
         name: str = "",
         english_prompt: str = "",
+        character_lock: str = "",
         vietnamese_prompt: str = "",
         image_file: str = "",
         status: str = "pending"
@@ -65,11 +70,12 @@ class Character:
         self.id = id
         self.role = role
         self.name = name
-        self.english_prompt = english_prompt
+        self.english_prompt = english_prompt  # portrait_prompt - for generating reference image
+        self.character_lock = character_lock  # short description for scene prompts
         self.vietnamese_prompt = vietnamese_prompt
         self.image_file = image_file
         self.status = status
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Chuyển đổi thành dictionary."""
         return {
@@ -77,11 +83,12 @@ class Character:
             "role": self.role,
             "name": self.name,
             "english_prompt": self.english_prompt,
+            "character_lock": self.character_lock,
             "vietnamese_prompt": self.vietnamese_prompt,
             "image_file": self.image_file,
             "status": self.status,
         }
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Character":
         """Tạo Character từ dictionary."""
@@ -90,8 +97,60 @@ class Character:
             role=str(data.get("role", "supporting")),
             name=str(data.get("name", "")),
             english_prompt=str(data.get("english_prompt", "")),
+            character_lock=str(data.get("character_lock", "")),
             vietnamese_prompt=str(data.get("vietnamese_prompt", "")),
             image_file=str(data.get("image_file", "")),
+            status=str(data.get("status", "pending")),
+        )
+
+
+# ============================================================================
+# LOCATION DATA CLASS
+# ============================================================================
+
+class Location:
+    """Đại diện cho một location/bối cảnh trong truyện."""
+
+    def __init__(
+        self,
+        id: str,
+        name: str = "",
+        english_prompt: str = "",
+        location_lock: str = "",
+        lighting_default: str = "",
+        image_file: str = "",
+        status: str = "pending"
+    ):
+        self.id = id
+        self.name = name
+        self.english_prompt = english_prompt  # location_prompt từ AI
+        self.location_lock = location_lock
+        self.lighting_default = lighting_default
+        self.image_file = image_file
+        self.status = status
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Chuyển đổi thành dictionary."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "english_prompt": self.english_prompt,
+            "location_lock": self.location_lock,
+            "lighting_default": self.lighting_default,
+            "image_file": self.image_file,
+            "status": self.status,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Location":
+        """Tạo Location từ dictionary."""
+        return cls(
+            id=str(data.get("id", "")),
+            name=str(data.get("name", "")),
+            english_prompt=str(data.get("english_prompt", data.get("location_prompt", ""))),
+            location_lock=str(data.get("location_lock", "")),
+            lighting_default=str(data.get("lighting_default", "")),
+            image_file=str(data.get("image_file", data.get("filename", ""))),
             status=str(data.get("status", "pending")),
         )
 
@@ -102,7 +161,7 @@ class Character:
 
 class Scene:
     """Đại diện cho một scene trong video."""
-    
+
     def __init__(
         self,
         scene_id: int,
@@ -114,7 +173,10 @@ class Scene:
         img_path: str = "",
         video_path: str = "",
         status_img: str = "pending",
-        status_vid: str = "pending"
+        status_vid: str = "pending",
+        characters_used: str = "",      # JSON list: ["nv1", "nv2"]
+        location_used: str = "",         # Location ID: "loc1"
+        reference_files: str = ""        # JSON list: ["nv1.png", "loc1.png"]
     ):
         self.scene_id = scene_id
         self.srt_start = srt_start
@@ -126,7 +188,10 @@ class Scene:
         self.video_path = video_path
         self.status_img = status_img
         self.status_vid = status_vid
-    
+        self.characters_used = characters_used
+        self.location_used = location_used
+        self.reference_files = reference_files
+
     def to_dict(self) -> Dict[str, Any]:
         """Chuyển đổi thành dictionary."""
         return {
@@ -140,8 +205,11 @@ class Scene:
             "video_path": self.video_path,
             "status_img": self.status_img,
             "status_vid": self.status_vid,
+            "characters_used": self.characters_used,
+            "location_used": self.location_used,
+            "reference_files": self.reference_files,
         }
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Scene":
         """Tạo Scene từ dictionary."""
@@ -156,6 +224,9 @@ class Scene:
             video_path=str(data.get("video_path", "")),
             status_img=str(data.get("status_img", "pending")),
             status_vid=str(data.get("status_vid", "pending")),
+            characters_used=str(data.get("characters_used", "")),
+            location_used=str(data.get("location_used", "")),
+            reference_files=str(data.get("reference_files", "")),
         )
 
 
@@ -246,6 +317,7 @@ class PromptWorkbook:
             "role": 12,
             "name": 20,
             "english_prompt": 60,
+            "character_lock": 50,
             "vietnamese_prompt": 40,
             "image_file": 15,
             "status": 10,
@@ -282,6 +354,9 @@ class PromptWorkbook:
             "video_path": 30,
             "status_img": 12,
             "status_vid": 12,
+            "characters_used": 20,
+            "location_used": 15,
+            "reference_files": 30,
         }
         
         for col, column_name in enumerate(SCENES_COLUMNS, start=1):

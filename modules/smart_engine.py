@@ -35,13 +35,17 @@ class Resource:
     status: str = "ready"  # ready, busy, exhausted, error
     fail_count: int = 0
     last_used: float = 0
+    token_time: float = 0  # Thoi gian lay token (de check het han)
 
 
 class SmartEngine:
     """
     Engine thong minh - dam bao output 100%.
     """
-    
+
+    # Token het han sau 50 phut (thuc te la ~1h nhung de an toan)
+    TOKEN_EXPIRY_SECONDS = 50 * 60
+
     def __init__(self, config_path: str = None):
         # Support VE3_CONFIG_DIR environment variable
         if config_path:
@@ -49,44 +53,51 @@ class SmartEngine:
         else:
             config_dir = os.environ.get('VE3_CONFIG_DIR', 'config')
             self.config_path = Path(config_dir) / "accounts.json"
-        
+
+        # Token cache file
+        self.tokens_path = self.config_path.parent / "tokens.json"
+
         self.chrome_path = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
-        
+
         # Resources
         self.profiles: List[Resource] = []
+        self.deepseek_keys: List[Resource] = []
         self.groq_keys: List[Resource] = []
         self.gemini_keys: List[Resource] = []
-        
-        # Settings
-        self.parallel = 2
-        self.delay = 2
+
+        # Settings - TOI UU TOC DO
+        self.parallel = 20  # Tang len 20 - dung TAT CA tokens co san
+        self.delay = 0.5    # Giam tu 1s -> 0.5s giua moi anh
         self.max_retries = 3
-        
+
         # State
         self.stop_flag = False
         self.callback = None
         self._lock = threading.Lock()
-        
+
         self.load_config()
-    
+        self.load_cached_tokens()  # Load tokens da luu
+
     def log(self, msg: str, level: str = "INFO"):
         ts = datetime.now().strftime("%H:%M:%S")
         full_msg = f"[{ts}] [{level}] {msg}"
-        print(full_msg)
         if self.callback:
             self.callback(full_msg)
-    
+        else:
+            # Fallback to print only when no GUI callback
+            print(full_msg)
+
     def load_config(self):
         """Load config."""
         if not self.config_path.exists():
             return
-        
+
         try:
             with open(self.config_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-            
+
             self.chrome_path = data.get('chrome_path', self.chrome_path)
-            
+
             # Load profiles
             for i, p in enumerate(data.get('chrome_profiles', [])):
                 path = p if isinstance(p, str) else p.get('path', '')
@@ -98,45 +109,131 @@ class SmartEngine:
                         type='profile',
                         value=path
                     ))
-            
+
             # Load API keys
             api = data.get('api_keys', {})
+
+            # DeepSeek (uu tien cao nhat - re va on dinh)
+            for k in api.get('deepseek', []):
+                if k and not k.startswith('THAY_BANG') and not k.startswith('sk-YOUR'):
+                    self.deepseek_keys.append(Resource(type='deepseek', value=k))
+
             for k in api.get('groq', []):
                 if k and not k.startswith('THAY_BANG') and not k.startswith('gsk_YOUR'):
                     self.groq_keys.append(Resource(type='groq', value=k))
-            
+
             for k in api.get('gemini', []):
                 if k and not k.startswith('THAY_BANG') and not k.startswith('AIzaSy_YOUR'):
                     self.gemini_keys.append(Resource(type='gemini', value=k))
-            
+
             # Settings
             settings = data.get('settings', {})
             self.parallel = settings.get('parallel', 2)
             self.delay = settings.get('delay_between_images', 2)
-            
+
         except Exception as e:
             self.log(f"Load config error: {e}", "ERROR")
-    
+
+    # ========== TOKEN CACHING ==========
+
+    def load_cached_tokens(self):
+        """Load tokens da luu tu file."""
+        if not self.tokens_path.exists():
+            return
+
+        try:
+            with open(self.tokens_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            now = time.time()
+            loaded = 0
+            expired = 0
+
+            for profile in self.profiles:
+                profile_name = Path(profile.value).name
+                if profile_name in data:
+                    token_data = data[profile_name]
+                    token_time = token_data.get('time', 0)
+
+                    # Check het han chua (50 phut)
+                    if now - token_time < self.TOKEN_EXPIRY_SECONDS:
+                        profile.token = token_data.get('token', '')
+                        profile.project_id = token_data.get('project_id', '')
+                        profile.token_time = token_time
+                        loaded += 1
+                    else:
+                        expired += 1
+
+            if loaded > 0:
+                self.log(f"Loaded {loaded} cached tokens ({expired} expired)")
+
+        except Exception as e:
+            self.log(f"Load cached tokens error: {e}", "WARN")
+
+    def save_cached_tokens(self):
+        """Luu tokens vao file de dung lai."""
+        try:
+            data = {}
+            for profile in self.profiles:
+                if profile.token:
+                    profile_name = Path(profile.value).name
+                    data[profile_name] = {
+                        'token': profile.token,
+                        'project_id': profile.project_id,
+                        'time': profile.token_time or time.time()
+                    }
+
+            self.tokens_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.tokens_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2)
+
+            self.log(f"Saved {len(data)} tokens to cache")
+
+        except Exception as e:
+            self.log(f"Save tokens error: {e}", "WARN")
+
+    def is_token_valid(self, profile: Resource) -> bool:
+        """Check token con valid khong (chua het han + API hoat dong)."""
+        if not profile.token:
+            return False
+
+        # Check het han chua
+        if profile.token_time:
+            age = time.time() - profile.token_time
+            if age > self.TOKEN_EXPIRY_SECONDS:
+                self.log(f"Token {Path(profile.value).name} het han ({int(age/60)} phut)")
+                profile.token = ""
+                return False
+
+        # Quick API test (optional - co the bo qua de nhanh hon)
+        # TODO: Them API test neu can
+
+        return True
+
+    def get_valid_token_count(self) -> int:
+        """Dem so token con valid."""
+        return sum(1 for p in self.profiles if self.is_token_valid(p))
+
     def check_requirements(self, has_voice: bool = True) -> Tuple[bool, List[str]]:
         """
         Kiem tra thieu gi.
         Return: (ok, list of missing items)
         """
         missing = []
-        
+
         if not self.profiles:
             missing.append("Chrome profiles (sua config/accounts.json)")
-        
-        if has_voice and not self.groq_keys and not self.gemini_keys:
-            missing.append("AI API keys cho voice (Groq FREE: console.groq.com/keys)")
-        
+
+        if has_voice and not self.deepseek_keys and not self.groq_keys and not self.gemini_keys:
+            missing.append("AI API keys cho voice (DeepSeek RE: platform.deepseek.com/api_keys)")
+
         if not Path(self.chrome_path).exists():
             missing.append(f"Chrome: {self.chrome_path}")
-        
+
         return len(missing) == 0, missing
-    
+
     # ========== RESOURCE MANAGEMENT ==========
-    
+
     def get_available_profile(self) -> Optional[Resource]:
         """Lay profile san sang."""
         with self._lock:
@@ -148,11 +245,15 @@ class SmartEngine:
                 if p.status in ['ready', 'error'] and p.fail_count < self.max_retries:
                     return p
         return None
-    
+
     def get_available_ai_key(self) -> Optional[Resource]:
-        """Lay AI key san sang (uu tien Groq vi free)."""
+        """Lay AI key san sang (uu tien DeepSeek vi re va on dinh)."""
         with self._lock:
-            # Uu tien Groq
+            # Uu tien DeepSeek (re nhat, on dinh)
+            for k in self.deepseek_keys:
+                if k.status == 'ready' and k.fail_count < self.max_retries:
+                    return k
+            # Fallback Groq (free nhung hay rate limit)
             for k in self.groq_keys:
                 if k.status == 'ready' and k.fail_count < self.max_retries:
                     return k
@@ -161,7 +262,7 @@ class SmartEngine:
                 if k.status == 'ready' and k.fail_count < self.max_retries:
                     return k
         return None
-    
+
     def mark_resource_used(self, res: Resource, success: bool):
         """Danh dau resource da dung."""
         with self._lock:
@@ -174,90 +275,136 @@ class SmartEngine:
                 if res.fail_count >= self.max_retries:
                     res.status = 'exhausted'
                     self.log(f"Resource exhausted: {res.type} - {res.value[:20]}...", "WARN")
-    
+
     def reset_resources(self):
         """Reset tat ca resources."""
         with self._lock:
-            for r in self.profiles + self.groq_keys + self.gemini_keys:
+            for r in self.profiles + self.deepseek_keys + self.groq_keys + self.gemini_keys:
                 r.status = 'ready'
                 r.fail_count = 0
-    
+
     # ========== TOKEN MANAGEMENT ==========
-    
+
     def get_token_for_profile(self, profile: Resource) -> bool:
         """Lay token cho 1 profile."""
         from modules.auto_token import ChromeAutoToken
-        
+
         self.log(f"Lay token: {Path(profile.value).name}...")
-        
+
         try:
             extractor = ChromeAutoToken(
                 chrome_path=self.chrome_path,
-                profile_path=profile.value
+                profile_path=profile.value,
+                auto_close=True  # Tu dong dong Chrome sau khi lay token
             )
-            
+
             token, proj_id, error = extractor.extract_token(callback=self.callback)
-            
+
             if token:
                 profile.token = token
                 profile.project_id = proj_id or ""
+                profile.token_time = time.time()  # Luu thoi gian lay token
                 profile.status = 'ready'
                 self.log(f"OK: {Path(profile.value).name} - Token OK!", "OK")
+                self.save_cached_tokens()  # Luu ngay vao file
                 return True
             else:
                 profile.fail_count += 1
                 self.log(f"FAIL: {Path(profile.value).name} - {error}", "ERROR")
                 return False
-                
+
         except Exception as e:
             profile.fail_count += 1
             self.log(f"ERROR: {e}", "ERROR")
             return False
-    
+
     def get_all_tokens(self) -> int:
         """Lay token cho tat ca profiles (tuan tu vi can GUI)."""
         success = 0
-        
+
         self.log(f"=== LAY TOKEN CHO {len(self.profiles)} PROFILES ===")
-        
+
         for i, profile in enumerate(self.profiles):
             if self.stop_flag:
                 break
-            
+
             self.log(f"[{i+1}/{len(self.profiles)}] {Path(profile.value).name}")
-            
-            if profile.token:
-                self.log(f"  -> Da co token, skip")
+
+            # Check token con valid khong
+            if self.is_token_valid(profile):
+                self.log(f"  -> Da co token valid, skip")
                 success += 1
                 continue
-            
+
+            # Token het han hoac chua co
+            if profile.token:
+                self.log(f"  -> Token het han, lay moi...")
+
             if self.get_token_for_profile(profile):
                 success += 1
-            
-            # Doi giua cac profiles
+
+            # Doi giua cac profiles (giam tu 3s -> 1s)
             if i < len(self.profiles) - 1:
-                time.sleep(3)
-        
+                time.sleep(1)
+
         self.log(f"=== XONG: {success}/{len(self.profiles)} tokens ===")
         return success
-    
+
     def refresh_token_if_needed(self, profile: Resource) -> bool:
-        """Refresh token neu can."""
-        # TODO: Check token expiry
-        if not profile.token:
+        """Refresh token neu can - check expiry."""
+        if not self.is_token_valid(profile):
             return self.get_token_for_profile(profile)
         return True
-    
+
+    def _get_other_valid_profile(self, exclude_profile: Resource) -> Optional[Resource]:
+        """Tim profile khac co token con valid."""
+        with self._lock:
+            for p in self.profiles:
+                if p != exclude_profile and p.token and self.is_token_valid(p):
+                    return p
+        return None
+
+    def refresh_expired_tokens(self) -> int:
+        """
+        Kiem tra va refresh cac token da het han.
+        Goi khi khoi dong tool.
+
+        Returns:
+            So token da refresh thanh cong
+        """
+        refreshed = 0
+        expired_profiles = []
+
+        # Tim cac profile co token het han
+        for profile in self.profiles:
+            if profile.token and not self.is_token_valid(profile):
+                expired_profiles.append(profile)
+                profile.token = ""  # Clear expired token
+
+        if not expired_profiles:
+            return 0
+
+        self.log(f"Tim thay {len(expired_profiles)} token het han, dang refresh...")
+
+        for profile in expired_profiles:
+            if self.stop_flag:
+                break
+            if self.get_token_for_profile(profile):
+                refreshed += 1
+
+        self.log(f"Da refresh {refreshed}/{len(expired_profiles)} tokens")
+        return refreshed
+
     # ========== SRT PROCESSING ==========
-    
+
     def make_srt(self, voice_path: Path, srt_path: Path) -> bool:
         """Tao SRT tu voice."""
         if srt_path.exists():
             self.log(f"SRT da ton tai: {srt_path.name}")
             return True
-        
+
         self.log("Transcribe voice -> SRT...")
-        
+
         try:
             from modules.voice_to_srt import VoiceToSrt
             conv = VoiceToSrt(model_name="base", language="vi")
@@ -267,17 +414,17 @@ class SmartEngine:
         except Exception as e:
             self.log(f"SRT error: {e}", "ERROR")
             return False
-    
+
     # ========== PROMPT GENERATION ==========
-    
+
     def make_prompts(self, proj_dir: Path, name: str, excel_path: Path) -> bool:
         """Tao prompts tu SRT. Retry voi cac AI keys khac neu fail."""
         if excel_path.exists():
             self.log(f"Prompts da ton tai: {excel_path.name}")
             return True
-        
+
         self.log("Generate prompts...")
-        
+
         # Load config
         import yaml
         cfg = {}
@@ -285,47 +432,55 @@ class SmartEngine:
         if cfg_file.exists():
             with open(cfg_file, "r", encoding="utf-8") as f:
                 cfg = yaml.safe_load(f) or {}
-        
-        # Add API keys
-        cfg['groq_api_keys'] = [k.value for k in self.groq_keys if k.status != 'exhausted']
+
+        # Add API keys (thu tu uu tien: Gemini > Groq > DeepSeek)
         cfg['gemini_api_keys'] = [k.value for k in self.gemini_keys if k.status != 'exhausted']
-        cfg['preferred_provider'] = 'groq'
-        
+        cfg['groq_api_keys'] = [k.value for k in self.groq_keys if k.status != 'exhausted']
+        cfg['deepseek_api_keys'] = [k.value for k in self.deepseek_keys if k.status != 'exhausted']
+        cfg['preferred_provider'] = 'gemini' if self.gemini_keys else ('groq' if self.groq_keys else 'deepseek')
+
         # Retry with different keys
         for attempt in range(self.max_retries):
             if self.stop_flag:
                 return False
-            
+
             ai_key = self.get_available_ai_key()
             if not ai_key:
                 self.log("Het AI keys!", "ERROR")
                 return False
-            
+
             self.log(f"Thu AI key: {ai_key.type} (attempt {attempt+1})")
-            
+
             try:
                 from modules.prompts_generator import PromptGenerator
                 gen = PromptGenerator(cfg)
-                
+
                 if gen.generate_for_project(proj_dir, name):
                     self.mark_resource_used(ai_key, True)
                     self.log(f"OK: {excel_path.name}", "OK")
                     return True
                 else:
                     self.mark_resource_used(ai_key, False)
-                    
+
             except Exception as e:
                 self.log(f"Prompt error: {e}", "ERROR")
                 self.mark_resource_used(ai_key, False)
-        
+
         return False
-    
+
     # ========== IMAGE GENERATION ==========
 
-    def generate_single_image(self, prompt_data: Dict, profile: Resource) -> bool:
-        """Tao 1 anh voi 1 profile, ho tro reference images."""
+    def generate_single_image(self, prompt_data: Dict, profile: Resource) -> tuple:
+        """
+        Tao 1 anh voi 1 profile, ho tro reference images.
+
+        QUAN TRONG: Upload reference images truoc de lay media_name,
+        KHONG gui base64 truc tiep!
+
+        Returns:
+            tuple: (success: bool, token_expired: bool)
+        """
         from modules.google_flow_api import GoogleFlowAPI, AspectRatio
-        import json
 
         pid = prompt_data.get('id', '')
         prompt = prompt_data.get('prompt', '')
@@ -334,11 +489,11 @@ class SmartEngine:
         nv_path = prompt_data.get('nv_path', '')
 
         if not prompt or not output:
-            return False
+            return False, False
 
         # Skip if exists
         if Path(output).exists():
-            return True
+            return True, False
 
         try:
             api = GoogleFlowAPI(
@@ -350,6 +505,7 @@ class SmartEngine:
             Path(output).parent.mkdir(parents=True, exist_ok=True)
 
             # Upload reference images to get media_name (NOT base64!)
+            # Chi upload cho scene images (khong phai nv* hoac loc*)
             image_inputs = []
             if reference_files and nv_path and not pid.startswith('nv') and not pid.startswith('loc'):
                 # Parse reference_files (JSON array or comma-separated)
@@ -368,10 +524,10 @@ class SmartEngine:
                     img_path = Path(nv_path) / filename
                     if img_path.exists():
                         try:
-                            # Upload để lấy media_name (KHÔNG gửi base64 trực tiếp!)
+                            # Upload de lay media_name (KHONG gui base64 truc tiep!)
                             success_upload, img_input, error_upload = api.upload_image(img_path)
                             if success_upload and img_input:
-                                image_inputs.append(img_input)  # ImageInput object với media_name
+                                image_inputs.append(img_input)  # ImageInput object voi media_name
                                 self.log(f"  -> Uploaded: {filename} -> {img_input.name[:40]}...")
                             else:
                                 self.log(f"  -> Upload failed {filename}: {error_upload}", "WARN")
@@ -384,6 +540,7 @@ class SmartEngine:
                     self.log(f"  -> Using {len(image_inputs)} reference images for {pid}")
 
             # generate_and_download returns (success, paths, error)
+            # Pass reference images for visual consistency
             success, paths, error = api.generate_and_download(
                 prompt=prompt,
                 output_dir=Path(output).parent,
@@ -400,38 +557,49 @@ class SmartEngine:
                     if Path(output).exists():
                         Path(output).unlink()
                     src.rename(output)
-                return True
+                return True, False
             else:
-                self.log(f"Generate failed {pid}: {error}", "ERROR")
-                return False
+                # Check if token expired
+                error_str = str(error).lower()
+                token_expired = 'expired' in error_str or 'unauthorized' in error_str or '401' in error_str or 'authentication' in error_str
+                if token_expired:
+                    self.log(f"Token het han cho {pid}, can refresh", "WARN")
+                    profile.token = ""  # Clear expired token
+                else:
+                    self.log(f"Generate failed {pid}: {error}", "ERROR")
+                return False, token_expired
 
         except Exception as e:
-            self.log(f"Image error {pid}: {e}", "ERROR")
-            if 'unauthorized' in str(e).lower() or '401' in str(e):
+            error_str = str(e).lower()
+            token_expired = 'expired' in error_str or 'unauthorized' in error_str or '401' in error_str or 'authentication' in error_str
+            if token_expired:
+                self.log(f"Token het han cho {pid}", "WARN")
                 profile.token = ""
-            return False
-    
+            else:
+                self.log(f"Image error {pid}: {e}", "ERROR")
+            return False, token_expired
+
     def generate_images_parallel(self, prompts: List[Dict]) -> Dict:
         """
         Tao anh SONG SONG.
         Dam bao tat ca prompts deu duoc tao - retry neu fail.
         """
         self.log(f"=== TAO {len(prompts)} ANH SONG SONG ===")
-        
+
         results = {"success": 0, "failed": 0, "pending": list(prompts)}
-        
+
         # Loop until all done or no resources left
         attempt = 0
         while results["pending"] and attempt < self.max_retries * 2:
             if self.stop_flag:
                 break
-            
+
             attempt += 1
             self.log(f"=== ROUND {attempt} - {len(results['pending'])} pending ===")
-            
+
             # Get profiles with tokens
             active_profiles = [p for p in self.profiles if p.token and p.status != 'exhausted']
-            
+
             if not active_profiles:
                 self.log("Khong co profile nao co token!", "WARN")
                 # Try to get more tokens
@@ -439,42 +607,76 @@ class SmartEngine:
                 if n == 0:
                     break
                 active_profiles = [p for p in self.profiles if p.token]
-            
+
             if not active_profiles:
                 break
-            
-            n_workers = min(len(active_profiles), self.parallel, len(results["pending"]))
-            
+
+            # DUNG TAT CA tokens co san - khong gioi han
+            n_workers = min(len(active_profiles), len(results["pending"]))
+            self.log(f"Su dung {n_workers} workers ({len(active_profiles)} tokens)")
+
             # Distribute prompts
             pending = results["pending"]
             results["pending"] = []
-            
+
             chunks = [[] for _ in range(n_workers)]
             for i, p in enumerate(pending):
                 chunks[i % n_workers].append(p)
-            
+
             # Run workers
             done_in_round = []
             failed_in_round = []
             lock = threading.Lock()
-            
+
             def worker(worker_id: int, profile: Resource, prompt_list: List[Dict]):
+                current_profile = profile
+
                 for pd in prompt_list:
                     if self.stop_flag:
                         break
-                    
+
                     pid = pd.get('id', '')
                     self.log(f"[W{worker_id}] {pid}...")
-                    
+
                     # Refresh token if needed
-                    if not profile.token:
-                        if not self.refresh_token_if_needed(profile):
-                            with lock:
-                                failed_in_round.append(pd)
-                            continue
-                    
-                    success = self.generate_single_image(pd, profile)
-                    
+                    if not current_profile.token:
+                        # Try to find another profile with valid token first
+                        other_profile = self._get_other_valid_profile(current_profile)
+                        if other_profile:
+                            self.log(f"[W{worker_id}] Chuyen sang profile khac", "INFO")
+                            current_profile = other_profile
+                        else:
+                            # No other profile, try to refresh current one
+                            self.log(f"[W{worker_id}] Tat ca token het han, dang lay moi...", "WARN")
+                            if not self.refresh_token_if_needed(current_profile):
+                                with lock:
+                                    failed_in_round.append(pd)
+                                continue
+
+                    success, token_expired = self.generate_single_image(pd, current_profile)
+
+                    if token_expired:
+                        # Token expired, mark as invalid
+                        current_profile.token = ""
+
+                        # Try another profile first
+                        other_profile = self._get_other_valid_profile(current_profile)
+                        if other_profile:
+                            self.log(f"[W{worker_id}] Token het han, chuyen sang profile khac...", "WARN")
+                            current_profile = other_profile
+                            # Retry with new profile
+                            success, _ = self.generate_single_image(pd, current_profile)
+                        else:
+                            # No other valid profile, refresh current one
+                            self.log(f"[W{worker_id}] Tat ca token het han, dang refresh...", "WARN")
+                            if self.get_token_for_profile(current_profile):
+                                # Refresh success, retry the image
+                                self.log(f"[W{worker_id}] Token moi OK, thu lai {pid}...", "INFO")
+                                success, _ = self.generate_single_image(pd, current_profile)
+                            else:
+                                self.log(f"[W{worker_id}] Khong the lay token moi!", "ERROR")
+                                success = False
+
                     with lock:
                         if success:
                             done_in_round.append(pd)
@@ -482,9 +684,9 @@ class SmartEngine:
                         else:
                             failed_in_round.append(pd)
                             self.log(f"[W{worker_id}] {pid}: FAIL", "WARN")
-                    
+
                     time.sleep(self.delay)
-            
+
             # Start threads
             threads = []
             for i in range(n_workers):
@@ -496,28 +698,28 @@ class SmartEngine:
                     )
                     t.start()
                     threads.append(t)
-            
+
             # Wait
             for t in threads:
                 t.join()
-            
+
             # Update results
             results["success"] += len(done_in_round)
             results["pending"] = failed_in_round
-            
+
             self.log(f"Round {attempt}: +{len(done_in_round)} OK, {len(failed_in_round)} pending")
-            
-            # If still have pending, wait a bit
+
+            # If still have pending, wait a bit (giam tu 5s -> 2s)
             if results["pending"]:
-                time.sleep(5)
-        
+                time.sleep(2)
+
         results["failed"] = len(results["pending"])
         self.log(f"=== XONG: {results['success']} OK, {results['failed']} FAIL ===")
-        
+
         return results
-    
+
     # ========== MAIN PIPELINE ==========
-    
+
     def run(
         self,
         input_path: str,
@@ -525,160 +727,226 @@ class SmartEngine:
         callback: Callable = None
     ) -> Dict:
         """
-        CHAY TAT CA - 1 ham duy nhat.
-        
+        PIPELINE LINH HOAT - bat dau ngay khi co 1 token.
+
+        Flow moi:
+        1. Check requirements
+        2. SONG SONG: Lay 1 token + Lam SRT + Lam prompts
+        3. Khi co 1 token + prompts -> BAT DAU TAO ANH NGAY
+        4. SONG SONG: Tiep tuc lay them token + Tao anh
+        5. Ket thuc khi het prompts
+
         Args:
             input_path: Voice file (.mp3, .wav) hoac Excel (.xlsx)
             output_dir: Thu muc output (optional)
             callback: Ham log callback
-        
+
         Returns:
             Dict with success/failed counts
         """
         self.callback = callback
         self.stop_flag = False
-        
+
         inp = Path(input_path)
         ext = inp.suffix.lower()
         name = inp.stem
-        
+
         # Setup output dir
         if output_dir:
             proj_dir = Path(output_dir)
         else:
             proj_dir = Path("PROJECTS") / name
-        
+
         proj_dir.mkdir(parents=True, exist_ok=True)
         for d in ["srt", "prompts", "nv", "img"]:
             (proj_dir / d).mkdir(exist_ok=True)
-        
+
         excel_path = proj_dir / "prompts" / f"{name}_prompts.xlsx"
-        
+        srt_path = proj_dir / "srt" / f"{name}.srt"
+
         self.log("="*50)
+        self.log(f"VE3 TOOL - FAST PIPELINE")
         self.log(f"INPUT: {inp}")
         self.log(f"OUTPUT: {proj_dir}")
         self.log("="*50)
-        
+
         # === 1. CHECK REQUIREMENTS ===
         self.log("[STEP 1] Kiem tra yeu cau...")
-        
+
         ok, missing = self.check_requirements(has_voice=(ext in ['.mp3', '.wav']))
         if not ok:
             self.log("THIEU:", "ERROR")
             for m in missing:
                 self.log(f"  - {m}", "ERROR")
             return {"error": "missing_requirements", "missing": missing}
-        
-        self.log(f"  Profiles: {len(self.profiles)}")
+
+        valid_tokens = self.get_valid_token_count()
+        self.log(f"  Profiles: {len(self.profiles)} ({valid_tokens} tokens da co)")
+        self.log(f"  DeepSeek keys: {len(self.deepseek_keys)}")
         self.log(f"  Groq keys: {len(self.groq_keys)}")
         self.log(f"  Gemini keys: {len(self.gemini_keys)}")
-        
-        # === 2. PARALLEL: GET TOKENS + MAKE SRT ===
-        self.log("[STEP 2] Lay tokens + Tao SRT (song song)...")
-        
-        srt_path = proj_dir / "srt" / f"{name}.srt"
+
+        # Refresh expired tokens at startup
+        self.refresh_expired_tokens()
+
+        # === 2. SONG SONG: Token + SRT + Prompts ===
+        self.log("[STEP 2] SONG SONG: Token + SRT + Prompts...")
+
         voice_path = None
-        
         if ext in ['.mp3', '.wav']:
             voice_path = proj_dir / f"{name}{ext}"
             if inp != voice_path:
                 shutil.copy2(inp, voice_path)
-        
-        # Start SRT in background if voice
-        srt_thread = None
-        srt_result = [False]
-        
-        if voice_path and not srt_path.exists():
-            def srt_worker():
-                srt_result[0] = self.make_srt(voice_path, srt_path)
-            srt_thread = threading.Thread(target=srt_worker, daemon=True)
-            srt_thread.start()
-        else:
-            srt_result[0] = True
-        
-        # Get tokens (main thread - needs Chrome GUI)
-        n_tokens = self.get_all_tokens()
-        
-        # Wait for SRT
-        if srt_thread:
-            srt_thread.join()
-        
-        if not srt_result[0] and ext in ['.mp3', '.wav']:
+
+        # Results containers
+        srt_done = [srt_path.exists()]
+        prompts_done = [excel_path.exists()]
+        tokens_done = [False]
+        tokens_count = [0]
+
+        # Thread 1: Lay TAT CA tokens (prefetch) - khong can cho SRT/Prompts
+        # Lam song song vi lay token can mouse, SRT/Prompts khong can
+        def prefetch_all_tokens():
+            """Prefetch tat ca tokens truoc khi bat dau tao anh."""
+            self.log("[PREFETCH] Bat dau lay tokens cho tat ca profiles...")
+            count = 0
+
+            for i, profile in enumerate(self.profiles):
+                if self.stop_flag:
+                    break
+
+                # Skip neu token con valid
+                if self.is_token_valid(profile):
+                    self.log(f"[PREFETCH] Profile #{i+1}: Token valid, skip")
+                    count += 1
+                    continue
+
+                self.log(f"[PREFETCH] Profile #{i+1}/{len(self.profiles)}: Dang lay token...")
+                if self.get_token_for_profile(profile):
+                    count += 1
+                    self.log(f"[PREFETCH] Profile #{i+1}: OK!")
+                else:
+                    self.log(f"[PREFETCH] Profile #{i+1}: FAIL!", "WARN")
+
+                # Delay ngan giua cac profiles
+                if i < len(self.profiles) - 1:
+                    time.sleep(0.5)
+
+            tokens_count[0] = count
+            tokens_done[0] = True
+            self.log(f"[PREFETCH] XONG: {count}/{len(self.profiles)} tokens ready")
+
+        # Thread 2: Lam SRT (khong can mouse)
+        def do_srt():
+            if voice_path and not srt_path.exists():
+                srt_done[0] = self.make_srt(voice_path, srt_path)
+            else:
+                srt_done[0] = True
+
+        # Thread 3: Lam Prompts (sau khi SRT xong, khong can mouse)
+        def do_prompts():
+            # Doi SRT
+            while not srt_done[0] and not self.stop_flag:
+                time.sleep(0.5)
+
+            if ext == '.xlsx':
+                if inp != excel_path:
+                    shutil.copy2(inp, excel_path)
+                prompts_done[0] = True
+            elif srt_done[0] and not excel_path.exists():
+                prompts_done[0] = self.make_prompts(proj_dir, name, excel_path)
+            else:
+                prompts_done[0] = excel_path.exists()
+
+        # Start threads - TAT CA CHAY SONG SONG
+        self.log("[STEP 2] SONG SONG: SRT + Prompts + Prefetch Tokens...")
+        t1 = threading.Thread(target=prefetch_all_tokens, daemon=True)
+        t2 = threading.Thread(target=do_srt, daemon=True)
+        t3 = threading.Thread(target=do_prompts, daemon=True)
+
+        t1.start()
+        t2.start()
+        t3.start()
+
+        threads = [t1, t2, t3]
+
+        # Doi ca 3 xong
+        for t in threads:
+            t.join()
+
+        # Check results
+        if not srt_done[0] and ext in ['.mp3', '.wav']:
             return {"error": "srt_failed"}
-        
-        if n_tokens == 0:
+
+        if not prompts_done[0]:
+            return {"error": "prompts_failed"}
+
+        # Check tokens (da prefetch xong)
+        has_token = any(p.token for p in self.profiles)
+        if not has_token:
+            self.log("Khong lay duoc token nao!", "ERROR")
             return {"error": "no_tokens"}
-        
-        # === 3. MAKE PROMPTS ===
-        self.log("[STEP 3] Tao prompts...")
-        
-        if ext == '.xlsx':
-            # Input is Excel
-            if inp != excel_path:
-                shutil.copy2(inp, excel_path)
-        else:
-            # Generate from SRT
-            if not self.make_prompts(proj_dir, name, excel_path):
-                return {"error": "prompts_failed"}
-        
-        # === 4. LOAD PROMPTS ===
-        self.log("[STEP 4] Load prompts...")
-        
+
+        self.log(f"[TOKENS] Da co {tokens_count[0]}/{len(self.profiles)} tokens san sang")
+
+        # === 3. LOAD PROMPTS ===
+        self.log("[STEP 3] Load prompts...")
+
         prompts = self._load_prompts(excel_path, proj_dir)
-        
+
         if not prompts:
             return {"error": "no_prompts"}
-        
+
         self.log(f"  Tong: {len(prompts)} prompts")
-        
+
         # Filter existing
         prompts = [p for p in prompts if not Path(p['output_path']).exists()]
         self.log(f"  Can tao: {len(prompts)} anh")
-        
+
         if not prompts:
             self.log("Tat ca anh da ton tai!", "OK")
             return {"success": 0, "failed": 0, "skipped": "all_exist"}
-        
-        # === 5. GENERATE IMAGES ===
-        self.log("[STEP 5] Tao anh song song...")
-        
+
+        # === 4. TAO ANH (Tokens da duoc prefetch) ===
+        self.log("[STEP 4] Tao anh (tokens da san sang)...")
+
+        # Tao anh - khong can lay token nua vi da prefetch o Step 2
         results = self.generate_images_parallel(prompts)
-        
-        # === 6. FINAL CHECK ===
-        self.log("[STEP 6] Kiem tra ket qua...")
-        
+
+        # === 5. FINAL CHECK ===
+        self.log("[STEP 5] Kiem tra ket qua...")
+
         if results["failed"] > 0:
             self.log(f"CON {results['failed']} ANH CHUA XONG!", "WARN")
-            # TODO: Could try alternative methods here
         else:
             self.log("TAT CA ANH DA HOAN THANH!", "OK")
-        
+
         return results
-    
+
     def _load_prompts(self, excel_path: Path, proj_dir: Path) -> List[Dict]:
         """Load prompts tu Excel - doc TAT CA sheets."""
         import openpyxl
-        
+
         prompts = []
         wb = openpyxl.load_workbook(excel_path)
-        
+
         self.log(f"Excel co {len(wb.sheetnames)} sheets: {wb.sheetnames}")
-        
+
         # Doc TAT CA sheets
         for sheet_name in wb.sheetnames:
             ws = wb[sheet_name]
-            
+
             # Get headers
             headers = []
             for cell in ws[1]:
                 headers.append(cell.value)
-            
+
             self.log(f"  Sheet '{sheet_name}' headers: {headers}")
-            
+
             if not headers or all(h is None for h in headers):
                 self.log(f"  -> Skip: no headers")
                 continue
-            
+
             # Tim cot ID, Prompt, va reference_files
             id_col = None
             prompt_col = None
@@ -724,7 +992,7 @@ class SmartEngine:
                 continue
 
             self.log(f"  -> Found: id_col={id_col} ({headers[id_col]}), prompt_col={prompt_col} ({headers[prompt_col]}), ref_col={ref_col}")
-            
+
             count = 0
             for row in ws.iter_rows(min_row=2, values_only=True):
                 if row is None:
@@ -761,12 +1029,12 @@ class SmartEngine:
                     'nv_path': str(proj_dir / "nv")  # Path to reference images folder
                 })
                 count += 1
-            
+
             self.log(f"  -> Loaded {count} prompts from '{sheet_name}'")
-        
+
         self.log(f"TONG CONG: {len(prompts)} prompts")
         return prompts
-    
+
     def stop(self):
         """Dung."""
         self.stop_flag = True
@@ -779,11 +1047,11 @@ class SmartEngine:
 def run_auto(input_path: str, callback: Callable = None) -> Dict:
     """
     1 HAM DUY NHAT - Chay tat ca tu dong.
-    
+
     Args:
         input_path: File voice (.mp3, .wav) hoac Excel (.xlsx)
         callback: Ham nhan log messages
-    
+
     Returns:
         Dict: {"success": N, "failed": M}
     """
@@ -793,7 +1061,7 @@ def run_auto(input_path: str, callback: Callable = None) -> Dict:
 
 if __name__ == "__main__":
     import sys
-    
+
     if len(sys.argv) > 1:
         result = run_auto(sys.argv[1], callback=print)
         print(f"\nResult: {result}")

@@ -360,16 +360,16 @@ def _parse_srt_fallback(content: str) -> List[SrtEntry]:
 
 def group_srt_into_scenes(
     entries: List[SrtEntry],
-    min_duration: float = 15.0,
-    max_duration: float = 25.0
+    min_duration: float = 3.0,
+    max_duration: float = 8.0
 ) -> List[Dict[str, Any]]:
     """
     Gom các SRT entries thành các scene theo thời lượng.
-    
+
     Args:
         entries: List các SrtEntry
-        min_duration: Thời lượng tối thiểu của scene (giây)
-        max_duration: Thời lượng tối đa của scene (giây)
+        min_duration: Thời lượng tối thiểu của scene (giây), mặc định 3s
+        max_duration: Thời lượng tối đa của scene (giây), mặc định 8s (max for video gen)
         
     Returns:
         List các scene, mỗi scene có: scene_id, start_time, end_time, text, srt_indices

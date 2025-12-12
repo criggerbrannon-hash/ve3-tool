@@ -6,12 +6,14 @@ Tích hợp Google Flow API vào pipeline để tự động tạo ảnh từ Ex
 Workflow:
 1. Đọc Excel prompts (characters + scenes sheets)
 2. Tạo ảnh NV (nhân vật) trước - lưu vào thư mục nv/
-3. Tạo ảnh scenes sau - lưu vào thư mục img/
+3. Tạo ảnh scenes sau - lưu vào thư mục img/ với REFERENCE IMAGES từ nv/
 4. Cập nhật Excel với đường dẫn ảnh và status
 """
 
 import os
 import time
+import json
+import base64
 import yaml
 from pathlib import Path
 from typing import Optional, List, Dict, Tuple, Any
@@ -27,11 +29,11 @@ class FlowImageGenerator:
     Generator ảnh sử dụng Google Flow API.
     Đọc prompts từ Excel và tạo ảnh tự động.
     """
-    
+
     def __init__(
         self,
-        project_path: Path,
-        bearer_token: str,
+        project_path: Path = None,
+        bearer_token: str = None,
         project_id: Optional[str] = None,
         aspect_ratio: str = "landscape",
         delay_between_requests: float = 3.0,
@@ -39,21 +41,21 @@ class FlowImageGenerator:
     ):
         """
         Khởi tạo Flow Image Generator.
-        
+
         Args:
             project_path: Đường dẫn đến thư mục project (PROJECTS/{CODE}/)
-            bearer_token: Google Flow Bearer token
+            bearer_token: Google Flow Bearer token (có thể để None nếu dùng generate_and_save với token riêng)
             project_id: Flow Project ID (optional)
             aspect_ratio: Tỷ lệ khung hình (landscape/portrait/square)
             delay_between_requests: Thời gian chờ giữa các request (giây)
             verbose: In log chi tiết
         """
-        self.project_path = Path(project_path)
+        self.project_path = Path(project_path) if project_path else None
         self.bearer_token = bearer_token
         self.project_id = project_id
         self.delay = delay_between_requests
         self.verbose = verbose
-        
+
         # Map aspect ratio
         ar_map = {
             "landscape": AspectRatio.LANDSCAPE,
@@ -64,22 +66,29 @@ class FlowImageGenerator:
             "1:1": AspectRatio.SQUARE,
         }
         self.aspect_ratio = ar_map.get(aspect_ratio.lower(), AspectRatio.LANDSCAPE)
-        
-        # Tạo Flow API client
-        self.flow_client = GoogleFlowAPI(
-            bearer_token=bearer_token,
-            project_id=project_id,
-            verbose=verbose
-        )
-        
-        # Paths
-        self.nv_path = self.project_path / "nv"
-        self.img_path = self.project_path / "img"
-        self.prompts_path = self.project_path / "prompts"
-        
-        # Tạo thư mục nếu chưa có
-        self.nv_path.mkdir(parents=True, exist_ok=True)
-        self.img_path.mkdir(parents=True, exist_ok=True)
+
+        # Tạo Flow API client (nếu có bearer_token)
+        self.flow_client = None
+        if bearer_token:
+            self.flow_client = GoogleFlowAPI(
+                bearer_token=bearer_token,
+                project_id=project_id,
+                verbose=verbose
+            )
+
+        # Paths (chỉ khởi tạo nếu có project_path)
+        self.nv_path = None
+        self.img_path = None
+        self.prompts_path = None
+
+        if self.project_path:
+            self.nv_path = self.project_path / "nv"
+            self.img_path = self.project_path / "img"
+            self.prompts_path = self.project_path / "prompts"
+
+            # Tạo thư mục nếu chưa có
+            self.nv_path.mkdir(parents=True, exist_ok=True)
+            self.img_path.mkdir(parents=True, exist_ok=True)
         
         # Stats
         self.stats = {
@@ -209,7 +218,81 @@ class FlowImageGenerator:
                 return files[0]
         
         return None
-    
+
+    def _load_image_as_base64(self, image_path: Path) -> Optional[str]:
+        """
+        Load ảnh từ file và convert sang base64.
+
+        Args:
+            image_path: Path đến file ảnh
+
+        Returns:
+            Base64 encoded string hoặc None nếu lỗi
+        """
+        try:
+            if not image_path.exists():
+                self._log(f"  ⚠️  Reference image not found: {image_path}")
+                return None
+
+            with open(image_path, "rb") as f:
+                img_data = f.read()
+
+            b64_data = base64.b64encode(img_data).decode("utf-8")
+            self._log(f"  ✓ Loaded reference: {image_path.name} ({len(img_data) / 1024:.1f}KB)")
+            return b64_data
+
+        except Exception as e:
+            self._log(f"  ❌ Error loading {image_path}: {e}")
+            return None
+
+    def _get_reference_images(self, reference_files: str) -> List[str]:
+        """
+        Load tất cả reference images từ danh sách files.
+
+        Args:
+            reference_files: JSON string hoặc comma-separated string của file names
+                           Ví dụ: '["nv1.png", "loc1.png"]' hoặc 'nv1.png, loc1.png'
+
+        Returns:
+            List of base64 encoded images
+        """
+        if not reference_files:
+            return []
+
+        # Parse reference files
+        file_list = []
+        try:
+            # Try JSON format first
+            parsed = json.loads(reference_files)
+            if isinstance(parsed, list):
+                file_list = parsed
+            elif isinstance(parsed, str):
+                file_list = [parsed]
+        except (json.JSONDecodeError, TypeError):
+            # Fallback to comma-separated
+            file_list = [f.strip() for f in str(reference_files).split(",") if f.strip()]
+
+        if not file_list:
+            return []
+
+        # Check if nv_path is available
+        if not self.nv_path:
+            self._log(f"  ⚠️  Cannot load reference images: nv_path not set")
+            return []
+
+        self._log(f"  📎 Loading {len(file_list)} reference images: {file_list}")
+
+        # Load each reference image from nv/ folder (all reference images are in nv/)
+        base64_images = []
+        for filename in file_list:
+            # Reference images are always in nv/ folder
+            img_path = self.nv_path / filename
+            b64 = self._load_image_as_base64(img_path)
+            if b64:
+                base64_images.append(b64)
+
+        return base64_images
+
     def generate_character_images(
         self,
         excel_path: Optional[Path] = None,
@@ -399,6 +482,9 @@ class FlowImageGenerator:
                 "img_prompt": headers.index("img_prompt") if "img_prompt" in headers else -1,
                 "img_path": headers.index("img_path") if "img_path" in headers else -1,
                 "status_img": headers.index("status_img") if "status_img" in headers else -1,
+                "reference_files": headers.index("reference_files") if "reference_files" in headers else -1,
+                "characters_used": headers.index("characters_used") if "characters_used" in headers else -1,
+                "location_used": headers.index("location_used") if "location_used" in headers else -1,
             }
 
             # Tìm cột characters (có thể có nhiều tên khác nhau)
@@ -450,6 +536,26 @@ class FlowImageGenerator:
                         if not scene_characters:
                             scene_characters = [char_str.strip()]
 
+                # Also check reference_files column
+                reference_files = ""
+                if col_idx["reference_files"] >= 0:
+                    reference_files = row[col_idx["reference_files"]].value or ""
+
+                # Fallback: build reference from characters_used and location_used
+                if not reference_files and not scene_characters:
+                    ref_list = []
+                    if col_idx["characters_used"] >= 0:
+                        chars_used = row[col_idx["characters_used"]].value or ""
+                        try:
+                            chars = json.loads(chars_used) if chars_used.startswith("[") else [c.strip() for c in chars_used.split(",") if c.strip()]
+                            scene_characters.extend(chars)
+                        except:
+                            pass
+                    if col_idx["location_used"] >= 0:
+                        loc_used = row[col_idx["location_used"]].value or ""
+                        if loc_used:
+                            scene_characters.append(loc_used)
+
                 if not prompt:
                     continue
 
@@ -471,6 +577,7 @@ class FlowImageGenerator:
                 self._log(f"   Prompt: {prompt[:100]}...")
 
                 # Collect reference images for this scene
+                # QUAN TRONG: Dùng media_name từ cache, KHÔNG dùng base64!
                 reference_images = []
                 if self.use_character_references and scene_characters:
                     for char_id in scene_characters:
@@ -485,6 +592,9 @@ class FlowImageGenerator:
                         else:
                             self._log(f"   ⚠️ {char_id}: Not found in character_references cache")
 
+                if reference_images:
+                    self._log(f"   🖼️  Using {len(reference_images)} reference images for consistency")
+
                 # Generate image (with or without references)
                 success, images, error = self.flow_client.generate_images(
                     prompt=prompt,
@@ -492,7 +602,7 @@ class FlowImageGenerator:
                     aspect_ratio=self.aspect_ratio,
                     reference_images=reference_images if reference_images else None
                 )
-                
+
                 if success and images:
                     # Download image
                     downloaded = self.flow_client.download_image(
@@ -582,6 +692,75 @@ class FlowImageGenerator:
         
         return results
     
+    def generate_and_save(
+        self,
+        prompt: str,
+        output_path: str,
+        token: str = None,
+        project_id: str = None,
+        reference_images: List[str] = None
+    ) -> bool:
+        """
+        Tạo một ảnh đơn lẻ và lưu vào file.
+
+        Args:
+            prompt: Prompt mô tả ảnh
+            output_path: Đường dẫn lưu ảnh
+            token: Bearer token (nếu khác với token đã cấu hình)
+            project_id: Project ID (nếu khác với ID đã cấu hình)
+            reference_images: List of base64 encoded reference images
+
+        Returns:
+            True nếu thành công, False nếu thất bại
+        """
+        self._log(f"🎨 Generating single image...")
+        self._log(f"   Prompt: {prompt[:80]}...")
+
+        # Create new Flow client if token provided
+        if token:
+            from .google_flow_api import GoogleFlowAPI
+            flow_client = GoogleFlowAPI(
+                bearer_token=token,
+                project_id=project_id or self.project_id,
+                verbose=self.verbose
+            )
+        else:
+            flow_client = self.flow_client
+
+        try:
+            # Generate image
+            success, images, error = flow_client.generate_images(
+                prompt=prompt,
+                count=1,
+                aspect_ratio=self.aspect_ratio,
+                image_inputs=reference_images
+            )
+
+            if not success or not images:
+                self._log(f"   ❌ Generation failed: {error}")
+                return False
+
+            # Download/save to output path
+            output_dir = Path(output_path).parent
+            filename = Path(output_path).stem
+
+            downloaded = flow_client.download_image(
+                images[0],
+                output_dir,
+                filename
+            )
+
+            if downloaded:
+                self._log(f"   ✅ Saved to: {output_path}")
+                return True
+            else:
+                self._log(f"   ❌ Download failed")
+                return False
+
+        except Exception as e:
+            self._log(f"   ❌ Error: {e}")
+            return False
+
     def get_stats(self) -> Dict[str, int]:
         """Lấy thống kê."""
         return self.stats.copy()

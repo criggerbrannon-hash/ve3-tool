@@ -3,6 +3,7 @@ VE3 Tool - Free AI Providers
 ============================
 Cac AI provider mien phi de thay the Gemini:
 - Groq (mien phi, rat nhanh)
+- DeepSeek (re, chat nhat)
 - OpenRouter (nhieu model mien phi)
 - Google AI Studio (Gemini mien phi)
 """
@@ -22,6 +23,78 @@ class AIProvider:
     api_key: str
     model: str
     endpoint: str
+
+
+class DeepSeekClient:
+    """
+    DeepSeek API Client - Re va manh!
+
+    Dang ky: https://platform.deepseek.com/api_keys
+    Models:
+    - deepseek-chat (tot nhat cho chat/reasoning)
+    - deepseek-coder (tot cho code)
+
+    Gia: ~$0.14/1M input tokens, ~$0.28/1M output tokens (rat re!)
+    """
+
+    ENDPOINT = "https://api.deepseek.com/v1/chat/completions"
+
+    MODELS = [
+        "deepseek-chat",      # Best for general use
+        "deepseek-reasoner",  # For complex reasoning
+    ]
+
+    def __init__(self, api_key: str, model: str = None):
+        self.api_key = api_key
+        self.model = model or self.MODELS[0]
+
+    def generate(
+        self,
+        prompt: str,
+        system_prompt: str = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096
+    ) -> Optional[str]:
+        """Generate text."""
+
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+
+        data = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens
+        }
+
+        try:
+            resp = requests.post(
+                self.ENDPOINT,
+                headers=headers,
+                json=data,
+                timeout=120
+            )
+
+            if resp.status_code == 200:
+                result = resp.json()
+                return result["choices"][0]["message"]["content"]
+            elif resp.status_code == 429:
+                print(f"DeepSeek rate limit, waiting...")
+                return None
+            else:
+                print(f"[DeepSeek Error] {resp.status_code}: {resp.text[:200]}")
+                return None
+
+        except Exception as e:
+            print(f"[DeepSeek Error] {e}")
+            return None
     
 
 class GroqClient:
@@ -242,47 +315,113 @@ class GeminiClient:
 class MultiAIClient:
     """
     Client ho tro nhieu AI providers.
-    Tu dong chuyen sang provider khac neu gap loi.
+    Tu dong test va loai bo API khong hoat dong khi khoi tao.
+    Thu tu uu tien: Gemini > Groq > DeepSeek > OpenRouter
     """
-    
-    def __init__(self, config: Dict[str, Any]):
+
+    def __init__(self, config: Dict[str, Any], auto_filter: bool = True):
         """
         Config format:
         {
-            "groq_api_keys": ["key1", "key2"],
-            "openrouter_api_keys": ["key1"],
             "gemini_api_keys": ["key1", "key2"],
-            "preferred_provider": "groq"  # groq, openrouter, gemini
+            "groq_api_keys": ["key1", "key2"],
+            "deepseek_api_keys": ["key1"],
+            "openrouter_api_keys": ["key1"],
         }
+
+        auto_filter: Tu dong test va loai bo API khong hoat dong
         """
         self.config = config
         self.clients = []
-        self._init_clients()
-    
-    def _init_clients(self):
-        """Khoi tao cac clients."""
-        
-        # Groq (uu tien vi nhanh nhat)
-        groq_keys = self.config.get("groq_api_keys", [])
-        for key in groq_keys:
-            if key and key.strip():
-                self.clients.append(("groq", GroqClient(key.strip())))
-        
-        # OpenRouter
-        openrouter_keys = self.config.get("openrouter_api_keys", [])
-        for key in openrouter_keys:
-            if key and key.strip():
-                self.clients.append(("openrouter", OpenRouterClient(key.strip())))
-        
-        # Gemini
+        self._init_clients(auto_filter)
+
+    def _test_client(self, name: str, client) -> bool:
+        """Test 1 client voi request nho."""
+        try:
+            result = client.generate("Say OK", max_tokens=5)
+            return result is not None
+        except:
+            return False
+
+    def _init_clients(self, auto_filter: bool = True):
+        """Khoi tao cac clients theo thu tu uu tien: Gemini > Groq > DeepSeek."""
+
+        if auto_filter:
+            print("\n[API Filter] Dang kiem tra API keys...")
+
+        # 1. Gemini (chat luong cao nhat, nhanh nhat)
         gemini_keys = self.config.get("gemini_api_keys", [])
-        for key in gemini_keys:
+        for i, key in enumerate(gemini_keys):
             if key and key.strip():
-                self.clients.append(("gemini", GeminiClient(key.strip())))
-        
-        # Sap xep theo preferred_provider
-        preferred = self.config.get("preferred_provider", "groq")
-        self.clients.sort(key=lambda x: 0 if x[0] == preferred else 1)
+                client = GeminiClient(key.strip())
+                if auto_filter:
+                    print(f"  Testing Gemini key #{i+1}...", end=" ")
+                    if self._test_client("gemini", client):
+                        print("OK")
+                        self.clients.append(("gemini", client))
+                    else:
+                        print("SKIP (quota/error)")
+                else:
+                    self.clients.append(("gemini", client))
+
+        # 2. Groq (nhanh, mien phi nhung hay rate limit)
+        groq_keys = self.config.get("groq_api_keys", [])
+        for i, key in enumerate(groq_keys):
+            if key and key.strip():
+                client = GroqClient(key.strip())
+                if auto_filter:
+                    print(f"  Testing Groq key #{i+1}...", end=" ")
+                    if self._test_client("groq", client):
+                        print("OK")
+                        self.clients.append(("groq", client))
+                    else:
+                        print("SKIP (rate limit/error)")
+                else:
+                    self.clients.append(("groq", client))
+
+        # 3. DeepSeek (re, on dinh, nhung cham)
+        deepseek_keys = self.config.get("deepseek_api_keys", [])
+        for i, key in enumerate(deepseek_keys):
+            if key and key.strip():
+                client = DeepSeekClient(key.strip())
+                if auto_filter:
+                    print(f"  Testing DeepSeek key #{i+1}...", end=" ")
+                    if self._test_client("deepseek", client):
+                        print("OK")
+                        self.clients.append(("deepseek", client))
+                    else:
+                        print("SKIP (error)")
+                else:
+                    self.clients.append(("deepseek", client))
+
+        # 4. OpenRouter (backup)
+        openrouter_keys = self.config.get("openrouter_api_keys", [])
+        for i, key in enumerate(openrouter_keys):
+            if key and key.strip():
+                client = OpenRouterClient(key.strip())
+                if auto_filter:
+                    print(f"  Testing OpenRouter key #{i+1}...", end=" ")
+                    if self._test_client("openrouter", client):
+                        print("OK")
+                        self.clients.append(("openrouter", client))
+                    else:
+                        print("SKIP (error)")
+                else:
+                    self.clients.append(("openrouter", client))
+
+        if auto_filter:
+            # Count by provider type
+            counts = {}
+            for name, _ in self.clients:
+                counts[name] = counts.get(name, 0) + 1
+            print(f"[API Filter] Ket qua: {counts.get('gemini', 0)} Gemini, {counts.get('groq', 0)} Groq, {counts.get('deepseek', 0)} DeepSeek")
+
+            if not self.clients:
+                print("[API Filter] CANH BAO: Khong co API key nao hoat dong!")
+            else:
+                first_provider = self.clients[0][0] if self.clients else None
+                if first_provider:
+                    print(f"[API Filter] Se dung: {first_provider.capitalize()} (uu tien)")
     
     def generate(
         self,
@@ -290,54 +429,59 @@ class MultiAIClient:
         system_prompt: str = None,
         temperature: float = 0.7,
         max_tokens: int = 4096,
-        retry_count: int = 3
+        retry_count: int = 2
     ) -> Optional[str]:
         """
-        Generate text, tu dong retry voi provider khac neu loi.
+        Generate text, tu dong chuyen sang provider khac neu loi.
+        Chi thu cac API da duoc filter la hoat dong.
         """
-        
+
         if not self.clients:
-            print("[MultiAI] Khong co AI provider nao duoc cau hinh!")
+            print("[MultiAI] Khong co AI provider nao hoat dong!")
             return None
-        
+
         errors = []
-        
-        for name, client in self.clients:
+        clients_to_remove = []
+
+        for idx, (name, client) in enumerate(self.clients):
             for attempt in range(retry_count):
                 try:
-                    print(f"[MultiAI] Trying {name} (attempt {attempt + 1})...")
-                    
+                    print(f"[MultiAI] {name.capitalize()} (attempt {attempt + 1})...")
+
                     result = client.generate(
                         prompt=prompt,
                         system_prompt=system_prompt,
                         temperature=temperature,
                         max_tokens=max_tokens
                     )
-                    
+
                     if result:
                         return result
-                    
+
                 except Exception as e:
-                    error_msg = str(e)
-                    errors.append(f"{name}: {error_msg}")
-                    
-                    # Neu la loi key leaked, bo qua key nay
-                    if "leaked" in error_msg.lower():
-                        print(f"[MultiAI] {name} key leaked, skipping...")
+                    error_msg = str(e).lower()
+                    errors.append(f"{name}: {str(e)[:50]}")
+
+                    # Loi nghiem trong - xoa client nay
+                    if "leaked" in error_msg or "quota" in error_msg or "unauthorized" in error_msg:
+                        print(f"[MultiAI] {name} khong dung duoc, bo qua...")
+                        clients_to_remove.append(idx)
                         break
-                    
-                    # Rate limit - doi va thu lai
-                    if "rate" in error_msg.lower() or "429" in error_msg:
-                        print(f"[MultiAI] Rate limit, waiting 30s...")
-                        time.sleep(30)
-                        continue
-                
-                # Doi giua cac attempt
-                time.sleep(2)
-            
-            # Chuyen sang provider tiep theo
-        
-        print(f"[MultiAI] All providers failed: {errors}")
+
+                    # Rate limit - chuyen sang provider khac ngay
+                    if "rate" in error_msg or "429" in error_msg:
+                        print(f"[MultiAI] {name} rate limit, chuyen provider...")
+                        break
+
+                time.sleep(1)
+
+        # Xoa cac client khong dung duoc
+        for idx in reversed(clients_to_remove):
+            if idx < len(self.clients):
+                self.clients.pop(idx)
+
+        if errors:
+            print(f"[MultiAI] Tat ca providers failed")
         return None
     
     def get_available_providers(self) -> List[str]:

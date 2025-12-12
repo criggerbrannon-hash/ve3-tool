@@ -4,9 +4,9 @@
 project_root: "./VE3_TOOL"
 
 # ============================================================================
-# CHROME SETTINGS (Cho tự động lấy Bearer Token)
+# CHROME SETTINGS (For automatic Bearer Token extraction)
 # ============================================================================
-# Tool sẽ sử dụng Chrome profile của bạn để tự động lấy token
+# Tool will use your Chrome profile to automatically get tokens
 
 chrome_path: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
 chrome_profile: "C:\\Users\\admin\\AppData\\Local\\Google\\Chrome\\User Data\\Profile 2"
@@ -14,43 +14,52 @@ chrome_profile: "C:\\Users\\admin\\AppData\\Local\\Google\\Chrome\\User Data\\Pr
 # ============================================================================
 # GOOGLE FLOW API Configuration
 # ============================================================================
-# Token sẽ được tự động lấy khi chạy GUI
-# Hoặc paste thủ công vào đây
+# Token will be automatically extracted when running GUI
+# Or you can paste manually here
 
 flow_bearer_token: ""
 flow_project_id: ""
 flow_aspect_ratio: "landscape"
 flow_image_count: 2
 flow_timeout: 120
-flow_delay: 3.0
+flow_delay: 2.0
 
 # ============================================================================
-# GEMINI API Configuration (Chỉ cần nếu tạo prompts từ SRT)
+# GEMINI API Configuration (Only needed for generating prompts from SRT)
 # ============================================================================
-# Lấy API key tại: https://makersuite.google.com/app/apikey
-# Có thể dùng nhiều keys để tránh rate limit
+# Get API key at: https://aistudio.google.com/app/apikey
+# You can use multiple keys to avoid rate limits
 
 gemini_api_keys:
-  - ""  # Thêm API key của bạn vào đây
+  - ""  # Add your API key here
 
+# Multiple models for fallback - if one fails, try the next
 gemini_models:
   - "gemini-2.0-flash"
-  - "gemini-2.5-flash"
+  - "gemini-1.5-flash"
+  - "gemini-1.5-flash-8b"
+  - "gemini-1.5-pro"
+  - "gemini-2.0-flash-exp"
+  - "gemini-1.0-pro"
 
 # ============================================================================
-# Automation Settings (Optional)
+# Automation Settings
 # ============================================================================
 max_scenes_per_account: 50
 retry_count: 3
 wait_timeout: 30
 
-# Scene duration (giây) - dùng khi gom SRT thành scenes
+# Scene duration (seconds) - used when grouping SRT into scenes
 min_scene_duration: 15
 max_scene_duration: 25
 
+# ============================================================================
 # Whisper Settings (Voice to SRT)
+# ============================================================================
 whisper_model: "base"
-whisper_language: "vi"
+whisper_language: "en"  # Changed to English
 
+# ============================================================================
 # Logging
+# ============================================================================
 log_level: "INFO"

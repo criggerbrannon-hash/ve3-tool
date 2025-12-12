@@ -733,12 +733,12 @@ class GoogleFlowAPI:
             aspect_ratio: Tỷ lệ khung hình
             prefix: Prefix cho tên file
             reference_images: List GeneratedImage objects để dùng làm reference
-            image_inputs: List ImageInput objects cho reference
+            image_inputs: List ImageInput objects cho reference (KHÔNG phải base64!)
 
         Returns:
             Tuple[success, list_of_paths, error_message]
         """
-        # Generate
+        # Generate with reference images
         success, images, error = self.generate_images(
             prompt=prompt,
             count=count,
