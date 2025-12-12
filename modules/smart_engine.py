@@ -321,39 +321,78 @@ class SmartEngine:
         return False
     
     # ========== IMAGE GENERATION ==========
-    
+
     def generate_single_image(self, prompt_data: Dict, profile: Resource) -> bool:
-        """Tao 1 anh voi 1 profile."""
+        """Tao 1 anh voi 1 profile, ho tro reference images."""
         from modules.google_flow_api import GoogleFlowAPI, AspectRatio
-        
+        import json
+
         pid = prompt_data.get('id', '')
         prompt = prompt_data.get('prompt', '')
         output = prompt_data.get('output_path', '')
-        
+        reference_files = prompt_data.get('reference_files', '')
+        nv_path = prompt_data.get('nv_path', '')
+
         if not prompt or not output:
             return False
-        
+
         # Skip if exists
         if Path(output).exists():
             return True
-        
+
         try:
             api = GoogleFlowAPI(
                 bearer_token=profile.token,
-                project_id=profile.project_id
+                project_id=profile.project_id,
+                verbose=False
             )
-            
+
             Path(output).parent.mkdir(parents=True, exist_ok=True)
-            
+
+            # Upload reference images to get media_name (NOT base64!)
+            image_inputs = []
+            if reference_files and nv_path and not pid.startswith('nv') and not pid.startswith('loc'):
+                # Parse reference_files (JSON array or comma-separated)
+                file_list = []
+                try:
+                    parsed = json.loads(reference_files)
+                    if isinstance(parsed, list):
+                        file_list = parsed
+                    elif isinstance(parsed, str):
+                        file_list = [parsed]
+                except (json.JSONDecodeError, TypeError):
+                    file_list = [f.strip() for f in str(reference_files).split(",") if f.strip()]
+
+                # Upload each reference image to get media_name
+                for filename in file_list:
+                    img_path = Path(nv_path) / filename
+                    if img_path.exists():
+                        try:
+                            # Upload để lấy media_name (KHÔNG gửi base64 trực tiếp!)
+                            success_upload, img_input, error_upload = api.upload_image(img_path)
+                            if success_upload and img_input:
+                                image_inputs.append(img_input)  # ImageInput object với media_name
+                                self.log(f"  -> Uploaded: {filename} -> {img_input.name[:40]}...")
+                            else:
+                                self.log(f"  -> Upload failed {filename}: {error_upload}", "WARN")
+                        except Exception as e:
+                            self.log(f"  -> Upload error {filename}: {e}", "WARN")
+                    else:
+                        self.log(f"  -> Reference not found: {img_path}", "WARN")
+
+                if image_inputs:
+                    self.log(f"  -> Using {len(image_inputs)} reference images for {pid}")
+
             # generate_and_download returns (success, paths, error)
             success, paths, error = api.generate_and_download(
                 prompt=prompt,
                 output_dir=Path(output).parent,
                 count=1,
                 aspect_ratio=AspectRatio.LANDSCAPE,
-                prefix=pid
+                prefix=pid,
+                image_inputs=image_inputs if image_inputs else None
             )
-            
+
             if success and paths:
                 # Rename first image to correct filename
                 src = paths[0]
@@ -365,7 +404,7 @@ class SmartEngine:
             else:
                 self.log(f"Generate failed {pid}: {error}", "ERROR")
                 return False
-            
+
         except Exception as e:
             self.log(f"Image error {pid}: {e}", "ERROR")
             if 'unauthorized' in str(e).lower() or '401' in str(e):
@@ -640,22 +679,23 @@ class SmartEngine:
                 self.log(f"  -> Skip: no headers")
                 continue
             
-            # Tim cot ID va Prompt - linh hoat hon
+            # Tim cot ID, Prompt, va reference_files
             id_col = None
             prompt_col = None
-            
+            ref_col = None  # reference_files column
+
             for i, h in enumerate(headers):
                 if h is None:
                     continue
                 h_lower = str(h).lower().strip()
-                
+
                 # Tim cot ID
                 if id_col is None:
                     if h_lower == 'id' or h_lower == 'scene_id' or h_lower == 'sceneid':
                         id_col = i
                     elif 'id' in h_lower and ('scene' in h_lower or 'nv' in h_lower or 'char' in h_lower):
                         id_col = i
-                
+
                 # Tim cot Prompt - uu tien english_prompt, sau do img_prompt
                 if 'english' in h_lower and 'prompt' in h_lower:
                     prompt_col = i
@@ -667,19 +707,23 @@ class SmartEngine:
                     prompt_col = i
                 elif prompt_col is None and 'prompt' in h_lower and 'video' not in h_lower and 'viet' not in h_lower:
                     prompt_col = i
-            
+
+                # Tim cot reference_files (cho scene images)
+                if 'reference' in h_lower and 'file' in h_lower:
+                    ref_col = i
+
             # Neu khong tim thay, thu cot dau = ID, tim cot co "prompt"
             if id_col is None and len(headers) > 0 and headers[0]:
                 # Cot dau tien co the la ID
                 first_col = str(headers[0]).lower()
                 if 'id' in first_col or first_col in ['scene_id', 'nv_id', 'character_id']:
                     id_col = 0
-            
+
             if id_col is None or prompt_col is None:
                 self.log(f"  -> Skip: id_col={id_col}, prompt_col={prompt_col}")
                 continue
-            
-            self.log(f"  -> Found: id_col={id_col} ({headers[id_col]}), prompt_col={prompt_col} ({headers[prompt_col]})")
+
+            self.log(f"  -> Found: id_col={id_col} ({headers[id_col]}), prompt_col={prompt_col} ({headers[prompt_col]}), ref_col={ref_col}")
             
             count = 0
             for row in ws.iter_rows(min_row=2, values_only=True):
@@ -687,26 +731,34 @@ class SmartEngine:
                     continue
                 if id_col >= len(row) or prompt_col >= len(row):
                     continue
-                    
+
                 pid = row[id_col]
                 prompt = row[prompt_col]
-                
+
                 if not pid or not prompt:
                     continue
-                
+
                 pid_str = str(pid).strip()
-                
+
+                # Get reference_files if available
+                reference_files = ""
+                if ref_col is not None and ref_col < len(row):
+                    reference_files = row[ref_col] or ""
+
                 # Xac dinh output folder
-                if pid_str.startswith('nv'):
+                # Characters (nv*) and Locations (loc*) -> nv/ folder
+                if pid_str.startswith('nv') or pid_str.startswith('loc'):
                     out_path = proj_dir / "nv" / f"{pid_str}.png"
                 else:
                     out_path = proj_dir / "img" / f"{pid_str}.png"
-                
+
                 prompts.append({
                     'id': pid_str,
                     'prompt': str(prompt).strip(),
                     'output_path': str(out_path),
-                    'sheet': sheet_name
+                    'sheet': sheet_name,
+                    'reference_files': str(reference_files).strip() if reference_files else "",
+                    'nv_path': str(proj_dir / "nv")  # Path to reference images folder
                 })
                 count += 1
             
