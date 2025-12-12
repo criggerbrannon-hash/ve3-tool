@@ -75,8 +75,13 @@ class SmartEngine:
         self.callback = None
         self._lock = threading.Lock()
 
+        # Cache media_name per profile: {profile_name: {image_id: media_name}}
+        # QUAN TRONG: media_name chi valid cho token da tao ra no
+        self.media_name_cache = {}
+
         self.load_config()
         self.load_cached_tokens()  # Load tokens da luu
+        self.load_media_name_cache()  # Load media_name cache
 
     def log(self, msg: str, level: str = "INFO"):
         ts = datetime.now().strftime("%H:%M:%S")
@@ -169,6 +174,49 @@ class SmartEngine:
 
         except Exception as e:
             self.log(f"Load cached tokens error: {e}", "WARN")
+
+    # ========== MEDIA NAME CACHING ==========
+    # QUAN TRONG: media_name chi valid cho token da tao ra no
+    # Khi generate anh nv/loc -> luu media_name
+    # Khi generate scene -> dung media_name tu cung token
+
+    def load_media_name_cache(self):
+        """Load media_name cache tu file."""
+        cache_path = self.config_path.parent / "media_names.json"
+        if not cache_path.exists():
+            return
+
+        try:
+            with open(cache_path, 'r', encoding='utf-8') as f:
+                self.media_name_cache = json.load(f)
+            total = sum(len(v) for v in self.media_name_cache.values())
+            if total > 0:
+                self.log(f"Loaded {total} cached media_names")
+        except Exception as e:
+            self.log(f"Load media_name cache error: {e}", "WARN")
+
+    def save_media_name_cache(self):
+        """Luu media_name cache vao file."""
+        try:
+            cache_path = self.config_path.parent / "media_names.json"
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(cache_path, 'w', encoding='utf-8') as f:
+                json.dump(self.media_name_cache, f, indent=2)
+        except Exception as e:
+            self.log(f"Save media_name cache error: {e}", "WARN")
+
+    def get_cached_media_name(self, profile: 'Resource', image_id: str) -> str:
+        """Lay media_name tu cache cho profile + image_id."""
+        profile_name = Path(profile.value).name
+        return self.media_name_cache.get(profile_name, {}).get(image_id, "")
+
+    def set_cached_media_name(self, profile: 'Resource', image_id: str, media_name: str):
+        """Luu media_name vao cache."""
+        profile_name = Path(profile.value).name
+        if profile_name not in self.media_name_cache:
+            self.media_name_cache[profile_name] = {}
+        self.media_name_cache[profile_name][image_id] = media_name
+        self.save_media_name_cache()
 
     def save_cached_tokens(self):
         """Luu tokens vao file de dung lai."""
@@ -474,13 +522,15 @@ class SmartEngine:
         """
         Tao 1 anh voi 1 profile, ho tro reference images.
 
-        QUAN TRONG: Upload reference images truoc de lay media_name,
-        KHONG gui base64 truc tiep!
+        FLOW QUAN TRONG:
+        1. Neu la nv*/loc* -> generate va LUU media_name vao cache
+        2. Neu la scene -> dung media_name tu cache (cung profile/token)
+           Neu khong co trong cache -> upload de lay media_name moi
 
         Returns:
             tuple: (success: bool, token_expired: bool)
         """
-        from modules.google_flow_api import GoogleFlowAPI, AspectRatio
+        from modules.google_flow_api import GoogleFlowAPI, AspectRatio, ImageInput
 
         pid = prompt_data.get('id', '')
         prompt = prompt_data.get('prompt', '')
@@ -495,6 +545,8 @@ class SmartEngine:
         if Path(output).exists():
             return True, False
 
+        is_reference_image = pid.startswith('nv') or pid.startswith('loc')
+
         try:
             api = GoogleFlowAPI(
                 bearer_token=profile.token,
@@ -504,10 +556,9 @@ class SmartEngine:
 
             Path(output).parent.mkdir(parents=True, exist_ok=True)
 
-            # Upload reference images to get media_name (NOT base64!)
-            # Chi upload cho scene images (khong phai nv* hoac loc*)
+            # === SCENE IMAGES: Su dung reference images ===
             image_inputs = []
-            if reference_files and nv_path and not pid.startswith('nv') and not pid.startswith('loc'):
+            if reference_files and nv_path and not is_reference_image:
                 # Parse reference_files (JSON array or comma-separated)
                 file_list = []
                 try:
@@ -519,45 +570,65 @@ class SmartEngine:
                 except (json.JSONDecodeError, TypeError):
                     file_list = [f.strip() for f in str(reference_files).split(",") if f.strip()]
 
-                # Upload each reference image to get media_name
+                # Tim media_name cho moi reference image
                 for filename in file_list:
-                    img_path = Path(nv_path) / filename
-                    if img_path.exists():
-                        try:
-                            # Upload de lay media_name (KHONG gui base64 truc tiep!)
-                            success_upload, img_input, error_upload = api.upload_image(img_path)
-                            if success_upload and img_input:
-                                image_inputs.append(img_input)  # ImageInput object voi media_name
-                                self.log(f"  -> Uploaded: {filename} -> {img_input.name[:40]}...")
-                            else:
-                                self.log(f"  -> Upload failed {filename}: {error_upload}", "WARN")
-                        except Exception as e:
-                            self.log(f"  -> Upload error {filename}: {e}", "WARN")
+                    # Extract image_id tu filename (vd: "nv1.png" -> "nv1")
+                    image_id = Path(filename).stem
+
+                    # 1. Thu lay tu cache truoc (cung profile/token)
+                    cached_media_name = self.get_cached_media_name(profile, image_id)
+
+                    if cached_media_name:
+                        # Co trong cache -> dung luon
+                        image_inputs.append(ImageInput(name=cached_media_name))
+                        self.log(f"  -> Cache hit: {image_id} -> {cached_media_name[:40]}...")
                     else:
-                        self.log(f"  -> Reference not found: {img_path}", "WARN")
+                        # Khong co trong cache -> upload de lay media_name moi
+                        img_path = Path(nv_path) / filename
+                        if img_path.exists():
+                            try:
+                                success_upload, img_input, error_upload = api.upload_image(img_path)
+                                if success_upload and img_input:
+                                    image_inputs.append(img_input)
+                                    # Luu vao cache cho lan sau
+                                    self.set_cached_media_name(profile, image_id, img_input.name)
+                                    self.log(f"  -> Uploaded: {image_id} -> {img_input.name[:40]}...")
+                                else:
+                                    self.log(f"  -> Upload failed {filename}: {error_upload}", "WARN")
+                            except Exception as e:
+                                self.log(f"  -> Upload error {filename}: {e}", "WARN")
+                        else:
+                            self.log(f"  -> Reference not found: {img_path}", "WARN")
 
                 if image_inputs:
                     self.log(f"  -> Using {len(image_inputs)} reference images for {pid}")
 
-            # generate_and_download returns (success, paths, error)
-            # Pass reference images for visual consistency
-            success, paths, error = api.generate_and_download(
+            # === GENERATE IMAGE ===
+            success, images, error = api.generate_images(
                 prompt=prompt,
-                output_dir=Path(output).parent,
                 count=1,
                 aspect_ratio=AspectRatio.LANDSCAPE,
-                prefix=pid,
                 image_inputs=image_inputs if image_inputs else None
             )
 
-            if success and paths:
-                # Rename first image to correct filename
-                src = paths[0]
-                if src.exists() and str(src) != output:
-                    if Path(output).exists():
-                        Path(output).unlink()
-                    src.rename(output)
-                return True, False
+            if success and images:
+                # === LUU MEDIA_NAME neu la nv/loc ===
+                if is_reference_image and images[0].media_name:
+                    self.set_cached_media_name(profile, pid, images[0].media_name)
+                    self.log(f"  -> Saved media_name for {pid}: {images[0].media_name[:40]}...")
+
+                # Download image
+                downloaded = api.download_image(images[0], Path(output).parent, pid)
+                if downloaded:
+                    # Rename to correct filename if needed
+                    if downloaded.exists() and str(downloaded) != output:
+                        if Path(output).exists():
+                            Path(output).unlink()
+                        downloaded.rename(output)
+                    return True, False
+                else:
+                    self.log(f"Download failed {pid}", "ERROR")
+                    return False, False
             else:
                 # Check if token expired
                 error_str = str(error).lower()
