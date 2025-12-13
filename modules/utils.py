@@ -395,20 +395,21 @@ def group_srt_into_scenes(
         # Tính thời lượng nếu thêm entry này
         new_duration = (entry.end_time - current_scene["start_time"]).total_seconds()
         current_duration = (current_scene["end_time"] - current_scene["start_time"]).total_seconds()
-        
-        # Nếu vượt quá max_duration và đã có đủ min_duration thì tạo scene mới
-        if new_duration > max_duration and current_duration >= min_duration:
-            # Lưu scene hiện tại
+
+        # QUAN TRỌNG: Nếu vượt quá max_duration thì PHẢI tạo scene mới
+        # Bỏ điều kiện min_duration để đảm bảo max_duration LUÔN được enforce
+        if new_duration > max_duration:
+            # Lưu scene hiện tại (dù ngắn hơn min_duration)
             scenes.append({
                 "scene_id": len(scenes) + 1,
                 "start_time": current_scene["start_time"],
                 "end_time": current_scene["end_time"],
                 "text": " ".join(current_scene["texts"]),
-                "srt_start": format_srt_time(current_scene["start_time"]),  # Timestamp: "00:00:00,000"
-                "srt_end": format_srt_time(current_scene["end_time"]),      # Timestamp: "00:00:05,340"
-                "srt_indices": current_scene["srt_indices"],                 # Keep indices for reference
+                "srt_start": format_srt_time(current_scene["start_time"]),
+                "srt_end": format_srt_time(current_scene["end_time"]),
+                "srt_indices": current_scene["srt_indices"],
             })
-            
+
             # Bắt đầu scene mới
             current_scene = {
                 "srt_indices": [entry.index],

@@ -1153,6 +1153,27 @@ class PromptGenerator:
         )
         self.logger.info(f"Đã chia thành {len(time_based_scenes)} scenes (max 8s/scene)")
 
+        # DEBUG: Log từng scene để kiểm tra
+        for i, s in enumerate(time_based_scenes):
+            duration = 0
+            if isinstance(s.get("start_time"), timedelta) and isinstance(s.get("end_time"), timedelta):
+                duration = (s["end_time"] - s["start_time"]).total_seconds()
+            self.logger.info(f"  Scene {i+1}: {s.get('srt_start', '')} -> {s.get('srt_end', '')} ({duration:.1f}s)")
+
+        # VALIDATE: Nếu có scene nào > max_duration, chia lại
+        needs_resplit = False
+        for s in time_based_scenes:
+            if isinstance(s.get("start_time"), timedelta) and isinstance(s.get("end_time"), timedelta):
+                duration = (s["end_time"] - s["start_time"]).total_seconds()
+                if duration > self.max_scene_duration + 0.5:  # +0.5 tolerance
+                    self.logger.warning(f"Scene {s.get('scene_id')} duration={duration:.1f}s > {self.max_scene_duration}s!")
+                    needs_resplit = True
+                    break
+
+        if needs_resplit:
+            self.logger.warning("Re-splitting scenes to enforce max duration...")
+            time_based_scenes = self._force_split_scenes(time_based_scenes, srt_entries)
+
         # BƯỚC 2: AI phân tích nội dung để tạo visual_moment và xác định location
         self.logger.info("Bước 2: AI phân tích nội dung để tạo visual_moment...")
 
@@ -1256,6 +1277,65 @@ class PromptGenerator:
         except Exception as e:
             self.logger.error(f"AI analysis failed: {e}, returning time-based scenes")
             return self._format_time_based_scenes(time_based_scenes)
+
+    def _force_split_scenes(self, scenes: List[Dict], srt_entries: List) -> List[Dict]:
+        """Force split scenes that exceed max_duration."""
+        result = []
+        scene_counter = 1
+
+        for scene in scenes:
+            if not isinstance(scene.get("start_time"), timedelta):
+                scene["scene_id"] = scene_counter
+                result.append(scene)
+                scene_counter += 1
+                continue
+
+            duration = (scene["end_time"] - scene["start_time"]).total_seconds()
+
+            if duration <= self.max_scene_duration + 0.5:
+                scene["scene_id"] = scene_counter
+                result.append(scene)
+                scene_counter += 1
+            else:
+                # Scene quá dài, cần chia nhỏ
+                srt_indices = scene.get("srt_indices", [])
+                if srt_indices:
+                    # Tìm SRT entries cho scene này
+                    scene_entries = [e for e in srt_entries if e.index in srt_indices]
+                    if scene_entries:
+                        # Chia lại với max_duration nhỏ hơn
+                        sub_scenes = group_srt_into_scenes(
+                            scene_entries,
+                            min_duration=1,  # Bỏ qua min để đảm bảo max
+                            max_duration=self.max_scene_duration
+                        )
+                        for sub in sub_scenes:
+                            sub["scene_id"] = scene_counter
+                            result.append(sub)
+                            scene_counter += 1
+                        continue
+
+                # Fallback: chia đều theo thời gian
+                num_parts = int(duration / self.max_scene_duration) + 1
+                part_duration = duration / num_parts
+                start_sec = scene["start_time"].total_seconds()
+
+                for i in range(num_parts):
+                    part_start = timedelta(seconds=start_sec + i * part_duration)
+                    part_end = timedelta(seconds=min(start_sec + (i + 1) * part_duration, scene["end_time"].total_seconds()))
+
+                    result.append({
+                        "scene_id": scene_counter,
+                        "start_time": part_start,
+                        "end_time": part_end,
+                        "text": scene["text"],
+                        "srt_start": format_srt_time(part_start),
+                        "srt_end": format_srt_time(part_end),
+                        "srt_indices": scene.get("srt_indices", []),
+                    })
+                    scene_counter += 1
+
+        return result
 
     def _format_time_based_scenes(self, time_based_scenes: List[Dict], default_char: str = "nvc") -> List[Dict[str, Any]]:
         """Format time-based scenes khi không có AI analysis."""
