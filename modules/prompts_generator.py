@@ -949,7 +949,15 @@ class PromptGenerator:
         for scene_data, prompts in zip(scenes_data, all_scene_prompts):
             # Convert lists to JSON strings for storage
             chars_used = prompts.get("characters_used", [])
+
+            # === LOCATION: Ưu tiên từ AI, fallback từ scene_data (Director Flow) ===
             location_used = prompts.get("location_used", "")
+            if not location_used:
+                # Fallback: dùng location_id từ bước chia scene (smart_divide_scenes)
+                location_used = scene_data.get("location_id", "")
+                if location_used:
+                    self.logger.debug(f"Scene {scene_data['scene_id']}: Using location_id from scene division: {location_used}")
+
             ref_files = prompts.get("reference_files", [])
 
             # === AUTO-GENERATE reference_files nếu AI không điền ===
@@ -1135,6 +1143,12 @@ class PromptGenerator:
 
             self.logger.info(f"[Smart Divide] AI returned {len(json_data['scenes'])} scenes")
 
+            # Log locations nếu có
+            if "locations" in json_data:
+                self.logger.info(f"[Smart Divide] Found {len(json_data['locations'])} locations")
+                for loc in json_data["locations"]:
+                    self.logger.info(f"  - {loc.get('id')}: {loc.get('name')}")
+
             # Convert AI output to internal format
             scenes_data = []
             for scene in json_data["scenes"]:
@@ -1153,6 +1167,7 @@ class PromptGenerator:
 
                 scenes_data.append({
                     "scene_id": scene.get("scene_id", len(scenes_data) + 1),
+                    "location_id": scene.get("location_id", ""),  # BỐI CẢNH - quan trọng!
                     "story_beat": scene.get("story_beat", ""),  # Nhịp kể chuyện
                     "start_time": start_str,
                     "end_time": end_str,
@@ -1363,9 +1378,10 @@ class PromptGenerator:
         else:
             locations_info = "(No location references - describe locations based on story context)"
 
-        # Format thông tin scenes (include story_beat, shot_type and visual_moment)
+        # Format thông tin scenes (include location_id, story_beat, shot_type and visual_moment)
         pacing_script = "\n".join([
             f"{s['scene_id']}. [{s.get('shot_type', 'Medium shot')}] \"{s['text']}\"\n"
+            f"   Location: {s.get('location_id', 'N/A')}\n"
             f"   Story beat: {s.get('story_beat', 'N/A')}\n"
             f"   Visual: {s.get('visual_moment', s['text'])}"
             for s in scenes_data
