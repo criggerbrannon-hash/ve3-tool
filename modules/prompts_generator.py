@@ -874,7 +874,13 @@ class PromptGenerator:
         self.logger.info(f"Chia thành {len(scenes_data)} scenes")
 
         # Step 3: Tạo prompts cho từng batch scenes (PARALLEL)
-        self.logger.info("Tạo prompts cho scenes...")
+        self.logger.info("=" * 50)
+        self.logger.info("Step 3: Tạo IMG PROMPTS cho scenes...")
+        self.logger.info("=" * 50)
+
+        if not scenes_data:
+            self.logger.error("KHÔNG CÓ SCENES DATA! Dừng.")
+            return False
 
         # Chia scenes thành batches để tránh vượt quá context limit
         batch_size = self.batch_size
@@ -945,7 +951,26 @@ class PromptGenerator:
                 # Rate limiting
                 if i + 1 < total_batches:
                     time.sleep(2)  # Tránh rate limit
-        
+
+        # === VALIDATE: Đảm bảo all_scene_prompts có đủ số lượng như scenes_data ===
+        self.logger.info(f"Scenes: {len(scenes_data)}, Prompts: {len(all_scene_prompts)}")
+        if len(all_scene_prompts) < len(scenes_data):
+            self.logger.warning(f"THIẾU {len(scenes_data) - len(all_scene_prompts)} prompts! Tạo fallback...")
+            while len(all_scene_prompts) < len(scenes_data):
+                idx = len(all_scene_prompts)
+                scene = scenes_data[idx]
+                # Tạo prompt từ visual_moment hoặc text
+                visual = scene.get("visual_moment", scene.get("text", ""))
+                fallback_prompt = f"{scene.get('shot_type', 'Medium shot')}, {visual[:300]}, cinematic lighting, 4K photorealistic"
+                all_scene_prompts.append({
+                    "img_prompt": fallback_prompt,
+                    "video_prompt": fallback_prompt,
+                    "characters_used": scene.get("characters_in_scene", []),
+                    "location_used": scene.get("location_id", ""),
+                    "reference_files": []
+                })
+                self.logger.info(f"Created fallback prompt for scene {idx + 1}")
+
         # Lưu scenes vào Excel
         for scene_data, prompts in zip(scenes_data, all_scene_prompts):
             # Convert lists to JSON strings for storage
@@ -1616,8 +1641,8 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
             if not json_data or "scenes" not in json_data:
                 self.logger.warning(f"[Scene Prompts] Invalid response - no 'scenes' key in JSON")
                 self.logger.warning(f"[Scene Prompts] Raw response (first 500 chars): {str(response)[:500]}")
-                # Return default prompts
-                return [{"img_prompt": "", "video_prompt": ""} for _ in scenes_data]
+                # Return FALLBACK prompts (không để trống!)
+                return self._create_fallback_prompts(scenes_data, characters, locations, global_style)
 
             self.logger.info(f"[Scene Prompts] Got {len(json_data['scenes'])} scene prompts from AI (need {len(scenes_data)})")
 
@@ -1666,7 +1691,71 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
             
         except Exception as e:
             self.logger.error(f"Failed to generate scene prompts: {e}")
-            return [{"img_prompt": "", "video_prompt": ""} for _ in scenes_data]
+            # Return FALLBACK prompts (không để trống!)
+            return self._create_fallback_prompts(scenes_data, characters, locations, global_style)
+
+    def _create_fallback_prompts(
+        self,
+        scenes_data: List[Dict],
+        characters: List = None,
+        locations: List = None,
+        global_style: str = ""
+    ) -> List[Dict[str, str]]:
+        """Tạo fallback prompts khi AI không trả về đúng."""
+        self.logger.info(f"[Fallback] Tạo {len(scenes_data)} fallback prompts...")
+        characters = characters or []
+        locations = locations or []
+
+        # Build character description map
+        char_desc = {}
+        for c in characters:
+            char_desc[c.id] = c.character_lock or c.vietnamese_prompt or f"{c.name}"
+
+        # Build location description map
+        loc_desc = {}
+        for loc in locations:
+            loc_desc[loc.id] = loc.location_lock or loc.name
+
+        style_suffix = global_style or "Cinematic, 4K photorealistic, natural lighting"
+
+        result = []
+        for scene in scenes_data:
+            # Get scene info
+            visual = scene.get("visual_moment", scene.get("text", ""))[:300]
+            shot_type = scene.get("shot_type", "Medium shot")
+            location_id = scene.get("location_id", "loc1")
+            chars_in_scene = scene.get("characters_in_scene", [])
+
+            # Build character part
+            char_parts = []
+            for char_id in chars_in_scene:
+                if char_id in char_desc:
+                    char_parts.append(char_desc[char_id])
+
+            # Build location part
+            loc_part = loc_desc.get(location_id, "")
+
+            # Build prompt
+            parts = [shot_type]
+            if char_parts:
+                parts.append(", ".join(char_parts[:2]))  # Max 2 characters
+            parts.append(visual)
+            if loc_part:
+                parts.append(loc_part)
+            parts.append(style_suffix)
+
+            img_prompt = ". ".join([p for p in parts if p])
+
+            result.append({
+                "img_prompt": img_prompt,
+                "video_prompt": img_prompt,
+                "characters_used": chars_in_scene,
+                "location_used": location_id,
+                "reference_files": [f"{c}.png" for c in chars_in_scene] + ([f"{location_id}.png"] if location_id else [])
+            })
+
+        self.logger.info(f"[Fallback] Đã tạo {len(result)} fallback prompts")
+        return result
     
     def _extract_json(self, text: str) -> Optional[Dict]:
         """
