@@ -1109,8 +1109,11 @@ class PromptGenerator:
             json_data = self._extract_json(response)
 
             if not json_data or "scenes" not in json_data:
-                self.logger.warning(f"Invalid smart divide response, falling back to time-based")
+                self.logger.warning(f"[Smart Divide] Invalid response - no 'scenes' key")
+                self.logger.warning(f"[Smart Divide] Raw response (first 500 chars): {str(response)[:500]}")
                 return self._fallback_time_based_division(srt_entries)
+
+            self.logger.info(f"[Smart Divide] AI returned {len(json_data['scenes'])} scenes")
 
             # Convert AI output to internal format
             scenes_data = []
@@ -1356,15 +1359,19 @@ Style: {global_style}
 Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": "..."}}]}}"""
         
         try:
+            self.logger.info(f"[Scene Prompts] Generating for {len(scenes_data)} scenes...")
             response = self._generate_content(prompt, temperature=0.6)
-            
+
             # Parse JSON
             json_data = self._extract_json(response)
-            
+
             if not json_data or "scenes" not in json_data:
-                self.logger.warning(f"Invalid scene prompts response, using defaults")
+                self.logger.warning(f"[Scene Prompts] Invalid response - no 'scenes' key in JSON")
+                self.logger.warning(f"[Scene Prompts] Raw response (first 500 chars): {str(response)[:500]}")
                 # Return default prompts
                 return [{"img_prompt": "", "video_prompt": ""} for _ in scenes_data]
+
+            self.logger.info(f"[Scene Prompts] Got {len(json_data['scenes'])} scene prompts from AI")
             
             # Match prompts với scenes
             prompts_map = {s["scene_id"]: s for s in json_data["scenes"]}
