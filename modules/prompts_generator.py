@@ -1419,12 +1419,17 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
                 # Return default prompts
                 return [{"img_prompt": "", "video_prompt": ""} for _ in scenes_data]
 
-            self.logger.info(f"[Scene Prompts] Got {len(json_data['scenes'])} scene prompts from AI")
-            
+            self.logger.info(f"[Scene Prompts] Got {len(json_data['scenes'])} scene prompts from AI (need {len(scenes_data)})")
+
+            # Kiểm tra nếu AI trả về thiếu prompts
+            if len(json_data['scenes']) < len(scenes_data):
+                self.logger.warning(f"[Scene Prompts] AI THIẾU {len(scenes_data) - len(json_data['scenes'])} prompts!")
+
             # Match prompts với scenes
             prompts_map = {s["scene_id"]: s for s in json_data["scenes"]}
 
             result = []
+            missing_scenes = []
             for scene_data in scenes_data:
                 scene_id = scene_data["scene_id"]
                 if scene_id in prompts_map:
@@ -1437,13 +1442,25 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
                         "reference_files": scene_result.get("reference_files", [])
                     })
                 else:
+                    # Scene không có prompt từ AI - tạo prompt đơn giản từ text
+                    missing_scenes.append(scene_id)
+                    scene_text = scene_data.get("text", "")
+                    visual_moment = scene_data.get("visual_moment", scene_text)
+                    shot_type = scene_data.get("shot_type", "Medium shot")
+
+                    # Tạo prompt đơn giản từ nội dung scene
+                    simple_prompt = f"{shot_type}, {visual_moment[:200]}, cinematic lighting, high quality"
+
                     result.append({
-                        "img_prompt": "",
-                        "video_prompt": "",
+                        "img_prompt": simple_prompt,
+                        "video_prompt": simple_prompt,
                         "characters_used": [],
                         "location_used": "",
                         "reference_files": []
                     })
+
+            if missing_scenes:
+                self.logger.warning(f"[Scene Prompts] Đã tạo prompt đơn giản cho {len(missing_scenes)} scenes thiếu: {missing_scenes}")
 
             return result
             
