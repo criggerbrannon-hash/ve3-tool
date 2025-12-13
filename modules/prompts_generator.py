@@ -976,6 +976,11 @@ class PromptGenerator:
                 if ref_files:
                     self.logger.debug(f"Scene {scene_data['scene_id']}: Auto-generated reference_files: {ref_files}")
 
+            # === FALLBACK: Luôn có nhân vật chính nvc nếu không có reference nào ===
+            if not ref_files:
+                ref_files = ["nvc.png"]
+                self.logger.warning(f"Scene {scene_data['scene_id']}: No characters found, using default nvc.png")
+
             chars_str = json.dumps(chars_used) if isinstance(chars_used, list) else str(chars_used)
             refs_str = json.dumps(ref_files) if isinstance(ref_files, list) else str(ref_files)
 

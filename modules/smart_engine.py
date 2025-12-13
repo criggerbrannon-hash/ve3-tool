@@ -648,17 +648,23 @@ class SmartEngine:
 
             # === SCENE IMAGES: Su dung reference images ===
             image_inputs = []
-            if reference_files and nv_path and not is_reference_image:
+            if nv_path and not is_reference_image:
                 # Parse reference_files (JSON array or comma-separated)
                 file_list = []
-                try:
-                    parsed = json.loads(reference_files)
-                    if isinstance(parsed, list):
-                        file_list = parsed
-                    elif isinstance(parsed, str):
-                        file_list = [parsed]
-                except (json.JSONDecodeError, TypeError):
-                    file_list = [f.strip() for f in str(reference_files).split(",") if f.strip()]
+                if reference_files:
+                    try:
+                        parsed = json.loads(reference_files)
+                        if isinstance(parsed, list):
+                            file_list = parsed
+                        elif isinstance(parsed, str):
+                            file_list = [parsed]
+                    except (json.JSONDecodeError, TypeError):
+                        file_list = [f.strip() for f in str(reference_files).split(",") if f.strip()]
+
+                # FALLBACK: Neu khong co reference nao, dung nvc (nhan vat chinh)
+                if not file_list:
+                    file_list = ["nvc.png"]
+                    self.log(f"  -> No reference specified, using default nvc.png")
 
                 # Tim media_name cho moi reference image
                 # LUU Y: API CHI CHAP NHAN media_name, KHONG chap nhan base64!
