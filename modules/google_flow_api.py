@@ -130,19 +130,37 @@ class GoogleFlowAPI:
     ) -> Tuple[bool, List[GeneratedImage], str]:
         """
         Tạo ảnh từ prompt sử dụng Flow API.
-        
+
         Args:
             prompt: Text prompt mô tả ảnh
             count: Số lượng ảnh cần tạo (1-4)
             aspect_ratio: Tỷ lệ khung hình
             model: Model tạo ảnh
             image_inputs: List base64 images cho image-to-image (optional)
-            
+
         Returns:
             Tuple[success, list_of_images, error_message]
         """
         self._log(f"Generating {count} images with prompt: {prompt[:50]}...")
-        
+
+        # Format image_inputs properly for API
+        # API expects: [{"image": {"encodedImage": "base64_data"}}]
+        formatted_image_inputs = []
+        if image_inputs:
+            for img_b64 in image_inputs:
+                if img_b64:
+                    # Clean base64 data
+                    b64_data = img_b64
+                    if "," in b64_data:
+                        b64_data = b64_data.split(",")[1]
+                    b64_data = b64_data.strip().replace("\n", "").replace("\r", "")
+
+                    formatted_image_inputs.append({
+                        "image": {
+                            "encodedImage": b64_data
+                        }
+                    })
+
         # Build requests array
         requests_data = []
         for _ in range(count):
@@ -156,7 +174,7 @@ class GoogleFlowAPI:
                 "imageModelName": model.value,
                 "imageAspectRatio": aspect_ratio.value,
                 "prompt": prompt,
-                "imageInputs": image_inputs or []
+                "imageInputs": formatted_image_inputs
             }
             requests_data.append(request_item)
         
