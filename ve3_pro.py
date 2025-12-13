@@ -56,8 +56,9 @@ def get_git_info():
 
     try:
         # Get last commit info: hash, date, message
+        # --date=local: Hien thi theo gio dia phuong cua may
         result = subprocess.run(
-            ["git", "log", "-1", "--format=%h|%ci|%s"],
+            ["git", "log", "-1", "--date=local", "--format=%h|%ci|%s"],
             cwd=ROOT_DIR, capture_output=True, text=True, timeout=10
         )
         if result.returncode == 0:
@@ -65,7 +66,7 @@ def get_git_info():
             if len(parts) >= 3:
                 return {
                     "hash": parts[0],
-                    "date": parts[1][:16],  # "2024-12-13 21:00"
+                    "date": parts[1][:16],  # "2024-12-13 21:00" (gio dia phuong)
                     "message": parts[2][:50]
                 }
     except:
