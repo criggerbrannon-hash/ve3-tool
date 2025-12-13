@@ -152,42 +152,39 @@ generate_scenes: |
 
   ## NGUYEN TAC BAT BUOC:
 
-  ### 1. MOI SCENE = 1 ANH:
+  ### 1. SCENE LA HANH DONG, KHONG PHAI PORTRAIT:
+  - Nhan vat DANG LAM GI DO - khong phai dung pose
+  - KHONG BAO GIO nhin thang vao camera
+  - KHONG dung "looking at camera", "facing viewer", "portrait"
+  - Mo ta HANH DONG: dang di, dang noi, dang nghi, dang lam viec...
+
+  ### 2. SU DUNG THAM CHIEU DUNG CACH:
+  - **character_lock**: Chi dung MO TA NGOAI HINH (tuoi, toc, mat, quan ao)
+  - KHONG copy phan "looking at camera" tu portrait prompt
+  - Them HANH DONG vao sau mo ta ngoai hinh
+  - Vi du: "Minh, 32 tuoi, toc den ngan... DANG NGOI DOC SACH"
+
+  ### 3. MOI SCENE = 1 KHOANH KHAC:
   - Moi scene trong input = 1 scene output
-  - scene_id tuong ung voi so thu tu
+  - Mo ta KHOANH KHAC cu the trong cau chuyen
 
-  ### 2. SU DUNG THAM CHIEU (QUAN TRONG NHAT):
-  - **character_lock**: COPY NGUYEN VAN vao img_prompt khi nhan vat xuat hien
-  - **location_lock**: COPY NGUYEN VAN vao img_prompt lam background
-  - **reference_files**: LIET KE tat ca file tham chieu duoc dung (nv1.png, loc1.png...)
-  - KHONG tu nghĩ ra mo ta moi - PHAI dung dung character_lock va location_lock da cho
+  ### 4. LOCATION + LIGHTING:
+  - **location_lock**: COPY NGUYEN VAN lam background
+  - Them anh sang phu hop voi thoi diem trong ngay
 
-  ### 3. VISUAL CLARITY PROTOCOL:
-  - LUON them: "Face illuminated by soft volumetric light, clear facial features, high visibility"
-  - Dat SAU mo ta nhan vat, TRUOC mo ta boi canh
-
-  ### 4. GLOBAL STYLE INJECTION:
+  ### 5. GLOBAL STYLE INJECTION:
   - Ket thuc moi img_prompt bang global_style string
-
-  ### 5. COMPLETE SCENE INDEPENDENCE:
-  - Moi scene PHAI doc lap 100%
-  - KHONG viet "same as Scene X" hay "nhu truoc"
-  - Mo ta DAY DU: character_lock + outfit + location_lock + lighting trong MOI scene
-
-  ### 6. CAMERA VARIETY:
-  - Luan phien goc may: Eye-level, Low angle, High angle, OTS, Close-up
-  - KHONG 3 scene lien tiep cung goc may
 
   ## INPUT DATA:
   **GLOBAL_STYLE:** {global_style}
 
-  **CHARACTERS (Dung character_lock nguyen van):**
+  **CHARACTERS (Chi dung phan mo ta ngoai hinh, BO QUA "looking at camera"):**
   {characters_info}
 
   **LOCATIONS (Dung location_lock nguyen van):**
   {locations_info}
 
-  **SCENES (Noi dung can tao prompt):**
+  **SCENES (Noi dung can tao prompt - TAP TRUNG VAO HANH DONG):**
   {scenes_info}
 
   ## OUTPUT FORMAT - JSON ARRAY:
@@ -201,45 +198,40 @@ generate_scenes: |
         "characters_used": ["nv1"],
         "location_used": "loc1",
         "reference_files": ["nv1.png", "loc1.png"],
-        "img_prompt": "Scene 1: Eye-level, 85mm portrait lens. Minh, 32-year-old Vietnamese man with short black side-parted hair, oval face, light tan skin, wearing navy blue polo shirt. Face illuminated by soft volumetric light, clear facial features, high visibility. He stands by the window looking out pensively. Modern apartment living room, beige sofa, wooden coffee table, large window with city view, warm afternoon sunlight. Cinematic, 4K photorealistic, shot on Arri Alexa, soft film grain, High Key Lighting, Balanced Exposure, well-lit, soft fill light, no crushing shadows, highly detailed texture, professional color grading.",
-        "video_prompt": "Slow dolly in. Minh remains still, gazing out the window. Dust particles float in the sunlight."
+        "img_prompt": "Wide shot, 24mm lens. Minh, 32-year-old Vietnamese man with short black side-parted hair, oval face, light tan skin, wearing navy blue polo shirt, WALKING SLOWLY toward the window, his back partially turned to viewer. Modern apartment living room, beige sofa, wooden coffee table, large window with city view, warm afternoon sunlight streaming in. Cinematic, 4K photorealistic, shot on Arri Alexa, soft film grain, natural lighting.",
+        "video_prompt": "Slow tracking shot following Minh as he walks to window."
       }},
       {{
         "scene_id": 2,
         "characters_used": ["nv1", "nv2"],
         "location_used": "loc1",
         "reference_files": ["nv1.png", "nv2.png", "loc1.png"],
-        "img_prompt": "Scene 2: Over-the-shoulder shot, 50mm lens. In sharp focus: Minh, 32-year-old Vietnamese man with short black side-parted hair, oval face, light tan skin, sitting on beige sofa, speaking with engaged expression. Face illuminated by soft volumetric light, clear facial features. In soft focus foreground: back of head of Lan, 30-year-old Vietnamese woman with long straight black center-parted hair, round face, fair skin. Two people facing each other. Modern apartment living room, beige sofa, wooden coffee table, large window with city view, warm afternoon window light. Cinematic, 4K photorealistic, shot on Arri Alexa, soft film grain, High Key Lighting, Balanced Exposure, well-lit, soft fill light, no crushing shadows, highly detailed texture, professional color grading.",
-        "video_prompt": "Static shot with subtle handheld drift. Minh gestures while speaking."
+        "img_prompt": "Over-the-shoulder shot from behind Lan, 50mm lens. Minh, 32-year-old Vietnamese man with short black side-parted hair, sitting on beige sofa, LEANING FORWARD while speaking, hands gesturing. In soft focus foreground: back of Lan's head, long black hair. Two people in conversation. Modern apartment living room, warm afternoon light. Cinematic, 4K photorealistic, natural lighting.",
+        "video_prompt": "Minh speaks animatedly, hands moving to emphasize points."
       }},
       {{
         "scene_id": 3,
         "characters_used": ["nv1"],
         "location_used": "loc1",
         "reference_files": ["nv1.png", "loc1.png"],
-        "img_prompt": "Scene 3: Close-up, 100mm macro lens. Minh's hands clenching into fists, wedding ring visible, knuckles whitening. Modern apartment living room, warm afternoon lighting. Cinematic, 4K photorealistic, shot on Arri Alexa, soft film grain, High Key Lighting, Balanced Exposure, well-lit, soft fill light, no crushing shadows, highly detailed texture, professional color grading.",
-        "video_prompt": "The hands slowly tighten into fists, knuckles whitening with tension."
+        "img_prompt": "Extreme close-up, 100mm macro lens. Minh's hands CLENCHING into fists on his lap, knuckles whitening, wedding ring visible. Shallow depth of field. Warm afternoon lighting. Cinematic, 4K photorealistic.",
+        "video_prompt": "The hands slowly tighten, tension building."
       }}
     ]
   }}
 
-  ## SHOT TYPE GUIDE:
-  - Establishing/Intro: Wide Shot (24mm)
-  - Dialogue: Medium Shot (50mm), Over-the-shoulder
-  - Emotion/Reaction: Close-up (85mm), Medium Close-up
-  - Tension/Drama: Dutch Angle, Low Angle, ECU
-  - Action: Tracking shot, Wide with movement
+  ## HANH DONG GUIDE (Thay vi pose):
+  - Sad/Thinking: nhin ra cua so, cui dau, tay om mat
+  - Happy: cuoi voi nguoi khac, om, bat tay
+  - Angry: nam dam, dung day, quay lung
+  - Talking: nghieng nguoi, dua tay, nhin nguoi doi dien
+  - Walking: dang buoc di, lung quay lai
+  - Working: dang viet, dang doc, dang lam viec
 
-  ## CHECKLIST TRUOC KHI OUTPUT:
-  - [ ] scene_id la INTEGER (1, 2, 3...) khong phai string
-  - [ ] characters_used: list cac nhan vat ID xuat hien (["nv1", "nv2"])
-  - [ ] location_used: ID boi canh ("loc1")
-  - [ ] reference_files: tat ca file tham chieu (["nv1.png", "nv2.png", "loc1.png"])
-  - [ ] img_prompt COPY character_lock NGUYEN VAN tu input (khong tu viet lai)
-  - [ ] img_prompt COPY location_lock NGUYEN VAN tu input (khong tu viet lai)
-  - [ ] img_prompt ket thuc bang global style
-  - [ ] "Face illuminated by soft volumetric light" co trong prompt
-  - [ ] Khong co 3+ scene lien tiep cung shot type
+  ## KHONG DUOC LAM:
+  - KHONG: "looking at camera", "facing viewer", "portrait shot"
+  - KHONG: "neutral expression", "standing straight"
+  - KHONG: nhan vat dung yen khong lam gi
 
   OUTPUT: JSON object voi key "scenes", KHONG co markdown code block.
 
