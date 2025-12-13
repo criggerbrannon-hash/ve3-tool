@@ -1115,14 +1115,18 @@ class PromptGenerator:
             # Convert AI output to internal format
             scenes_data = []
             for scene in json_data["scenes"]:
-                # Parse timestamps
-                start_str = scene.get("start_time", "00:00:00")
-                end_str = scene.get("end_time", "00:00:00")
+                # Parse timestamps (AI returns "HH:MM:SS" or "HH:MM:SS,mmm")
+                start_str = scene.get("start_time", "00:00:00,000")
+                end_str = scene.get("end_time", "00:00:00,000")
 
-                # Get SRT indices
+                # Ensure timestamps have milliseconds
+                if "," not in start_str:
+                    start_str += ",000"
+                if "," not in end_str:
+                    end_str += ",000"
+
+                # Keep SRT indices for internal processing
                 srt_indices = scene.get("srt_indices", [])
-                srt_start = min(srt_indices) if srt_indices else 1
-                srt_end = max(srt_indices) if srt_indices else 1
 
                 scenes_data.append({
                     "scene_id": scene.get("scene_id", len(scenes_data) + 1),
@@ -1133,8 +1137,9 @@ class PromptGenerator:
                     "text": scene.get("text", ""),
                     "visual_moment": scene.get("visual_moment", ""),
                     "shot_type": scene.get("shot_type", "Medium shot"),
-                    "srt_start": srt_start,
-                    "srt_end": srt_end,
+                    "srt_start": start_str,  # Timestamp: "00:00:00,000"
+                    "srt_end": end_str,      # Timestamp: "00:00:05,340"
+                    "_srt_indices": srt_indices,  # Internal use for validation
                 })
 
             self.logger.info(f"AI chia thành {len(scenes_data)} scenes theo nội dung")
@@ -1168,12 +1173,15 @@ class PromptGenerator:
         scene_counter = 1
 
         for scene in scenes_data:
-            # Tính duration thực tế từ srt_start và srt_end
-            srt_start = scene.get("srt_start", 1)
-            srt_end = scene.get("srt_end", srt_start)
+            # Lấy SRT indices (internal field) để tìm entries
+            srt_indices = scene.get("_srt_indices", [])
 
-            # Lấy các SRT entries trong range này
-            scene_entries = [srt_lookup[i] for i in range(srt_start, srt_end + 1) if i in srt_lookup]
+            # Lấy các SRT entries theo indices
+            if srt_indices:
+                scene_entries = [srt_lookup[i] for i in srt_indices if i in srt_lookup]
+            else:
+                # Fallback: không có indices, skip validation
+                scene_entries = []
 
             if not scene_entries:
                 # Không tìm thấy entries, giữ nguyên
@@ -1188,11 +1196,13 @@ class PromptGenerator:
             actual_duration = (actual_end - actual_start).total_seconds()
 
             if actual_duration <= self.max_scene_duration:
-                # Duration OK, giữ nguyên
+                # Duration OK, giữ nguyên với timestamps
                 scene["scene_id"] = scene_counter
                 scene["start_time"] = format_srt_time(actual_start)
                 scene["end_time"] = format_srt_time(actual_end)
                 scene["duration_seconds"] = actual_duration
+                scene["srt_start"] = format_srt_time(actual_start)  # Timestamp
+                scene["srt_end"] = format_srt_time(actual_end)      # Timestamp
                 validated.append(scene)
                 scene_counter += 1
             else:
@@ -1207,17 +1217,21 @@ class PromptGenerator:
                 )
 
                 for sub in sub_scenes:
+                    # Timestamps
+                    sub_start = format_srt_time(sub["start_time"]) if isinstance(sub["start_time"], timedelta) else sub["start_time"]
+                    sub_end = format_srt_time(sub["end_time"]) if isinstance(sub["end_time"], timedelta) else sub["end_time"]
+
                     validated.append({
                         "scene_id": scene_counter,
                         "story_beat": scene.get("story_beat", ""),
-                        "start_time": format_srt_time(sub["start_time"]) if isinstance(sub["start_time"], timedelta) else sub["start_time"],
-                        "end_time": format_srt_time(sub["end_time"]) if isinstance(sub["end_time"], timedelta) else sub["end_time"],
+                        "start_time": sub_start,
+                        "end_time": sub_end,
                         "duration_seconds": (sub["end_time"] - sub["start_time"]).total_seconds() if isinstance(sub["start_time"], timedelta) else 5,
                         "text": sub["text"],
                         "visual_moment": scene.get("visual_moment", sub["text"]),
                         "shot_type": scene.get("shot_type", "Medium shot"),
-                        "srt_start": sub["srt_start"],
-                        "srt_end": sub["srt_end"],
+                        "srt_start": sub.get("srt_start", sub_start),  # Timestamp: "00:00:00,000"
+                        "srt_end": sub.get("srt_end", sub_end),        # Timestamp: "00:00:05,340"
                     })
                     scene_counter += 1
 

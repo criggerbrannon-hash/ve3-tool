@@ -168,11 +168,11 @@ class Scene:
     def __init__(
         self,
         scene_id: int,
-        start_time: str = "",           # HH:MM:SS,mmm - thời gian bắt đầu
-        end_time: str = "",             # HH:MM:SS,mmm - thời gian kết thúc
+        start_time: str = "",           # HH:MM:SS,mmm - thời gian bắt đầu (deprecated)
+        end_time: str = "",             # HH:MM:SS,mmm - thời gian kết thúc (deprecated)
         duration: float = 0.0,          # Độ dài (giây)
-        srt_start: int = 0,
-        srt_end: int = 0,
+        srt_start: str = "",            # Timestamp bắt đầu: "00:00:00,000"
+        srt_end: str = "",              # Timestamp kết thúc: "00:00:05,340"
         srt_text: str = "",
         img_prompt: str = "",
         video_prompt: str = "",
