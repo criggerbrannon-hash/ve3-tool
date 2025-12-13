@@ -643,17 +643,19 @@ class SmartEngine:
             # Tim cot ID va Prompt - linh hoat hon
             id_col = None
             prompt_col = None
-            
+
             for i, h in enumerate(headers):
                 if h is None:
                     continue
                 h_lower = str(h).lower().strip()
-                
-                # Tim cot ID
+
+                # Tim cot ID - uu tien shot_id truoc (vi moi shot = 1 anh)
                 if id_col is None:
-                    if h_lower == 'id' or h_lower == 'scene_id' or h_lower == 'sceneid':
+                    if h_lower == 'shot_id' or h_lower == 'shotid':
                         id_col = i
-                    elif 'id' in h_lower and ('scene' in h_lower or 'nv' in h_lower or 'char' in h_lower):
+                    elif h_lower == 'id' or h_lower == 'scene_id' or h_lower == 'sceneid':
+                        id_col = i
+                    elif 'id' in h_lower and ('scene' in h_lower or 'nv' in h_lower or 'char' in h_lower or 'shot' in h_lower):
                         id_col = i
                 
                 # Tim cot Prompt - uu tien english_prompt, sau do img_prompt
@@ -672,8 +674,15 @@ class SmartEngine:
             if id_col is None and len(headers) > 0 and headers[0]:
                 # Cot dau tien co the la ID
                 first_col = str(headers[0]).lower()
-                if 'id' in first_col or first_col in ['scene_id', 'nv_id', 'character_id']:
+                if 'id' in first_col or first_col in ['scene_id', 'shot_id', 'nv_id', 'character_id']:
                     id_col = 0
+
+            # Neu van chua tim thay shot_id, tim shot_id rieng
+            if id_col is not None:
+                for i, h in enumerate(headers):
+                    if h and str(h).lower().strip() == 'shot_id':
+                        id_col = i  # Uu tien shot_id
+                        break
             
             if id_col is None or prompt_col is None:
                 self.log(f"  -> Skip: id_col={id_col}, prompt_col={prompt_col}")
