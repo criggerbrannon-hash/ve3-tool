@@ -20,36 +20,45 @@ visual_clarity_string: "Face illuminated by soft volumetric light, clear facial 
 negative_prompt_string: "cartoon, 3d render, text, watermark, bad anatomy, distorted face, very dark image, underexposed, wrong face, different character, inconsistent appearance"
 
 # =============================================================================
-# STEP 1 + 2: ANALYZE STORY (Character Bible + Location Bible + Pacing)
+# STEP 1 + 2: ANALYZE STORY (Director's Vision + Character + Location Bible)
 # =============================================================================
 # Input: {story_text}
-# Output: JSON voi characters, locations, va pacing script
+# Output: JSON voi world_setting, characters, locations
 # =============================================================================
 
 analyze_story: |
-  Ban la AI Production Director. Phan tich kich ban va tao Production Kit.
+  Ban la AI Production Director (Dao dien). Phan tich kich ban va tao Production Kit.
 
   ## INPUT SCRIPT:
   ---
   {story_text}
   ---
 
-  ## NHIEM VU:
+  ## NHIEM VU - LAM THEO THU TU:
 
-  ### A. CHARACTER BIBLE (QUAN TRONG NHAT - Trich xuat TAT CA nhan vat)
-  - PHAI tim va liet ke TAT CA nhan vat xuat hien trong truyen (chinh + phu)
-  - Moi nhan vat can co:
-    * portrait_prompt: Anh chan dung (white background, neutral face, studio lighting)
-    * character_lock: Mo ta CHI TIET de paste vao scene (PHAI co: tuoi, gioi tinh, toc, mat, da, TRANG PHUC)
+  ### BUOC 1: DIRECTOR'S VISION (PHAN TICH THE GIOI CAU CHUYEN TRUOC!)
+  Doc ky cau chuyen va xac dinh:
+  - **Era (Thoi dai)**: Hien dai? 1990s? 1970s? Thoi phong kien?
+  - **Setting (Moi truong)**: Thanh thi? Nong thon? Mien nui? Ven bien?
+  - **Social class (Tang lop)**: Giau co? Trung luu? Ngheo kho? Nong dan?
+  - **Tone (Tone mau)**: Am ap? Lanh leo? U am? Tuoi sang?
+  - **Region (Vung mien)**: Mien Bac? Mien Trung? Mien Nam? Tay Nguyen?
 
-  ### B. LOCATION BIBLE (Trich xuat TAT CA boi canh)
-  - PHAI tim va liet ke TAT CA dia diem/boi canh trong truyen
-  - Moi location can:
-    * location_prompt: Anh boi canh (empty, no people)
-    * location_lock: Mo ta CHI TIET de paste vao scene
+  TU WORLD SETTING NAY → Quyet dinh PHONG CACH cho nhan vat va boi canh!
 
-  ### C. KEY OBJECTS (Vat the quan trong neu co)
-  - Chi liet ke neu co vat the dac biet trong truyen
+  ### BUOC 2: CHARACTER BIBLE ("Cast" nhan vat PHU HOP voi the gioi)
+  - Moi nhan vat PHAI phu hop voi world setting da xac dinh
+  - Neu truyen nong thon ngheo → nhan vat mac ao ba ba, da ngam, toc gian di
+  - Neu truyen thanh thi hien dai → nhan vat mac ao so mi, da sang, toc thoi trang
+  - Neu truyen thoi xua → nhan vat mac ao dai/ao tu than, toc bui/tet
+
+  ### BUOC 3: LOCATION BIBLE ("Scout" boi canh PHU HOP voi the gioi)
+  - Moi boi canh PHAI phu hop voi world setting da xac dinh
+  - Neu truyen nong thon → nha la, duong dat, dong lua, ao ca
+  - Neu truyen thanh thi → chung cu, van phong, quan cafe, duong nhua
+  - Neu truyen thoi xua → nha go, san dinh, chua chien
+
+  ### BUOC 4: KEY OBJECTS (Chi liet ke neu co vat the dac biet)
 
   ## OUTPUT FORMAT - PURE JSON (khong markdown):
 
@@ -61,84 +70,112 @@ analyze_story: |
       "total_locations": 2
     }},
 
-    "global_style": "Cinematic, 4K photorealistic, shot on Arri Alexa, soft film grain, High Key Lighting, Balanced Exposure, well-lit, soft fill light, no crushing shadows, highly detailed texture, professional color grading",
+    "world_setting": {{
+      "era": "1990s rural Vietnam",
+      "setting": "Nong thon mien Bac Viet Nam",
+      "social_class": "Nong dan ngheo",
+      "tone": "Am ap nhung buon man mac",
+      "region": "Dong bang Bac Bo",
+      "visual_style": "Warm earthy tones, golden hour lighting, rustic textures, weathered surfaces"
+    }},
+
+    "global_style": "Cinematic, 4K photorealistic, shot on Arri Alexa, soft film grain, warm earthy color palette, natural lighting, rustic Vietnamese aesthetic",
+
+    "context_lock": "1990s rural Northern Vietnam, farming village, simple wooden houses with thatched roofs, dirt roads, rice paddies, warm golden afternoon light",
 
     "characters": [
       {{
-        "id": "nv1",
-        "name": "Minh",
+        "id": "nvc",
+        "name": "Toi (Nguoi ke chuyen)",
         "role": "main",
-        "age": 32,
+        "age": 35,
         "gender": "male",
         "is_child": false,
-        "filename": "nv1.png",
-        "portrait_prompt": "A cinematic portrait, straight-on medium close-up shot on 85mm portrait lens. Subject is a 32-year-old Vietnamese man with short black side-parted hair, oval face, double eyelids, light tan skin. Looking directly at camera with completely neutral expression. Bright, even studio lighting, fully illuminated face. Pure white studio background. Wearing plain navy polo shirt. 8K, sharp focus, high fidelity portraiture, photorealistic.",
-        "character_lock": "Minh, 32-year-old Vietnamese man with short black side-parted hair, oval face, light tan skin, wearing navy blue polo shirt and dark gray slacks"
+        "filename": "nvc.png",
+        "portrait_prompt": "A cinematic portrait, straight-on medium close-up shot on 85mm lens. Subject is a 35-year-old Vietnamese farmer with weathered face, short black hair with some gray, dark tanned skin from sun exposure, gentle tired eyes. Looking directly at camera with neutral expression. Bright studio lighting, fully illuminated face. Pure white studio background. Wearing faded brown work shirt, simple and worn. 8K, sharp focus, photorealistic.",
+        "character_lock": "35-year-old Vietnamese farmer, weathered tan face, short black hair with gray, tired gentle eyes, wearing faded brown cotton work shirt"
       }},
       {{
-        "id": "nv2",
-        "name": "Lan",
+        "id": "nv1",
+        "name": "Me",
         "role": "supporting",
-        "age": 30,
+        "age": 60,
         "gender": "female",
         "is_child": false,
-        "filename": "nv2.png",
-        "portrait_prompt": "A cinematic portrait, straight-on medium close-up shot on 85mm portrait lens. Subject is a 30-year-old Vietnamese woman with long straight black center-parted hair, round face, fair skin, rosy cheeks. Looking directly at camera with completely neutral expression. Bright, even studio lighting, fully illuminated face. Pure white studio background. Wearing cream-colored blouse. 8K, sharp focus, high fidelity portraiture, photorealistic.",
-        "character_lock": "Lan, 30-year-old Vietnamese woman with long straight black center-parted hair, round face, fair skin, wearing cream-colored blouse and light pink cardigan"
+        "filename": "nv1.png",
+        "portrait_prompt": "A cinematic portrait, straight-on medium close-up shot on 85mm lens. Subject is a 60-year-old Vietnamese elderly woman with silver hair in a simple bun, deeply wrinkled face showing years of hard work, kind warm eyes, dark weathered skin. Looking directly at camera with neutral expression. Bright studio lighting. Pure white studio background. Wearing traditional dark brown ao ba ba. 8K, sharp focus, photorealistic.",
+        "character_lock": "60-year-old Vietnamese elderly mother, silver hair in simple bun, deeply wrinkled weathered face, kind warm eyes, wearing dark brown ao ba ba traditional shirt"
       }},
       {{
         "id": "nvc1",
-        "name": "Bao",
+        "name": "Con trai nho",
         "role": "supporting",
-        "age": 8,
+        "age": 7,
         "gender": "male",
         "is_child": true,
         "filename": "NONE",
         "portrait_prompt": "DO_NOT_GENERATE",
-        "character_lock": "Bao, 8-year-old Vietnamese boy with short black hair, round chubby face, wearing blue school uniform"
+        "character_lock": "7-year-old Vietnamese village boy, short black hair, round innocent face, wearing simple faded t-shirt and shorts"
       }}
     ],
 
     "locations": [
       {{
         "id": "loc1",
-        "name": "Phong khach",
+        "name": "Nha tranh nong thon",
         "filename": "loc1.png",
-        "location_prompt": "Interior wide shot of modern Vietnamese apartment living room. Empty room, no people. Beige leather sofa, wooden coffee table, large window with city view, warm afternoon sunlight streaming in, minimalist decor, potted plants, cream-colored walls. Cinematic, 4K photorealistic, well-lit, soft natural lighting. 8K, architectural photography style.",
-        "location_lock": "Modern apartment living room, beige leather sofa, wooden coffee table, large window with city view, cream-colored walls, warm afternoon sunlight",
-        "lighting_default": "Warm natural window light from the right"
+        "location_prompt": "Interior wide shot of humble Vietnamese rural home from 1990s. Empty room, no people. Simple wooden walls, thatched roof visible, earthen floor, bamboo furniture, old wooden bed with mosquito net, faded family photos on wall, altar with incense, warm golden afternoon light streaming through window. Cinematic, 4K photorealistic, warm earthy tones. 8K, rustic aesthetic.",
+        "location_lock": "Humble 1990s Vietnamese rural home interior, wooden walls, bamboo furniture, earthen floor, old photos on wall, warm golden afternoon light through window",
+        "lighting_default": "Warm golden afternoon light through small window"
       }},
       {{
         "id": "loc2",
-        "name": "Van phong",
+        "name": "San nha nong thon",
         "filename": "loc2.png",
-        "location_prompt": "Interior wide shot of corporate office space. Empty room, no people. Glass partitions, fluorescent ceiling lights, computer monitors on desks, ergonomic office chairs, neutral gray carpet, modern minimalist design. Cinematic, 4K photorealistic, well-lit. 8K, architectural photography style.",
-        "location_lock": "Corporate office space, glass partitions, fluorescent ceiling lights, computer monitors on desks, gray carpet, modern minimalist design",
-        "lighting_default": "Cool blue-white fluorescent overhead lighting"
+        "location_prompt": "Exterior wide shot of Vietnamese rural home courtyard from 1990s. Empty, no people. Dirt yard, simple wooden house with thatched roof, banana trees, well with bucket, chickens area, worn wooden bench, clothes drying on line, surrounding rice paddies visible. Warm golden hour lighting. Cinematic, 4K photorealistic. 8K.",
+        "location_lock": "1990s Vietnamese rural courtyard, dirt yard, thatched roof house, banana trees, well, worn wooden bench, rice paddies in background, golden hour light",
+        "lighting_default": "Warm golden hour sunlight, long shadows"
       }}
     ],
 
-    "key_objects": [
-      {{
-        "id": "obj1",
-        "name": "Wedding Ring",
-        "filename": "obj1.png",
-        "object_prompt": "Extreme macro close-up of a simple gold wedding band with slight wear marks, sitting on white marble surface. Soft diffused studio lighting from above. Shallow depth of field. 8K, product photography style, photorealistic."
-      }}
-    ]
+    "key_objects": []
   }}
 
+  ## VI DU 2 - TRUYEN THANH THI HIEN DAI:
+  Neu cau chuyen ve cuoc song van phong thanh pho, thi:
+  - world_setting.setting = "Thanh thi Sai Gon hien dai"
+  - characters: mac ao so mi, vest, trang phuc cong so
+  - locations: van phong kinh, chung cu cao cap, quan cafe hien dai
+
+  ## VI DU 3 - TRUYEN THOI XUA:
+  Neu cau chuyen ve thoi phong kien, thi:
+  - world_setting.era = "Thoi Nguyen 1800s"
+  - characters: mac ao dai, khan dong, ao tu than
+  - locations: nha ruong, san dinh lang, chua co
+
   ## QUY TAC BAT BUOC:
-  1. PHAI trich xuat TAT CA nhan vat duoc nhac den trong truyen (ke ca chi xuat hien 1 lan)
-  2. PHAI trich xuat TAT CA boi canh/dia diem duoc nhac den trong truyen
-  3. character_lock PHAI co: Ten + Tuoi + Gioi tinh + Dac diem khuon mat + Toc + Da + TRANG PHUC
-  4. location_lock PHAI co: Loai dia diem + Cac vat the chinh + Anh sang
-  5. portrait_prompt: PHAI co "Pure white studio background", "neutral expression", "looking directly at camera"
-  6. location_prompt: PHAI co "Empty room, no people"
-  7. Tre em (is_child=true): portrait_prompt = "DO_NOT_GENERATE", filename = "NONE"
-  8. ID format: nv1, nv2, nv3... (nhan vat), nvc1, nvc2... (tre em), loc1, loc2... (boi canh)
-  9. filename DUNG .png (KHONG DUNG .jpg)
-  10. Chi tra ve JSON thuan, KHONG co markdown code block
+  1. BUOC 1 - PHAI phan tich world_setting TRUOC KHI tao nhan vat/boi canh
+  2. NHAN VAT + BOI CANH PHAI DONG NHAT voi world_setting (cung thoi dai, cung phong cach, cung tone mau)
+  3. PHAI trich xuat TAT CA nhan vat duoc nhac den trong truyen (ke ca chi xuat hien 1 lan)
+  4. PHAI trich xuat TAT CA boi canh/dia diem duoc nhac den trong truyen
+  5. character_lock PHAI co: Ten + Tuoi + Gioi tinh + Dac diem khuon mat + Toc + Da + TRANG PHUC (phu hop world_setting!)
+  6. location_lock PHAI co: Loai dia diem + Cac vat the chinh + Anh sang (phu hop world_setting!)
+  7. portrait_prompt: PHAI co "Pure white studio background", "neutral expression", "looking directly at camera"
+  8. location_prompt: PHAI co "Empty room, no people"
+  9. Tre em (is_child=true): portrait_prompt = "DO_NOT_GENERATE", filename = "NONE"
+  10. ID format: nvc (nhan vat chinh/narrator), nv1, nv2... (phu), nvc1, nvc2... (tre em), loc1, loc2... (boi canh)
+  11. filename DUNG .png (KHONG DUNG .jpg)
+  12. Chi tra ve JSON thuan, KHONG co markdown code block
+
+  ## KIEM TRA TINH DONG NHAT:
+  Truoc khi tra ve, kiem tra:
+  - Nhan vat co TRANG PHUC phu hop voi world_setting khong?
+  - Boi canh co VAT THE phu hop voi world_setting khong?
+  - Tat ca co TONE MAU thong nhat khong?
+
+  Vi du KHONG DONG NHAT (SAI):
+  - world_setting = "1990s nong thon ngheo" + nhan vat mac "vest suit hien dai" ❌
+  - world_setting = "thanh thi Sai Gon" + boi canh "nha tranh mai la" ❌
 
 # =============================================================================
 # STEP 3: SCENE PRODUCTION (Tao prompt cho tung scene)

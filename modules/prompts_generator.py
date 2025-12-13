@@ -1107,6 +1107,15 @@ class PromptGenerator:
             context_lock = json_data.get("context_lock", "")
             global_style = json_data.get("global_style", "")
 
+            # Extract world_setting (v6.0 - Director's Vision)
+            world_setting = json_data.get("world_setting", {})
+            if world_setting:
+                self.logger.info(f"[Director's Vision] Era: {world_setting.get('era', 'N/A')}, Setting: {world_setting.get('setting', 'N/A')}")
+                # Nếu không có context_lock, tạo từ world_setting
+                if not context_lock:
+                    context_lock = f"{world_setting.get('era', '')}, {world_setting.get('setting', '')}, {world_setting.get('visual_style', '')}"
+                    self.logger.info(f"[Director's Vision] Generated context_lock: {context_lock[:100]}...")
+
             # Extract characters
             characters = []
             for char_data in json_data["characters"]:
