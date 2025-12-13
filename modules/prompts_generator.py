@@ -1167,6 +1167,34 @@ class PromptGenerator:
 
             self.logger.info(f"AI chia thành {len(scenes_data)} scenes theo nội dung")
 
+            # CHECK: Đảm bảo AI cover toàn bộ SRT (không bỏ sót phần nào)
+            if scenes_data:
+                # Lấy thời gian kết thúc của scene cuối cùng từ AI
+                last_scene_end = scenes_data[-1].get("end_time", "00:00:00,000")
+                # Lấy thời gian kết thúc của SRT entry cuối cùng
+                last_srt_end = format_srt_time(srt_entries[-1].end_time)
+
+                self.logger.info(f"AI end: {last_scene_end}, SRT end: {last_srt_end}")
+
+                # Parse timestamps to compare
+                def parse_time_to_seconds(ts: str) -> float:
+                    """Convert timestamp string to seconds."""
+                    ts = ts.replace(",", ".")
+                    parts = ts.split(":")
+                    if len(parts) == 3:
+                        h, m, s = parts
+                        return int(h) * 3600 + int(m) * 60 + float(s)
+                    return 0
+
+                ai_end_sec = parse_time_to_seconds(last_scene_end)
+                srt_end_sec = parse_time_to_seconds(last_srt_end)
+
+                # Nếu AI bỏ sót > 10 giây, dùng fallback cho phần còn lại
+                if srt_end_sec - ai_end_sec > 10:
+                    self.logger.warning(f"AI chỉ cover {ai_end_sec:.0f}s / {srt_end_sec:.0f}s ({(ai_end_sec/srt_end_sec*100):.0f}%)")
+                    self.logger.warning("Dùng time-based division để đảm bảo cover toàn bộ nội dung")
+                    return self._fallback_time_based_division(srt_entries)
+
             # POST-VALIDATION: Chia lại những scene vượt quá max_duration (8s)
             validated_scenes = self._validate_and_split_scenes(scenes_data, srt_entries)
             if len(validated_scenes) != len(scenes_data):
