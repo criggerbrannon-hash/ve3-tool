@@ -430,11 +430,45 @@ def group_srt_into_scenes(
             "start_time": current_scene["start_time"],
             "end_time": current_scene["end_time"],
             "text": " ".join(current_scene["texts"]),
-            "srt_start": format_srt_time(current_scene["start_time"]),  # Timestamp
-            "srt_end": format_srt_time(current_scene["end_time"]),      # Timestamp
+            "srt_start": format_srt_time(current_scene["start_time"]),
+            "srt_end": format_srt_time(current_scene["end_time"]),
             "srt_indices": current_scene["srt_indices"],
         })
-    
+
+    # POST-PROCESS: Merge scenes ngắn liên tiếp để ưu tiên gần max_duration
+    if len(scenes) > 1:
+        merged = []
+        i = 0
+        while i < len(scenes):
+            current = scenes[i]
+            current_dur = (current["end_time"] - current["start_time"]).total_seconds()
+
+            # Nếu scene ngắn hơn min và còn scene tiếp theo
+            if current_dur < min_duration and i + 1 < len(scenes):
+                next_scene = scenes[i + 1]
+                combined_dur = (next_scene["end_time"] - current["start_time"]).total_seconds()
+
+                # Merge nếu tổng <= max_duration
+                if combined_dur <= max_duration:
+                    merged.append({
+                        "scene_id": len(merged) + 1,
+                        "start_time": current["start_time"],
+                        "end_time": next_scene["end_time"],
+                        "text": current["text"] + " " + next_scene["text"],
+                        "srt_start": format_srt_time(current["start_time"]),
+                        "srt_end": format_srt_time(next_scene["end_time"]),
+                        "srt_indices": current["srt_indices"] + next_scene["srt_indices"],
+                    })
+                    i += 2  # Skip cả 2 scenes đã merge
+                    continue
+
+            # Không merge, giữ nguyên
+            current["scene_id"] = len(merged) + 1
+            merged.append(current)
+            i += 1
+
+        scenes = merged
+
     return scenes
 
 # ============================================================================
