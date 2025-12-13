@@ -33,6 +33,10 @@ CHARACTERS_COLUMNS = [
 # Cột cho sheet Scenes
 SCENES_COLUMNS = [
     "scene_id",         # ID scene (1, 2, 3, ...)
+    "shot_id",          # ID phân cảnh trong scene (1.1, 1.2, 1.3, ...)
+    "start_time",       # Thời gian bắt đầu (HH:MM:SS,mmm)
+    "end_time",         # Thời gian kết thúc (HH:MM:SS,mmm)
+    "duration",         # Thời lượng (giây)
     "srt_start",        # Index bắt đầu trong SRT
     "srt_end",          # Index kết thúc trong SRT
     "srt_text",         # Nội dung text của scene
@@ -101,11 +105,20 @@ class Character:
 # ============================================================================
 
 class Scene:
-    """Đại diện cho một scene trong video."""
-    
+    """
+    Đại diện cho một phân cảnh (shot) trong video.
+
+    Mỗi Scene là 1 ảnh với thời lượng tối đa 8 giây.
+    Một bối cảnh (context) có thể có nhiều phân cảnh.
+    """
+
     def __init__(
         self,
         scene_id: int,
+        shot_id: str = "",        # ID phân cảnh: "1.1", "1.2", "2.1", ...
+        start_time: str = "",     # Thời gian bắt đầu: "00:00:05,340"
+        end_time: str = "",       # Thời gian kết thúc: "00:00:13,340"
+        duration: float = 0.0,    # Thời lượng (giây)
         srt_start: int = 0,
         srt_end: int = 0,
         srt_text: str = "",
@@ -117,6 +130,10 @@ class Scene:
         status_vid: str = "pending"
     ):
         self.scene_id = scene_id
+        self.shot_id = shot_id
+        self.start_time = start_time
+        self.end_time = end_time
+        self.duration = duration
         self.srt_start = srt_start
         self.srt_end = srt_end
         self.srt_text = srt_text
@@ -126,11 +143,15 @@ class Scene:
         self.video_path = video_path
         self.status_img = status_img
         self.status_vid = status_vid
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Chuyển đổi thành dictionary."""
         return {
             "scene_id": self.scene_id,
+            "shot_id": self.shot_id,
+            "start_time": self.start_time,
+            "end_time": self.end_time,
+            "duration": self.duration,
             "srt_start": self.srt_start,
             "srt_end": self.srt_end,
             "srt_text": self.srt_text,
@@ -141,12 +162,16 @@ class Scene:
             "status_img": self.status_img,
             "status_vid": self.status_vid,
         }
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Scene":
         """Tạo Scene từ dictionary."""
         return cls(
             scene_id=int(data.get("scene_id", 0)),
+            shot_id=str(data.get("shot_id", "")),
+            start_time=str(data.get("start_time", "")),
+            end_time=str(data.get("end_time", "")),
+            duration=float(data.get("duration", 0) or 0),
             srt_start=int(data.get("srt_start", 0) or 0),
             srt_end=int(data.get("srt_end", 0) or 0),
             srt_text=str(data.get("srt_text", "")),
@@ -273,6 +298,10 @@ class PromptWorkbook:
         # Điều chỉnh độ rộng cột
         column_widths = {
             "scene_id": 10,
+            "shot_id": 10,
+            "start_time": 18,
+            "end_time": 18,
+            "duration": 10,
             "srt_start": 10,
             "srt_end": 10,
             "srt_text": 50,

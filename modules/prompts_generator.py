@@ -16,6 +16,7 @@ from modules.utils import (
     get_logger,
     parse_srt_file,
     group_srt_into_scenes,
+    create_shots_from_scenes,
     format_srt_time
 )
 from modules.excel_manager import (
@@ -392,12 +393,12 @@ Bạn là chuyên gia tạo prompt cho AI image/video generation.
 THÔNG TIN NHÂN VẬT (đã định nghĩa):
 {characters_info}
 
-DANH SÁCH SCENE CẦN TẠO PROMPT:
-{scenes_info}
+DANH SÁCH SHOTS CẦN TẠO PROMPT (mỗi shot = 1 ảnh):
+{shots_info}
 
 NHIỆM VỤ:
-Với mỗi scene, tạo:
-1. img_prompt: Prompt tạo ảnh tĩnh mô tả scene
+Với mỗi shot, tạo:
+1. img_prompt: Prompt tạo ảnh tĩnh mô tả cảnh
 2. video_prompt: Prompt tạo video/animation từ ảnh
 
 YÊU CẦU QUAN TRỌNG:
@@ -409,18 +410,24 @@ YÊU CẦU QUAN TRỌNG:
 - video_prompt: tập trung vào movement, camera motion, transitions
 - Viết hoàn toàn bằng tiếng Anh
 - Prompt phải phù hợp với style realistic/cinematic
+- Các shot trong cùng 1 scene phải có sự liên kết về bối cảnh và hành động
 
 OUTPUT FORMAT - Trả về JSON:
 
 {{
-  "scenes": [
+  "shots": [
     {{
-      "scene_id": 1,
+      "shot_id": "1.1",
       "img_prompt": "...",
       "video_prompt": "..."
     }},
     {{
-      "scene_id": 2,
+      "shot_id": "1.2",
+      "img_prompt": "...",
+      "video_prompt": "..."
+    }},
+    {{
+      "shot_id": "2.1",
       "img_prompt": "...",
       "video_prompt": "..."
     }}
@@ -449,24 +456,27 @@ class PromptGenerator:
     def __init__(self, settings: Dict[str, Any]):
         """
         Khởi tạo PromptGenerator.
-        
+
         Args:
             settings: Dictionary cấu hình từ settings.yaml
         """
         self.settings = settings
         self.logger = get_logger("prompt_generator")
-        
+
         # Sử dụng MultiAIClient (hỗ trợ Groq + Gemini)
         self.ai_client = MultiAIClient(settings)
-        
+
         # Legacy: Fallback to GeminiClient nếu cần
         api_keys = settings.get("gemini_api_keys") or [settings.get("gemini_api_key")]
         models = settings.get("gemini_models") or [settings.get("gemini_model", "gemini-2.0-flash")]
         self.gemini = GeminiClient(api_keys=api_keys, models=models)
-        
+
         # Scene grouping settings
         self.min_scene_duration = settings.get("min_scene_duration", 15)
         self.max_scene_duration = settings.get("max_scene_duration", 25)
+
+        # Shot settings: mỗi ảnh tối đa 8 giây
+        self.max_shot_duration = settings.get("max_shot_duration", 8.0)
     
     def _generate_content(self, prompt: str, temperature: float = 0.7, max_tokens: int = 8192) -> str:
         """Generate content using available AI providers."""
@@ -485,115 +495,133 @@ class PromptGenerator:
     ) -> bool:
         """
         Tạo prompts cho một project.
-        
+
+        Flow:
+        1. Đọc SRT và gom thành scenes
+        2. Chia scenes thành shots (mỗi shot tối đa 8 giây)
+        3. Phân tích nhân vật qua AI
+        4. Tạo prompts cho từng shot với timestamp
+
         Args:
             project_dir: Path đến thư mục project
             code: Mã project
             overwrite: Nếu True, ghi đè prompts đã có
-            
+
         Returns:
             True nếu thành công
         """
         project_dir = Path(project_dir)
-        
+
         # Paths
         srt_path = project_dir / "srt" / f"{code}.srt"
         excel_path = project_dir / "prompts" / f"{code}_prompts.xlsx"
-        
+
         # Kiểm tra SRT file
         if not srt_path.exists():
             self.logger.error(f"SRT file không tồn tại: {srt_path}")
             return False
-        
+
         # Load hoặc tạo Excel
         workbook = PromptWorkbook(excel_path).load_or_create()
-        
+
         # Kiểm tra đã có prompts chưa
         if workbook.has_prompts() and not overwrite:
             self.logger.info("Prompts đã tồn tại, bỏ qua (dùng --overwrite-prompts để ghi đè)")
             return True
-        
+
         # Clear dữ liệu cũ nếu overwrite
         if overwrite:
             self.logger.info("Xóa prompts cũ...")
             workbook.clear_characters()
             workbook.clear_scenes()
             workbook.save()
-        
+
         # Đọc và parse SRT
         self.logger.info(f"Đọc SRT file: {srt_path}")
         srt_entries = parse_srt_file(srt_path)
-        
+
         if not srt_entries:
             self.logger.error("Không tìm thấy entries trong SRT file")
             return False
-        
+
         self.logger.info(f"Tìm thấy {len(srt_entries)} SRT entries")
-        
+
         # Gom thành scenes
         scenes_data = group_srt_into_scenes(
             srt_entries,
             min_duration=self.min_scene_duration,
             max_duration=self.max_scene_duration
         )
-        
+
         self.logger.info(f"Gom thành {len(scenes_data)} scenes")
-        
+
+        # Chia scenes thành shots (mỗi shot tối đa 8 giây)
+        shots_data = create_shots_from_scenes(
+            scenes_data,
+            max_shot_duration=self.max_shot_duration
+        )
+
+        self.logger.info(f"Chia thành {len(shots_data)} shots (mỗi shot <= {self.max_shot_duration}s)")
+
         # Tạo full story text để phân tích nhân vật
         full_story = " ".join([e.text for e in srt_entries])
-        
+
         # Step 1: Phân tích nhân vật
-        self.logger.info("Phân tích nhân vật qua Gemini...")
+        self.logger.info("Phân tích nhân vật qua AI...")
         characters = self._analyze_characters(full_story)
-        
+
         if not characters:
             self.logger.error("Không thể phân tích nhân vật")
             return False
-        
+
         # Lưu nhân vật vào Excel
         for char in characters:
             char.image_file = f"{char.id}.png"
             char.status = "pending"
             workbook.add_character(char)
-        
+
         workbook.save()
         self.logger.info(f"Đã lưu {len(characters)} nhân vật")
-        
-        # Step 2: Tạo prompts cho từng batch scenes
-        self.logger.info("Tạo prompts cho scenes...")
-        
-        # Chia scenes thành batches để tránh vượt quá context limit
+
+        # Step 2: Tạo prompts cho từng batch shots
+        self.logger.info("Tạo prompts cho shots...")
+
+        # Chia shots thành batches để tránh vượt quá context limit
         batch_size = 10
-        all_scene_prompts = []
-        
-        for i in range(0, len(scenes_data), batch_size):
-            batch = scenes_data[i:i + batch_size]
-            self.logger.info(f"Xử lý batch {i // batch_size + 1}/{(len(scenes_data) - 1) // batch_size + 1}")
-            
-            scene_prompts = self._generate_scene_prompts(characters, batch)
-            all_scene_prompts.extend(scene_prompts)
-            
+        all_shot_prompts = []
+
+        for i in range(0, len(shots_data), batch_size):
+            batch = shots_data[i:i + batch_size]
+            self.logger.info(f"Xử lý batch {i // batch_size + 1}/{(len(shots_data) - 1) // batch_size + 1}")
+
+            shot_prompts = self._generate_shot_prompts(characters, batch)
+            all_shot_prompts.extend(shot_prompts)
+
             # Rate limiting
-            if i + batch_size < len(scenes_data):
+            if i + batch_size < len(shots_data):
                 time.sleep(2)  # Tránh rate limit
-        
-        # Lưu scenes vào Excel
-        for scene_data, prompts in zip(scenes_data, all_scene_prompts):
+
+        # Lưu shots vào Excel
+        for shot_data, prompts in zip(shots_data, all_shot_prompts):
             scene = Scene(
-                scene_id=scene_data["scene_id"],
-                srt_start=scene_data["srt_start"],
-                srt_end=scene_data["srt_end"],
-                srt_text=scene_data["text"][:500],  # Truncate nếu quá dài
+                scene_id=shot_data["scene_id"],
+                shot_id=shot_data["shot_id"],
+                start_time=shot_data["start_time_str"],
+                end_time=shot_data["end_time_str"],
+                duration=shot_data["duration"],
+                srt_start=shot_data["srt_start"],
+                srt_end=shot_data["srt_end"],
+                srt_text=shot_data["text"][:500],  # Truncate nếu quá dài
                 img_prompt=prompts.get("img_prompt", ""),
                 video_prompt=prompts.get("video_prompt", ""),
                 status_img="pending",
                 status_vid="pending"
             )
             workbook.add_scene(scene)
-        
+
         workbook.save()
-        self.logger.info(f"Đã lưu {len(scenes_data)} scenes với prompts")
-        
+        self.logger.info(f"Đã lưu {len(shots_data)} shots với prompts và timestamp")
+
         return True
     
     def _analyze_characters(self, story_text: str) -> List[Character]:
@@ -698,7 +726,72 @@ class PromptGenerator:
         except Exception as e:
             self.logger.error(f"Failed to generate scene prompts: {e}")
             return [{"img_prompt": "", "video_prompt": ""} for _ in scenes_data]
-    
+
+    def _generate_shot_prompts(
+        self,
+        characters: List[Character],
+        shots_data: List[Dict[str, Any]]
+    ) -> List[Dict[str, str]]:
+        """
+        Tạo prompts cho một batch shots với timestamp.
+
+        Args:
+            characters: Danh sách nhân vật
+            shots_data: Danh sách shot data (có timestamp)
+
+        Returns:
+            List các dict chứa img_prompt và video_prompt
+        """
+        # Format thông tin nhân vật
+        characters_info = "\n".join([
+            f"- {char.id} ({char.role}): {char.name}\n  Appearance: {char.english_prompt}"
+            for char in characters
+        ])
+
+        # Format thông tin shots với timestamp
+        shots_info = "\n".join([
+            f"Shot {s['shot_id']} [{s['start_time_str']} --> {s['end_time_str']}] ({s['duration']:.1f}s):\n  \"{s['text'][:250]}...\""
+            if len(s['text']) > 250 else
+            f"Shot {s['shot_id']} [{s['start_time_str']} --> {s['end_time_str']}] ({s['duration']:.1f}s):\n  \"{s['text']}\""
+            for s in shots_data
+        ])
+
+        prompt = GENERATE_SCENE_PROMPTS.format(
+            characters_info=characters_info,
+            shots_info=shots_info
+        )
+
+        try:
+            response = self._generate_content(prompt, temperature=0.6)
+
+            # Parse JSON
+            json_data = self._extract_json(response)
+
+            if not json_data or "shots" not in json_data:
+                self.logger.warning(f"Invalid shot prompts response, using defaults")
+                # Return default prompts
+                return [{"img_prompt": "", "video_prompt": ""} for _ in shots_data]
+
+            # Match prompts với shots
+            prompts_map = {str(s["shot_id"]): s for s in json_data["shots"]}
+
+            result = []
+            for shot_data in shots_data:
+                shot_id = shot_data["shot_id"]
+                if shot_id in prompts_map:
+                    result.append({
+                        "img_prompt": prompts_map[shot_id].get("img_prompt", ""),
+                        "video_prompt": prompts_map[shot_id].get("video_prompt", "")
+                    })
+                else:
+                    result.append({"img_prompt": "", "video_prompt": ""})
+
+            return result
+
+        except Exception as e:
+            self.logger.error(f"Failed to generate shot prompts: {e}")
+            return [{"img_prompt": "", "video_prompt": ""} for _ in shots_data]
+
     def _extract_json(self, text: str) -> Optional[Dict]:
         """
         Trích xuất JSON từ response text.

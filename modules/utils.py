@@ -365,18 +365,18 @@ def group_srt_into_scenes(
 ) -> List[Dict[str, Any]]:
     """
     Gom các SRT entries thành các scene theo thời lượng.
-    
+
     Args:
         entries: List các SrtEntry
         min_duration: Thời lượng tối thiểu của scene (giây)
         max_duration: Thời lượng tối đa của scene (giây)
-        
+
     Returns:
         List các scene, mỗi scene có: scene_id, start_time, end_time, text, srt_indices
     """
     if not entries:
         return []
-    
+
     scenes = []
     current_scene = {
         "srt_indices": [entries[0].index],
@@ -384,12 +384,12 @@ def group_srt_into_scenes(
         "start_time": entries[0].start_time,
         "end_time": entries[0].end_time,
     }
-    
+
     for entry in entries[1:]:
         # Tính thời lượng nếu thêm entry này
         new_duration = (entry.end_time - current_scene["start_time"]).total_seconds()
         current_duration = (current_scene["end_time"] - current_scene["start_time"]).total_seconds()
-        
+
         # Nếu vượt quá max_duration và đã có đủ min_duration thì tạo scene mới
         if new_duration > max_duration and current_duration >= min_duration:
             # Lưu scene hiện tại
@@ -401,7 +401,7 @@ def group_srt_into_scenes(
                 "srt_start": current_scene["srt_indices"][0],
                 "srt_end": current_scene["srt_indices"][-1],
             })
-            
+
             # Bắt đầu scene mới
             current_scene = {
                 "srt_indices": [entry.index],
@@ -414,7 +414,7 @@ def group_srt_into_scenes(
             current_scene["srt_indices"].append(entry.index)
             current_scene["texts"].append(entry.text)
             current_scene["end_time"] = entry.end_time
-    
+
     # Thêm scene cuối cùng
     if current_scene["srt_indices"]:
         scenes.append({
@@ -425,8 +425,96 @@ def group_srt_into_scenes(
             "srt_start": current_scene["srt_indices"][0],
             "srt_end": current_scene["srt_indices"][-1],
         })
-    
+
     return scenes
+
+
+def split_scene_into_shots(
+    scene: Dict[str, Any],
+    max_shot_duration: float = 8.0
+) -> List[Dict[str, Any]]:
+    """
+    Chia một scene thành nhiều shots dựa trên thời lượng.
+
+    Mỗi shot tối đa max_shot_duration giây (mặc định 8s).
+    Một ảnh = 1 shot.
+
+    Args:
+        scene: Dictionary chứa thông tin scene
+        max_shot_duration: Thời lượng tối đa của mỗi shot (giây)
+
+    Returns:
+        List các shot, mỗi shot có: shot_id, start_time, end_time, duration
+    """
+    import math
+
+    start_time = scene["start_time"]
+    end_time = scene["end_time"]
+    scene_id = scene["scene_id"]
+
+    # Tính tổng thời lượng của scene
+    total_duration = (end_time - start_time).total_seconds()
+
+    # Tính số lượng shot cần thiết
+    num_shots = max(1, math.ceil(total_duration / max_shot_duration))
+
+    # Tính thời lượng thực tế của mỗi shot (chia đều)
+    shot_duration = total_duration / num_shots
+
+    shots = []
+    current_start = start_time
+
+    for i in range(num_shots):
+        shot_start = current_start
+
+        # Shot cuối cùng lấy đến end_time để tránh lỗi làm tròn
+        if i == num_shots - 1:
+            shot_end = end_time
+        else:
+            shot_end = shot_start + timedelta(seconds=shot_duration)
+
+        actual_duration = (shot_end - shot_start).total_seconds()
+
+        shots.append({
+            "scene_id": scene_id,
+            "shot_id": f"{scene_id}.{i + 1}",  # Ví dụ: "1.1", "1.2", "1.3"
+            "shot_index": i + 1,
+            "start_time": shot_start,
+            "end_time": shot_end,
+            "start_time_str": format_srt_time(shot_start),
+            "end_time_str": format_srt_time(shot_end),
+            "duration": round(actual_duration, 3),
+            "srt_start": scene.get("srt_start", 0),
+            "srt_end": scene.get("srt_end", 0),
+            "text": scene.get("text", ""),
+        })
+
+        current_start = shot_end
+
+    return shots
+
+
+def create_shots_from_scenes(
+    scenes: List[Dict[str, Any]],
+    max_shot_duration: float = 8.0
+) -> List[Dict[str, Any]]:
+    """
+    Tạo danh sách tất cả shots từ danh sách scenes.
+
+    Args:
+        scenes: List các scene từ group_srt_into_scenes()
+        max_shot_duration: Thời lượng tối đa của mỗi shot (giây)
+
+    Returns:
+        List tất cả shots với timestamp
+    """
+    all_shots = []
+
+    for scene in scenes:
+        shots = split_scene_into_shots(scene, max_shot_duration)
+        all_shots.extend(shots)
+
+    return all_shots
 
 # ============================================================================
 # MISC UTILITIES
