@@ -244,72 +244,77 @@ generate_scenes: |
 # =============================================================================
 
 smart_divide_scenes: |
-  Ban la AI Director. Phan tich NOI DUNG cac scene da chia san de tao VISUAL MOMENT.
+  Ban la AI Director. Phan tich NOI DUNG va tao VISUAL MOMENT the hien dung noi dung do.
 
-  ## NHIEM VU:
-  - Scene da duoc chia san (max 8s/scene)
-  - Ban chi can: XAC DINH LOCATION + TAO VISUAL MOMENT cho moi scene
+  ## CONTEXT - NHAN VAT VA BOI CANH DA XAC DINH:
+  {characters_info}
+
+  {locations_info}
 
   ## INPUT - Cac scene da chia (max 8s/scene):
   ---
   {srt_with_timestamps}
   ---
 
-  ## BUOC 1: XAC DINH BOI CANH (LOCATIONS)
-  Doc noi dung va liet ke cac boi canh:
-  - Boi canh = NOI dien ra hanh dong (toa an, nha, duong pho...)
-  - ID: loc1, loc2, loc3...
+  ## NHIEM VU CHINH:
+  1. Doc NOI DUNG moi scene
+  2. Xac dinh NHAN VAT nao xuat hien (dung ID tu danh sach tren)
+  3. Xac dinh BOI CANH dang o dau (dung ID tu danh sach tren, hoac tao moi neu chua co)
+  4. Tao VISUAL MOMENT mo ta CHINH XAC hinh anh the hien noi dung do
 
-  ## BUOC 2: TAO VISUAL MOMENT
-  Moi scene can 1 mo ta HINH ANH cu the:
-  - Khong phai portrait (khong nhin camera)
-  - Mo ta HANH DONG dang dien ra
-  - Goc may phu hop (Wide/Medium/Close-up)
+  ## CACH TAO VISUAL MOMENT:
+  Visual moment = Mo ta HINH ANH cu the the hien NOI DUNG doan van:
+  - PHAI co nhan vat dang LAM GI (hanh dong, khong phai portrait)
+  - PHAI the hien CAM XUC/TINH HUONG trong noi dung
+  - PHAI co BOI CANH phu hop
 
   Vi du:
-  - Text: "Toi ngoi tren bac them toa an, tay run run cam ho so"
-  - Visual: "Medium shot, nguoi dan ong ngoi tren bac them toa an, dau cui xuong, tay run run cam tap ho so day"
+  - Noi dung: "Toi ngoi tren bac them toa an, tay run run cam ho so. Me toi la nguoi da hy sinh tat ca cho toi."
+  - Visual: "Medium shot, nguoi dan ong ngoi co don tren bac them toa an, dau cui xuong nhin tap ho so trong tay run ray, ve mat buon ba, anh chieu ta xuong"
+
+  - Noi dung: "Khi toi con nho, hai me con chi co nhau, toi nghi rang moi lien ket do se khong bao gio bi pha vo."
+  - Visual: "Wide shot hoi tuong, nguoi me tre dan tay dua con nho di tren con duong que, anh hoang hon am ap, khong gian yeu thuong"
 
   ## OUTPUT FORMAT - JSON:
 
   {{
-    "locations": [
-      {{"id": "loc1", "name": "Toa an"}},
-      {{"id": "loc2", "name": "Duong pho"}}
-    ],
     "scenes": [
       {{
         "scene_id": 1,
         "location_id": "loc1",
+        "characters_in_scene": ["nv1"],
         "shot_type": "Medium shot",
-        "visual_moment": "Medium shot nguoi dan ong ngoi tren bac them toa an, dau cui, tay run cam ho so"
+        "visual_moment": "Medium shot nguoi dan ong ngoi co don tren bac them toa an, dau cui nhin ho so, ve mat lo lang"
       }},
       {{
         "scene_id": 2,
         "location_id": "loc1",
+        "characters_in_scene": ["nv1"],
         "shot_type": "Close-up",
-        "visual_moment": "Close-up khuon mat nguoi dan ong, mat nhin xa xam, dang hoi tuong"
+        "visual_moment": "Close-up doi tay run ray nam chat tap ho so, ngon tay trang bech vi cang thang"
       }},
       {{
         "scene_id": 3,
         "location_id": "loc2",
+        "characters_in_scene": ["nv1", "nv2"],
         "shot_type": "Wide shot",
-        "visual_moment": "Wide shot me va con trai di tren duong pho nho, anh chieu nghieng"
+        "visual_moment": "Wide shot hoi tuong - nguoi me tre dan tay con trai nho di tren duong que, anh hoang hon"
       }}
     ]
   }}
 
-  ## GOC MAY GUIDE:
-  - Wide shot: Boi canh moi, thiet lap khong gian
-  - Medium shot: Hanh dong chinh, doi thoai
-  - Close-up: Cam xuc, chi tiet quan trong
-  - OTS (Over-the-shoulder): Hoi thoai 2 nguoi
-
-  ## QUY TAC:
+  ## QUY TAC BAT BUOC:
   1. scene_id PHAI KHOP voi so thu tu input (1, 2, 3...)
-  2. Moi scene PHAI co location_id
-  3. visual_moment PHAI mo ta HANH DONG (khong phai portrait)
-  4. KHONG thay doi timestamps (da chia san)
+  2. visual_moment PHAI the hien DUNG noi dung cua scene (khong chung chung)
+  3. characters_in_scene chi chua ID nhan vat THUC SU xuat hien trong scene
+  4. location_id dung ID da cho, hoac tao moi neu chua co (loc1, loc2...)
+  5. KHONG mo ta portrait (khong nhin camera, khong dung yen)
+
+  ## GOC MAY:
+  - Wide shot: Thiet lap boi canh, hoi tuong
+  - Medium shot: Hanh dong chinh
+  - Close-up: Cam xuc, chi tiet
+  - OTS: Doi thoai 2 nguoi
 
   OUTPUT: JSON object, KHONG markdown.
 

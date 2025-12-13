@@ -867,8 +867,9 @@ class PromptGenerator:
         self.logger.info(f"Đã lưu {len(characters)} nhân vật + {len(locations)} bối cảnh")
 
         # Step 2: Chia scene THÔNG MINH theo nội dung (không theo thời gian)
+        # Truyền characters và locations để AI hiểu context
         self.logger.info("Chia scene theo nội dung (AI Smart Division)...")
-        scenes_data = self._smart_divide_scenes(srt_entries)
+        scenes_data = self._smart_divide_scenes(srt_entries, characters, locations)
 
         self.logger.info(f"Chia thành {len(scenes_data)} scenes")
 
@@ -963,7 +964,8 @@ class PromptGenerator:
             # === AUTO-GENERATE reference_files nếu AI không điền ===
             if not ref_files:
                 ref_files = []
-                # Thêm tất cả nhân vật đã dùng
+
+                # Ưu tiên 1: Lấy từ prompts (characters_used)
                 if chars_used:
                     if isinstance(chars_used, str):
                         try:
@@ -975,6 +977,23 @@ class PromptGenerator:
                             ref_files.append(f"{char_id}.png")
                         elif char_id:
                             ref_files.append(char_id)
+
+                # Ưu tiên 2: Fallback từ scene_data (characters_in_scene từ smart_divide)
+                if not ref_files:
+                    chars_in_scene = scene_data.get("characters_in_scene", [])
+                    if chars_in_scene:
+                        if isinstance(chars_in_scene, str):
+                            try:
+                                chars_in_scene = json.loads(chars_in_scene)
+                            except:
+                                chars_in_scene = [chars_in_scene]
+                        for char_id in chars_in_scene:
+                            if char_id and not char_id.endswith('.png'):
+                                ref_files.append(f"{char_id}.png")
+                            elif char_id:
+                                ref_files.append(char_id)
+                        self.logger.debug(f"Scene {scene_data['scene_id']}: Using characters_in_scene: {chars_in_scene}")
+
                 # Thêm location đã dùng
                 if location_used:
                     loc_file = f"{location_used}.png" if not location_used.endswith('.png') else location_used
@@ -1105,20 +1124,26 @@ class PromptGenerator:
             self.logger.error(f"Failed to analyze characters: {e}")
             return [], [], "", ""
 
-    def _smart_divide_scenes(self, srt_entries: List) -> List[Dict[str, Any]]:
+    def _smart_divide_scenes(self, srt_entries: List, characters: List = None, locations: List = None) -> List[Dict[str, Any]]:
         """
         Chia scene theo hướng: TIME-BASED trước (max 8s), rồi AI phân tích nội dung.
 
         Flow mới:
         1. Chia SRT thành các nhóm <= 8s (time-based, đảm bảo chính xác)
         2. AI phân tích nội dung mỗi nhóm → xác định location + visual_moment
+        3. Sử dụng thông tin characters/locations đã phân tích để tạo visual chính xác
 
         Args:
             srt_entries: List các SrtEntry từ file SRT
+            characters: List các Character đã phân tích
+            locations: List các Location đã phân tích
 
         Returns:
             List các scene data với: scene_id, start_time, end_time, text, srt_start, srt_end
         """
+        characters = characters or []
+        locations = locations or []
+
         # BƯỚC 1: Chia theo thời gian trước (max 8s/scene) - CHÍNH XÁC
         self.logger.info("Bước 1: Chia SRT theo thời gian (max 8s/scene)...")
         time_based_scenes = group_srt_into_scenes(
@@ -1131,9 +1156,25 @@ class PromptGenerator:
         # BƯỚC 2: AI phân tích nội dung để tạo visual_moment và xác định location
         self.logger.info("Bước 2: AI phân tích nội dung để tạo visual_moment...")
 
+        # Format thông tin characters cho AI
+        chars_info = ""
+        if characters:
+            chars_info = "NHÂN VẬT ĐÃ XÁC ĐỊNH:\n" + "\n".join([
+                f"- {c.id}: {c.name} ({c.role}) - {c.character_lock or c.vietnamese_prompt or ''}"
+                for c in characters
+            ])
+
+        # Format thông tin locations cho AI
+        locs_info = ""
+        if locations:
+            locs_info = "BỐI CẢNH ĐÃ XÁC ĐỊNH:\n" + "\n".join([
+                f"- {loc.id}: {loc.name} - {loc.location_lock or ''}"
+                for loc in locations
+            ])
+
         # Format scenes cho AI
         scenes_for_ai = "\n".join([
-            f"{i+1}. [{s.get('srt_start', '')} -> {s.get('srt_end', '')}] \"{s['text'][:200]}\""
+            f"{i+1}. [{s.get('srt_start', '')} -> {s.get('srt_end', '')}] \"{s['text'][:300]}\""
             for i, s in enumerate(time_based_scenes)
         ])
 
@@ -1143,7 +1184,20 @@ class PromptGenerator:
             self.logger.warning("Smart divide prompt not found, returning time-based scenes")
             return self._format_time_based_scenes(time_based_scenes)
 
-        prompt = prompt_template.format(srt_with_timestamps=scenes_for_ai)
+        # Build full prompt với context
+        try:
+            prompt = prompt_template.format(
+                srt_with_timestamps=scenes_for_ai,
+                characters_info=chars_info,
+                locations_info=locs_info
+            )
+        except KeyError:
+            # Fallback nếu template không có placeholder
+            prompt = prompt_template.format(srt_with_timestamps=scenes_for_ai)
+            # Prepend context
+            if chars_info or locs_info:
+                context = f"{chars_info}\n\n{locs_info}\n\n" if chars_info and locs_info else (chars_info or locs_info) + "\n\n"
+                prompt = context + prompt
 
         try:
             response = self._generate_content(prompt, temperature=0.4, max_tokens=16000)
@@ -1175,9 +1229,16 @@ class PromptGenerator:
                 end_time = scene.get("srt_end", format_srt_time(scene["end_time"]) if isinstance(scene["end_time"], timedelta) else scene["end_time"])
                 duration = scene.get("duration", (scene["end_time"] - scene["start_time"]).total_seconds() if isinstance(scene["start_time"], timedelta) else 5)
 
+                # Lấy characters từ AI analysis
+                chars_in_scene = ai_data.get("characters_in_scene", [])
+                if not chars_in_scene and characters:
+                    # Fallback: dùng nhân vật chính nếu AI không chỉ định
+                    chars_in_scene = [characters[0].id] if characters else []
+
                 final_scenes.append({
                     "scene_id": scene_id,
                     "location_id": ai_data.get("location_id", "loc1"),
+                    "characters_in_scene": chars_in_scene,  # Nhân vật xuất hiện trong scene
                     "story_beat": ai_data.get("story_beat", ""),
                     "start_time": start_time,
                     "end_time": end_time,
@@ -1196,7 +1257,7 @@ class PromptGenerator:
             self.logger.error(f"AI analysis failed: {e}, returning time-based scenes")
             return self._format_time_based_scenes(time_based_scenes)
 
-    def _format_time_based_scenes(self, time_based_scenes: List[Dict]) -> List[Dict[str, Any]]:
+    def _format_time_based_scenes(self, time_based_scenes: List[Dict], default_char: str = "nvc") -> List[Dict[str, Any]]:
         """Format time-based scenes khi không có AI analysis."""
         formatted = []
         for i, scene in enumerate(time_based_scenes):
@@ -1207,6 +1268,7 @@ class PromptGenerator:
             formatted.append({
                 "scene_id": i + 1,
                 "location_id": "loc1",
+                "characters_in_scene": [default_char],  # Default: nhân vật chính
                 "story_beat": "",
                 "start_time": start_time,
                 "end_time": end_time,
