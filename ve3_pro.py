@@ -46,6 +46,47 @@ sys.path.insert(0, str(ROOT_DIR))
 CONFIG_DIR = Path(os.environ.get('VE3_CONFIG_DIR', ROOT_DIR / "config"))
 PROJECTS_DIR = Path(os.environ.get('VE3_PROJECTS_DIR', ROOT_DIR / "PROJECTS"))
 
+
+def auto_update_from_git():
+    """Auto pull latest code from git if available."""
+    import subprocess
+    git_dir = ROOT_DIR / ".git"
+    if not git_dir.exists():
+        return False, "Not a git repo"
+
+    try:
+        # Get current branch
+        result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=ROOT_DIR, capture_output=True, text=True, timeout=10
+        )
+        branch = result.stdout.strip()
+
+        # Pull latest
+        result = subprocess.run(
+            ["git", "pull", "origin", branch],
+            cwd=ROOT_DIR, capture_output=True, text=True, timeout=30
+        )
+
+        if result.returncode == 0:
+            output = result.stdout.strip()
+            if "Already up to date" in output:
+                return True, "Already up to date"
+            else:
+                return True, f"Updated from {branch}"
+        else:
+            return False, result.stderr.strip()[:100]
+    except Exception as e:
+        return False, str(e)[:100]
+
+
+# Auto-update on startup
+_update_ok, _update_msg = auto_update_from_git()
+if _update_ok:
+    print(f"[Auto-Update] {_update_msg}")
+else:
+    print(f"[Auto-Update] Skip: {_update_msg}")
+
 try:
     from PIL import Image, ImageTk
     HAS_PIL = True
