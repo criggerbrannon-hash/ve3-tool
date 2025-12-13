@@ -55,18 +55,23 @@ def get_git_info():
         return None
 
     try:
-        # Get last commit info: hash, date, message
-        # --date=local: Hien thi theo gio dia phuong cua may
+        # Get commit info: hash, unix timestamp, message
+        # %ct = unix timestamp (seconds since epoch)
         result = subprocess.run(
-            ["git", "log", "-1", "--date=local", "--format=%h|%ci|%s"],
+            ["git", "log", "-1", "--format=%h|%ct|%s"],
             cwd=ROOT_DIR, capture_output=True, text=True, timeout=10
         )
         if result.returncode == 0:
             parts = result.stdout.strip().split("|")
             if len(parts) >= 3:
+                # Convert unix timestamp to local time
+                timestamp = int(parts[1])
+                local_time = datetime.fromtimestamp(timestamp)
+                date_str = local_time.strftime("%Y-%m-%d %H:%M")
+
                 return {
                     "hash": parts[0],
-                    "date": parts[1][:16],  # "2024-12-13 21:00" (gio dia phuong)
+                    "date": date_str,  # Gio theo may tinh
                     "message": parts[2][:50]
                 }
     except:
