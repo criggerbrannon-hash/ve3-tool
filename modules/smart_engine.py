@@ -661,10 +661,17 @@ class SmartEngine:
                     except (json.JSONDecodeError, TypeError):
                         file_list = [f.strip() for f in str(reference_files).split(",") if f.strip()]
 
-                # FALLBACK: Neu khong co reference nao, dung nvc (nhan vat chinh)
+                # FALLBACK: Dam bao LUON co nhan vat trong reference
+                has_character = any(f.lower().startswith('nv') for f in file_list)
+
                 if not file_list:
+                    # Khong co reference nao -> dung nvc
                     file_list = ["nvc.png"]
-                    self.log(f"  -> No reference specified, using default nvc.png")
+                    self.log(f"  -> No reference, using default nvc.png")
+                elif not has_character:
+                    # Chi co loc, khong co nhan vat -> them nvc vao dau
+                    file_list.insert(0, "nvc.png")
+                    self.log(f"  -> No character in refs, adding nvc.png → {file_list}")
 
                 # Tim media_name cho moi reference image
                 # LUU Y: API CHI CHAP NHAN media_name, KHONG chap nhan base64!
