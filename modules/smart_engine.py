@@ -607,7 +607,38 @@ class SmartEngine:
 
     # ========== IMAGE GENERATION ==========
 
-    def generate_single_image(self, prompt_data: Dict, profile: Resource) -> tuple:
+    def _sanitize_prompt(self, prompt: str) -> str:
+        """
+        Điều chỉnh prompt để tránh vi phạm policy.
+        Loại bỏ các từ/cụm từ nhạy cảm.
+        """
+        import re
+
+        # Các từ/cụm từ cần loại bỏ hoặc thay thế
+        sensitive_words = [
+            # Violence
+            (r'\b(kill|murder|blood|gore|violent|weapon|gun|knife|death|dead|corpse)\b', ''),
+            (r'\b(fight|attack|hurt|injure|wound)\b', 'interact'),
+            # Adult content
+            (r'\b(naked|nude|sexy|seductive|erotic|sensual)\b', ''),
+            (r'\b(kiss|embrace|romantic)\b', 'close'),
+            # Sensitive topics
+            (r'\b(drugs|alcohol|smoking|cigarette)\b', ''),
+            (r'\b(scared|terrified|horror|scary)\b', 'surprised'),
+            # Simplify complex scenes
+            (r'\b(crying|tears|sad|depressed)\b', 'emotional'),
+        ]
+
+        sanitized = prompt
+        for pattern, replacement in sensitive_words:
+            sanitized = re.sub(pattern, replacement, sanitized, flags=re.IGNORECASE)
+
+        # Loại bỏ khoảng trắng thừa
+        sanitized = re.sub(r'\s+', ' ', sanitized).strip()
+
+        return sanitized
+
+    def generate_single_image(self, prompt_data: Dict, profile: Resource, retry_count: int = 0) -> tuple:
         """
         Tao 1 anh voi 1 profile, ho tro reference images.
 
@@ -745,9 +776,21 @@ class SmartEngine:
                 if token_expired:
                     self.log(f"Token het han cho {pid}, can refresh", "WARN")
                     profile.token = ""  # Clear expired token
-                else:
-                    self.log(f"Generate failed {pid}: {error}", "ERROR")
-                return False, token_expired
+                    return False, token_expired
+
+                # Check for policy violation - retry with sanitized prompt
+                is_policy_error = '400' in error_str or 'policy' in error_str or 'blocked' in error_str or 'safety' in error_str
+                if is_policy_error and retry_count < 2:
+                    self.log(f"  -> Policy violation, thu lai voi prompt da dieu chinh...", "WARN")
+                    # Sanitize prompt and retry
+                    sanitized = self._sanitize_prompt(prompt)
+                    if sanitized != prompt:
+                        prompt_data_copy = prompt_data.copy()
+                        prompt_data_copy['prompt'] = sanitized
+                        return self.generate_single_image(prompt_data_copy, profile, retry_count + 1)
+
+                self.log(f"Generate failed {pid}: {error}", "ERROR")
+                return False, False
 
         except Exception as e:
             error_str = str(e).lower()
