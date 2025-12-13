@@ -684,17 +684,10 @@ class SmartEngine:
                     cached_media_name = self.get_cached_media_name(profile, image_id)
 
                     if cached_media_name:
-                        # Chon input_type dua tren loai reference:
-                        # - nv* (nhan vat): SUBJECT - giu nhan vat nhat quan
-                        # - loc* (boi canh): REFERENCE - tham chieu chung
-                        from modules.google_flow_api import ImageInputType
-                        if image_id.lower().startswith('nv'):
-                            input_type = ImageInputType.SUBJECT  # Giu nhan vat nhat quan
-                        else:
-                            input_type = ImageInputType.REFERENCE  # Boi canh/style
-
-                        image_inputs.append(ImageInput(name=cached_media_name, input_type=input_type))
-                        self.log(f"  -> Ref OK: {image_id} ({input_type.name})")
+                        # API chi chap nhan REFERENCE type
+                        # SUBJECT/STYLE khong duoc ho tro
+                        image_inputs.append(ImageInput(name=cached_media_name))
+                        self.log(f"  -> Ref OK: {image_id}")
                     else:
                         # Khong co media_name -> SKIP (khong the dung base64)
                         skipped_refs.append(image_id)
