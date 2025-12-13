@@ -1107,7 +1107,11 @@ class PromptGenerator:
 
     def _smart_divide_scenes(self, srt_entries: List) -> List[Dict[str, Any]]:
         """
-        Chia scene thông minh theo nội dung thay vì theo thời gian.
+        Chia scene theo hướng: TIME-BASED trước (max 8s), rồi AI phân tích nội dung.
+
+        Flow mới:
+        1. Chia SRT thành các nhóm <= 8s (time-based, đảm bảo chính xác)
+        2. AI phân tích nội dung mỗi nhóm → xác định location + visual_moment
 
         Args:
             srt_entries: List các SrtEntry từ file SRT
@@ -1115,115 +1119,110 @@ class PromptGenerator:
         Returns:
             List các scene data với: scene_id, start_time, end_time, text, srt_start, srt_end
         """
-        # Format SRT entries với timestamps cho AI
-        srt_with_timestamps = "\n".join([
-            f"{e.index}. [{format_srt_time(e.start_time)} -> {format_srt_time(e.end_time)}] \"{e.text}\""
-            for e in srt_entries
+        # BƯỚC 1: Chia theo thời gian trước (max 8s/scene) - CHÍNH XÁC
+        self.logger.info("Bước 1: Chia SRT theo thời gian (max 8s/scene)...")
+        time_based_scenes = group_srt_into_scenes(
+            srt_entries,
+            min_duration=self.min_scene_duration,
+            max_duration=self.max_scene_duration
+        )
+        self.logger.info(f"Đã chia thành {len(time_based_scenes)} scenes (max 8s/scene)")
+
+        # BƯỚC 2: AI phân tích nội dung để tạo visual_moment và xác định location
+        self.logger.info("Bước 2: AI phân tích nội dung để tạo visual_moment...")
+
+        # Format scenes cho AI
+        scenes_for_ai = "\n".join([
+            f"{i+1}. [{s.get('srt_start', '')} -> {s.get('srt_end', '')}] \"{s['text'][:200]}\""
+            for i, s in enumerate(time_based_scenes)
         ])
 
-        # Load prompt từ config/prompts.yaml
+        # Load prompt
         prompt_template = get_smart_divide_scenes_prompt()
         if not prompt_template:
-            self.logger.warning("Smart divide prompt not found, falling back to time-based division")
-            return self._fallback_time_based_division(srt_entries)
+            self.logger.warning("Smart divide prompt not found, returning time-based scenes")
+            return self._format_time_based_scenes(time_based_scenes)
 
-        prompt = prompt_template.format(srt_with_timestamps=srt_with_timestamps)
+        prompt = prompt_template.format(srt_with_timestamps=scenes_for_ai)
 
         try:
-            self.logger.info("AI đang phân tích nội dung để chia scene...")
             response = self._generate_content(prompt, temperature=0.4, max_tokens=16000)
-
-            # Parse JSON từ response
             json_data = self._extract_json(response)
 
             if not json_data or "scenes" not in json_data:
-                self.logger.warning(f"[Smart Divide] Invalid response - no 'scenes' key")
-                self.logger.warning(f"[Smart Divide] Raw response (first 500 chars): {str(response)[:500]}")
-                return self._fallback_time_based_division(srt_entries)
+                self.logger.warning("[Smart Divide] AI không trả về scenes, dùng time-based")
+                return self._format_time_based_scenes(time_based_scenes)
 
-            self.logger.info(f"[Smart Divide] AI returned {len(json_data['scenes'])} scenes")
+            self.logger.info(f"[Smart Divide] AI trả về {len(json_data['scenes'])} scene analyses")
 
-            # Log locations nếu có
+            # Extract locations (nếu có)
+            ai_locations = {}
             if "locations" in json_data:
-                self.logger.info(f"[Smart Divide] Found {len(json_data['locations'])} locations")
                 for loc in json_data["locations"]:
-                    self.logger.info(f"  - {loc.get('id')}: {loc.get('name')}")
+                    ai_locations[loc.get("id", "")] = loc.get("name", "")
+                self.logger.info(f"[Smart Divide] Found {len(ai_locations)} locations: {ai_locations}")
 
-            # Convert AI output to internal format
-            scenes_data = []
-            for scene in json_data["scenes"]:
-                # Parse timestamps (AI returns "HH:MM:SS" or "HH:MM:SS,mmm")
-                start_str = scene.get("start_time", "00:00:00,000")
-                end_str = scene.get("end_time", "00:00:00,000")
+            # Merge AI analysis vào time-based scenes
+            ai_scenes_map = {s.get("scene_id", i+1): s for i, s in enumerate(json_data["scenes"])}
 
-                # Ensure timestamps have milliseconds
-                if "," not in start_str:
-                    start_str += ",000"
-                if "," not in end_str:
-                    end_str += ",000"
+            final_scenes = []
+            for i, scene in enumerate(time_based_scenes):
+                scene_id = i + 1
+                ai_data = ai_scenes_map.get(scene_id, {})
 
-                # Keep SRT indices for internal processing
-                srt_indices = scene.get("srt_indices", [])
+                # Format timestamps
+                start_time = scene.get("srt_start", format_srt_time(scene["start_time"]) if isinstance(scene["start_time"], timedelta) else scene["start_time"])
+                end_time = scene.get("srt_end", format_srt_time(scene["end_time"]) if isinstance(scene["end_time"], timedelta) else scene["end_time"])
+                duration = scene.get("duration", (scene["end_time"] - scene["start_time"]).total_seconds() if isinstance(scene["start_time"], timedelta) else 5)
 
-                scenes_data.append({
-                    "scene_id": scene.get("scene_id", len(scenes_data) + 1),
-                    "location_id": scene.get("location_id", ""),  # BỐI CẢNH - quan trọng!
-                    "story_beat": scene.get("story_beat", ""),  # Nhịp kể chuyện
-                    "start_time": start_str,
-                    "end_time": end_str,
-                    "duration_seconds": scene.get("duration_seconds", 5),
-                    "text": scene.get("text", ""),
-                    "visual_moment": scene.get("visual_moment", ""),
-                    "shot_type": scene.get("shot_type", "Medium shot"),
-                    "srt_start": start_str,  # Timestamp: "00:00:00,000"
-                    "srt_end": end_str,      # Timestamp: "00:00:05,340"
-                    "_srt_indices": srt_indices,  # Internal use for validation
+                final_scenes.append({
+                    "scene_id": scene_id,
+                    "location_id": ai_data.get("location_id", "loc1"),
+                    "story_beat": ai_data.get("story_beat", ""),
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "duration_seconds": duration,
+                    "text": scene["text"],
+                    "visual_moment": ai_data.get("visual_moment", scene["text"]),
+                    "shot_type": ai_data.get("shot_type", "Medium shot"),
+                    "srt_start": start_time,
+                    "srt_end": end_time,
                 })
 
-            self.logger.info(f"AI chia thành {len(scenes_data)} scenes theo nội dung")
-
-            # CHECK: Đảm bảo AI cover toàn bộ SRT (không bỏ sót phần nào)
-            if scenes_data:
-                # Lấy thời gian kết thúc của scene cuối cùng từ AI
-                last_scene_end = scenes_data[-1].get("end_time", "00:00:00,000")
-                # Lấy thời gian kết thúc của SRT entry cuối cùng
-                last_srt_end = format_srt_time(srt_entries[-1].end_time)
-
-                self.logger.info(f"AI end: {last_scene_end}, SRT end: {last_srt_end}")
-
-                # Parse timestamps to compare
-                def parse_time_to_seconds(ts: str) -> float:
-                    """Convert timestamp string to seconds."""
-                    ts = ts.replace(",", ".")
-                    parts = ts.split(":")
-                    if len(parts) == 3:
-                        h, m, s = parts
-                        return int(h) * 3600 + int(m) * 60 + float(s)
-                    return 0
-
-                ai_end_sec = parse_time_to_seconds(last_scene_end)
-                srt_end_sec = parse_time_to_seconds(last_srt_end)
-
-                # Nếu AI bỏ sót > 10 giây, dùng fallback cho phần còn lại
-                if srt_end_sec - ai_end_sec > 10:
-                    self.logger.warning(f"AI chỉ cover {ai_end_sec:.0f}s / {srt_end_sec:.0f}s ({(ai_end_sec/srt_end_sec*100):.0f}%)")
-                    self.logger.warning("Dùng time-based division để đảm bảo cover toàn bộ nội dung")
-                    return self._fallback_time_based_division(srt_entries)
-
-            # POST-VALIDATION: Chia lại những scene vượt quá max_duration (8s)
-            validated_scenes = self._validate_and_split_scenes(scenes_data, srt_entries)
-            if len(validated_scenes) != len(scenes_data):
-                self.logger.info(f"Post-validation: {len(scenes_data)} -> {len(validated_scenes)} scenes (split long scenes)")
-
-            return validated_scenes
+            self.logger.info(f"Hoàn thành: {len(final_scenes)} scenes với visual_moment từ AI")
+            return final_scenes
 
         except Exception as e:
-            self.logger.error(f"Smart divide failed: {e}, falling back to time-based")
-            return self._fallback_time_based_division(srt_entries)
+            self.logger.error(f"AI analysis failed: {e}, returning time-based scenes")
+            return self._format_time_based_scenes(time_based_scenes)
+
+    def _format_time_based_scenes(self, time_based_scenes: List[Dict]) -> List[Dict[str, Any]]:
+        """Format time-based scenes khi không có AI analysis."""
+        formatted = []
+        for i, scene in enumerate(time_based_scenes):
+            start_time = format_srt_time(scene["start_time"]) if isinstance(scene["start_time"], timedelta) else scene.get("srt_start", "00:00:00,000")
+            end_time = format_srt_time(scene["end_time"]) if isinstance(scene["end_time"], timedelta) else scene.get("srt_end", "00:00:08,000")
+            duration = (scene["end_time"] - scene["start_time"]).total_seconds() if isinstance(scene["start_time"], timedelta) else 5
+
+            formatted.append({
+                "scene_id": i + 1,
+                "location_id": "loc1",
+                "story_beat": "",
+                "start_time": start_time,
+                "end_time": end_time,
+                "duration_seconds": duration,
+                "text": scene["text"],
+                "visual_moment": scene["text"],
+                "shot_type": "Medium shot",
+                "srt_start": start_time,
+                "srt_end": end_time,
+            })
+        return formatted
 
     def _validate_and_split_scenes(self, scenes_data: List[Dict], srt_entries: List) -> List[Dict[str, Any]]:
         """
         Validate và chia lại những scene vượt quá max_duration.
+        LUÔN check duration từ timestamps, không phụ thuộc srt_indices.
 
         Args:
             scenes_data: List scenes từ AI
@@ -1232,6 +1231,17 @@ class PromptGenerator:
         Returns:
             List scenes đã được validate và split nếu cần
         """
+        def parse_time_to_seconds(ts: str) -> float:
+            """Convert timestamp string "HH:MM:SS,mmm" hoặc "HH:MM:SS" to seconds."""
+            if not ts:
+                return 0
+            ts = ts.replace(",", ".")
+            parts = ts.split(":")
+            if len(parts) == 3:
+                h, m, s = parts
+                return int(h) * 3600 + int(m) * 60 + float(s)
+            return 0
+
         # Build lookup table: srt_index -> SrtEntry
         srt_lookup = {e.index: e for e in srt_entries}
 
@@ -1239,67 +1249,99 @@ class PromptGenerator:
         scene_counter = 1
 
         for scene in scenes_data:
-            # Lấy SRT indices (internal field) để tìm entries
-            srt_indices = scene.get("_srt_indices", [])
+            # LUÔN tính duration từ timestamps
+            start_str = scene.get("start_time", "00:00:00")
+            end_str = scene.get("end_time", "00:00:00")
+            duration_from_ts = parse_time_to_seconds(end_str) - parse_time_to_seconds(start_str)
 
-            # Lấy các SRT entries theo indices
-            if srt_indices:
-                scene_entries = [srt_lookup[i] for i in srt_indices if i in srt_lookup]
+            # Lấy duration_seconds từ AI (fallback)
+            duration = scene.get("duration_seconds", duration_from_ts) or duration_from_ts
+
+            self.logger.debug(f"Scene {scene.get('scene_id')}: {start_str} -> {end_str} = {duration:.1f}s")
+
+            if duration <= self.max_scene_duration:
+                # Duration OK, giữ nguyên
+                scene["scene_id"] = scene_counter
+                scene["duration_seconds"] = duration
+                scene["srt_start"] = start_str if "," in start_str else f"{start_str},000"
+                scene["srt_end"] = end_str if "," in end_str else f"{end_str},000"
+                validated.append(scene)
+                scene_counter += 1
             else:
-                # Fallback: không có indices, skip validation
+                # Duration > max, cần chia nhỏ
+                self.logger.warning(f"Scene {scene.get('scene_id')} duration={duration:.1f}s > {self.max_scene_duration}s, SPLITTING!")
+
+                # Tìm SRT entries trong khoảng thời gian này
+                start_sec = parse_time_to_seconds(start_str)
+                end_sec = parse_time_to_seconds(end_str)
+
                 scene_entries = []
+                for entry in srt_entries:
+                    entry_start = entry.start_time.total_seconds()
+                    entry_end = entry.end_time.total_seconds()
+                    # Entry nằm trong khoảng scene
+                    if entry_start >= start_sec - 0.5 and entry_end <= end_sec + 0.5:
+                        scene_entries.append(entry)
 
-            if not scene_entries:
-                # Không tìm thấy entries, giữ nguyên
-                scene["scene_id"] = scene_counter
-                validated.append(scene)
-                scene_counter += 1
-                continue
+                if scene_entries:
+                    # Có SRT entries → chia theo entries
+                    sub_scenes = group_srt_into_scenes(
+                        scene_entries,
+                        min_duration=self.min_scene_duration,
+                        max_duration=self.max_scene_duration
+                    )
 
-            # Tính duration thực tế
-            actual_start = scene_entries[0].start_time
-            actual_end = scene_entries[-1].end_time
-            actual_duration = (actual_end - actual_start).total_seconds()
+                    for sub in sub_scenes:
+                        sub_start = format_srt_time(sub["start_time"]) if isinstance(sub["start_time"], timedelta) else sub["start_time"]
+                        sub_end = format_srt_time(sub["end_time"]) if isinstance(sub["end_time"], timedelta) else sub["end_time"]
+                        sub_duration = (sub["end_time"] - sub["start_time"]).total_seconds() if isinstance(sub["start_time"], timedelta) else 5
 
-            if actual_duration <= self.max_scene_duration:
-                # Duration OK, giữ nguyên với timestamps
-                scene["scene_id"] = scene_counter
-                scene["start_time"] = format_srt_time(actual_start)
-                scene["end_time"] = format_srt_time(actual_end)
-                scene["duration_seconds"] = actual_duration
-                scene["srt_start"] = format_srt_time(actual_start)  # Timestamp
-                scene["srt_end"] = format_srt_time(actual_end)      # Timestamp
-                validated.append(scene)
-                scene_counter += 1
-            else:
-                # Duration vượt quá max, cần chia nhỏ
-                self.logger.warning(f"Scene {scene.get('scene_id')} duration={actual_duration:.1f}s > {self.max_scene_duration}s, splitting...")
+                        validated.append({
+                            "scene_id": scene_counter,
+                            "location_id": scene.get("location_id", ""),
+                            "story_beat": scene.get("story_beat", ""),
+                            "start_time": sub_start,
+                            "end_time": sub_end,
+                            "duration_seconds": sub_duration,
+                            "text": sub["text"],
+                            "visual_moment": scene.get("visual_moment", sub["text"]),
+                            "shot_type": scene.get("shot_type", "Medium shot"),
+                            "srt_start": sub_start,
+                            "srt_end": sub_end,
+                        })
+                        scene_counter += 1
+                else:
+                    # Không tìm được entries → chia đều theo thời gian
+                    self.logger.warning(f"No SRT entries found for scene, splitting evenly by time")
+                    num_parts = int(duration / self.max_scene_duration) + 1
+                    part_duration = duration / num_parts
+                    original_text = scene.get("text", "")
 
-                # Sử dụng group_srt_into_scenes để chia theo thời gian
-                sub_scenes = group_srt_into_scenes(
-                    scene_entries,
-                    min_duration=self.min_scene_duration,
-                    max_duration=self.max_scene_duration
-                )
+                    for i in range(num_parts):
+                        part_start_sec = start_sec + (i * part_duration)
+                        part_end_sec = min(start_sec + ((i + 1) * part_duration), end_sec)
 
-                for sub in sub_scenes:
-                    # Timestamps
-                    sub_start = format_srt_time(sub["start_time"]) if isinstance(sub["start_time"], timedelta) else sub["start_time"]
-                    sub_end = format_srt_time(sub["end_time"]) if isinstance(sub["end_time"], timedelta) else sub["end_time"]
+                        # Convert to timestamp string
+                        def sec_to_ts(sec):
+                            h = int(sec // 3600)
+                            m = int((sec % 3600) // 60)
+                            s = sec % 60
+                            return f"{h:02d}:{m:02d}:{s:06.3f}".replace(".", ",")
 
-                    validated.append({
-                        "scene_id": scene_counter,
-                        "story_beat": scene.get("story_beat", ""),
-                        "start_time": sub_start,
-                        "end_time": sub_end,
-                        "duration_seconds": (sub["end_time"] - sub["start_time"]).total_seconds() if isinstance(sub["start_time"], timedelta) else 5,
-                        "text": sub["text"],
-                        "visual_moment": scene.get("visual_moment", sub["text"]),
-                        "shot_type": scene.get("shot_type", "Medium shot"),
-                        "srt_start": sub.get("srt_start", sub_start),  # Timestamp: "00:00:00,000"
-                        "srt_end": sub.get("srt_end", sub_end),        # Timestamp: "00:00:05,340"
-                    })
-                    scene_counter += 1
+                        validated.append({
+                            "scene_id": scene_counter,
+                            "location_id": scene.get("location_id", ""),
+                            "story_beat": scene.get("story_beat", ""),
+                            "start_time": sec_to_ts(part_start_sec),
+                            "end_time": sec_to_ts(part_end_sec),
+                            "duration_seconds": part_end_sec - part_start_sec,
+                            "text": original_text,
+                            "visual_moment": scene.get("visual_moment", original_text),
+                            "shot_type": scene.get("shot_type", "Medium shot"),
+                            "srt_start": sec_to_ts(part_start_sec),
+                            "srt_end": sec_to_ts(part_end_sec),
+                        })
+                        scene_counter += 1
 
         return validated
 
