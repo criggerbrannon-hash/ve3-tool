@@ -1,0 +1,1401 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BG Remover Pro - AI Background Removal & 4K Upscaling</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        :root {
+            --primary: #6366f1;
+            --primary-dark: #4f46e5;
+            --primary-light: #818cf8;
+            --secondary: #ec4899;
+            --accent: #06b6d4;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --bg-dark: #0f0f23;
+            --bg-darker: #080816;
+            --bg-card: rgba(255, 255, 255, 0.03);
+            --bg-card-hover: rgba(255, 255, 255, 0.06);
+            --border: rgba(255, 255, 255, 0.08);
+            --text: #f8fafc;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --glass: rgba(255, 255, 255, 0.05);
+            --glass-border: rgba(255, 255, 255, 0.1);
+            --gradient-1: linear-gradient(135deg, #6366f1 0%, #ec4899 100%);
+            --gradient-2: linear-gradient(135deg, #06b6d4 0%, #6366f1 100%);
+            --gradient-3: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%);
+            --shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            --shadow-glow: 0 0 60px rgba(99, 102, 241, 0.3);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-darker);
+            color: var(--text);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* Animated Background */
+        .bg-animation {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            z-index: -1;
+            overflow: hidden;
+        }
+
+        .bg-animation::before {
+            content: '';
+            position: absolute;
+            width: 150%;
+            height: 150%;
+            top: -25%;
+            left: -25%;
+            background: radial-gradient(circle at 20% 20%, rgba(99, 102, 241, 0.15) 0%, transparent 50%),
+                        radial-gradient(circle at 80% 80%, rgba(236, 72, 153, 0.15) 0%, transparent 50%),
+                        radial-gradient(circle at 50% 50%, rgba(6, 182, 212, 0.1) 0%, transparent 50%);
+            animation: bgFloat 20s ease-in-out infinite;
+        }
+
+        @keyframes bgFloat {
+            0%, 100% { transform: translate(0, 0) rotate(0deg); }
+            33% { transform: translate(2%, 2%) rotate(1deg); }
+            66% { transform: translate(-1%, 1%) rotate(-1deg); }
+        }
+
+        /* Grid Pattern */
+        .grid-pattern {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            z-index: -1;
+            background-image:
+                linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+            background-size: 50px 50px;
+        }
+
+        /* Container */
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        /* Header */
+        header {
+            padding: 30px 0;
+            text-align: center;
+            position: relative;
+        }
+
+        .logo {
+            display: inline-flex;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+
+        .logo-icon {
+            width: 60px;
+            height: 60px;
+            background: var(--gradient-1);
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            box-shadow: var(--shadow-glow);
+            animation: logoPulse 2s ease-in-out infinite;
+        }
+
+        @keyframes logoPulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+
+        .logo h1 {
+            font-size: 2.5rem;
+            font-weight: 800;
+            background: var(--gradient-1);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .tagline {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+            font-weight: 400;
+        }
+
+        .tagline span {
+            color: var(--primary-light);
+            font-weight: 600;
+        }
+
+        /* Main Layout */
+        .main-content {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-top: 20px;
+        }
+
+        @media (max-width: 1024px) {
+            .main-content {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Glass Card */
+        .card {
+            background: var(--bg-card);
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            padding: 30px;
+            transition: all 0.3s ease;
+        }
+
+        .card:hover {
+            background: var(--bg-card-hover);
+            border-color: var(--glass-border);
+            transform: translateY(-2px);
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 25px;
+        }
+
+        .card-icon {
+            width: 45px;
+            height: 45px;
+            background: var(--gradient-2);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+
+        .card-title {
+            font-size: 1.3rem;
+            font-weight: 700;
+        }
+
+        .card-subtitle {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        /* Upload Zone */
+        .upload-zone {
+            border: 2px dashed var(--border);
+            border-radius: 20px;
+            padding: 60px 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .upload-zone::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: var(--gradient-1);
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .upload-zone:hover {
+            border-color: var(--primary);
+            background: rgba(99, 102, 241, 0.05);
+        }
+
+        .upload-zone:hover::before {
+            opacity: 0.05;
+        }
+
+        .upload-zone.drag-over {
+            border-color: var(--primary);
+            background: rgba(99, 102, 241, 0.1);
+            transform: scale(1.02);
+        }
+
+        .upload-zone.drag-over::before {
+            opacity: 0.1;
+        }
+
+        .upload-icon {
+            font-size: 4rem;
+            margin-bottom: 20px;
+            background: var(--gradient-1);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            animation: uploadFloat 3s ease-in-out infinite;
+        }
+
+        @keyframes uploadFloat {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
+        }
+
+        .upload-text {
+            font-size: 1.2rem;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+
+        .upload-hint {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+
+        .upload-hint span {
+            color: var(--primary-light);
+            cursor: pointer;
+        }
+
+        #fileInput {
+            display: none;
+        }
+
+        /* Preview Section */
+        .preview-container {
+            position: relative;
+            border-radius: 16px;
+            overflow: hidden;
+            background: repeating-conic-gradient(#1a1a2e 0% 25%, #252540 0% 50%) 50% / 20px 20px;
+            min-height: 400px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .preview-container img {
+            max-width: 100%;
+            max-height: 500px;
+            object-fit: contain;
+            border-radius: 8px;
+        }
+
+        .preview-placeholder {
+            color: var(--text-muted);
+            text-align: center;
+            padding: 40px;
+        }
+
+        .preview-placeholder i {
+            font-size: 4rem;
+            margin-bottom: 15px;
+            opacity: 0.3;
+        }
+
+        /* Compare Slider */
+        .compare-container {
+            position: relative;
+            overflow: hidden;
+            border-radius: 16px;
+        }
+
+        .compare-slider {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 4px;
+            background: var(--primary);
+            cursor: ew-resize;
+            z-index: 10;
+            left: 50%;
+        }
+
+        .compare-slider::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 40px;
+            height: 40px;
+            background: var(--primary);
+            border-radius: 50%;
+            box-shadow: var(--shadow-glow);
+        }
+
+        .compare-slider::after {
+            content: '\f0ec';
+            font-family: 'Font Awesome 6 Free';
+            font-weight: 900;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 14px;
+        }
+
+        /* Options Panel */
+        .options-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+
+        .option-card {
+            background: var(--glass);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 20px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .option-card:hover {
+            border-color: var(--primary);
+            background: rgba(99, 102, 241, 0.1);
+        }
+
+        .option-card.active {
+            border-color: var(--primary);
+            background: rgba(99, 102, 241, 0.15);
+            box-shadow: 0 0 20px rgba(99, 102, 241, 0.2);
+        }
+
+        .option-icon {
+            font-size: 1.5rem;
+            margin-bottom: 10px;
+        }
+
+        .option-title {
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .option-desc {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        /* Upscale Options */
+        .upscale-options {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .upscale-btn {
+            flex: 1;
+            padding: 15px;
+            background: var(--glass);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            color: var(--text);
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .upscale-btn:hover {
+            border-color: var(--primary);
+        }
+
+        .upscale-btn.active {
+            background: var(--gradient-1);
+            border-color: transparent;
+            box-shadow: var(--shadow-glow);
+        }
+
+        .upscale-btn span {
+            display: block;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-top: 5px;
+            font-weight: 400;
+        }
+
+        .upscale-btn.active span {
+            color: rgba(255, 255, 255, 0.8);
+        }
+
+        /* Background Colors */
+        .bg-colors {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+        }
+
+        .bg-color {
+            width: 45px;
+            height: 45px;
+            border-radius: 12px;
+            cursor: pointer;
+            border: 3px solid transparent;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .bg-color:hover {
+            transform: scale(1.1);
+        }
+
+        .bg-color.active {
+            border-color: var(--primary);
+            box-shadow: 0 0 15px rgba(99, 102, 241, 0.5);
+        }
+
+        .bg-color.transparent {
+            background: repeating-conic-gradient(#333 0% 25%, #666 0% 50%) 50% / 10px 10px;
+        }
+
+        .bg-color.custom {
+            background: var(--gradient-1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.2rem;
+        }
+
+        /* Process Button */
+        .process-btn {
+            width: 100%;
+            padding: 20px 40px;
+            background: var(--gradient-1);
+            border: none;
+            border-radius: 16px;
+            color: white;
+            font-size: 1.2rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+        }
+
+        .process-btn::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+            transition: left 0.5s ease;
+        }
+
+        .process-btn:hover::before {
+            left: 100%;
+        }
+
+        .process-btn:hover {
+            transform: translateY(-3px);
+            box-shadow: var(--shadow-glow);
+        }
+
+        .process-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .process-btn:disabled:hover::before {
+            left: -100%;
+        }
+
+        /* Progress Bar */
+        .progress-container {
+            margin-top: 20px;
+            display: none;
+        }
+
+        .progress-container.active {
+            display: block;
+        }
+
+        .progress-bar {
+            height: 8px;
+            background: var(--glass);
+            border-radius: 10px;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: var(--gradient-1);
+            border-radius: 10px;
+            transition: width 0.3s ease;
+            position: relative;
+        }
+
+        .progress-fill::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+            animation: progressShine 1.5s infinite;
+        }
+
+        @keyframes progressShine {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
+
+        .progress-text {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+        }
+
+        /* Action Buttons */
+        .action-buttons {
+            display: flex;
+            gap: 12px;
+            margin-top: 20px;
+        }
+
+        .action-btn {
+            flex: 1;
+            padding: 15px 25px;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            background: var(--glass);
+            color: var(--text);
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .action-btn:hover {
+            border-color: var(--primary);
+            background: rgba(99, 102, 241, 0.1);
+        }
+
+        .action-btn.primary {
+            background: var(--gradient-2);
+            border: none;
+        }
+
+        .action-btn.primary:hover {
+            box-shadow: 0 0 30px rgba(6, 182, 212, 0.3);
+        }
+
+        /* Result Info */
+        .result-info {
+            display: flex;
+            gap: 20px;
+            margin-top: 20px;
+            padding: 20px;
+            background: var(--glass);
+            border-radius: 14px;
+        }
+
+        .info-item {
+            flex: 1;
+            text-align: center;
+        }
+
+        .info-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            background: var(--gradient-1);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .info-label {
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            margin-top: 5px;
+        }
+
+        /* Batch Mode */
+        .batch-toggle {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 15px;
+            background: var(--glass);
+            border-radius: 12px;
+            margin-bottom: 20px;
+            cursor: pointer;
+        }
+
+        .toggle-switch {
+            width: 50px;
+            height: 26px;
+            background: var(--border);
+            border-radius: 13px;
+            position: relative;
+            transition: all 0.3s ease;
+        }
+
+        .toggle-switch::after {
+            content: '';
+            position: absolute;
+            width: 22px;
+            height: 22px;
+            background: white;
+            border-radius: 50%;
+            top: 2px;
+            left: 2px;
+            transition: all 0.3s ease;
+        }
+
+        .batch-toggle.active .toggle-switch {
+            background: var(--primary);
+        }
+
+        .batch-toggle.active .toggle-switch::after {
+            left: 26px;
+        }
+
+        /* Footer */
+        footer {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--text-muted);
+        }
+
+        footer a {
+            color: var(--primary-light);
+            text-decoration: none;
+        }
+
+        /* Toast Notifications */
+        .toast-container {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .toast {
+            padding: 16px 24px;
+            background: var(--bg-card);
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            color: var(--text);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            animation: toastIn 0.3s ease;
+            min-width: 300px;
+        }
+
+        @keyframes toastIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        .toast.success { border-left: 4px solid var(--success); }
+        .toast.error { border-left: 4px solid var(--error); }
+        .toast.info { border-left: 4px solid var(--primary); }
+
+        .toast i {
+            font-size: 1.2rem;
+        }
+
+        .toast.success i { color: var(--success); }
+        .toast.error i { color: var(--error); }
+        .toast.info i { color: var(--primary); }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .logo h1 {
+                font-size: 1.8rem;
+            }
+
+            .options-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .upscale-options {
+                flex-wrap: wrap;
+            }
+
+            .upscale-btn {
+                flex: 1 1 45%;
+            }
+        }
+
+        /* Loading Spinner */
+        .spinner {
+            width: 24px;
+            height: 24px;
+            border: 3px solid rgba(255,255,255,0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Feature Tags */
+        .feature-tags {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 15px;
+            justify-content: center;
+        }
+
+        .feature-tag {
+            padding: 8px 16px;
+            background: var(--glass);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .feature-tag i {
+            color: var(--primary-light);
+        }
+
+        /* Checkbox Custom */
+        .checkbox-custom {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            cursor: pointer;
+            padding: 12px 16px;
+            background: var(--glass);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            margin-bottom: 10px;
+            transition: all 0.3s ease;
+        }
+
+        .checkbox-custom:hover {
+            border-color: var(--primary);
+        }
+
+        .checkbox-custom input {
+            display: none;
+        }
+
+        .checkbox-box {
+            width: 22px;
+            height: 22px;
+            border: 2px solid var(--border);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+        }
+
+        .checkbox-custom input:checked + .checkbox-box {
+            background: var(--primary);
+            border-color: var(--primary);
+        }
+
+        .checkbox-custom input:checked + .checkbox-box::after {
+            content: '\f00c';
+            font-family: 'Font Awesome 6 Free';
+            font-weight: 900;
+            color: white;
+            font-size: 12px;
+        }
+
+        /* Label */
+        .section-label {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .section-label i {
+            color: var(--primary-light);
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-animation"></div>
+    <div class="grid-pattern"></div>
+
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <div class="logo">
+                <div class="logo-icon">
+                    <i class="fas fa-wand-magic-sparkles"></i>
+                </div>
+                <h1>BG Remover Pro</h1>
+            </div>
+            <p class="tagline">AI-Powered Background Removal & <span>4K Upscaling</span></p>
+            <div class="feature-tags">
+                <div class="feature-tag">
+                    <i class="fas fa-brain"></i>
+                    AI Powered
+                </div>
+                <div class="feature-tag">
+                    <i class="fas fa-bolt"></i>
+                    Lightning Fast
+                </div>
+                <div class="feature-tag">
+                    <i class="fas fa-expand"></i>
+                    4K Upscale
+                </div>
+                <div class="feature-tag">
+                    <i class="fas fa-layer-group"></i>
+                    Batch Mode
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Left Panel - Upload & Options -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon">
+                        <i class="fas fa-upload"></i>
+                    </div>
+                    <div>
+                        <div class="card-title">Upload Image</div>
+                        <div class="card-subtitle">Drag & drop or click to select</div>
+                    </div>
+                </div>
+
+                <!-- Upload Zone -->
+                <div class="upload-zone" id="uploadZone">
+                    <div class="upload-icon">
+                        <i class="fas fa-cloud-upload-alt"></i>
+                    </div>
+                    <div class="upload-text">Drop your image here</div>
+                    <div class="upload-hint">or <span>browse</span> to choose a file</div>
+                    <div class="upload-hint" style="margin-top: 10px;">
+                        Supports: PNG, JPG, WEBP (Max 50MB)
+                    </div>
+                    <input type="file" id="fileInput" accept="image/*" multiple>
+                </div>
+
+                <!-- Batch Toggle -->
+                <div class="batch-toggle" id="batchToggle">
+                    <div class="toggle-switch"></div>
+                    <div>
+                        <div style="font-weight: 600;">Batch Mode</div>
+                        <div style="font-size: 0.85rem; color: var(--text-muted);">Process multiple images at once</div>
+                    </div>
+                </div>
+
+                <!-- Options -->
+                <div class="section-label">
+                    <i class="fas fa-sliders"></i>
+                    Processing Options
+                </div>
+
+                <label class="checkbox-custom">
+                    <input type="checkbox" id="removeBg" checked>
+                    <div class="checkbox-box"></div>
+                    <div>
+                        <div style="font-weight: 500;">Remove Background</div>
+                        <div style="font-size: 0.8rem; color: var(--text-muted);">AI-powered background removal</div>
+                    </div>
+                </label>
+
+                <label class="checkbox-custom">
+                    <input type="checkbox" id="alphaMatting">
+                    <div class="checkbox-box"></div>
+                    <div>
+                        <div style="font-weight: 500;">Alpha Matting</div>
+                        <div style="font-size: 0.8rem; color: var(--text-muted);">Better edge detection for hair/fur</div>
+                    </div>
+                </label>
+
+                <label class="checkbox-custom">
+                    <input type="checkbox" id="autoCrop">
+                    <div class="checkbox-box"></div>
+                    <div>
+                        <div style="font-weight: 500;">Auto Crop</div>
+                        <div style="font-size: 0.8rem; color: var(--text-muted);">Automatically crop to content</div>
+                    </div>
+                </label>
+
+                <!-- Upscale Options -->
+                <div class="section-label" style="margin-top: 20px;">
+                    <i class="fas fa-expand-arrows-alt"></i>
+                    Upscale Resolution
+                </div>
+                <div class="upscale-options">
+                    <button class="upscale-btn active" data-scale="1">
+                        Original
+                        <span>No upscale</span>
+                    </button>
+                    <button class="upscale-btn" data-scale="2">
+                        2x
+                        <span>HD Quality</span>
+                    </button>
+                    <button class="upscale-btn" data-scale="4">
+                        4x
+                        <span>4K Ultra HD</span>
+                    </button>
+                </div>
+
+                <!-- Background Color -->
+                <div class="section-label">
+                    <i class="fas fa-palette"></i>
+                    Background Color (Optional)
+                </div>
+                <div class="bg-colors">
+                    <div class="bg-color transparent active" data-color="" title="Transparent"></div>
+                    <div class="bg-color" data-color="#ffffff" style="background: #ffffff" title="White"></div>
+                    <div class="bg-color" data-color="#000000" style="background: #000000" title="Black"></div>
+                    <div class="bg-color" data-color="#ff0000" style="background: #ff0000" title="Red"></div>
+                    <div class="bg-color" data-color="#00ff00" style="background: #00ff00" title="Green"></div>
+                    <div class="bg-color" data-color="#0000ff" style="background: #0000ff" title="Blue"></div>
+                    <div class="bg-color" data-color="#ffff00" style="background: #ffff00" title="Yellow"></div>
+                    <div class="bg-color" data-color="#ff00ff" style="background: #ff00ff" title="Magenta"></div>
+                    <div class="bg-color" data-color="#00ffff" style="background: #00ffff" title="Cyan"></div>
+                    <div class="bg-color custom" title="Custom Color">
+                        <i class="fas fa-plus"></i>
+                        <input type="color" id="customColor" style="opacity: 0; position: absolute; cursor: pointer;">
+                    </div>
+                </div>
+
+                <!-- Process Button -->
+                <button class="process-btn" id="processBtn" disabled>
+                    <i class="fas fa-magic"></i>
+                    <span>Process Image</span>
+                </button>
+
+                <!-- Progress -->
+                <div class="progress-container" id="progressContainer">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+                    </div>
+                    <div class="progress-text">
+                        <span id="progressStatus">Processing...</span>
+                        <span id="progressPercent">0%</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Panel - Preview -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-icon" style="background: var(--gradient-3);">
+                        <i class="fas fa-image"></i>
+                    </div>
+                    <div>
+                        <div class="card-title">Preview</div>
+                        <div class="card-subtitle">Before & After comparison</div>
+                    </div>
+                </div>
+
+                <!-- Preview Area -->
+                <div class="preview-container" id="previewContainer">
+                    <div class="preview-placeholder">
+                        <i class="fas fa-image"></i>
+                        <div>Upload an image to preview</div>
+                    </div>
+                </div>
+
+                <!-- Result Info -->
+                <div class="result-info" id="resultInfo" style="display: none;">
+                    <div class="info-item">
+                        <div class="info-value" id="resultWidth">-</div>
+                        <div class="info-label">Width (px)</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-value" id="resultHeight">-</div>
+                        <div class="info-label">Height (px)</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-value" id="resultFormat">-</div>
+                        <div class="info-label">Format</div>
+                    </div>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="action-buttons" id="actionButtons" style="display: none;">
+                    <button class="action-btn" id="downloadBtn">
+                        <i class="fas fa-download"></i>
+                        Download
+                    </button>
+                    <button class="action-btn" id="copyBtn">
+                        <i class="fas fa-copy"></i>
+                        Copy
+                    </button>
+                    <button class="action-btn primary" id="newImageBtn">
+                        <i class="fas fa-plus"></i>
+                        New Image
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <footer>
+            <p>Made with <i class="fas fa-heart" style="color: var(--secondary);"></i> by VE3 Team</p>
+            <p style="margin-top: 8px; font-size: 0.85rem;">Powered by AI - Rembg & Real-ESRGAN</p>
+        </footer>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script>
+        // ==================== STATE ====================
+        const state = {
+            selectedFile: null,
+            selectedFiles: [],
+            batchMode: false,
+            upscale: 1,
+            bgColor: '',
+            processing: false,
+            resultImage: null
+        };
+
+        // ==================== ELEMENTS ====================
+        const elements = {
+            uploadZone: document.getElementById('uploadZone'),
+            fileInput: document.getElementById('fileInput'),
+            processBtn: document.getElementById('processBtn'),
+            progressContainer: document.getElementById('progressContainer'),
+            progressFill: document.getElementById('progressFill'),
+            progressStatus: document.getElementById('progressStatus'),
+            progressPercent: document.getElementById('progressPercent'),
+            previewContainer: document.getElementById('previewContainer'),
+            resultInfo: document.getElementById('resultInfo'),
+            actionButtons: document.getElementById('actionButtons'),
+            batchToggle: document.getElementById('batchToggle'),
+            removeBg: document.getElementById('removeBg'),
+            alphaMatting: document.getElementById('alphaMatting'),
+            autoCrop: document.getElementById('autoCrop'),
+            customColor: document.getElementById('customColor')
+        };
+
+        // ==================== WEBSOCKET ====================
+        let socket;
+        try {
+            socket = io();
+            socket.on('connect', () => console.log('WebSocket connected'));
+            socket.on('progress', handleProgress);
+        } catch (e) {
+            console.log('WebSocket not available, using polling');
+        }
+
+        // ==================== EVENT LISTENERS ====================
+
+        // Upload Zone
+        elements.uploadZone.addEventListener('click', () => elements.fileInput.click());
+        elements.uploadZone.addEventListener('dragover', handleDragOver);
+        elements.uploadZone.addEventListener('dragleave', handleDragLeave);
+        elements.uploadZone.addEventListener('drop', handleDrop);
+        elements.fileInput.addEventListener('change', handleFileSelect);
+
+        // Batch Toggle
+        elements.batchToggle.addEventListener('click', () => {
+            state.batchMode = !state.batchMode;
+            elements.batchToggle.classList.toggle('active', state.batchMode);
+            elements.fileInput.multiple = state.batchMode;
+        });
+
+        // Upscale Buttons
+        document.querySelectorAll('.upscale-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.upscale-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                state.upscale = parseInt(btn.dataset.scale);
+            });
+        });
+
+        // Background Colors
+        document.querySelectorAll('.bg-color').forEach(color => {
+            color.addEventListener('click', () => {
+                if (color.classList.contains('custom')) {
+                    elements.customColor.click();
+                    return;
+                }
+                document.querySelectorAll('.bg-color').forEach(c => c.classList.remove('active'));
+                color.classList.add('active');
+                state.bgColor = color.dataset.color;
+            });
+        });
+
+        elements.customColor.addEventListener('input', (e) => {
+            state.bgColor = e.target.value;
+            document.querySelectorAll('.bg-color').forEach(c => c.classList.remove('active'));
+            e.target.parentElement.classList.add('active');
+            e.target.parentElement.style.background = e.target.value;
+        });
+
+        // Process Button
+        elements.processBtn.addEventListener('click', processImage);
+
+        // Action Buttons
+        document.getElementById('downloadBtn').addEventListener('click', downloadImage);
+        document.getElementById('copyBtn').addEventListener('click', copyImage);
+        document.getElementById('newImageBtn').addEventListener('click', resetUI);
+
+        // ==================== HANDLERS ====================
+
+        function handleDragOver(e) {
+            e.preventDefault();
+            elements.uploadZone.classList.add('drag-over');
+        }
+
+        function handleDragLeave(e) {
+            e.preventDefault();
+            elements.uploadZone.classList.remove('drag-over');
+        }
+
+        function handleDrop(e) {
+            e.preventDefault();
+            elements.uploadZone.classList.remove('drag-over');
+            const files = e.dataTransfer.files;
+            if (files.length) {
+                handleFiles(files);
+            }
+        }
+
+        function handleFileSelect(e) {
+            const files = e.target.files;
+            if (files.length) {
+                handleFiles(files);
+            }
+        }
+
+        function handleFiles(files) {
+            if (state.batchMode) {
+                state.selectedFiles = Array.from(files);
+                showToast(`${files.length} images selected`, 'info');
+                elements.processBtn.disabled = false;
+                elements.processBtn.innerHTML = `<i class="fas fa-magic"></i><span>Process ${files.length} Images</span>`;
+            } else {
+                state.selectedFile = files[0];
+                previewImage(files[0]);
+                elements.processBtn.disabled = false;
+                elements.processBtn.innerHTML = '<i class="fas fa-magic"></i><span>Process Image</span>';
+            }
+        }
+
+        function previewImage(file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                elements.previewContainer.innerHTML = `<img src="${e.target.result}" alt="Preview">`;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        async function processImage() {
+            if (state.processing) return;
+            if (state.batchMode && state.selectedFiles.length === 0) return;
+            if (!state.batchMode && !state.selectedFile) return;
+
+            state.processing = true;
+            elements.processBtn.disabled = true;
+            elements.processBtn.innerHTML = '<div class="spinner"></div><span>Processing...</span>';
+            elements.progressContainer.classList.add('active');
+            updateProgress(0, 'Starting...');
+
+            try {
+                const formData = new FormData();
+
+                if (state.batchMode) {
+                    state.selectedFiles.forEach(file => formData.append('images', file));
+                } else {
+                    formData.append('image', state.selectedFile);
+                }
+
+                formData.append('remove_bg', elements.removeBg.checked);
+                formData.append('upscale', state.upscale);
+                formData.append('alpha_matting', elements.alphaMatting.checked);
+                formData.append('auto_crop', elements.autoCrop.checked);
+                if (state.bgColor) {
+                    formData.append('bg_color', state.bgColor);
+                }
+
+                const endpoint = state.batchMode ? '/api/batch' : '/api/process';
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    if (state.batchMode) {
+                        showToast(`Processed ${result.succeeded}/${result.total} images`, 'success');
+                        // Handle batch results...
+                    } else {
+                        state.resultImage = result.image;
+                        showResult(result);
+                        showToast('Image processed successfully!', 'success');
+                    }
+                } else {
+                    throw new Error(result.error);
+                }
+
+            } catch (error) {
+                console.error('Processing error:', error);
+                showToast(error.message || 'Processing failed', 'error');
+            } finally {
+                state.processing = false;
+                elements.processBtn.disabled = false;
+                elements.processBtn.innerHTML = '<i class="fas fa-magic"></i><span>Process Image</span>';
+                elements.progressContainer.classList.remove('active');
+            }
+        }
+
+        function handleProgress(data) {
+            updateProgress(data.progress, data.message);
+        }
+
+        function updateProgress(percent, status) {
+            elements.progressFill.style.width = `${percent}%`;
+            elements.progressPercent.textContent = `${percent}%`;
+            if (status) {
+                elements.progressStatus.textContent = status;
+            }
+        }
+
+        function showResult(result) {
+            elements.previewContainer.innerHTML = `<img src="${result.image}" alt="Result">`;
+
+            document.getElementById('resultWidth').textContent = result.width;
+            document.getElementById('resultHeight').textContent = result.height;
+            document.getElementById('resultFormat').textContent = result.has_transparency ? 'PNG' : 'JPEG';
+
+            elements.resultInfo.style.display = 'flex';
+            elements.actionButtons.style.display = 'flex';
+        }
+
+        function downloadImage() {
+            if (!state.resultImage) return;
+
+            const link = document.createElement('a');
+            link.href = state.resultImage;
+            link.download = `bg_removed_${Date.now()}.png`;
+            link.click();
+
+            showToast('Image downloaded!', 'success');
+        }
+
+        async function copyImage() {
+            if (!state.resultImage) return;
+
+            try {
+                const response = await fetch(state.resultImage);
+                const blob = await response.blob();
+                await navigator.clipboard.write([
+                    new ClipboardItem({ [blob.type]: blob })
+                ]);
+                showToast('Image copied to clipboard!', 'success');
+            } catch (error) {
+                showToast('Failed to copy image', 'error');
+            }
+        }
+
+        function resetUI() {
+            state.selectedFile = null;
+            state.selectedFiles = [];
+            state.resultImage = null;
+
+            elements.fileInput.value = '';
+            elements.previewContainer.innerHTML = `
+                <div class="preview-placeholder">
+                    <i class="fas fa-image"></i>
+                    <div>Upload an image to preview</div>
+                </div>
+            `;
+            elements.resultInfo.style.display = 'none';
+            elements.actionButtons.style.display = 'none';
+            elements.processBtn.disabled = true;
+            elements.processBtn.innerHTML = '<i class="fas fa-magic"></i><span>Process Image</span>';
+        }
+
+        function showToast(message, type = 'info') {
+            const container = document.getElementById('toastContainer');
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+
+            const icons = {
+                success: 'fa-check-circle',
+                error: 'fa-times-circle',
+                info: 'fa-info-circle'
+            };
+
+            toast.innerHTML = `
+                <i class="fas ${icons[type]}"></i>
+                <span>${message}</span>
+            `;
+
+            container.appendChild(toast);
+
+            setTimeout(() => {
+                toast.style.animation = 'toastIn 0.3s ease reverse';
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+
+        // ==================== INIT ====================
+        console.log('BG Remover Pro initialized');
+    </script>
+</body>
+</html>
