@@ -238,8 +238,8 @@ class Scene:
             start_time=str(data.get("start_time", "")),
             end_time=str(data.get("end_time", "")),
             duration=float(duration_val),
-            srt_start=int(data.get("srt_start", 0) or 0),
-            srt_end=int(data.get("srt_end", 0) or 0),
+            srt_start=str(data.get("srt_start", "") or ""),  # Timestamp: "00:00:00,000"
+            srt_end=str(data.get("srt_end", "") or ""),      # Timestamp: "00:00:05,340"
             srt_text=str(data.get("srt_text", "")),
             img_prompt=str(data.get("img_prompt", "")),
             video_prompt=str(data.get("video_prompt", "")),
@@ -620,3 +620,122 @@ class PromptWorkbook:
             "videos_done": sum(1 for s in scenes if s.status_vid == "done"),
             "videos_error": sum(1 for s in scenes if s.status_vid == "error"),
         }
+
+    # ========================================================================
+    # EXPORT METHODS - TXT & SRT
+    # ========================================================================
+
+    def export_scenes_txt(self, output_path: Path) -> bool:
+        """
+        Xuất danh sách scenes ra file TXT.
+
+        Format:
+        [Scene 1] 00:00:00,000 - 00:00:05,340
+        Prompt: A man walking in the park...
+        Text: Đây là nội dung thoại...
+        ---
+
+        Args:
+            output_path: Đường dẫn file TXT output
+
+        Returns:
+            True nếu thành công
+        """
+        scenes = self.get_scenes()
+        if not scenes:
+            self.logger.warning("No scenes to export")
+            return False
+
+        lines = []
+        lines.append("=" * 60)
+        lines.append("DANH SÁCH PHÂN CẢNH - SCENE LIST")
+        lines.append(f"Tổng: {len(scenes)} scenes")
+        lines.append("=" * 60)
+        lines.append("")
+
+        for scene in scenes:
+            # Scene header với timestamp
+            start = scene.srt_start or scene.start_time or "00:00:00,000"
+            end = scene.srt_end or scene.end_time or "00:00:00,000"
+            duration = f"{scene.duration:.1f}s" if scene.duration else ""
+
+            lines.append(f"[Scene {scene.scene_id}] {start} - {end} ({duration})")
+            lines.append("-" * 40)
+
+            # Prompt
+            if scene.img_prompt:
+                lines.append(f"Prompt: {scene.img_prompt[:200]}...")
+
+            # SRT text (thoại)
+            if scene.srt_text:
+                lines.append(f"Text: {scene.srt_text}")
+
+            # Image path if exists
+            if scene.img_path:
+                lines.append(f"Image: {scene.img_path}")
+
+            lines.append("")
+            lines.append("---")
+            lines.append("")
+
+        # Write to file
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("\n".join(lines), encoding="utf-8")
+
+        self.logger.info(f"Exported {len(scenes)} scenes to {output_path}")
+        return True
+
+    def export_scenes_srt(self, output_path: Path) -> bool:
+        """
+        Xuất scenes ra file SRT với thời gian để edit video.
+
+        Format SRT chuẩn:
+        1
+        00:00:00,000 --> 00:00:05,340
+        [Scene 1] Prompt preview...
+
+        Args:
+            output_path: Đường dẫn file SRT output
+
+        Returns:
+            True nếu thành công
+        """
+        scenes = self.get_scenes()
+        if not scenes:
+            self.logger.warning("No scenes to export SRT")
+            return False
+
+        lines = []
+
+        for i, scene in enumerate(scenes, 1):
+            # SRT index
+            lines.append(str(i))
+
+            # Timestamp line
+            start = scene.srt_start or scene.start_time or "00:00:00,000"
+            end = scene.srt_end or scene.end_time or "00:00:00,000"
+
+            # Đảm bảo format đúng SRT (có dấu phẩy cho milliseconds)
+            if "," not in start:
+                start = start.replace(".", ",") if "." in start else start + ",000"
+            if "," not in end:
+                end = end.replace(".", ",") if "." in end else end + ",000"
+
+            lines.append(f"{start} --> {end}")
+
+            # Content: Scene ID + preview prompt
+            prompt_preview = (scene.img_prompt or "")[:80]
+            if len(scene.img_prompt or "") > 80:
+                prompt_preview += "..."
+
+            lines.append(f"[Scene {scene.scene_id}] {prompt_preview}")
+            lines.append("")  # Blank line between entries
+
+        # Write to file
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("\n".join(lines), encoding="utf-8")
+
+        self.logger.info(f"Exported {len(scenes)} scenes to SRT: {output_path}")
+        return True

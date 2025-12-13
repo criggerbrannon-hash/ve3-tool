@@ -1073,7 +1073,32 @@ class SmartEngine:
         else:
             self.log("TAT CA ANH DA HOAN THANH!", "OK")
 
+        # === 6. EXPORT TXT & SRT ===
+        self.log("[STEP 6] Xuat TXT & SRT...")
+        self._export_scenes(excel_path, proj_dir, name)
+
         return results
+
+    def _export_scenes(self, excel_path: Path, proj_dir: Path, name: str) -> None:
+        """Export scenes ra TXT va SRT de ho tro video editing."""
+        try:
+            from modules.excel_manager import PromptWorkbook
+
+            wb = PromptWorkbook(excel_path)
+            wb.load_or_create()
+
+            # Export TXT - danh sach phan canh
+            txt_path = proj_dir / f"{name}_scenes.txt"
+            if wb.export_scenes_txt(txt_path):
+                self.log(f"  -> TXT: {txt_path.name}", "OK")
+
+            # Export SRT - thoi gian phan canh
+            srt_output_path = proj_dir / f"{name}_scenes.srt"
+            if wb.export_scenes_srt(srt_output_path):
+                self.log(f"  -> SRT: {srt_output_path.name}", "OK")
+
+        except Exception as e:
+            self.log(f"  Export error: {e}", "WARN")
 
     def _load_prompts(self, excel_path: Path, proj_dir: Path) -> List[Dict]:
         """Load prompts tu Excel - doc TAT CA sheets."""
