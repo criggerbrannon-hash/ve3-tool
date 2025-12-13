@@ -391,6 +391,12 @@ class UnixVoiceToVideo:
         ttk.Label(header, text="🎬 Uni-x", style='Title.TLabel').pack(anchor=tk.W)
         ttk.Label(header, text="Voice → Video (1 Click)", style='Subtitle.TLabel').pack(anchor=tk.W)
 
+        # Version info - visible in UI
+        if GIT_INFO:
+            version_text = f"v{self.VERSION} • {GIT_INFO['date']} ({GIT_INFO['hash']})"
+            ttk.Label(header, text=version_text, foreground=self.COLORS['text_muted'],
+                     font=('Segoe UI', 8)).pack(anchor=tk.W, pady=(2, 0))
+
         # === 1. INPUT ===
         input_frame = ttk.LabelFrame(scrollable_frame, text=" 📁 Đầu vào ", padding=10)
         input_frame.pack(fill=tk.X, pady=(0, 10), padx=5)
