@@ -47,6 +47,32 @@ CONFIG_DIR = Path(os.environ.get('VE3_CONFIG_DIR', ROOT_DIR / "config"))
 PROJECTS_DIR = Path(os.environ.get('VE3_PROJECTS_DIR', ROOT_DIR / "PROJECTS"))
 
 
+def get_git_info():
+    """Get git commit info: hash, date, message."""
+    import subprocess
+    git_dir = ROOT_DIR / ".git"
+    if not git_dir.exists():
+        return None
+
+    try:
+        # Get last commit info: hash, date, message
+        result = subprocess.run(
+            ["git", "log", "-1", "--format=%h|%ci|%s"],
+            cwd=ROOT_DIR, capture_output=True, text=True, timeout=10
+        )
+        if result.returncode == 0:
+            parts = result.stdout.strip().split("|")
+            if len(parts) >= 3:
+                return {
+                    "hash": parts[0],
+                    "date": parts[1][:16],  # "2024-12-13 21:00"
+                    "message": parts[2][:50]
+                }
+    except:
+        pass
+    return None
+
+
 def auto_update_from_git():
     """Auto pull latest code from git if available."""
     import subprocess
@@ -82,10 +108,15 @@ def auto_update_from_git():
 
 # Auto-update on startup
 _update_ok, _update_msg = auto_update_from_git()
+GIT_INFO = get_git_info()  # Store for GUI display
+
 if _update_ok:
     print(f"[Auto-Update] {_update_msg}")
 else:
     print(f"[Auto-Update] Skip: {_update_msg}")
+
+if GIT_INFO:
+    print(f"[Version] {GIT_INFO['hash']} - {GIT_INFO['date']} - {GIT_INFO['message']}")
 
 try:
     from PIL import Image, ImageTk
@@ -119,7 +150,11 @@ class UnixVoiceToVideo:
 
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title(self.APP_NAME)
+        # Title with version and last update time
+        title = self.APP_NAME
+        if GIT_INFO:
+            title += f"  |  Updated: {GIT_INFO['date']}  ({GIT_INFO['hash']})"
+        self.root.title(title)
         self.root.geometry("1280x800")
         self.root.minsize(1100, 700)
 
