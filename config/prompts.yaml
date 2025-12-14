@@ -461,18 +461,25 @@ directors_treatment: |
 # =============================================================================
 
 generate_scenes: |
-  Ban la AI Production Director. Tao visual prompt cho tung scene, SU DUNG ANH THAM CHIEU (reference images).
+  Ban la AI Film Director. DICH loi ke thanh HINH ANH ke chuyen (visual storytelling).
 
-  ## NGUYEN TAC BAT BUOC:
+  ## NGUYEN TAC SO 1: DICH, KHONG XOA!
 
-  ### 0. CRITICAL - KHONG DUOC DUNG TEXT/DIALOGUE TRONG IMG_PROMPT:
-  - img_prompt CHI MO TA HINH ANH (visual description ONLY!)
-  - TUYET DOI KHONG dua dialogue, narration, subtitle vao img_prompt
-  - Neu scene text la "By the time I was 28 years old..." -> KHONG DUOC copy vao prompt!
-  - Chi mo ta NGUOI + HANH DONG + BOI CANH + ANH SANG
+  Nguoi ke NOAN cau chuyen. Ban phai TAO HINH ANH THE HIEN cau chuyen do!
+  KHONG chi mo ta "nguoi dung" - phai CHO THAY noi dung cau chuyen!
 
-  SAI (co text): "Man standing. By the time I was 28 years old I had saved money..."
-  DUNG (chi visual): "30-year-old man standing on empty plot of land, hopeful expression, looking at horizon, sunny day"
+  ### VI DU DICH NARRATION → VISUAL:
+
+  | Loi ke (SRT text) | SAI (generic) | DUNG (ke chuyen) |
+  |-------------------|---------------|------------------|
+  | "Toi 28 tuoi, tiet kiem du tien mua dat" | "Man standing" | "28yo man dung giua manh dat trong, tay cam giay to dat, cuoi tu hao, hoang hon phia sau" |
+  | "Me lam 2 cong viec de nuoi toi" | "Woman working" | "32yo me met moi van hanh may ep ao, mo hoi tran, dong phuc cu nat, dong ho chi 9PM" |
+  | "Toi xay nha bang chinh doi tay minh" | "Man with tools" | "28yo man dong dinh vao khung go, mun cua tren mat, bung dung cu, nha dang xay phia sau" |
+
+  ## NGUYEN TAC SO 2: KHONG DUOC DUNG TEXT/DIALOGUE TRONG IMG_PROMPT!
+  - img_prompt CHI MO TA HINH ANH
+  - TUYET DOI KHONG copy loi ke vao prompt
+  - "By the time I was 28..." → KHONG DUOC! Se tao chu tren anh!
 
   ### 1. SCENE LA HANH DONG, KHONG PHAI PORTRAIT:
   - Nhan vat DANG LAM GI DO - khong phai dung pose
@@ -573,7 +580,23 @@ generate_scenes: |
 # =============================================================================
 
 smart_divide_scenes: |
-  You are an AI Director. Use the DIRECTOR'S TREATMENT to create visual scenes.
+  You are an AI Director creating a FILM from narration. Your job is to TRANSLATE spoken words into VISUAL STORYTELLING.
+
+  ## CRITICAL CONCEPT: NARRATION → VISUAL TRANSLATION
+
+  The narrator SPEAKS the story. You must CREATE the VISUALS that SHOW the story.
+  DO NOT just describe "man standing". SHOW what the narration is ABOUT!
+
+  ### TRANSLATION EXAMPLES:
+
+  | Narration (what narrator says) | BAD Visual (generic) | GOOD Visual (story-telling) |
+  |-------------------------------|---------------------|----------------------------|
+  | "By the time I was 28, I saved enough to buy land" | "Man standing" | "28yo man standing proudly on empty grass lot, holding property deed, hopeful smile, surveying his new land" |
+  | "My mother worked two jobs" | "Woman at work" | "Exhausted 32yo mother in faded work uniform, pressing shirts at dry cleaning machine, sweat on brow, late evening" |
+  | "She would come home smelling like detergent" | "Woman at door" | "Tired mother entering small apartment, 8yo boy running to hug her, her work clothes wrinkled, warm loving embrace" |
+  | "I built the house with my own hands" | "Man with tools" | "Muscular 25yo man hammering wooden beam on house frame, sawdust in hair, proud determined expression, golden hour sunlight" |
+  | "She took me to court for my house" | "Man at courthouse" | "30yo man sitting defeated on courthouse steps, crumpled legal papers in trembling hands, mother visible through courthouse doors behind him" |
+  | "It cost me $72,000 - every penny I had earned" | "Man with money" | "Close-up of calloused working hands counting worn dollar bills, years of savings visible in weathered wallet, bittersweet moment" |
 
   ## DIRECTOR'S TREATMENT (Your Visual Blueprint):
   ---
@@ -591,20 +614,10 @@ smart_divide_scenes: |
   ---
 
   ## YOUR TASK:
-  Map each SRT segment to the appropriate STORY PART from the Director's Treatment.
-  Use the visual_strategy and emotional_tone from that part to guide your scene creation.
-
-  ## MAPPING PROCESS:
-  1. Read each SRT segment
-  2. Identify which STORY PART it belongs to (Hook, Childhood, Building Dream, Betrayal, Resolution)
-  3. Use that part's visual_strategy and emotional_tone
-  4. Create a visual_moment that fits the OVERALL narrative
-
-  ## IMPORTANT - USE THE DIRECTOR'S TREATMENT:
-  - If segment is in "CHILDHOOD MEMORIES" part → Use warm flashback visuals, young mother
-  - If segment is in "BUILDING THE DREAM" part → Use hopeful, construction visuals
-  - If segment is pure narration → Follow visual_guidelines.narration_scenes
-  - If segment is YouTube CTA → Follow visual_guidelines.do_not_illustrate
+  For EACH SRT segment:
+  1. UNDERSTAND what the narration is ABOUT (not just the words)
+  2. CREATE a visual that SHOWS that meaning
+  3. Include SPECIFIC ACTIONS, EMOTIONS, DETAILS
 
   ## SCENE TYPE CLASSIFICATION:
 
@@ -683,48 +696,63 @@ smart_divide_scenes: |
     "scenes": [
       {{
         "scene_id": 1,
+        "srt_text": "My mother took me to court to take away the house I built with my own hands.",
         "scene_type": "FRAME_PRESENT",
         "timeline_note": "Present day, narrator 30yo",
         "location_id": "loc_courthouse",
         "characters_in_scene": ["nvc"],
         "shot_type": "Medium shot",
-        "visual_moment": "30-year-old man sitting on gray courthouse steps, hands trembling while holding thick folder of documents, head bowed, worried expression"
+        "visual_moment": "Devastated 30yo man sitting alone on cold gray courthouse steps, trembling hands clutching crumpled legal documents, head bowed in disbelief, morning light casting long shadow"
       }},
       {{
         "scene_id": 2,
+        "srt_text": "My mother worked two jobs just to keep us fed.",
         "scene_type": "CHILDHOOD_FLASHBACK",
         "timeline_note": "Flashback: narrator 8yo, mother 32yo",
-        "location_id": "loc2",
-        "characters_in_scene": ["nv1_young", "nvc1"],
-        "shot_type": "Wide shot",
-        "visual_moment": "Warm-toned memory: YOUNG blonde mother (32yo) kneeling down to hug 8-year-old boy in small apartment, protective embrace, soft warm lighting"
+        "location_id": "loc_dryclean",
+        "characters_in_scene": ["nv1_young"],
+        "shot_type": "Medium shot",
+        "visual_moment": "Exhausted 32yo blonde mother operating industrial pressing machine, steam rising around her tired face, faded blue work uniform stained with sweat, fluorescent lights harsh overhead, clock showing 9PM"
       }},
       {{
         "scene_id": 3,
-        "scene_type": "ADULT_FLASHBACK",
-        "timeline_note": "Flashback: narrator 28yo",
-        "location_id": "loc_construction",
-        "characters_in_scene": ["nvc"],
-        "shot_type": "Medium shot",
-        "visual_moment": "28-year-old man swinging hammer at wooden house frame, sweat on forehead, determined expression, sunny construction site"
+        "srt_text": "She would come home late at night, her feet swollen from standing all day.",
+        "scene_type": "CHILDHOOD_FLASHBACK",
+        "timeline_note": "Flashback: mother coming home",
+        "location_id": "loc_apartment",
+        "characters_in_scene": ["nv1_young", "nvc1"],
+        "shot_type": "Wide shot",
+        "visual_moment": "Worn-out 32yo mother limping through apartment door at midnight, 8yo boy in pajamas running to embrace her, her swollen feet visible as she kicks off work shoes, warm tungsten light from single lamp"
       }},
       {{
         "scene_id": 4,
+        "srt_text": "By the time I was 28, I had saved enough to buy a small piece of land.",
+        "scene_type": "ADULT_FLASHBACK",
+        "timeline_note": "Flashback: narrator 28yo buying land",
+        "location_id": "loc_land",
+        "characters_in_scene": ["nvc_young"],
+        "shot_type": "Wide shot",
+        "visual_moment": "Proud 28yo man standing in center of empty grass lot on suburban outskirts, holding property deed document in raised hand, huge smile of accomplishment, golden sunset behind him, FOR SALE sign now has SOLD sticker"
+      }},
+      {{
+        "scene_id": 5,
+        "srt_text": "I built the house with my own two hands. Every nail, every board.",
+        "scene_type": "ADULT_FLASHBACK",
+        "timeline_note": "Flashback: building the house",
+        "location_id": "loc_construction",
+        "characters_in_scene": ["nvc_young"],
+        "shot_type": "Medium shot",
+        "visual_moment": "Muscular 28yo man driving nail into wooden beam with hammer, sawdust covering his sweaty face, tool belt around waist, half-finished house frame behind him, determination in his eyes, bright sunny day"
+      }},
+      {{
+        "scene_id": 6,
+        "srt_text": "You are everything to me. And I believed her.",
         "scene_type": "EMOTIONAL_BEAT",
         "timeline_note": "Present reflection",
         "location_id": "loc_courthouse",
         "characters_in_scene": ["nvc"],
-        "shot_type": "Close-up",
-        "visual_moment": "Extreme close-up of narrator's face on courthouse steps, eyes distant and glistening, remembering the past"
-      }},
-      {{
-        "scene_id": 5,
-        "scene_type": "YOUTUBE_CTA",
-        "timeline_note": "Meta - breaking fourth wall",
-        "location_id": "loc_courthouse",
-        "characters_in_scene": ["nvc"],
-        "shot_type": "Medium shot",
-        "visual_moment": "Narrator on courthouse steps looking toward camera, speaking directly to audience"
+        "shot_type": "Extreme close-up",
+        "visual_moment": "Extreme close-up of narrator's eyes glistening with tears on courthouse steps, single tear rolling down cheek, distant unfocused gaze of someone lost in painful memory"
       }}
     ]
   }}
@@ -737,14 +765,26 @@ smart_divide_scenes: |
   5. **Don't invent random scenes** - If text is reflective, show reflection, not random action
   6. **YouTube CTAs** - Keep simple, narrator speaking to camera
 
-  ## GOLDEN RULE - visual_moment:
-  7. **visual_moment = ONLY VISUAL DESCRIPTION!**
-     - Describe what we SEE: character + action + location + emotion
-     - NEVER include dialogue, narration, or spoken text!
-     - The SRT text is for subtitles, NOT for visual_moment!
+  ## VISUAL RICHNESS CHECKLIST (Every visual_moment MUST have):
+  - [ ] SPECIFIC ACTION (not just "standing" - what are they DOING?)
+  - [ ] EMOTION (what feeling shows on face/body?)
+  - [ ] DETAILS (props, clothing state, environment details)
+  - [ ] LIGHTING/TIME (morning, evening, harsh fluorescent, warm tungsten)
+  - [ ] STORY CONTEXT (why is this moment important?)
 
-  WRONG: "Man standing. By the time I was 28 years old I had saved enough money..."
-  RIGHT: "30-year-old man standing on empty grass lot, hopeful expression, sunny day, looking toward horizon"
+  BAD: "Man at construction site"
+  GOOD: "Sweaty 28yo man triumphantly placing final roof beam, arms raised in celebration, finished house visible below, sunset golden light, years of hard work finally complete"
+
+  ## GOLDEN RULE - TRANSLATE, DON'T REMOVE:
+  7. **visual_moment = VISUAL TRANSLATION of narration**
+     - READ the narration: "By the time I was 28, I saved enough to buy land"
+     - UNDERSTAND the meaning: Achievement, pride, years of saving paying off
+     - CREATE the visual: "Proud 28yo man holding deed, standing on his new land, huge smile, golden sunset"
+     - NEVER just put text OR generic descriptions!
+
+  WORST: "By the time I was 28 years old I saved money..." (text in prompt = subtitles on image!)
+  BAD: "Man standing on land" (generic, no story)
+  GOOD: "Proud 28yo man holding property deed, standing center of empty lot, tears of joy, American dream achieved"
 
   ## MAPPING GUIDE:
   | Content Type | Scene Type | Visual |

@@ -1864,15 +1864,48 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
             if visual_moment and not self._looks_like_narration(visual_moment):
                 parts.append(visual_moment[:200])
             else:
-                # Create generic visual based on scene_type
+                # Create STORY-AWARE visual based on scene_type and scene text
+                scene_text = scene.get("text", "").lower()
+
                 if scene_type == "CHILDHOOD_FLASHBACK":
-                    parts.append("in a warm nostalgic memory scene, soft warm lighting")
+                    # Analyze scene text for specific childhood visuals
+                    if "work" in scene_text or "job" in scene_text:
+                        parts.append("exhausted young mother in work uniform, late evening, warm nostalgic lighting")
+                    elif "home" in scene_text or "door" in scene_text:
+                        parts.append("tired mother entering small apartment, child waiting, warm embrace, soft tungsten lighting")
+                    elif "bed" in scene_text or "sleep" in scene_text:
+                        parts.append("mother tucking child into bed, small shared bedroom, dim warm bedside lamp")
+                    else:
+                        parts.append("warm childhood memory scene, mother and child together, soft nostalgic golden lighting")
+
                 elif scene_type == "ADULT_FLASHBACK":
-                    parts.append("in a hopeful flashback scene, natural daylight")
+                    # Analyze scene text for specific adult flashback visuals
+                    if "build" in scene_text or "hammer" in scene_text or "nail" in scene_text:
+                        parts.append("man hammering wooden beam on house frame, sawdust on face, determined expression, sunny day")
+                    elif "land" in scene_text or "buy" in scene_text or "save" in scene_text:
+                        parts.append("proud man standing on empty lot holding property deed, hopeful smile, golden sunset")
+                    elif "finish" in scene_text or "complete" in scene_text or "done" in scene_text:
+                        parts.append("man standing proudly in front of finished house, arms crossed, sense of accomplishment")
+                    else:
+                        parts.append("young adult working hard toward his dream, hopeful determined expression, natural daylight")
+
                 elif scene_type == "EMOTIONAL_BEAT":
-                    parts.append("close-up shot, contemplative expression, emotional moment")
+                    # Analyze scene text for emotional context
+                    if "believe" in scene_text or "trust" in scene_text:
+                        parts.append("extreme close-up of eyes glistening with emotion, distant gaze, painful memory")
+                    elif "betray" in scene_text or "court" in scene_text:
+                        parts.append("close-up of face showing shock and disbelief, trembling lip, fighting back tears")
+                    else:
+                        parts.append("close-up contemplative expression, eyes reflecting deep thought, emotional weight visible")
+
                 else:  # FRAME_PRESENT or default
-                    parts.append("in present day setting, natural lighting")
+                    # Analyze scene text for present-day context
+                    if "court" in scene_text or "legal" in scene_text:
+                        parts.append("sitting on courthouse steps, holding legal documents, worried expression, morning light")
+                    elif "house" in scene_text or "home" in scene_text:
+                        parts.append("standing outside house, conflicted expression, life's work at stake")
+                    else:
+                        parts.append("present day, contemplative moment, natural lighting, weight of situation visible")
 
             # Location
             if loc_part:
