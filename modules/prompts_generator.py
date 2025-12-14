@@ -1402,6 +1402,13 @@ class PromptGenerator:
                 scene_type = ai_data.get("scene_type", "PRESENT_ACTION")
                 age_note = ai_data.get("age_note", "")
 
+                # Ưu tiên img_prompt từ AI, sau đó visual_moment, KHÔNG dùng scene text làm fallback!
+                ai_img_prompt = ai_data.get("img_prompt", "")
+                ai_visual_moment = ai_data.get("visual_moment", "")
+
+                # KHÔNG DÙNG scene["text"] làm fallback - sẽ gây narration trong prompt!
+                final_visual = ai_img_prompt or ai_visual_moment or ""
+
                 final_scenes.append({
                     "scene_id": scene_id,
                     "scene_type": scene_type,  # NEW: Type of scene
@@ -1412,8 +1419,9 @@ class PromptGenerator:
                     "start_time": start_time,
                     "end_time": end_time,
                     "duration_seconds": duration,
-                    "text": scene["text"],
-                    "visual_moment": ai_data.get("visual_moment", scene["text"]),
+                    "text": scene["text"],  # Keep for subtitle reference
+                    "visual_moment": final_visual,  # Use AI visual, NOT narration!
+                    "img_prompt": ai_img_prompt,  # NEW: Direct img_prompt from AI
                     "shot_type": ai_data.get("shot_type", "Medium shot"),
                     "srt_start": start_time,
                     "srt_end": end_time,
@@ -1710,12 +1718,31 @@ class PromptGenerator:
         else:
             locations_info = "(No location references - describe locations based on story context)"
 
+        # Kiểm tra xem có scenes nào đã có img_prompt từ smart_divide_scenes không
+        scenes_with_prompts = [s for s in scenes_data if s.get("img_prompt")]
+        if scenes_with_prompts and len(scenes_with_prompts) == len(scenes_data):
+            # TẤT CẢ scenes đã có img_prompt từ smart_divide_scenes - dùng trực tiếp!
+            self.logger.info(f"[Scene Prompts] All {len(scenes_data)} scenes already have img_prompt from smart_divide_scenes - using directly!")
+            result = []
+            for s in scenes_data:
+                result.append({
+                    "img_prompt": s.get("img_prompt", ""),
+                    "video_prompt": s.get("img_prompt", ""),
+                    "characters_used": s.get("characters_in_scene", []),
+                    "location_used": s.get("location_id", ""),
+                    "reference_files": []  # Will be populated later
+                })
+            return result
+
         # Format thông tin scenes (include location_id, story_beat, shot_type and visual_moment)
+        # KHÔNG dùng s['text'] làm fallback cho visual_moment!
         pacing_script = "\n".join([
             f"{s['scene_id']}. [{s.get('shot_type', 'Medium shot')}] \"{s['text']}\"\n"
+            f"   Scene Type: {s.get('scene_type', 'FRAME_PRESENT')}\n"
             f"   Location: {s.get('location_id', 'N/A')}\n"
+            f"   Characters: {s.get('characters_in_scene', [])}\n"
             f"   Story beat: {s.get('story_beat', 'N/A')}\n"
-            f"   Visual: {s.get('visual_moment', s['text'])}"
+            f"   Visual hint: {s.get('visual_moment', '') or '(Create visual based on narration meaning)'}"
             for s in scenes_data
         ])
 
@@ -1796,22 +1823,24 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
                         "reference_files": scene_result.get("reference_files", [])
                     })
                 else:
-                    # Scene không có prompt từ AI - tạo prompt đơn giản từ text
+                    # Scene không có prompt từ AI - dùng fallback THÔNG MINH
                     missing_scenes.append(scene_id)
-                    scene_text = scene_data.get("text", "")
-                    visual_moment = scene_data.get("visual_moment", scene_text)
-                    shot_type = scene_data.get("shot_type", "Medium shot")
-
-                    # Tạo prompt đơn giản từ nội dung scene
-                    simple_prompt = f"{shot_type}, {visual_moment[:200]}, cinematic lighting, high quality"
-
-                    result.append({
-                        "img_prompt": simple_prompt,
-                        "video_prompt": simple_prompt,
-                        "characters_used": [],
-                        "location_used": "",
-                        "reference_files": []
-                    })
+                    # GỌI FALLBACK METHOD thay vì dùng scene_text trực tiếp!
+                    # Fallback sẽ tạo prompt dựa trên scene_type, KHÔNG dùng narration text
+                    fallback_prompts = self._create_fallback_prompts(
+                        [scene_data], characters, locations, global_style_override
+                    )
+                    if fallback_prompts:
+                        result.append(fallback_prompts[0])
+                    else:
+                        # Ultimate fallback - generic nhưng KHÔNG có narration text
+                        result.append({
+                            "img_prompt": f"Medium shot, cinematic scene, natural lighting, 4K photorealistic",
+                            "video_prompt": f"Medium shot, cinematic scene",
+                            "characters_used": [],
+                            "location_used": "",
+                            "reference_files": []
+                        })
 
             if missing_scenes:
                 self.logger.warning(f"[Scene Prompts] Đã tạo prompt đơn giản cho {len(missing_scenes)} scenes thiếu: {missing_scenes}")

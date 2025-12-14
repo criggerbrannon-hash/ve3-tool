@@ -698,61 +698,49 @@ smart_divide_scenes: |
         "scene_id": 1,
         "srt_text": "My mother took me to court to take away the house I built with my own hands.",
         "scene_type": "FRAME_PRESENT",
-        "timeline_note": "Present day, narrator 30yo",
         "location_id": "loc_courthouse",
         "characters_in_scene": ["nvc"],
-        "shot_type": "Medium shot",
-        "visual_moment": "Devastated 30yo man sitting alone on cold gray courthouse steps, trembling hands clutching crumpled legal documents, head bowed in disbelief, morning light casting long shadow"
+        "img_prompt": "Medium shot, 50mm lens. 30-year-old Caucasian man with short brown hair, tired blue eyes, light stubble, wearing simple gray t-shirt, SITTING ALONE on cold gray courthouse steps, trembling hands clutching crumpled legal documents, head bowed in disbelief. American courthouse exterior with white columns and flag visible behind. Soft overcast morning light casting long shadow. Cinematic, 4K photorealistic, emotional devastation visible on face."
       }},
       {{
         "scene_id": 2,
         "srt_text": "My mother worked two jobs just to keep us fed.",
         "scene_type": "CHILDHOOD_FLASHBACK",
-        "timeline_note": "Flashback: narrator 8yo, mother 32yo",
         "location_id": "loc_dryclean",
         "characters_in_scene": ["nv1_young"],
-        "shot_type": "Medium shot",
-        "visual_moment": "Exhausted 32yo blonde mother operating industrial pressing machine, steam rising around her tired face, faded blue work uniform stained with sweat, fluorescent lights harsh overhead, clock showing 9PM"
+        "img_prompt": "Medium shot, 35mm lens. 32-year-old Caucasian woman with blonde hair in tired ponytail, warm hazel eyes with dark circles, OPERATING industrial pressing machine with exhausted expression. Steam rising around her tired face, faded blue work uniform stained with sweat. 1990s dry cleaning shop interior, racks of hanging clothes, harsh fluorescent lights overhead, wall clock showing 9PM. Warm nostalgic color grading, cinematic, showing sacrifice of a hardworking mother."
       }},
       {{
         "scene_id": 3,
         "srt_text": "She would come home late at night, her feet swollen from standing all day.",
         "scene_type": "CHILDHOOD_FLASHBACK",
-        "timeline_note": "Flashback: mother coming home",
         "location_id": "loc_apartment",
         "characters_in_scene": ["nv1_young", "nvc1"],
-        "shot_type": "Wide shot",
-        "visual_moment": "Worn-out 32yo mother limping through apartment door at midnight, 8yo boy in pajamas running to embrace her, her swollen feet visible as she kicks off work shoes, warm tungsten light from single lamp"
+        "img_prompt": "Wide shot, 24mm lens. 32-year-old blonde mother in faded work uniform LIMPING through small apartment door at midnight, kicking off worn shoes revealing swollen feet. 8-year-old boy in pajamas RUNNING to embrace her with open arms. 1990s cramped apartment, worn carpet, single lamp providing warm tungsten glow. Emotional reunion moment, love despite exhaustion, cinematic warm color grading."
       }},
       {{
         "scene_id": 4,
         "srt_text": "By the time I was 28, I had saved enough to buy a small piece of land.",
         "scene_type": "ADULT_FLASHBACK",
-        "timeline_note": "Flashback: narrator 28yo buying land",
         "location_id": "loc_land",
         "characters_in_scene": ["nvc_young"],
-        "shot_type": "Wide shot",
-        "visual_moment": "Proud 28yo man standing in center of empty grass lot on suburban outskirts, holding property deed document in raised hand, huge smile of accomplishment, golden sunset behind him, FOR SALE sign now has SOLD sticker"
+        "img_prompt": "Wide shot, 24mm lens. 28-year-old Caucasian man with short brown hair, bright blue eyes, clean shaven, healthy tan, wearing dusty work clothes, STANDING PROUDLY in center of empty grass lot on suburban outskirts. Holding property deed document raised triumphantly in hand, huge genuine smile of accomplishment. FOR SALE sign with SOLD sticker visible. Golden sunset backlighting, American dream achieved moment, hopeful cinematic atmosphere."
       }},
       {{
         "scene_id": 5,
         "srt_text": "I built the house with my own two hands. Every nail, every board.",
         "scene_type": "ADULT_FLASHBACK",
-        "timeline_note": "Flashback: building the house",
         "location_id": "loc_construction",
         "characters_in_scene": ["nvc_young"],
-        "shot_type": "Medium shot",
-        "visual_moment": "Muscular 28yo man driving nail into wooden beam with hammer, sawdust covering his sweaty face, tool belt around waist, half-finished house frame behind him, determination in his eyes, bright sunny day"
+        "img_prompt": "Medium shot, 50mm lens. Muscular 28-year-old man with tan skin and determined expression, SWINGING HAMMER driving nail into wooden beam. Sawdust covering his sweaty face, tool belt heavy around waist, work gloves worn. Half-finished wooden house frame structure behind him. Bright sunny day, golden hour light, pride and determination in every muscle. Cinematic, showing years of hard work paying off."
       }},
       {{
         "scene_id": 6,
         "srt_text": "You are everything to me. And I believed her.",
         "scene_type": "EMOTIONAL_BEAT",
-        "timeline_note": "Present reflection",
         "location_id": "loc_courthouse",
         "characters_in_scene": ["nvc"],
-        "shot_type": "Extreme close-up",
-        "visual_moment": "Extreme close-up of narrator's eyes glistening with tears on courthouse steps, single tear rolling down cheek, distant unfocused gaze of someone lost in painful memory"
+        "img_prompt": "Extreme close-up, 85mm lens. 30-year-old man's eyes GLISTENING with tears, single tear rolling down weathered cheek. Shallow depth of field, courthouse steps blurred in background. Eyes have distant, unfocused gaze of someone lost in painful memory of betrayal. Soft natural light, raw emotional vulnerability, cinematic intimate moment capturing heartbreak."
       }}
     ]
   }}
