@@ -1761,8 +1761,14 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
                 scene_id = scene_data["scene_id"]
                 if scene_id in prompts_map:
                     scene_result = prompts_map[scene_id]
+
+                    # POST-PROCESS: Clean any narration text from img_prompt
+                    img_prompt = scene_result.get("img_prompt", "")
+                    scene_text = scene_data.get("text", "")[:100]  # First 100 chars of narration
+                    img_prompt = self._clean_narration_from_prompt(img_prompt, scene_text)
+
                     result.append({
-                        "img_prompt": scene_result.get("img_prompt", ""),
+                        "img_prompt": img_prompt,
                         "video_prompt": scene_result.get("video_prompt", ""),
                         "characters_used": scene_result.get("characters_used", []),
                         "location_used": scene_result.get("location_used", ""),
@@ -1803,7 +1809,11 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
         locations: List = None,
         global_style: str = ""
     ) -> List[Dict[str, str]]:
-        """Tạo fallback prompts khi AI không trả về đúng."""
+        """Tạo fallback prompts khi AI không trả về đúng.
+
+        IMPORTANT: KHÔNG đưa narration/dialogue text vào img_prompt!
+        img_prompt chỉ chứa mô tả hình ảnh (visual description).
+        """
         self.logger.info(f"[Fallback] Tạo {len(scenes_data)} fallback prompts...")
         characters = characters or []
         locations = locations or []
@@ -1823,7 +1833,9 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
         result = []
         for scene in scenes_data:
             # Get scene info
-            visual = scene.get("visual_moment", scene.get("text", ""))[:300]
+            # IMPORTANT: Ưu tiên visual_moment (đã được AI xử lý), KHÔNG dùng text (narration)!
+            visual_moment = scene.get("visual_moment", "")
+            scene_type = scene.get("scene_type", "FRAME_PRESENT")
             shot_type = scene.get("shot_type", "Medium shot")
             location_id = scene.get("location_id", "loc1")
             chars_in_scene = scene.get("characters_in_scene", [])
@@ -1837,13 +1849,36 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
             # Build location part
             loc_part = loc_desc.get(location_id, "")
 
-            # Build prompt
+            # Build prompt - ONLY VISUAL DESCRIPTION, NO NARRATION TEXT!
             parts = [shot_type]
+
+            # Character description
             if char_parts:
                 parts.append(", ".join(char_parts[:2]))  # Max 2 characters
-            parts.append(visual)
+            elif characters:
+                # Default to main character if none specified
+                parts.append(char_desc.get("nvc", characters[0].character_lock or characters[0].name))
+
+            # Visual moment - ONLY if it's actually visual (not narration)
+            # Check if visual_moment looks like narration (contains certain patterns)
+            if visual_moment and not self._looks_like_narration(visual_moment):
+                parts.append(visual_moment[:200])
+            else:
+                # Create generic visual based on scene_type
+                if scene_type == "CHILDHOOD_FLASHBACK":
+                    parts.append("in a warm nostalgic memory scene, soft warm lighting")
+                elif scene_type == "ADULT_FLASHBACK":
+                    parts.append("in a hopeful flashback scene, natural daylight")
+                elif scene_type == "EMOTIONAL_BEAT":
+                    parts.append("close-up shot, contemplative expression, emotional moment")
+                else:  # FRAME_PRESENT or default
+                    parts.append("in present day setting, natural lighting")
+
+            # Location
             if loc_part:
                 parts.append(loc_part)
+
+            # Style
             parts.append(style_suffix)
 
             img_prompt = ". ".join([p for p in parts if p])
@@ -1858,7 +1893,111 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
 
         self.logger.info(f"[Fallback] Đã tạo {len(result)} fallback prompts")
         return result
-    
+
+    def _looks_like_narration(self, text: str) -> bool:
+        """Check if text looks like narration/dialogue rather than visual description.
+
+        Narration patterns:
+        - Contains quotes or spoken text
+        - Starts with "I ", "My ", "We ", "She ", "He "
+        - Contains past tense narrative phrases
+        """
+        if not text:
+            return True
+
+        text_lower = text.lower().strip()
+
+        # Narration indicators
+        narration_patterns = [
+            # First person narrative
+            text_lower.startswith("i "),
+            text_lower.startswith("i'"),
+            text_lower.startswith("my "),
+            text_lower.startswith("we "),
+            # Third person narrative
+            text_lower.startswith("she "),
+            text_lower.startswith("he "),
+            text_lower.startswith("they "),
+            # Contains dialogue markers
+            '"' in text,
+            "said" in text_lower,
+            "told" in text_lower,
+            "asked" in text_lower,
+            # Past tense narrative
+            "i was" in text_lower,
+            "i had" in text_lower,
+            "i remember" in text_lower,
+            "by the time" in text_lower,
+            "years old" in text_lower,
+            # YouTube CTA
+            "subscribe" in text_lower,
+            "like button" in text_lower,
+            "comment" in text_lower,
+        ]
+
+        return any(narration_patterns)
+
+    def _clean_narration_from_prompt(self, img_prompt: str, scene_text: str) -> str:
+        """Remove any narration/dialogue text that might have been included in img_prompt.
+
+        AI sometimes includes the scene text directly in the prompt, which causes
+        image generators to render text as subtitles on the image.
+
+        Args:
+            img_prompt: The image prompt from AI
+            scene_text: The narration/dialogue text from SRT (first ~100 chars)
+
+        Returns:
+            Cleaned img_prompt without narration text
+        """
+        if not img_prompt or not scene_text:
+            return img_prompt
+
+        import re
+
+        # 1. Remove exact match of scene_text (or significant portion)
+        # Try to match phrases that are clearly from the narration
+        words = scene_text.split()
+        if len(words) >= 5:
+            # Try to match 5+ consecutive words from narration
+            for i in range(len(words) - 4):
+                phrase = " ".join(words[i:i+5])
+                if phrase.lower() in img_prompt.lower():
+                    # Found narration in prompt - try to remove it
+                    # Find and remove the sentence containing this phrase
+                    pattern = re.compile(r'[^.]*' + re.escape(phrase) + r'[^.]*\.?', re.IGNORECASE)
+                    img_prompt = pattern.sub('', img_prompt)
+                    self.logger.debug(f"[Clean] Removed narration phrase: '{phrase[:30]}...'")
+
+        # 2. Remove common narration patterns
+        narration_patterns = [
+            r'By the time I was \d+ years old[^.]*\.?',
+            r'I had saved[^.]*\.?',
+            r'I decided to[^.]*\.?',
+            r'It cost me[^.]*\.?',
+            r'I remember[^.]*\.?',
+            r'She (told|said|asked)[^.]*\.?',
+            r'He (told|said|asked)[^.]*\.?',
+            r'"[^"]*"',  # Remove quoted dialogue
+        ]
+
+        for pattern in narration_patterns:
+            if re.search(pattern, img_prompt, re.IGNORECASE):
+                img_prompt = re.sub(pattern, '', img_prompt, flags=re.IGNORECASE)
+                self.logger.debug(f"[Clean] Removed pattern: {pattern[:30]}...")
+
+        # 3. Clean up: remove double periods, extra spaces
+        img_prompt = re.sub(r'\.\.+', '.', img_prompt)
+        img_prompt = re.sub(r'\s+', ' ', img_prompt)
+        img_prompt = img_prompt.strip()
+        img_prompt = img_prompt.strip('.')
+
+        # 4. If prompt is now too short, return original (something went wrong)
+        if len(img_prompt) < 30:
+            self.logger.warning(f"[Clean] Prompt too short after cleaning, may need manual review")
+
+        return img_prompt
+
     def _extract_json(self, text: str) -> Optional[Dict]:
         """
         Trích xuất JSON từ response text.

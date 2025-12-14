@@ -465,6 +465,15 @@ generate_scenes: |
 
   ## NGUYEN TAC BAT BUOC:
 
+  ### 0. CRITICAL - KHONG DUOC DUNG TEXT/DIALOGUE TRONG IMG_PROMPT:
+  - img_prompt CHI MO TA HINH ANH (visual description ONLY!)
+  - TUYET DOI KHONG dua dialogue, narration, subtitle vao img_prompt
+  - Neu scene text la "By the time I was 28 years old..." -> KHONG DUOC copy vao prompt!
+  - Chi mo ta NGUOI + HANH DONG + BOI CANH + ANH SANG
+
+  SAI (co text): "Man standing. By the time I was 28 years old I had saved money..."
+  DUNG (chi visual): "30-year-old man standing on empty plot of land, hopeful expression, looking at horizon, sunny day"
+
   ### 1. SCENE LA HANH DONG, KHONG PHAI PORTRAIT:
   - Nhan vat DANG LAM GI DO - khong phai dung pose
   - KHONG BAO GIO nhin thang vao camera
@@ -546,6 +555,12 @@ generate_scenes: |
   - KHONG: "looking at camera", "facing viewer", "portrait shot"
   - KHONG: "neutral expression", "standing straight"
   - KHONG: nhan vat dung yen khong lam gi
+  - KHONG BAO GIO: dua dialogue/narration/subtitle text vao img_prompt!
+  - KHONG: copy scene text truc tiep vao prompt (se tao ra text tren anh!)
+
+  ## QUY TAC VANG:
+  img_prompt = CHARACTER_DESCRIPTION + ACTION + LOCATION + LIGHTING + STYLE
+  img_prompt != dialogue != narration != subtitle
 
   OUTPUT: JSON object voi key "scenes", KHONG co markdown code block.
 
@@ -721,6 +736,15 @@ smart_divide_scenes: |
   4. **Create specific locations** for actions mentioned (dry cleaning, convenience store, construction)
   5. **Don't invent random scenes** - If text is reflective, show reflection, not random action
   6. **YouTube CTAs** - Keep simple, narrator speaking to camera
+
+  ## GOLDEN RULE - visual_moment:
+  7. **visual_moment = ONLY VISUAL DESCRIPTION!**
+     - Describe what we SEE: character + action + location + emotion
+     - NEVER include dialogue, narration, or spoken text!
+     - The SRT text is for subtitles, NOT for visual_moment!
+
+  WRONG: "Man standing. By the time I was 28 years old I had saved enough money..."
+  RIGHT: "30-year-old man standing on empty grass lot, hopeful expression, sunny day, looking toward horizon"
 
   ## MAPPING GUIDE:
   | Content Type | Scene Type | Visual |
