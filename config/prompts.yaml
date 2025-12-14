@@ -62,84 +62,178 @@ analyze_story: |
 
   ## OUTPUT FORMAT - PURE JSON (khong markdown):
   ## IMPORTANT: ALL names MUST be in ENGLISH (not Vietnamese)!
+  ## IMPORTANT: Create MULTIPLE character ages and ALL locations for visual variety!
 
   {{
     "production_info": {{
       "title": "Story Title",
       "genre": "Drama/Comedy/etc",
-      "total_characters": 3,
-      "total_locations": 2
+      "total_characters": 6,
+      "total_locations": 7
     }},
 
     "world_setting": {{
-      "era": "Present day 2020s",
+      "era": "Present day 2020s (with 1990s flashbacks)",
       "setting": "Small town Ohio, USA",
       "social_class": "Working class",
-      "tone": "Dramatic, emotional",
+      "tone": "Dramatic, emotional, nostalgic",
       "region": "American Midwest",
-      "visual_style": "Natural lighting, realistic tones, suburban American aesthetic"
+      "visual_style": "Natural lighting, realistic tones, warm nostalgia for flashbacks"
     }},
 
     "global_style": "Cinematic, 4K photorealistic, shot on Arri Alexa, soft film grain, natural American suburban lighting",
 
-    "context_lock": "Present day small town Ohio, working class neighborhood, modest suburban homes, courthouse, convenience stores",
+    "context_lock": "Small town Ohio, working class, courthouse present day, 1990s apartment flashbacks",
 
     "characters": [
       {{
         "id": "nvc",
-        "name": "Narrator (Me)",
+        "name": "Narrator - Present (Dane)",
         "role": "main",
         "age": 30,
         "gender": "male",
         "is_child": false,
+        "timeline": "PRESENT",
         "filename": "nvc.png",
-        "portrait_prompt": "A cinematic portrait, straight-on medium close-up shot on 85mm lens. Subject is a 30-year-old Caucasian man with short brown hair, tired blue eyes, light stubble, fair skin showing signs of stress. Looking directly at camera with neutral expression. Bright studio lighting, fully illuminated face. Pure white studio background. Wearing simple gray t-shirt. 8K, sharp focus, photorealistic.",
-        "character_lock": "30-year-old Caucasian man, short brown hair, tired blue eyes, light stubble, wearing simple gray t-shirt"
+        "portrait_prompt": "A cinematic portrait, straight-on medium close-up shot on 85mm lens. Subject is a 30-year-old Caucasian man with short brown hair, tired blue eyes, light stubble, fair skin showing stress and worry. Looking directly at camera with neutral expression. Bright studio lighting, fully illuminated face. Pure white studio background. Wearing simple gray t-shirt. 8K, sharp focus, photorealistic.",
+        "character_lock": "30-year-old Caucasian man, short brown hair, tired blue eyes, light stubble, stressed expression, wearing simple gray t-shirt"
       }},
       {{
-        "id": "nv1",
-        "name": "Mother (Gloria)",
-        "role": "supporting",
-        "age": 55,
-        "gender": "female",
+        "id": "nvc_young",
+        "name": "Narrator - Young Adult (Dane at 25)",
+        "role": "main",
+        "age": 25,
+        "gender": "male",
         "is_child": false,
-        "filename": "nv1.png",
-        "portrait_prompt": "A cinematic portrait, straight-on medium close-up shot on 85mm lens. Subject is a 55-year-old Caucasian woman with graying blonde hair in a ponytail, tired hazel eyes, worn face showing years of hard work. Looking directly at camera with neutral expression. Bright studio lighting. Pure white studio background. Wearing faded blue work uniform. 8K, sharp focus, photorealistic.",
-        "character_lock": "55-year-old Caucasian woman, graying blonde hair in ponytail, tired hazel eyes, worn face, wearing faded blue work uniform"
+        "timeline": "ADULT_FLASHBACK",
+        "filename": "nvc_young.png",
+        "portrait_prompt": "A cinematic portrait, straight-on medium close-up shot on 85mm lens. Subject is a 25-year-old Caucasian man with short brown hair, bright blue eyes, clean shaven, healthy tan skin from outdoor work. Looking directly at camera with neutral expression. Bright studio lighting, fully illuminated face. Pure white studio background. Wearing dusty work shirt, construction worker appearance. 8K, sharp focus, photorealistic.",
+        "character_lock": "25-year-old Caucasian man, short brown hair, bright blue eyes, clean shaven, healthy tan, wearing dusty work shirt"
       }},
       {{
         "id": "nvc1",
-        "name": "Young Me (Child)",
+        "name": "Narrator - Child (Dane at 8)",
         "role": "supporting",
         "age": 8,
         "gender": "male",
         "is_child": true,
+        "timeline": "CHILDHOOD_FLASHBACK",
         "filename": "NONE",
         "portrait_prompt": "DO_NOT_GENERATE",
-        "character_lock": "8-year-old Caucasian boy, messy brown hair, innocent blue eyes, wearing old t-shirt and jeans"
+        "character_lock": "8-year-old Caucasian boy, messy brown hair, innocent blue eyes, freckles, wearing old faded t-shirt and worn jeans"
+      }},
+      {{
+        "id": "nv1",
+        "name": "Mother - Present (Gloria at 55)",
+        "role": "supporting",
+        "age": 55,
+        "gender": "female",
+        "is_child": false,
+        "timeline": "PRESENT",
+        "filename": "nv1.png",
+        "portrait_prompt": "A cinematic portrait, straight-on medium close-up shot on 85mm lens. Subject is a 55-year-old Caucasian woman with graying blonde hair in messy ponytail, tired hazel eyes, deep wrinkles, worn weathered face. Looking directly at camera with neutral expression. Bright studio lighting. Pure white studio background. Wearing old cardigan. 8K, sharp focus, photorealistic.",
+        "character_lock": "55-year-old Caucasian woman, graying blonde hair in messy ponytail, tired hazel eyes, deep wrinkles, weathered face, wearing old cardigan"
+      }},
+      {{
+        "id": "nv1_young",
+        "name": "Mother - Young (Gloria at 32)",
+        "role": "supporting",
+        "age": 32,
+        "gender": "female",
+        "is_child": false,
+        "timeline": "CHILDHOOD_FLASHBACK",
+        "filename": "nv1_young.png",
+        "portrait_prompt": "A cinematic portrait, straight-on medium close-up shot on 85mm lens. Subject is a 32-year-old Caucasian woman with blonde hair in tired ponytail, warm hazel eyes with dark circles, young but exhausted face, slight smile. Looking directly at camera with neutral expression. Bright studio lighting. Pure white studio background. Wearing faded blue work uniform. 8K, sharp focus, photorealistic.",
+        "character_lock": "32-year-old Caucasian woman, blonde hair in ponytail, warm hazel eyes with dark circles, tired but caring face, wearing faded blue work uniform"
+      }},
+      {{
+        "id": "nv2",
+        "name": "Father (mentioned, left)",
+        "role": "minor",
+        "age": 30,
+        "gender": "male",
+        "is_child": false,
+        "timeline": "CHILDHOOD_FLASHBACK",
+        "filename": "nv2.png",
+        "portrait_prompt": "A cinematic portrait, straight-on medium close-up shot on 85mm lens. Subject is a 30-year-old Caucasian man with dark brown hair, distant blue eyes, slight beard, cold detached expression. Looking directly at camera with neutral expression. Bright studio lighting. Pure white studio background. Wearing plain jacket. 8K, sharp focus, photorealistic.",
+        "character_lock": "30-year-old Caucasian man, dark brown hair, distant blue eyes, slight beard, cold expression, wearing plain jacket"
       }}
     ],
 
     "locations": [
       {{
-        "id": "loc1",
-        "name": "Courthouse Steps",
-        "filename": "loc1.png",
-        "location_prompt": "Exterior wide shot of small town American courthouse. Empty, no people. Gray stone steps, white columns, American flag, official government building facade. Overcast day lighting. Cinematic, 4K photorealistic. 8K, architectural style.",
-        "location_lock": "Small town American courthouse exterior, gray stone steps, white columns, American flag, overcast day",
-        "lighting_default": "Overcast natural daylight, soft shadows"
+        "id": "loc_courthouse",
+        "name": "Courthouse Steps (FRAME)",
+        "filename": "loc_courthouse.png",
+        "timeline": "PRESENT",
+        "location_prompt": "Exterior wide shot of small town American courthouse. Empty, no people. Gray stone steps leading up, white classical columns, American flag on pole, official building facade, overcast cloudy sky. Cinematic, 4K photorealistic. 8K.",
+        "location_lock": "Small town American courthouse exterior, gray stone steps, white columns, American flag, overcast sky",
+        "lighting_default": "Overcast natural daylight, soft diffused shadows"
       }},
       {{
-        "id": "loc2",
-        "name": "Small Apartment",
-        "filename": "loc2.png",
-        "location_prompt": "Interior wide shot of small working class American apartment from 1990s. Empty, no people. Thin walls, old carpet, small TV on stand, worn sofa, single window with thin curtains, radiator heater. Warm tungsten indoor lighting. Cinematic, 4K photorealistic. 8K.",
-        "location_lock": "1990s small American apartment interior, thin walls, old carpet, worn sofa, small TV, warm tungsten indoor lighting",
-        "lighting_default": "Warm tungsten indoor lighting"
+        "id": "loc_apartment",
+        "name": "Small Apartment Living Room",
+        "filename": "loc_apartment.png",
+        "timeline": "CHILDHOOD_FLASHBACK",
+        "location_prompt": "Interior wide shot of cramped 1990s American apartment living room. Empty, no people. Thin walls, worn brown carpet, old CRT TV on wooden stand, faded floral sofa, single window with thin curtains, old radiator heater. Warm tungsten lighting. Cinematic, 4K photorealistic. 8K.",
+        "location_lock": "1990s cramped apartment living room, worn carpet, old CRT TV, faded sofa, thin curtains, warm tungsten lighting",
+        "lighting_default": "Warm tungsten indoor lighting, cozy but poor"
+      }},
+      {{
+        "id": "loc_bedroom",
+        "name": "Shared Bedroom",
+        "filename": "loc_bedroom.png",
+        "timeline": "CHILDHOOD_FLASHBACK",
+        "location_prompt": "Interior shot of small 1990s shared bedroom. Empty, no people. Two single beds close together, thin blankets, small nightstand, dim bedside lamp, bare walls, one small window. Dim warm lighting. Cinematic, 4K photorealistic. 8K.",
+        "location_lock": "Small 1990s shared bedroom, two beds close together, thin blankets, dim bedside lamp, bare walls",
+        "lighting_default": "Dim warm bedside lamp lighting, intimate"
+      }},
+      {{
+        "id": "loc_dryclean",
+        "name": "Dry Cleaning Shop",
+        "filename": "loc_dryclean.png",
+        "timeline": "CHILDHOOD_FLASHBACK",
+        "location_prompt": "Interior wide shot of 1990s small town dry cleaning shop. Empty, no people. Industrial pressing machines, racks of hanging clothes in plastic, front counter, fluorescent ceiling lights, steam visible. Cinematic, 4K photorealistic. 8K.",
+        "location_lock": "1990s dry cleaning shop interior, pressing machines, clothes racks, fluorescent lights, steam",
+        "lighting_default": "Harsh fluorescent lighting, industrial feel"
+      }},
+      {{
+        "id": "loc_convenience",
+        "name": "Convenience Store (Night)",
+        "filename": "loc_convenience.png",
+        "timeline": "CHILDHOOD_FLASHBACK",
+        "location_prompt": "Interior shot of late-night convenience store. Empty, no people. Cash register counter, shelves with snacks and drinks, fluorescent lights, parking lot visible through window, night time. Cinematic, 4K photorealistic. 8K.",
+        "location_lock": "Late night convenience store, cash register, product shelves, fluorescent lights, parking lot through window, nighttime",
+        "lighting_default": "Harsh fluorescent interior, dark outside"
+      }},
+      {{
+        "id": "loc_construction",
+        "name": "House Under Construction",
+        "filename": "loc_construction.png",
+        "timeline": "ADULT_FLASHBACK",
+        "location_prompt": "Exterior wide shot of house under construction. Empty, no people. Wooden frame structure, exposed beams, scattered tools, sawdust, suburban lot, sunny day. Cinematic, 4K photorealistic. 8K.",
+        "location_lock": "House under construction, wooden frame, exposed beams, tools, sawdust, sunny suburban lot",
+        "lighting_default": "Bright sunny daylight, hopeful tone"
+      }},
+      {{
+        "id": "loc_finished_house",
+        "name": "Finished House Exterior",
+        "filename": "loc_finished_house.png",
+        "timeline": "ADULT_FLASHBACK",
+        "location_prompt": "Exterior wide shot of modest but new single-story house. Empty, no people. White siding, small front porch, green lawn, suburban neighborhood, sunny day. Cinematic, 4K photorealistic. 8K.",
+        "location_lock": "New modest single-story house, white siding, small porch, green lawn, sunny suburban setting",
+        "lighting_default": "Bright sunny daylight, proud accomplishment"
       }}
     ],
 
-    "key_objects": []
+    "key_objects": [
+      {{
+        "id": "obj_documents",
+        "name": "Legal Documents Folder",
+        "filename": "obj_documents.png",
+        "object_prompt": "Close-up of thick manila folder stuffed with legal documents and papers, official court stamps visible, worn edges. On gray stone surface. Soft studio lighting. 8K, product photography."
+      }}
+    ]
   }}
 
   ## EXAMPLE 2 - Modern Urban Story:
@@ -156,29 +250,46 @@ analyze_story: |
 
   ## MANDATORY RULES:
   1. ALL "name" fields MUST be in ENGLISH (e.g., "Mother", "Courthouse", NOT "Me", "Toa an")
-  2. ALL prompts (portrait_prompt, location_prompt, character_lock, location_lock) MUST be in ENGLISH
+  2. ALL prompts MUST be in ENGLISH
   3. Analyze world_setting FIRST before creating characters/locations
-  4. Characters + Locations MUST match world_setting (same era, same style, same tone)
-  5. Extract ALL characters mentioned in story (even if only appears once)
-  6. Extract ALL locations/places mentioned in story
-  7. character_lock MUST have: Name + Age + Gender + Face features + Hair + Skin + CLOTHING (matching world_setting!)
-  8. location_lock MUST have: Place type + Key objects + Lighting (matching world_setting!)
-  9. portrait_prompt: MUST have "Pure white studio background", "neutral expression", "looking directly at camera"
-  10. location_prompt: MUST have "Empty room, no people"
-  11. Children (is_child=true): portrait_prompt = "DO_NOT_GENERATE", filename = "NONE"
-  12. ID format: nvc (main/narrator), nv1, nv2... (supporting), nvc1, nvc2... (children), loc1, loc2... (locations)
-  13. filename uses .png (NOT .jpg)
-  14. Return pure JSON only, NO markdown code blocks
 
-  ## CONSISTENCY CHECK:
-  Before returning, verify:
-  - Do character CLOTHES match world_setting?
-  - Do location OBJECTS match world_setting?
-  - Is the TONE consistent across all?
+  ## CRITICAL - CHARACTER AGE VERSIONS:
+  4. For story narration with flashbacks, create MULTIPLE VERSIONS of main characters:
+     - nvc = Narrator PRESENT age
+     - nvc_young = Narrator YOUNG ADULT (18-28yo) for adult flashbacks
+     - nvc1 = Narrator CHILD (is_child=true, filename=NONE)
+     - nv1 = Mother PRESENT age
+     - nv1_young = Mother YOUNG (when narrator was child, ~30-35yo)
+  5. Each character version needs its own portrait_prompt and character_lock
+  6. Add "timeline" field: "PRESENT", "CHILDHOOD_FLASHBACK", "ADULT_FLASHBACK"
 
-  BAD EXAMPLES (inconsistent):
-  - world_setting = "1990s rural Ohio" + character wearing "modern designer suit" ❌
-  - world_setting = "modern NYC office" + location is "wooden farmhouse" ❌
+  ## CRITICAL - EXTRACT ALL LOCATIONS:
+  7. Extract EVERY location mentioned in story:
+     - Courthouse, apartment, bedroom, dry cleaning shop, convenience store, construction site, finished house, etc.
+  8. Each location needs "timeline" field to match when it appears in story
+  9. Create at least 5-7 locations for visual variety in a typical story
+
+  ## CHARACTER RULES:
+  10. character_lock MUST have: Age + Gender + Face features + Hair + Skin + CLOTHING
+  11. portrait_prompt: MUST have "Pure white studio background", "neutral expression", "looking directly at camera"
+  12. Children (is_child=true): portrait_prompt = "DO_NOT_GENERATE", filename = "NONE"
+  13. ID format: nvc, nvc_young (narrator), nv1, nv1_young, nv2 (others), nvc1 (child narrator)
+
+  ## LOCATION RULES:
+  14. location_prompt: MUST have "Empty, no people"
+  15. Add lighting_default appropriate for the scene mood
+  16. filename uses .png (NOT .jpg)
+
+  ## OUTPUT:
+  17. Return pure JSON only, NO markdown code blocks
+
+  ## VISUAL VARIETY CHECK:
+  Before returning, verify you have:
+  - [ ] At least 2 versions of narrator (present + young/child)
+  - [ ] At least 2 versions of mother if she appears in flashbacks (present + young)
+  - [ ] At least 5-7 different locations covering all mentioned places
+  - [ ] Timeline tags on all characters and locations
+  - [ ] Enough variety to make a visually interesting video (not repetitive!)
 
 # =============================================================================
 # STEP 3: SCENE PRODUCTION (Tao prompt cho tung scene)
