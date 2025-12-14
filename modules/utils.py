@@ -134,8 +134,8 @@ def load_settings(config_path: Path) -> Dict[str, Any]:
     settings.setdefault("max_scenes_per_account", 50)
     settings.setdefault("retry_count", 3)
     settings.setdefault("wait_timeout", 30)
-    settings.setdefault("min_scene_duration", 15)
-    settings.setdefault("max_scene_duration", 25)
+    settings.setdefault("min_scene_duration", 3)   # Min 3s per scene
+    settings.setdefault("max_scene_duration", 8)   # Max 8s per scene (for video gen)
     settings.setdefault("whisper_model", "base")
     settings.setdefault("whisper_language", "vi")
     settings.setdefault("log_level", "INFO")

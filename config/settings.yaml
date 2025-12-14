@@ -50,8 +50,9 @@ retry_count: 3
 wait_timeout: 30
 
 # Scene duration (seconds) - used when grouping SRT into scenes
-min_scene_duration: 15
-max_scene_duration: 25
+# IMPORTANT: Max 8s per scene for video generation!
+min_scene_duration: 3
+max_scene_duration: 8
 
 # ============================================================================
 # Whisper Settings (Voice to SRT)
