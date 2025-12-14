@@ -371,35 +371,65 @@ def group_srt_into_scenes(
 ) -> List[Dict[str, Any]]:
     """
     Gom các SRT entries thành các scene theo thời lượng.
+    QUAN TRỌNG: Mỗi scene KHÔNG được vượt quá max_duration!
 
     Args:
         entries: List các SrtEntry
         min_duration: Thời lượng tối thiểu của scene (giây), mặc định 3s
         max_duration: Thời lượng tối đa của scene (giây), mặc định 8s (max for video gen)
-        
+
     Returns:
         List các scene, mỗi scene có: scene_id, start_time, end_time, text, srt_indices
     """
     if not entries:
         return []
-    
+
+    # BƯỚC 1: Split các SRT entries dài hơn max_duration thành nhiều phần
+    split_entries = []
+    for entry in entries:
+        entry_duration = entry.duration
+        if entry_duration <= max_duration:
+            split_entries.append(entry)
+        else:
+            # Entry quá dài, cần chia nhỏ
+            num_parts = int(entry_duration / max_duration) + 1
+            part_duration = entry_duration / num_parts
+            words = entry.text.split()
+            words_per_part = max(1, len(words) // num_parts)
+
+            start_sec = entry.start_time.total_seconds()
+            for i in range(num_parts):
+                part_start = timedelta(seconds=start_sec + i * part_duration)
+                part_end = timedelta(seconds=min(start_sec + (i + 1) * part_duration, entry.end_time.total_seconds()))
+
+                # Chia text theo số từ
+                text_start = i * words_per_part
+                text_end = (i + 1) * words_per_part if i < num_parts - 1 else len(words)
+                part_text = " ".join(words[text_start:text_end]) or entry.text[:50]
+
+                split_entries.append(SrtEntry(
+                    index=entry.index * 100 + i,  # Unique index
+                    start_time=part_start,
+                    end_time=part_end,
+                    text=part_text
+                ))
+
+    # BƯỚC 2: Gom các entries đã split thành scenes (max_duration)
     scenes = []
     current_scene = {
-        "srt_indices": [entries[0].index],
-        "texts": [entries[0].text],
-        "start_time": entries[0].start_time,
-        "end_time": entries[0].end_time,
+        "srt_indices": [split_entries[0].index],
+        "texts": [split_entries[0].text],
+        "start_time": split_entries[0].start_time,
+        "end_time": split_entries[0].end_time,
     }
-    
-    for entry in entries[1:]:
+
+    for entry in split_entries[1:]:
         # Tính thời lượng nếu thêm entry này
         new_duration = (entry.end_time - current_scene["start_time"]).total_seconds()
-        current_duration = (current_scene["end_time"] - current_scene["start_time"]).total_seconds()
 
         # QUAN TRỌNG: Nếu vượt quá max_duration thì PHẢI tạo scene mới
-        # Bỏ điều kiện min_duration để đảm bảo max_duration LUÔN được enforce
         if new_duration > max_duration:
-            # Lưu scene hiện tại (dù ngắn hơn min_duration)
+            # Lưu scene hiện tại
             scenes.append({
                 "scene_id": len(scenes) + 1,
                 "start_time": current_scene["start_time"],
@@ -422,7 +452,7 @@ def group_srt_into_scenes(
             current_scene["srt_indices"].append(entry.index)
             current_scene["texts"].append(entry.text)
             current_scene["end_time"] = entry.end_time
-    
+
     # Thêm scene cuối cùng
     if current_scene["srt_indices"]:
         scenes.append({
@@ -435,7 +465,7 @@ def group_srt_into_scenes(
             "srt_indices": current_scene["srt_indices"],
         })
 
-    # POST-PROCESS: Merge scenes ngắn liên tiếp để ưu tiên gần max_duration
+    # BƯỚC 3: POST-PROCESS - Merge scenes ngắn liên tiếp để ưu tiên gần max_duration
     if len(scenes) > 1:
         merged = []
         i = 0
@@ -468,6 +498,12 @@ def group_srt_into_scenes(
             i += 1
 
         scenes = merged
+
+    # BƯỚC 4: VALIDATE - Double check không có scene nào > max_duration
+    for scene in scenes:
+        duration = (scene["end_time"] - scene["start_time"]).total_seconds()
+        if duration > max_duration + 0.5:  # +0.5 tolerance
+            print(f"[WARNING] Scene {scene['scene_id']} duration={duration:.1f}s > {max_duration}s!")
 
     return scenes
 
