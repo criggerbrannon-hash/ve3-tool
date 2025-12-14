@@ -866,10 +866,17 @@ class PromptGenerator:
         workbook.save()
         self.logger.info(f"Đã lưu {len(characters)} nhân vật + {len(locations)} bối cảnh")
 
-        # Step 2: Chia scene THÔNG MINH theo nội dung (không theo thời gian)
-        # Truyền characters và locations để AI hiểu context
+        # Step 1.5: Director's Treatment - Phân tích cấu trúc câu chuyện
+        self.logger.info("=" * 50)
+        self.logger.info("Step 1.5: Tạo DIRECTOR'S TREATMENT (Kịch bản đạo diễn)...")
+        self.logger.info("=" * 50)
+        directors_treatment = self._create_directors_treatment(full_story)
+        if directors_treatment:
+            self.logger.info(f"[Director's Treatment] Story parts: {len(directors_treatment.get('story_parts', []))}")
+
+        # Step 2: Chia scene THÔNG MINH theo nội dung (dựa trên Director's Treatment)
         self.logger.info("Chia scene theo nội dung (AI Smart Division)...")
-        scenes_data = self._smart_divide_scenes(srt_entries, characters, locations)
+        scenes_data = self._smart_divide_scenes(srt_entries, characters, locations, directors_treatment)
 
         self.logger.info(f"Chia thành {len(scenes_data)} scenes")
 
@@ -1158,13 +1165,70 @@ class PromptGenerator:
             self.logger.error(f"Failed to analyze characters: {e}")
             return [], [], "", ""
 
-    def _smart_divide_scenes(self, srt_entries: List, characters: List = None, locations: List = None) -> List[Dict[str, Any]]:
+    def _create_directors_treatment(self, story_text: str) -> Optional[Dict]:
+        """
+        Tạo Director's Treatment - Kịch bản đạo diễn phân tích cấu trúc câu chuyện.
+
+        Args:
+            story_text: Toàn bộ nội dung câu chuyện
+
+        Returns:
+            Dict với story_parts, visual_guidelines, scene_mapping_guide
+        """
+        try:
+            # Load prompt từ config/prompts.yaml
+            prompt_template = self._load_prompt_template("directors_treatment")
+            if not prompt_template:
+                self.logger.warning("[Director's Treatment] Không tìm thấy prompt template, bỏ qua")
+                return None
+
+            prompt = prompt_template.format(story_text=story_text[:12000])
+
+            self.logger.info("[Director's Treatment] Đang phân tích cấu trúc câu chuyện...")
+            response = self._generate_content(prompt, temperature=0.3, max_tokens=8000)
+            json_data = self._extract_json(response)
+
+            if not json_data or "story_parts" not in json_data:
+                self.logger.warning("[Director's Treatment] AI không trả về story_parts")
+                return None
+
+            # Log story analysis
+            story_analysis = json_data.get("story_analysis", {})
+            self.logger.info(f"[Director's Treatment] Title: {story_analysis.get('title', 'N/A')}")
+            self.logger.info(f"[Director's Treatment] Theme: {story_analysis.get('main_theme', 'N/A')}")
+
+            # Log story parts
+            for part in json_data.get("story_parts", []):
+                self.logger.info(f"  Part {part.get('part_number')}: {part.get('part_name')} ({part.get('time_range', 'N/A')})")
+                self.logger.info(f"    Tone: {part.get('emotional_tone', 'N/A')}")
+                self.logger.info(f"    Strategy: {part.get('visual_strategy', 'N/A')[:80]}...")
+
+            return json_data
+
+        except Exception as e:
+            self.logger.error(f"[Director's Treatment] Failed: {e}")
+            return None
+
+    def _load_prompt_template(self, prompt_name: str) -> Optional[str]:
+        """Load a specific prompt template from prompts.yaml"""
+        try:
+            import yaml
+            prompts_path = Path(__file__).parent.parent / "config" / "prompts.yaml"
+            with open(prompts_path, 'r', encoding='utf-8') as f:
+                prompts = yaml.safe_load(f)
+            return prompts.get(prompt_name, None)
+        except Exception as e:
+            self.logger.error(f"Failed to load prompt {prompt_name}: {e}")
+            return None
+
+    def _smart_divide_scenes(self, srt_entries: List, characters: List = None, locations: List = None, directors_treatment: Dict = None) -> List[Dict[str, Any]]:
         """
         Chia scene theo hướng: TIME-BASED trước (max 8s), rồi AI phân tích nội dung.
+        Sử dụng Director's Treatment để hướng dẫn visual strategy.
 
         Flow mới:
         1. Chia SRT thành các nhóm <= 8s (time-based, đảm bảo chính xác)
-        2. AI phân tích nội dung mỗi nhóm → xác định location + visual_moment
+        2. AI phân tích nội dung mỗi nhóm → xác định location + visual_moment (dựa trên Director's Treatment)
         3. Sử dụng thông tin characters/locations đã phân tích để tạo visual chính xác
 
         Args:
@@ -1233,26 +1297,40 @@ class PromptGenerator:
             for i, s in enumerate(time_based_scenes)
         ])
 
+        # Format Director's Treatment cho AI (nếu có)
+        treatment_info = ""
+        if directors_treatment:
+            import json
+            treatment_info = json.dumps(directors_treatment, indent=2, ensure_ascii=False)
+            self.logger.info(f"[Smart Divide] Using Director's Treatment with {len(directors_treatment.get('story_parts', []))} story parts")
+
         # Load prompt
         prompt_template = get_smart_divide_scenes_prompt()
         if not prompt_template:
             self.logger.warning("Smart divide prompt not found, returning time-based scenes")
             return self._format_time_based_scenes(time_based_scenes)
 
-        # Build full prompt với context
+        # Build full prompt với context + Director's Treatment
         try:
             prompt = prompt_template.format(
                 srt_with_timestamps=scenes_for_ai,
                 characters_info=chars_info,
-                locations_info=locs_info
+                locations_info=locs_info,
+                directors_treatment=treatment_info or "No director's treatment available - analyze story structure yourself"
             )
         except KeyError:
             # Fallback nếu template không có placeholder
             prompt = prompt_template.format(srt_with_timestamps=scenes_for_ai)
             # Prepend context
-            if chars_info or locs_info:
-                context = f"{chars_info}\n\n{locs_info}\n\n" if chars_info and locs_info else (chars_info or locs_info) + "\n\n"
-                prompt = context + prompt
+            context_parts = []
+            if treatment_info:
+                context_parts.append(f"DIRECTOR'S TREATMENT:\n{treatment_info}")
+            if chars_info:
+                context_parts.append(chars_info)
+            if locs_info:
+                context_parts.append(locs_info)
+            if context_parts:
+                prompt = "\n\n".join(context_parts) + "\n\n" + prompt
 
         try:
             response = self._generate_content(prompt, temperature=0.4, max_tokens=16000)

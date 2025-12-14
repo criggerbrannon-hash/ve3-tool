@@ -292,6 +292,168 @@ analyze_story: |
   - [ ] Enough variety to make a visually interesting video (not repetitive!)
 
 # =============================================================================
+# STEP 2: DIRECTOR'S TREATMENT (Visual Story Plan)
+# =============================================================================
+# Input: {story_text} - Full story content
+# Output: Story structure, emotional arc, visual plan for each part
+# THIS STEP IS CRITICAL - Creates the "film blueprint" before individual scenes
+# =============================================================================
+
+directors_treatment: |
+  You are a Film Director. Read the FULL STORY and create a DIRECTOR'S TREATMENT.
+  This is the master plan for how the video will look and feel.
+
+  ## INPUT - FULL STORY:
+  ---
+  {story_text}
+  ---
+
+  ## YOUR TASK:
+  Analyze the story like a film director would:
+  1. Understand the NARRATIVE STRUCTURE (beginning, middle, end)
+  2. Identify EMOTIONAL BEATS (what feelings to evoke at each point)
+  3. Plan VISUAL STRATEGY for each part (not every word needs a visual!)
+  4. Create a coherent VISUAL NARRATIVE that tells the story effectively
+
+  ## STORY STRUCTURE ANALYSIS:
+
+  ### IDENTIFY THE PARTS:
+  Most personal stories have this structure:
+  - **HOOK/OPENING**: Grab attention, set up conflict (usually present day)
+  - **BACKSTORY**: How we got here (usually flashbacks)
+  - **RISING ACTION**: Building toward the conflict
+  - **CLIMAX**: The main conflict/confrontation
+  - **RESOLUTION**: How it ended, lessons learned
+
+  ### EMOTIONAL ARC:
+  Map the emotional journey:
+  - Opening: Tension, curiosity, hook
+  - Backstory: Warmth, nostalgia, sympathy
+  - Rising: Hope, determination, pride
+  - Climax: Betrayal, shock, pain
+  - Resolution: Justice, closure, reflection
+
+  ## OUTPUT FORMAT - JSON:
+
+  {{
+    "story_analysis": {{
+      "title": "Mother's Betrayal",
+      "genre": "Personal Drama",
+      "total_duration_estimate": "30 minutes",
+      "main_theme": "Family betrayal and self-reliance",
+      "emotional_core": "A son's love betrayed by the mother he sacrificed for"
+    }},
+
+    "story_parts": [
+      {{
+        "part_number": 1,
+        "part_name": "THE HOOK",
+        "time_range": "00:00 - 00:45",
+        "content_summary": "Narrator sits on courthouse steps, reveals mother took him to court for his house",
+        "emotional_tone": "Tension, disbelief, hook the audience",
+        "visual_strategy": "PRESENT DAY - Focus on narrator's distress, courthouse setting, legal documents",
+        "key_visuals": [
+          "Narrator on courthouse steps, shaking hands holding documents",
+          "Close-ups of worried face",
+          "Wide shot of imposing courthouse"
+        ],
+        "pacing": "Slow, contemplative, building tension"
+      }},
+      {{
+        "part_number": 2,
+        "part_name": "CHILDHOOD MEMORIES",
+        "time_range": "00:46 - 02:00",
+        "content_summary": "Growing up poor in Ohio, father left, mother worked two jobs, shared bedroom",
+        "emotional_tone": "Warmth, nostalgia, sympathy for mother's sacrifice",
+        "visual_strategy": "WARM FLASHBACKS - Young mother working hard, intimate mother-son moments",
+        "key_visuals": [
+          "Young mother at dry cleaning shop, pressing shirts",
+          "Young mother at convenience store at night",
+          "Mother coming home exhausted, feet swollen",
+          "Mother and child in small apartment",
+          "Shared bedroom, mother crying quietly"
+        ],
+        "pacing": "Gentle, nostalgic, building emotional connection"
+      }},
+      {{
+        "part_number": 3,
+        "part_name": "BUILDING THE DREAM",
+        "time_range": "02:01 - 03:30",
+        "content_summary": "Narrator becomes carpenter, saves money, buys land, builds house with own hands",
+        "emotional_tone": "Hope, determination, pride, accomplishment",
+        "visual_strategy": "HOPEFUL FLASHBACKS - Young adult working hard, construction scenes",
+        "key_visuals": [
+          "Young narrator working as carpenter",
+          "Empty land plot",
+          "Construction in progress, hammering, building",
+          "Finished house, moment of pride"
+        ],
+        "pacing": "Uplifting, determined, building toward success"
+      }},
+      {{
+        "part_number": 4,
+        "part_name": "THE BETRAYAL",
+        "time_range": "03:31 - 05:00",
+        "content_summary": "Mother demands house, takes narrator to court, claims ownership",
+        "emotional_tone": "Shock, betrayal, disbelief, pain",
+        "visual_strategy": "CONTRAST - Happy moments with mother vs courtroom confrontation",
+        "key_visuals": [
+          "Mother's cold expression",
+          "Courtroom setting",
+          "Narrator's shocked face",
+          "Legal documents, evidence"
+        ],
+        "pacing": "Tense, dramatic, building to climax"
+      }},
+      {{
+        "part_number": 5,
+        "part_name": "RESOLUTION",
+        "time_range": "05:01 - end",
+        "content_summary": "Court decision, narrator wins/loses, lessons learned",
+        "emotional_tone": "Justice, closure, reflection, moving forward",
+        "visual_strategy": "PRESENT DAY - Return to courthouse, final reflection",
+        "key_visuals": [
+          "Courtroom verdict moment",
+          "Narrator's reaction",
+          "Walking away from courthouse",
+          "Final reflective shot"
+        ],
+        "pacing": "Resolution, emotional payoff, closure"
+      }}
+    ],
+
+    "visual_guidelines": {{
+      "frame_narrative_location": "Courthouse steps - return here for reflections and present-day thoughts",
+      "flashback_style": "Warm color grading for childhood, brighter for adult achievements",
+      "narration_scenes": "When narrator just talks (no action), show: close-up face, hands on documents, or location establishing shots",
+      "action_scenes": "When story describes specific events, show the action",
+      "emotional_beats": "Use close-ups for emotional moments, wide shots for establishing context",
+      "do_not_illustrate": [
+        "YouTube CTAs (like/subscribe) - just show narrator speaking",
+        "Pure opinion statements - show narrator reflecting",
+        "Transitions/filler sentences - continue previous scene"
+      ]
+    }},
+
+    "scene_mapping_guide": {{
+      "when_narrator_says_I_am": "PRESENT - show narrator at frame location",
+      "when_narrator_says_I_was_when_I_was": "FLASHBACK - show past scene with appropriate characters",
+      "when_narrator_describes_action": "SHOW the action happening",
+      "when_narrator_expresses_feeling": "CLOSE-UP of narrator's face reflecting",
+      "when_narrator_asks_audience": "NARRATOR to camera at frame location"
+    }}
+  }}
+
+  ## CRITICAL RULES:
+  1. UNDERSTAND THE WHOLE STORY before planning visuals
+  2. NOT every sentence needs a unique visual - some continue the previous scene
+  3. Emotional arc should be CLEAR in the visual treatment
+  4. Plan for VARIETY - different locations, different shot types, different moods
+  5. The video should FEEL like a film, not a slideshow of unrelated images
+
+  OUTPUT: JSON object with complete director's treatment, NO markdown.
+
+# =============================================================================
 # STEP 3: SCENE PRODUCTION (Tao prompt cho tung scene)
 # =============================================================================
 # Input: {characters_info}, {locations_info}, {pacing_script}, {global_style}
@@ -390,29 +552,44 @@ generate_scenes: |
 # =============================================================================
 # STEP 2.5: SMART SCENE DIVISION (Chia scene theo noi dung)
 # =============================================================================
-# Input: {srt_with_timestamps} - SRT entries voi timestamps
+# Input: {srt_with_timestamps}, {directors_treatment}, {characters_info}, {locations_info}
 # Output: JSON array cua scenes duoc chia theo noi dung
+# THIS STEP uses the Director's Treatment to guide scene creation!
 # =============================================================================
 
 smart_divide_scenes: |
-  You are an AI Director for a STORY NARRATION video (one person telling their life story).
+  You are an AI Director. Use the DIRECTOR'S TREATMENT to create visual scenes.
 
-  ## UNDERSTAND THE STORY STRUCTURE FIRST:
-  This is a PERSONAL STORY told by a narrator. It has:
-  1. **FRAME NARRATIVE**: The "present moment" where narrator is telling the story (e.g., sitting on courthouse steps)
-  2. **FLASHBACKS**: Memories from different time periods (childhood, teen years, adulthood)
-  3. **EMOTIONAL BEATS**: Reflective moments where narrator expresses feelings
-  4. **META CONTENT**: YouTube CTAs (like/subscribe) - not part of the story
+  ## DIRECTOR'S TREATMENT (Your Visual Blueprint):
+  ---
+  {directors_treatment}
+  ---
 
-  ## CONTEXT - CHARACTERS AND LOCATIONS:
+  ## CHARACTERS AND LOCATIONS:
   {characters_info}
 
   {locations_info}
 
-  ## INPUT - Scenes (max 8s/scene):
+  ## INPUT - SRT Segments (max 8s each):
   ---
   {srt_with_timestamps}
   ---
+
+  ## YOUR TASK:
+  Map each SRT segment to the appropriate STORY PART from the Director's Treatment.
+  Use the visual_strategy and emotional_tone from that part to guide your scene creation.
+
+  ## MAPPING PROCESS:
+  1. Read each SRT segment
+  2. Identify which STORY PART it belongs to (Hook, Childhood, Building Dream, Betrayal, Resolution)
+  3. Use that part's visual_strategy and emotional_tone
+  4. Create a visual_moment that fits the OVERALL narrative
+
+  ## IMPORTANT - USE THE DIRECTOR'S TREATMENT:
+  - If segment is in "CHILDHOOD MEMORIES" part → Use warm flashback visuals, young mother
+  - If segment is in "BUILDING THE DREAM" part → Use hopeful, construction visuals
+  - If segment is pure narration → Follow visual_guidelines.narration_scenes
+  - If segment is YouTube CTA → Follow visual_guidelines.do_not_illustrate
 
   ## SCENE TYPE CLASSIFICATION:
 
