@@ -1046,14 +1046,35 @@ class PromptGenerator:
                         has_character = True
                         break
 
-            # Nếu không có nhân vật nào → thêm nvc làm mặc định
+            # Nếu không có nhân vật nào → chọn nhân vật PHÙ HỢP dựa trên scene_type
             if not has_character:
+                scene_type = scene_data.get("scene_type", "FRAME_PRESENT")
+
+                # Chọn nhân vật dựa trên loại scene
+                if scene_type == "CHILDHOOD_FLASHBACK":
+                    # Flashback tuổi thơ: mẹ trẻ + con nhỏ
+                    default_chars = ["nv1_young.png", "nvc1.png"]
+                    self.logger.info(f"Scene {scene_data['scene_id']}: CHILDHOOD_FLASHBACK → using young mother + child")
+                elif scene_type == "ADULT_FLASHBACK":
+                    # Flashback trưởng thành: narrator trẻ
+                    default_chars = ["nvc_young.png"]
+                    self.logger.info(f"Scene {scene_data['scene_id']}: ADULT_FLASHBACK → using young narrator")
+                elif scene_type == "EMOTIONAL_BEAT":
+                    # Cảm xúc: narrator hiện tại (close-up)
+                    default_chars = ["nvc.png"]
+                    self.logger.info(f"Scene {scene_data['scene_id']}: EMOTIONAL_BEAT → using narrator close-up")
+                else:  # FRAME_PRESENT, YOUTUBE_CTA, default
+                    # Hiện tại: narrator hiện tại
+                    default_chars = ["nvc.png"]
+                    self.logger.info(f"Scene {scene_data['scene_id']}: {scene_type} → using current narrator")
+
+                # Thêm vào ref_files
                 if not ref_files:
-                    ref_files = ["nvc.png"]
+                    ref_files = default_chars.copy()
                 else:
-                    # Có loc nhưng không có nhân vật → thêm nvc vào đầu
-                    ref_files.insert(0, "nvc.png")
-                self.logger.warning(f"Scene {scene_data['scene_id']}: No character in refs, adding nvc.png → {ref_files}")
+                    # Có loc nhưng không có nhân vật → thêm nhân vật vào đầu
+                    for char in reversed(default_chars):
+                        ref_files.insert(0, char)
 
             chars_str = json.dumps(chars_used) if isinstance(chars_used, list) else str(chars_used)
             refs_str = json.dumps(ref_files) if isinstance(ref_files, list) else str(ref_files)
@@ -1852,12 +1873,23 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
             # Build prompt - ONLY VISUAL DESCRIPTION, NO NARRATION TEXT!
             parts = [shot_type]
 
-            # Character description
+            # Character description - chọn đúng nhân vật theo scene_type!
             if char_parts:
                 parts.append(", ".join(char_parts[:2]))  # Max 2 characters
             elif characters:
-                # Default to main character if none specified
-                parts.append(char_desc.get("nvc", characters[0].character_lock or characters[0].name))
+                # Chọn nhân vật PHÙ HỢP dựa trên scene_type
+                if scene_type == "CHILDHOOD_FLASHBACK":
+                    # Mẹ trẻ + con nhỏ
+                    young_mother = char_desc.get("nv1_young", char_desc.get("nv1", "32-year-old mother"))
+                    child = char_desc.get("nvc1", "8-year-old boy")
+                    parts.append(f"{young_mother}, with {child}")
+                elif scene_type == "ADULT_FLASHBACK":
+                    # Narrator trẻ (25-28 tuổi)
+                    young_narrator = char_desc.get("nvc_young", char_desc.get("nvc", "25-year-old man"))
+                    parts.append(young_narrator)
+                else:
+                    # FRAME_PRESENT, EMOTIONAL_BEAT - narrator hiện tại
+                    parts.append(char_desc.get("nvc", characters[0].character_lock or characters[0].name))
 
             # Visual moment - ONLY if it's actually visual (not narration)
             # Check if visual_moment looks like narration (contains certain patterns)
