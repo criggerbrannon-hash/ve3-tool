@@ -284,79 +284,127 @@ generate_scenes: |
 # =============================================================================
 
 smart_divide_scenes: |
-  Ban la AI Director. Phan tich NOI DUNG va tao VISUAL MOMENT the hien dung noi dung do.
+  You are an AI Director. Analyze CONTENT and create VISUAL MOMENTS that accurately represent the narration.
 
-  ## CONTEXT - NHAN VAT VA BOI CANH DA XAC DINH:
+  ## CONTEXT - CHARACTERS AND LOCATIONS:
   {characters_info}
 
   {locations_info}
 
-  ## INPUT - Cac scene da chia (max 8s/scene):
+  ## INPUT - Scenes (max 8s/scene):
   ---
   {srt_with_timestamps}
   ---
 
-  ## NHIEM VU CHINH:
-  1. Doc NOI DUNG moi scene
-  2. Xac dinh NHAN VAT nao xuat hien (dung ID tu danh sach tren)
-  3. Xac dinh BOI CANH dang o dau (dung ID tu danh sach tren, hoac tao moi neu chua co)
-  4. Tao VISUAL MOMENT mo ta CHINH XAC hinh anh the hien noi dung do
+  ## CRITICAL RULES:
 
-  ## CACH TAO VISUAL MOMENT:
-  Visual moment = Mo ta HINH ANH cu the the hien NOI DUNG doan van:
-  - PHAI co nhan vat dang LAM GI (hanh dong, khong phai portrait)
-  - PHAI the hien CAM XUC/TINH HUONG trong noi dung
-  - PHAI co BOI CANH phu hop
+  ### RULE 1: SCENE TYPES - Identify what type of content this is:
+  - **PRESENT ACTION**: Character doing something NOW → Show the action directly
+  - **FLASHBACK/MEMORY**: "When I was a kid...", "I remember..." → Show the MEMORY scene (use YOUNGER versions of characters!)
+  - **NARRATION/REFLECTION**: Character reflecting on feelings → Show character in contemplative pose in CURRENT location
+  - **YOUTUBE CTA**: "Like and subscribe", "Comment below" → SKIP or show narrator speaking to camera
 
-  Vi du:
-  - Noi dung: "Toi ngoi tren bac them toa an, tay run run cam ho so. Me toi la nguoi da hy sinh tat ca cho toi."
-  - Visual: "Medium shot, nguoi dan ong ngoi co don tren bac them toa an, dau cui xuong nhin tap ho so trong tay run ray, ve mat buon ba, anh chieu ta xuong"
+  ### RULE 2: FLASHBACK AGE ADJUSTMENT
+  If scene is a MEMORY/FLASHBACK:
+  - Mother at age 55 NOW → Show her as 30-35 years old in flashback
+  - "When I was 8" → Show child version, mother should be ~25-30 years younger
+  - Use "young version of [character]" in visual_moment
 
-  - Noi dung: "Khi toi con nho, hai me con chi co nhau, toi nghi rang moi lien ket do se khong bao gio bi pha vo."
-  - Visual: "Wide shot hoi tuong, nguoi me tre dan tay dua con nho di tren con duong que, anh hoang hon am ap, khong gian yeu thuong"
+  ### RULE 3: LOCATION MATCHING
+  Match the visual to WHERE the action happens:
+  - "I am sitting on courthouse steps" → loc_courthouse
+  - "She worked at dry cleaning shop" → loc_dryclean (create if not exists)
+  - "Convenience store" → loc_convenience (create if not exists)
+  - "I built my house" → loc_construction (create if not exists)
+  - If pure narration with no location hint → Use current scene location (usually narrator's current position)
+
+  ### RULE 4: NARRATION WITHOUT ACTION
+  If text is PURE NARRATION (no specific action described):
+  - Show narrator in contemplative pose at CURRENT location
+  - Example: "She was everything to me" → Close-up of narrator's face, thoughtful expression, current location
+  - DO NOT invent random actions that aren't in the text!
+
+  ### RULE 5: SKIP YOUTUBE CTA
+  If text contains: "like button", "subscribe", "comment below", "where you are watching from"
+  - Set visual_moment to: "Continue previous scene - narrator speaking"
+  - This avoids creating nonsensical visuals for meta-content
 
   ## OUTPUT FORMAT - JSON:
 
   {{
+    "new_locations": [
+      {{
+        "id": "loc_dryclean",
+        "name": "Dry Cleaning Shop",
+        "location_lock": "Small town American dry cleaning shop interior, racks of clothes, industrial pressing machines, fluorescent lighting"
+      }}
+    ],
     "scenes": [
       {{
         "scene_id": 1,
+        "scene_type": "PRESENT_ACTION",
         "location_id": "loc1",
-        "characters_in_scene": ["nv1"],
+        "characters_in_scene": ["nvc"],
         "shot_type": "Medium shot",
-        "visual_moment": "Medium shot nguoi dan ong ngoi co don tren bac them toa an, dau cui nhin ho so, ve mat lo lang"
+        "visual_moment": "30-year-old man sitting on courthouse steps, holding documents with shaking hands, looking down with worried expression"
       }},
       {{
         "scene_id": 2,
-        "location_id": "loc1",
-        "characters_in_scene": ["nv1"],
-        "shot_type": "Close-up",
-        "visual_moment": "Close-up doi tay run ray nam chat tap ho so, ngon tay trang bech vi cang thang"
+        "scene_type": "FLASHBACK",
+        "location_id": "loc2",
+        "characters_in_scene": ["nv1_young", "nvc1"],
+        "shot_type": "Wide shot",
+        "age_note": "Mother shown as 30-year-old (younger version)",
+        "visual_moment": "Wide shot memory - YOUNG mother (30 years old, blonde hair) holding hands with 8-year-old boy in small apartment, warm lighting, intimate moment"
       }},
       {{
         "scene_id": 3,
-        "location_id": "loc2",
-        "characters_in_scene": ["nv1", "nv2"],
-        "shot_type": "Wide shot",
-        "visual_moment": "Wide shot hoi tuong - nguoi me tre dan tay con trai nho di tren duong que, anh hoang hon"
+        "scene_type": "NARRATION",
+        "location_id": "loc1",
+        "characters_in_scene": ["nvc"],
+        "shot_type": "Close-up",
+        "visual_moment": "Close-up of narrator's face on courthouse steps, eyes distant and reflective, thinking about the past"
+      }},
+      {{
+        "scene_id": 4,
+        "scene_type": "YOUTUBE_CTA",
+        "location_id": "loc1",
+        "characters_in_scene": ["nvc"],
+        "shot_type": "Medium shot",
+        "visual_moment": "Continue previous scene - narrator on courthouse steps, looking at camera, speaking directly"
       }}
     ]
   }}
 
-  ## QUY TAC BAT BUOC:
-  1. scene_id PHAI KHOP voi so thu tu input (1, 2, 3...)
-  2. visual_moment PHAI the hien DUNG noi dung cua scene (khong chung chung)
-  3. characters_in_scene chi chua ID nhan vat THUC SU xuat hien trong scene
-  4. location_id dung ID da cho, hoac tao moi neu chua co (loc1, loc2...)
-  5. KHONG mo ta portrait (khong nhin camera, khong dung yen)
+  ## EXAMPLES OF GOOD VISUAL MOMENTS:
 
-  ## GOC MAY:
-  - Wide shot: Thiet lap boi canh, hoi tuong
-  - Medium shot: Hanh dong chinh
-  - Close-up: Cam xuc, chi tiet
-  - OTS: Doi thoai 2 nguoi
+  Content: "My mother worked two jobs. During the day she worked at a dry cleaning shop"
+  → scene_type: "FLASHBACK"
+  → visual_moment: "YOUNG mother (30 years old) operating large pressing machine at dry cleaning shop, face showing fatigue"
+  → location_id: "loc_dryclean" (new location)
 
-  OUTPUT: JSON object, KHONG markdown.
+  Content: "She would come home smelling like detergent, her feet swollen"
+  → scene_type: "FLASHBACK"
+  → visual_moment: "YOUNG mother sitting on worn sofa, removing shoes to reveal swollen feet, exhausted expression"
+  → location_id: "loc2" (apartment)
+
+  Content: "I built my first house with my own hands"
+  → scene_type: "FLASHBACK"
+  → visual_moment: "Man swinging hammer at house under construction, wooden frame visible, look of determination"
+  → location_id: "loc_construction" (new location)
+
+  Content: "Hit that like button and subscribe"
+  → scene_type: "YOUTUBE_CTA"
+  → visual_moment: "Continue previous scene - narrator speaking directly"
+
+  ## MANDATORY:
+  1. scene_id MUST match input order (1, 2, 3...)
+  2. visual_moment MUST reflect the ACTUAL content (not random actions!)
+  3. For FLASHBACK scenes, use YOUNGER versions of characters
+  4. Create new_locations if story mentions places not in the location list
+  5. NEVER show random unrelated actions!
+
+  OUTPUT: JSON object, NO markdown.
 
 # =============================================================================
 # CAMERA REFERENCE

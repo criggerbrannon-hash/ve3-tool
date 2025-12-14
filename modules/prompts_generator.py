@@ -1264,12 +1264,21 @@ class PromptGenerator:
 
             self.logger.info(f"[Smart Divide] AI trả về {len(json_data['scenes'])} scene analyses")
 
-            # Extract locations (nếu có)
-            ai_locations = {}
-            if "locations" in json_data:
-                for loc in json_data["locations"]:
-                    ai_locations[loc.get("id", "")] = loc.get("name", "")
-                self.logger.info(f"[Smart Divide] Found {len(ai_locations)} locations: {ai_locations}")
+            # Extract NEW locations từ AI (locations chưa có trong danh sách ban đầu)
+            new_locations = json_data.get("new_locations", [])
+            if new_locations:
+                self.logger.info(f"[Smart Divide] AI created {len(new_locations)} NEW locations:")
+                for loc in new_locations:
+                    self.logger.info(f"  - {loc.get('id')}: {loc.get('name')} - {loc.get('location_lock', '')[:50]}...")
+                    # Add to locations list for reference
+                    locations.append(Location(
+                        id=loc.get("id", ""),
+                        name=loc.get("name", ""),
+                        english_prompt=loc.get("location_prompt", ""),
+                        location_lock=loc.get("location_lock", ""),
+                        lighting_default=loc.get("lighting_default", ""),
+                        image_file=f"{loc.get('id', 'loc')}.png"
+                    ))
 
             # Merge AI analysis vào time-based scenes
             ai_scenes_map = {s.get("scene_id", i+1): s for i, s in enumerate(json_data["scenes"])}
@@ -1290,10 +1299,16 @@ class PromptGenerator:
                     # Fallback: dùng nhân vật chính nếu AI không chỉ định
                     chars_in_scene = [characters[0].id] if characters else []
 
+                # Scene type (PRESENT_ACTION, FLASHBACK, NARRATION, YOUTUBE_CTA)
+                scene_type = ai_data.get("scene_type", "PRESENT_ACTION")
+                age_note = ai_data.get("age_note", "")
+
                 final_scenes.append({
                     "scene_id": scene_id,
+                    "scene_type": scene_type,  # NEW: Type of scene
+                    "age_note": age_note,      # NEW: Age adjustment for flashbacks
                     "location_id": ai_data.get("location_id", "loc1"),
-                    "characters_in_scene": chars_in_scene,  # Nhân vật xuất hiện trong scene
+                    "characters_in_scene": chars_in_scene,
                     "story_beat": ai_data.get("story_beat", ""),
                     "start_time": start_time,
                     "end_time": end_time,
