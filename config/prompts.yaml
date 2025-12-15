@@ -544,9 +544,39 @@ directors_shooting_plan: |
   - EVERY image must serve the part's GOAL
   - Images are NOT illustrations - they CREATE FEELING
 
+  ## CHARACTER SELECTION - VERY IMPORTANT!
+
+  For each part, decide WHICH CHARACTERS and WHICH VERSION based on TIMELINE:
+
+  ```
+  TIMELINE → CHARACTER VERSION:
+
+  PRESENT (Frame story, Hook, CTA):
+    - Narrator: nvc (30yo) - current age
+    - Mother: nv1 (55yo) - current age
+
+  CHILDHOOD FLASHBACK (8-12 years old):
+    - Child narrator: nvc1 (8yo) - DO NOT use in reference_files!
+    - Young mother: nv1_young (32yo)
+
+  ADULT FLASHBACK (Building house, 28yo):
+    - Young adult narrator: nvc_young (28yo)
+    - Older mother: nv1 (55yo)
+  ```
+
+  Example character selection per part:
+  | Part | Timeline | Narrator | Mother | Notes |
+  |------|----------|----------|--------|-------|
+  | HOOK | Present | nvc (30yo) | - | Alone at courthouse |
+  | CHILDHOOD | Flashback 20yr | nvc1 (8yo) | nv1_young (32yo) | Child NOT in reference_files |
+  | BUILDING | Flashback 2yr | nvc_young (28yo) | nv1 (55yo) | Son building house |
+  | COMPLETION | Flashback 2yr | nvc_young (28yo) | nv1 (55yo) | House finished |
+  | BETRAYAL | Present | nvc (30yo) | nv1 (55yo) | Current conflict |
+
   ## CHILD CHARACTER RULES:
-  - Children should NOT be in reference_files (API policy)
-  - Describe children INLINE in img_prompt
+  - Children (nvc1, etc.) should NOT be in reference_files (API policy)
+  - Describe children INLINE in img_prompt: "(Child: 8yo Vietnamese boy, thin, hopeful eyes)"
+  - Only use adult references: nv1_young.png, loc_xxx.png
 
   ## INPUT:
 
@@ -574,6 +604,12 @@ directors_shooting_plan: |
         {{
           "part": "HOOK",
           "content": "Mother sues son for the house",
+          "timeline": "PRESENT",
+          "characters_needed": {{
+            "narrator": "nvc (30yo)",
+            "others": []
+          }},
+          "location": "loc_courthouse",
           "goal": "CREATE SHOCK, spark curiosity",
           "audience_feeling": "WTF? How could she do this?",
           "visual_strategy": "Dark, dramatic, lonely, imposing",
@@ -582,6 +618,12 @@ directors_shooting_plan: |
         {{
           "part": "PART 1 - Childhood",
           "content": "Poor childhood with hardworking mother",
+          "timeline": "CHILDHOOD FLASHBACK (20 years ago)",
+          "characters_needed": {{
+            "narrator": "nvc1 (8yo) - describe inline, NO reference",
+            "others": ["nv1_young (32yo mother)"]
+          }},
+          "location": "loc_old_house, loc_market",
           "goal": "BUILD SYMPATHY",
           "audience_feeling": "Poor kid, such hardship",
           "visual_strategy": "Warm, nostalgic, golden hour, intimate",
@@ -590,6 +632,12 @@ directors_shooting_plan: |
         {{
           "part": "PART 2 - Building",
           "content": "Son builds house for mother",
+          "timeline": "ADULT FLASHBACK (2 years ago)",
+          "characters_needed": {{
+            "narrator": "nvc_young (28yo)",
+            "others": ["nv1 (55yo mother)"]
+          }},
+          "location": "loc_construction",
           "goal": "SHOW SACRIFICE",
           "audience_feeling": "Such a devoted son",
           "visual_strategy": "Harsh sun, sweat, exhaustion, determination",
