@@ -1398,9 +1398,9 @@ class SmartEngine:
                 # Video không có audio
                 temp_video = Path(temp_dir) / "temp_video.mp4"
 
-                # Random transitions: fade (tối dần) hoặc mix (dissolve)
+                # Random transitions: fadeblack (tối dần) hoặc fade (mix mượt như TikTok)
                 import random
-                TRANSITION_DURATION = 0.5  # 0.5 giây transition
+                TRANSITION_DURATION = 0.8  # 0.8 giây transition
                 self.log(f"  Dang tao {len(images)} clips voi random transitions...")
 
                 # Tạo từng clip (raw, không transition)
@@ -1466,8 +1466,8 @@ class SmartEngine:
                         # Xfade chain: [0][1]xfade -> [v1], [v1][2]xfade -> [v2], ...
                         prev_label = "0:v"
                         for j in range(1, len(batch)):
-                            # Random transition type
-                            trans_type = random.choice(["fadeblack", "dissolve"])
+                            # Random transition type: fadeblack (tối dần) hoặc fade (mix mượt)
+                            trans_type = random.choice(["fadeblack", "fade"])
                             # Offset = tổng duration trước đó - transition_duration
                             offset = sum(b['duration'] for b in batch[:j]) - TRANSITION_DURATION * j
                             offset = max(0, offset)
