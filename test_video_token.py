@@ -86,7 +86,7 @@ class VideoTokenTest:
 
         self.log("Inject FULL capture script...")
 
-        # Script hook fetch để capture token + full request info
+        # Script hook fetch để capture token + full request info + ALL HEADERS
         capture_script = '''
 window._tk=null;
 window._pj=null;
@@ -94,6 +94,9 @@ window._requests=[];
 window._lastUrl=null;
 window._lastPayload=null;
 window._lastResponse=null;
+window._browserHeaders={};
+window._videoEndpoint=null;
+window._videoPayload=null;
 
 (function(){
     var originalFetch = window.fetch;
@@ -114,11 +117,28 @@ window._lastResponse=null;
                 if(match) window._pj = match[1];
             }
 
+            // Capture ALL headers including x-browser-*
+            var allHeaders = {};
+            if(options && options.headers) {
+                if(options.headers instanceof Headers) {
+                    options.headers.forEach(function(v, k) { allHeaders[k] = v; });
+                } else {
+                    for(var k in options.headers) { allHeaders[k] = options.headers[k]; }
+                }
+            }
+
+            // Capture x-browser-* headers specifically
+            for(var k in allHeaders) {
+                if(k.toLowerCase().startsWith('x-browser') || k.toLowerCase().startsWith('x-client')) {
+                    window._browserHeaders[k] = allHeaders[k];
+                }
+            }
+
             // Capture full request
             var reqData = {
                 url: urlStr,
                 method: options ? options.method : 'GET',
-                headers: headers,
+                headers: allHeaders,
                 body: options ? options.body : null,
                 timestamp: new Date().toISOString()
             };
@@ -127,9 +147,19 @@ window._lastResponse=null;
             window._lastUrl = urlStr;
             window._lastPayload = options ? options.body : null;
 
+            // Capture video generation endpoint specifically
+            if(urlStr.includes('video:batchAsyncGenerateVideo') || urlStr.includes('video:generate')) {
+                window._videoEndpoint = urlStr;
+                window._videoPayload = options ? options.body : null;
+                console.log('=== VIDEO GENERATION REQUEST ===');
+                console.log('Endpoint:', urlStr);
+                console.log('Headers:', JSON.stringify(allHeaders, null, 2));
+            }
+
             console.log('=== CAPTURED REQUEST ===');
             console.log('URL:', urlStr);
             console.log('Method:', reqData.method);
+            console.log('x-browser headers:', JSON.stringify(window._browserHeaders));
             if(reqData.body) console.log('Body preview:', String(reqData.body).substring(0, 500));
         }
 
@@ -147,8 +177,8 @@ window._lastResponse=null;
         });
     };
 
-    console.log('=== FULL CAPTURE READY ===');
-    console.log('Will capture: token, URL, payload, response');
+    console.log('=== FULL CAPTURE READY (v2) ===');
+    console.log('Will capture: token, URL, payload, response, x-browser headers');
 })();
 '''
 
@@ -496,7 +526,7 @@ window._lastResponse=null;
             return False
 
     def get_captured_data(self) -> Dict[str, Any]:
-        """Lấy TOÀN BỘ data đã capture từ DevTools."""
+        """Lấy TOÀN BỘ data đã capture từ DevTools bao gồm x-browser headers."""
         if not pag or not pyperclip:
             return {}
 
@@ -504,14 +534,17 @@ window._lastResponse=null;
             pag.hotkey("ctrl", "shift", "j")
             time.sleep(1.2)
 
-            # Lấy tất cả captured data
+            # Lấy tất cả captured data bao gồm browser headers
             js = '''copy(JSON.stringify({
                 token: window._tk,
                 project_id: window._pj,
                 requests: window._requests,
                 last_url: window._lastUrl,
                 last_payload: window._lastPayload,
-                last_response: window._lastResponse
+                last_response: window._lastResponse,
+                browser_headers: window._browserHeaders,
+                video_endpoint: window._videoEndpoint,
+                video_payload: window._videoPayload
             }))'''
 
             pyperclip.copy(js)
@@ -656,20 +689,35 @@ class VideoAPITest:
 
     BASE_URL = "https://aisandbox-pa.googleapis.com"
 
-    def __init__(self, token: str, project_id: str):
+    def __init__(self, token: str, project_id: str, browser_headers: Dict[str, str] = None):
         self.token = token
         self.project_id = project_id
+        self.browser_headers = browser_headers or {}
         self.session = self._create_session()
 
     def _create_session(self) -> requests.Session:
         session = requests.Session()
-        session.headers.update({
+
+        # Base headers
+        headers = {
             "Authorization": f"Bearer {self.token}",
-            "Content-Type": "application/json",
+            "Content-Type": "text/plain;charset=UTF-8",
             "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9",
             "Origin": "https://labs.google",
             "Referer": "https://labs.google/",
-        })
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "cross-site",
+        }
+
+        # Add x-browser-* headers if available (IMPORTANT for bypassing recaptcha!)
+        if self.browser_headers:
+            for k, v in self.browser_headers.items():
+                headers[k] = v
+            self.log(f"Added {len(self.browser_headers)} browser headers")
+
+        session.headers.update(headers)
         return session
 
     def log(self, msg: str):
@@ -695,82 +743,138 @@ class VideoAPITest:
 
     def generate_video_from_image(
         self,
+        media_id: str,
+        prompt: str = "Animate this image with smooth motion",
+        aspect_ratio: str = "VIDEO_ASPECT_RATIO_LANDSCAPE"
+    ) -> Dict[str, Any]:
+        """
+        Tạo video từ ảnh đã upload (có mediaId).
+
+        Args:
+            media_id: MediaID của ảnh đã upload lên Google (format: CAMaJDI0...)
+            prompt: Mô tả video cần tạo
+            aspect_ratio: Tỷ lệ video (LANDSCAPE, PORTRAIT, SQUARE)
+        """
+        self.log(f"Generating video from mediaId: {media_id[:50]}...")
+        self.log(f"Prompt: {prompt}")
+
+        import uuid
+        import random
+
+        # Endpoint chính xác từ captured data
+        endpoint = "/v1/video:batchAsyncGenerateVideoReferenceImages"
+        url = f"{self.BASE_URL}{endpoint}"
+
+        # Payload đúng format từ captured data
+        payload = {
+            "clientContext": {
+                "sessionId": f";{int(time.time() * 1000)}",
+                "projectId": self.project_id,
+                "tool": "PINHOLE",
+                "userPaygateTier": "PAYGATE_TIER_TWO"
+            },
+            "requests": [{
+                "aspectRatio": aspect_ratio,
+                "metadata": {"sceneId": str(uuid.uuid4())},
+                "referenceImages": [{
+                    "imageUsageType": "IMAGE_USAGE_TYPE_ASSET",
+                    "mediaId": media_id
+                }],
+                "seed": random.randint(1000, 9999),
+                "textInput": {"prompt": prompt},
+                "videoModelKey": "veo_3_0_r2v_fast_ultra"
+            }]
+        }
+
+        self.log(f"POST {url}")
+        self.log(f"Payload: {json.dumps(payload, indent=2)[:500]}...")
+
+        try:
+            response = self.session.post(
+                url,
+                data=json.dumps(payload),
+                timeout=120
+            )
+
+            self.log(f"Status: {response.status_code}")
+
+            result = {
+                "endpoint": endpoint,
+                "status": response.status_code,
+                "response_text": response.text[:1000] if response.text else None
+            }
+
+            if response.status_code == 200:
+                self.log("SUCCESS!")
+                result["success"] = True
+                try:
+                    result["response_json"] = response.json()
+                except:
+                    pass
+            else:
+                result["success"] = False
+                self.log(f"Failed: {response.text[:500]}")
+
+            return result
+
+        except Exception as e:
+            self.log(f"Error: {e}")
+            return {"success": False, "error": str(e)}
+
+    def check_video_status(self, generation_ids: list) -> Dict[str, Any]:
+        """Kiểm tra status của video đang generate."""
+        endpoint = "/v1/video:batchCheckAsyncVideoGenerationStatus"
+        url = f"{self.BASE_URL}{endpoint}"
+
+        payload = {
+            "clientContext": {
+                "sessionId": f";{int(time.time() * 1000)}",
+                "projectId": self.project_id,
+                "tool": "PINHOLE"
+            },
+            "generationIds": generation_ids
+        }
+
+        self.log(f"Checking status for {len(generation_ids)} videos...")
+
+        try:
+            response = self.session.post(
+                url,
+                data=json.dumps(payload),
+                timeout=60
+            )
+
+            return {
+                "status": response.status_code,
+                "response": response.json() if response.status_code == 200 else response.text
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
+    def generate_video_from_local_image(
+        self,
         image_path: str,
         prompt: str = "Animate this image with smooth motion"
     ) -> Dict[str, Any]:
         """
-        Thử tạo video từ ảnh.
+        Thử tạo video từ ảnh local (cần upload trước để có mediaId).
 
-        NOTE: Endpoint và payload có thể cần điều chỉnh sau khi capture được
-        request thực tế từ Chrome.
+        NOTE: Hiện tại chưa có API upload ảnh, cần dùng mediaId từ ảnh đã upload qua Chrome.
         """
-        self.log(f"Generating video from: {image_path}")
-        self.log(f"Prompt: {prompt}")
+        self.log(f"Local image: {image_path}")
+        self.log("⚠️  Cần upload ảnh qua Chrome trước để có mediaId")
+        self.log("   Hoặc dùng mediaId từ ảnh đã có trong Flow")
 
-        # Convert image to base64
+        # Convert image to base64 for reference
         image_b64 = self.image_to_base64(image_path)
         if not image_b64:
             return {"success": False, "error": "Cannot read image"}
 
-        # Các endpoint có thể thử
-        endpoints_to_try = [
-            f"/v1/projects/{self.project_id}/flowMedia:generateVideo",
-            f"/v1/projects/{self.project_id}/flowMedia:batchGenerateVideos",
-            f"/v1/projects/{self.project_id}/flowMedia:imageToVideo",
-            f"/v1/projects/{self.project_id}/videos:generate",
-        ]
-
-        # Payload mẫu (cần điều chỉnh sau khi capture request thực)
-        payload = {
-            "prompt": prompt,
-            "imageInputs": [image_b64],
-            "clientContext": {
-                "projectId": self.project_id,
-                "tool": "PINHOLE"
-            }
-        }
-
-        results = []
-
-        for endpoint in endpoints_to_try:
-            url = f"{self.BASE_URL}{endpoint}"
-            self.log(f"Trying: {url}")
-
-            try:
-                response = self.session.post(
-                    url,
-                    json=payload,
-                    timeout=60
-                )
-
-                result = {
-                    "endpoint": endpoint,
-                    "status": response.status_code,
-                    "response": response.text[:500] if response.text else None
-                }
-                results.append(result)
-
-                self.log(f"  Status: {response.status_code}")
-
-                if response.status_code == 200:
-                    self.log("  SUCCESS!")
-                    return {
-                        "success": True,
-                        "endpoint": endpoint,
-                        "response": response.json() if response.text else None
-                    }
-
-            except Exception as e:
-                self.log(f"  Error: {e}")
-                results.append({
-                    "endpoint": endpoint,
-                    "error": str(e)
-                })
-
         return {
             "success": False,
-            "tried_endpoints": results,
-            "message": "Không tìm được endpoint đúng. Cần capture request từ Chrome để xem endpoint thực."
+            "message": "Cần mediaId từ ảnh đã upload. Chạy test với Chrome để capture mediaId của ảnh.",
+            "image_size": len(image_b64),
+            "hint": "Dùng generate_video_from_image(media_id, prompt) với mediaId đã capture"
         }
 
 
@@ -781,7 +885,7 @@ class VideoAPITest:
 def main():
     """Test function."""
     print("=" * 60)
-    print("VIDEO TOKEN + API TEST")
+    print("VIDEO TOKEN + API TEST (v2)")
     print("=" * 60)
 
     # Config - thay đổi theo máy của bạn
@@ -812,7 +916,7 @@ def main():
 
     # === STEP 1: Lấy token ===
     print("=" * 60)
-    print("STEP 1: LẤY TOKEN")
+    print("STEP 1: LẤY TOKEN + HEADERS + MEDIA ID")
     print("=" * 60)
 
     tester = VideoTokenTest(chrome_path, profile_path)
@@ -825,56 +929,98 @@ def main():
     print(f"✓ TOKEN: {token[:80]}...")
     print(f"✓ PROJECT ID: {project_id}")
 
+    # Get captured data
+    captured_data = tester.captured_data
+    browser_headers = captured_data.get("browser_headers", {})
+    video_payload = captured_data.get("video_payload")
+
+    print()
+    print("=== BROWSER HEADERS ===")
+    if browser_headers:
+        for k, v in browser_headers.items():
+            print(f"  {k}: {v[:50]}..." if len(str(v)) > 50 else f"  {k}: {v}")
+    else:
+        print("  (Không capture được x-browser headers)")
+
+    # Extract mediaId từ captured video payload
+    media_id = None
+    if video_payload:
+        try:
+            payload_data = json.loads(video_payload) if isinstance(video_payload, str) else video_payload
+            requests_list = payload_data.get("requests", [])
+            if requests_list:
+                ref_images = requests_list[0].get("referenceImages", [])
+                if ref_images:
+                    media_id = ref_images[0].get("mediaId")
+                    print(f"\n✓ CAPTURED MEDIA ID: {media_id[:60]}...")
+        except Exception as e:
+            print(f"  Error parsing video_payload: {e}")
+
     # Save captured data
     result = {
         "token": token,
         "project_id": project_id,
+        "browser_headers": browser_headers,
+        "media_id": media_id,
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "captured_data": tester.captured_data
+        "captured_data": captured_data
     }
 
     with open("video_token_result.json", "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2, ensure_ascii=False)
-    print("✓ Đã lưu vào video_token_result.json")
+    print("\n✓ Đã lưu vào video_token_result.json")
 
     # In thông tin captured requests
-    if tester.captured_data.get("requests"):
+    if captured_data.get("requests"):
         print()
-        print("=== CAPTURED REQUESTS ===")
-        for req in tester.captured_data["requests"]:
-            print(f"  URL: {req.get('url', 'N/A')[:100]}")
-            print(f"  Method: {req.get('method', 'N/A')}")
-            if req.get('body'):
-                print(f"  Body: {str(req['body'])[:200]}...")
-            print()
+        print("=== CAPTURED REQUESTS (last 5) ===")
+        for req in captured_data["requests"][-5:]:
+            url = req.get('url', 'N/A')
+            if 'video' in url.lower():
+                print(f"  🎬 VIDEO: {url[:80]}")
+            else:
+                print(f"  📄 {url[:80]}")
 
-    # === STEP 2: Test Video API ===
+    # === STEP 2: Test Video API với mediaId đã capture ===
     print()
     print("=" * 60)
     print("STEP 2: TEST VIDEO API")
     print("=" * 60)
 
-    if not Path(test_image).exists():
-        print(f"✗ Test image không tồn tại: {test_image}")
-        print("  Bỏ qua test video API")
+    if not media_id:
+        print("⚠️  Không có mediaId từ captured data")
+        print("   Cần chọn 1 ảnh đã upload trong Flow để capture mediaId")
         return True
 
-    api_tester = VideoAPITest(token, project_id)
+    # Tạo API tester với browser headers
+    api_tester = VideoAPITest(
+        token=token,
+        project_id=project_id or "test-project",
+        browser_headers=browser_headers
+    )
+
+    # Test với mediaId đã capture
     video_result = api_tester.generate_video_from_image(
-        test_image,
-        prompt="Animate this beautiful scene with gentle motion"
+        media_id=media_id,
+        prompt="A beautiful sunset over the ocean with waves crashing"
     )
 
     print()
     print("=== VIDEO API RESULT ===")
-    print(json.dumps(video_result, indent=2, ensure_ascii=False)[:1000])
+    print(json.dumps(video_result, indent=2, ensure_ascii=False)[:1500])
 
     # Save video result
     with open("video_api_result.json", "w", encoding="utf-8") as f:
         json.dump(video_result, f, indent=2, ensure_ascii=False)
-    print("✓ Đã lưu vào video_api_result.json")
+    print("\n✓ Đã lưu vào video_api_result.json")
 
-    return True
+    if video_result.get("success"):
+        print("\n🎉 VIDEO GENERATION REQUEST THÀNH CÔNG!")
+        print("   Video đang được generate...")
+    else:
+        print("\n⚠️  Request failed - cần kiểm tra lại headers hoặc payload")
+
+    return video_result.get("success", False)
 
 
 if __name__ == "__main__":
