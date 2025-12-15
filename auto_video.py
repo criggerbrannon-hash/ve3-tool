@@ -93,29 +93,46 @@ window._captured = {
     xClientData: null,
     mediaId: null,
     operations: null,
-    videoPayload: null
+    videoPayload: null,
+    allHeaders: {}
 };
 
 (function(){
-    var origFetch = window.fetch;
+    function getHeader(hdrs, name) {
+        if(!hdrs) return null;
+        if(typeof hdrs.get === 'function') {
+            return hdrs.get(name);
+        }
+        return hdrs[name] || hdrs[name.toLowerCase()] || null;
+    }
 
+    function extractHeaders(hdrs) {
+        if(!hdrs) return;
+
+        var auth = getHeader(hdrs, 'Authorization');
+        if(auth && auth.startsWith('Bearer ')) {
+            window._captured.token = auth.substring(7);
+        }
+
+        var xbv = getHeader(hdrs, 'x-browser-validation');
+        if(xbv) {
+            window._captured.xBrowserValidation = xbv;
+            console.log('[CAPTURE] x-browser-validation:', xbv.substring(0, 30) + '...');
+        }
+
+        var xcd = getHeader(hdrs, 'x-client-data');
+        if(xcd) {
+            window._captured.xClientData = xcd;
+        }
+    }
+
+    var origFetch = window.fetch;
     window.fetch = function(url, opts) {
         var urlStr = url ? url.toString() : '';
 
-        if(urlStr.includes('aisandbox')) {
-            var hdrs = opts && opts.headers ? opts.headers : {};
-
-            var auth = hdrs.Authorization || hdrs.authorization || '';
-            if(auth.startsWith('Bearer ')) {
-                window._captured.token = auth.substring(7);
-            }
-
-            if(hdrs['x-browser-validation']) {
-                window._captured.xBrowserValidation = hdrs['x-browser-validation'];
-            }
-            if(hdrs['x-client-data']) {
-                window._captured.xClientData = hdrs['x-client-data'];
-            }
+        if(urlStr.includes('aisandbox') || urlStr.includes('googleapis')) {
+            console.log('[CAPTURE] Intercepted:', urlStr.substring(0, 80));
+            extractHeaders(opts && opts.headers);
 
             if(urlStr.includes('video:batchAsyncGenerateVideo') && opts && opts.body) {
                 window._captured.videoPayload = opts.body;
@@ -144,7 +161,19 @@ window._captured = {
         });
     };
 
-    console.log('=== CAPTURE READY ===');
+    var origXHR = XMLHttpRequest.prototype.setRequestHeader;
+    XMLHttpRequest.prototype.setRequestHeader = function(name, value) {
+        if(name.toLowerCase() === 'x-browser-validation' && value) {
+            window._captured.xBrowserValidation = value;
+            console.log('[CAPTURE-XHR] x-browser-validation:', value.substring(0, 30) + '...');
+        }
+        if(name.toLowerCase() === 'authorization' && value && value.startsWith('Bearer ')) {
+            window._captured.token = value.substring(7);
+        }
+        return origXHR.apply(this, arguments);
+    };
+
+    console.log('=== CAPTURE READY (fetch + XHR) ===');
 })();
 '''
 
