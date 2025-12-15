@@ -8,7 +8,7 @@ echo   Uni-x Voice to Video
 echo ========================================
 echo.
 
-:: Auto update qua git (force update, xoa conflict)
+:: Auto update qua git (KHONG xoa data cua user)
 where git >nul 2>&1
 if %errorlevel% equ 0 (
     echo [*] Checking for updates...
@@ -16,9 +16,8 @@ if %errorlevel% equ 0 (
     :: Huy merge dang do (neu co)
     git merge --abort 2>nul
 
-    :: Xoa tat ca thay doi local va untracked files
+    :: Reset chi cac file TRACKED (khong xoa PROJECTS, config, v.v.)
     git reset --hard HEAD 2>nul
-    git clean -fd 2>nul
 
     :: Fetch va reset ve code moi nhat
     git fetch origin claude/vtv-tool-image-support-01MrKhJPx1cecuLNUkJLpyNr 2>nul
