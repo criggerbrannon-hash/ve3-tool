@@ -381,23 +381,45 @@ class MultiAIClient:
             "Content-Type": "application/json"
         }
 
+        # Determine if prompt expects JSON response
+        expects_json = any(kw in prompt.lower() for kw in ['json', 'output format', '{"', "{'"])
+
         data = {
             "model": "deepseek-chat",
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant. When asked to output JSON, respond ONLY with valid JSON, no markdown code blocks, no explanations before or after the JSON."
+                },
+                {"role": "user", "content": prompt}
+            ],
             "temperature": temperature,
             "max_tokens": max_tokens
         }
 
-        print(f"[DeepSeek] Dang goi API... (prompt: {len(prompt)} ky tu, cho 60-120s)")
+        # Force JSON mode if prompt expects JSON
+        if expects_json:
+            data["response_format"] = {"type": "json_object"}
+
+        print(f"[DeepSeek] Dang goi API... (prompt: {len(prompt)} ky tu, json_mode={expects_json}, cho 60-180s)")
 
         resp = requests.post(self.DEEPSEEK_URL, headers=headers, json=data, timeout=180)
 
         if resp.status_code == 200:
             result = resp.json()
-            print(f"[DeepSeek] Thanh cong!")
-            return result["choices"][0]["message"]["content"]
+            content = result["choices"][0]["message"]["content"]
+            print(f"[DeepSeek] Thanh cong! Response: {len(content)} ky tu")
+
+            # Log preview for debugging
+            if content:
+                preview = content[:300].replace('\n', ' ')
+                print(f"[DeepSeek] Preview: {preview}...")
+
+            return content
         else:
-            raise requests.RequestException(f"DeepSeek API error {resp.status_code}: {resp.text[:200]}")
+            error_text = resp.text[:500]
+            print(f"[DeepSeek] Error {resp.status_code}: {error_text}")
+            raise requests.RequestException(f"DeepSeek API error {resp.status_code}: {error_text}")
 
     def _call_groq(self, prompt: str, temperature: float, max_tokens: int) -> str:
         """Call Groq API."""
@@ -408,14 +430,27 @@ class MultiAIClient:
             "Content-Type": "application/json"
         }
 
+        # Determine if prompt expects JSON response
+        expects_json = any(kw in prompt.lower() for kw in ['json', 'output format', '{"', "{'"])
+
         data = {
             "model": "llama-3.3-70b-versatile",
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant. When asked to output JSON, respond ONLY with valid JSON, no markdown code blocks."
+                },
+                {"role": "user", "content": prompt}
+            ],
             "temperature": temperature,
             "max_tokens": max_tokens
         }
 
-        self.logger.debug(f"Calling Groq API (key #{self.groq_index + 1})...")
+        # Force JSON mode if prompt expects JSON
+        if expects_json:
+            data["response_format"] = {"type": "json_object"}
+
+        self.logger.debug(f"Calling Groq API (key #{self.groq_index + 1}, json_mode={expects_json})...")
 
         resp = requests.post(self.GROQ_URL, headers=headers, json=data, timeout=120)
 
