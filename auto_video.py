@@ -438,8 +438,13 @@ class VideoGenerator:
             "Authorization": f"Bearer {self.creds.get('token')}",
             "Content-Type": "text/plain;charset=UTF-8",
             "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9",
             "Origin": "https://labs.google",
             "Referer": "https://labs.google/",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "cross-site",
             "x-browser-channel": "stable",
             "x-browser-copyright": "Copyright 2025 Google LLC. All Rights reserved.",
             "x-browser-year": "2025",
@@ -460,22 +465,43 @@ class VideoGenerator:
         """Upload ảnh → mediaId."""
         self.log(f"Upload: {Path(image_path).name}")
 
+        path = Path(image_path)
+        if not path.exists():
+            self.log(f"  ✗ File not found: {image_path}")
+            return None
+
+        # Check file size
+        file_size = path.stat().st_size
+        self.log(f"  File size: {file_size / 1024:.1f} KB")
+
         with open(image_path, "rb") as f:
             raw_bytes = base64.b64encode(f.read()).decode("utf-8")
 
         url = f"{self.BASE_URL}/v1:uploadUserImage"
         payload = {"imageInput": {"rawImageBytes": raw_bytes}}
 
+        self.log(f"  Payload size: {len(json.dumps(payload)) / 1024:.1f} KB")
+        self.log(f"  Token: {self.creds.get('token', '')[:30]}...")
+        self.log(f"  x-browser-validation: {'✓' if self.creds.get('xBrowserValidation') else '✗'}")
+
         try:
             resp = self.session.post(url, data=json.dumps(payload), timeout=120)
 
+            self.log(f"  Response status: {resp.status_code}")
+
             if resp.status_code == 200:
-                media_id = resp.json().get("mediaGenerationId", {}).get("mediaGenerationId")
+                data = resp.json()
+                media_id = data.get("mediaGenerationId", {}).get("mediaGenerationId")
                 if media_id:
                     self.log(f"  ✓ mediaId: {media_id[:40]}...")
                     return media_id
-            self.log(f"  ✗ Upload failed: {resp.status_code}")
-            return None
+                else:
+                    self.log(f"  ✗ No mediaId in response: {json.dumps(data)[:200]}")
+                    return None
+            else:
+                self.log(f"  ✗ Upload failed: {resp.status_code}")
+                self.log(f"  Response: {resp.text[:500]}")
+                return None
         except Exception as e:
             self.log(f"  ✗ Error: {e}")
             return None
