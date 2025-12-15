@@ -1398,75 +1398,33 @@ class SmartEngine:
                 # Video không có audio
                 temp_video = Path(temp_dir) / "temp_video.mp4"
 
-                # Transition settings
-                FADE_DURATION = 0.5  # 0.5 giây cho mỗi transition
+                # Transition: Dùng concat đơn giản (ổn định nhất)
+                # Fade transitions phức tạp với nhiều ảnh, skip để đảm bảo video xuất ra
+                self.log("  Dang ghep anh...")
 
-                self.log("  Dang ghep anh voi hieu ung chuyen canh...")
+                # Tạo file list cho FFmpeg concat
+                list_file = Path(temp_dir) / "images.txt"
+                with open(list_file, 'w', encoding='utf-8') as f:
+                    for img in images:
+                        abs_path = str(Path(img['path']).resolve()).replace('\\', '/')
+                        f.write(f"file '{abs_path}'\n")
+                        f.write(f"duration {img['duration']:.3f}\n")
+                    # Thêm ảnh cuối (FFmpeg requirement)
+                    f.write(f"file '{abs_path}'\n")
 
-                # Tạo video với xfade transitions
-                # Build input args
-                input_args = []
-                for img in images:
-                    abs_path = str(Path(img['path']).resolve()).replace('\\', '/')
-                    # Mỗi ảnh là 1 input với duration
-                    input_args.extend([
-                        "-loop", "1",
-                        "-t", str(img['duration'] + FADE_DURATION),  # Thêm thời gian cho fade
-                        "-i", abs_path
-                    ])
-
-                # Build xfade filter chain
-                # [0:v][1:v]xfade=transition=fade:duration=0.5:offset=X[v01];
-                # [v01][2:v]xfade=transition=fade:duration=0.5:offset=Y[v012];
-                # ...
-                filter_parts = []
-                accumulated_duration = images[0]['duration']
-
-                for i in range(len(images) - 1):
-                    if i == 0:
-                        prev_label = "[0:v]"
-                    else:
-                        prev_label = f"[v{i-1}]"
-
-                    next_label = f"[{i+1}:v]"
-                    out_label = f"[v{i}]"
-
-                    # Xen kẽ fade và dissolve
-                    transition = "fade" if i % 2 == 0 else "dissolve"
-
-                    offset = accumulated_duration - FADE_DURATION / 2
-                    filter_parts.append(
-                        f"{prev_label}{next_label}xfade=transition={transition}:duration={FADE_DURATION}:offset={offset:.3f}{out_label}"
-                    )
-
-                    accumulated_duration += images[i + 1]['duration']
-
-                # Scale và pad ở cuối
-                if filter_parts:
-                    final_label = f"[v{len(images)-2}]"
-                    filter_complex = ";".join(filter_parts) + f";{final_label}scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2[vout]"
-                else:
-                    # Chỉ có 1 ảnh
-                    filter_complex = "[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2[vout]"
-
-                cmd1 = [
-                    "ffmpeg", "-y",
-                    *input_args,
-                    "-filter_complex", filter_complex,
-                    "-map", "[vout]",
+                # Concat ảnh thành video
+                cmd_concat = [
+                    "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                    "-i", str(list_file),
+                    "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2",
                     "-c:v", "libx264", "-pix_fmt", "yuv420p",
                     "-r", "30", str(temp_video)
                 ]
-
-                result = subprocess.run(cmd1, capture_output=True, text=True)
+                result = subprocess.run(cmd_concat, capture_output=True, text=True)
                 if result.returncode != 0:
-                    # Lấy dòng cuối của stderr (error thực sự)
                     error_lines = result.stderr.strip().split('\n')
-                    actual_error = error_lines[-1] if error_lines else "Unknown error"
-                    self.log(f"  FFmpeg error: {actual_error}", "ERROR")
-                    # Fallback: thử concat đơn giản không có transition
-                    self.log("  Thu lai voi concat don gian...", "WARN")
-                    return self._compose_video_simple(proj_dir, excel_path, name, images, voice_path, srt_path, temp_dir)
+                    self.log(f"  Concat error: {error_lines[-1]}", "ERROR")
+                    return None
 
                 # Thêm audio
                 temp_with_audio = Path(temp_dir) / "with_audio.mp4"
