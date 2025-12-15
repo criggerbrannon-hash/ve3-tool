@@ -1199,7 +1199,77 @@ class SmartEngine:
         self.log("[STEP 6] Xuat TXT & SRT...")
         self._export_scenes(excel_path, proj_dir, name)
 
+        # === 7. AUTO COMPOSE VIDEO ===
+        if results["failed"] == 0 or results["success"] > 0:
+            self.log("[STEP 7] Tu dong ghep video...")
+            video_path = self._compose_video(proj_dir, excel_path, name)
+            if video_path:
+                results["video_path"] = str(video_path)
+
         return results
+
+    def _compose_video(self, proj_dir: Path, excel_path: Path, name: str) -> Optional[Path]:
+        """
+        Tự động ghép video từ ảnh + voice + SRT.
+
+        Sử dụng thời gian từ Excel (Director's Shooting Plan):
+        - Mỗi ảnh bắt đầu tại srt_start
+        - Mỗi ảnh kết thúc tại srt_start của ảnh tiếp theo (lấp khoảng trống)
+        """
+        try:
+            from modules.video_composer import VideoComposer, VideoConfig
+        except ImportError:
+            self.log("  Video composer not available. Cai FFmpeg truoc.", "WARN")
+            return None
+
+        # Tìm voice file
+        voice_files = list(proj_dir.glob("*.mp3")) + list(proj_dir.glob("*.wav"))
+        if not voice_files:
+            self.log("  Khong tim thay voice file (.mp3/.wav)", "WARN")
+            return None
+        voice_path = voice_files[0]
+
+        # Tìm SRT file
+        srt_files = list(proj_dir.glob("*.srt"))
+        srt_path = srt_files[0] if srt_files else None
+
+        # Output path
+        output_path = proj_dir / f"{name}_final.mp4"
+
+        self.log(f"  Voice: {voice_path.name}")
+        self.log(f"  SRT: {srt_path.name if srt_path else 'Khong co'}")
+        self.log(f"  Excel: {excel_path.name}")
+        self.log(f"  Output: {output_path.name}")
+
+        try:
+            config = VideoConfig(
+                width=1920,
+                height=1080,
+                fps=30,
+                font_size=48,
+                font_color="white",
+                subtitle_bg=True
+            )
+
+            composer = VideoComposer(config)
+
+            if composer.compose_video(
+                excel_path=str(excel_path),
+                voice_path=str(voice_path),
+                output_path=str(output_path),
+                srt_path=str(srt_path) if srt_path else None
+            ):
+                self.log(f"  -> Video: {output_path.name}", "OK")
+                return output_path
+            else:
+                self.log("  Ghep video that bai!", "ERROR")
+                return None
+
+        except Exception as e:
+            self.log(f"  Video compose error: {e}", "ERROR")
+            import traceback
+            traceback.print_exc()
+            return None
 
     def _export_scenes(self, excel_path: Path, proj_dir: Path, name: str) -> None:
         """Export scenes ra TXT va SRT de ho tro video editing."""
