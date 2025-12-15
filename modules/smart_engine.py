@@ -1200,10 +1200,10 @@ class SmartEngine:
 
         try:
             config = VideoConfig(
-                resolution=(1920, 1080),
+                width=1920,
+                height=1080,
                 fps=30,
-                audio_codec='aac',
-                audio_bitrate='192k'
+                audio_codec='aac'
             )
             composer = VideoComposer(config)
 
@@ -1213,6 +1213,11 @@ class SmartEngine:
                 self.log("  Ghep video that bai!", "ERROR")
                 return None
 
+        except RuntimeError as e:
+            # FFmpeg not found
+            self.log(f"  {e}", "ERROR")
+            self.log("  Hay cai FFmpeg: https://ffmpeg.org/download.html", "WARN")
+            return None
         except Exception as e:
             self.log(f"  Video compose error: {e}", "ERROR")
             return None
