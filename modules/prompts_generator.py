@@ -1351,7 +1351,7 @@ class PromptGenerator:
 
             # Format SRT segments với timestamps
             srt_segments = "\n".join([
-                f"[{self._format_timedelta(e.start)} - {self._format_timedelta(e.end)}] \"{e.text[:200]}\""
+                f"[{self._format_timedelta(e.start_time)} - {self._format_timedelta(e.end_time)}] \"{e.text[:200]}\""
                 for e in srt_entries
             ])
 
