@@ -1194,9 +1194,9 @@ class VE3ToolPro:
 4. Tạo 1 video bất kỳ (upload ảnh + nhập prompt + click Tạo)
 5. Tìm request tới 'aisandbox-pa.googleapis.com'
 6. Copy các giá trị sau từ Request Headers:
-   - Authorization (bỏ 'Bearer ' ở đầu)
-   - x-browser-validation
-7. Dán vào các ô bên dưới
+   - Authorization (bỏ 'Bearer ' ở đầu) ← BẮT BUỘC
+   - projectId từ Request Payload ← BẮT BUỘC
+   - x-browser-validation ← Optional
 """
         ttk.Label(win, text=instructions, justify=tk.LEFT, font=('Segoe UI', 9)).pack(anchor=tk.W, padx=20)
 
@@ -1204,35 +1204,42 @@ class VE3ToolPro:
         input_frame = ttk.Frame(win)
         input_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
 
-        ttk.Label(input_frame, text="Token (Authorization):").pack(anchor=tk.W)
+        ttk.Label(input_frame, text="Token (Authorization): *BẮT BUỘC*", foreground='red').pack(anchor=tk.W)
         token_entry = ttk.Entry(input_frame, width=70)
         token_entry.pack(fill=tk.X, pady=(0, 10))
 
-        ttk.Label(input_frame, text="x-browser-validation:").pack(anchor=tk.W)
+        ttk.Label(input_frame, text="ProjectID: *BẮT BUỘC*", foreground='red').pack(anchor=tk.W)
+        project_entry = ttk.Entry(input_frame, width=70)
+        project_entry.pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Label(input_frame, text="x-browser-validation: (optional)").pack(anchor=tk.W)
         xbv_entry = ttk.Entry(input_frame, width=70)
         xbv_entry.pack(fill=tk.X, pady=(0, 10))
 
-        ttk.Label(input_frame, text="RecaptchaToken (optional):").pack(anchor=tk.W)
-        recaptcha_entry = ttk.Entry(input_frame, width=70)
-        recaptcha_entry.pack(fill=tk.X, pady=(0, 10))
-
-        ttk.Label(input_frame, text="ProjectID (optional):").pack(anchor=tk.W)
-        project_entry = ttk.Entry(input_frame, width=70)
-        project_entry.pack(fill=tk.X)
+        ttk.Label(input_frame, text="x-client-data: (optional)").pack(anchor=tk.W)
+        xclient_entry = ttk.Entry(input_frame, width=70)
+        xclient_entry.pack(fill=tk.X)
 
         def save_creds():
             token = token_entry.get().strip()
+            project_id = project_entry.get().strip()
             xbv = xbv_entry.get().strip()
+            xclient = xclient_entry.get().strip()
 
             if not token:
                 messagebox.showerror("Lỗi", "Cần nhập Token!")
                 return
 
+            if not project_id:
+                messagebox.showerror("Lỗi", "Cần nhập ProjectID!")
+                return
+
             self.video_credentials = {
                 "token": token,
+                "projectId": project_id,
                 "xBrowserValidation": xbv,
-                "recaptchaToken": recaptcha_entry.get().strip(),
-                "projectId": project_entry.get().strip()
+                "xClientData": xclient,
+                "recaptchaToken": ""
             }
 
             # Save to file

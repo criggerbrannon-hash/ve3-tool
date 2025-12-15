@@ -768,14 +768,14 @@ class VideoGenerator:
             "priority": "u=1, i",
         }
 
-        # Headers quan trọng từ capture (REQUIRED!)
+        # Headers optional - có thể không cần cho một số trường hợp
         if self.creds.get("xBrowserValidation"):
             headers["x-browser-validation"] = self.creds["xBrowserValidation"]
-        else:
-            self.log("WARNING: Missing x-browser-validation header!")
 
         if self.creds.get("xClientData"):
             headers["x-client-data"] = self.creds["xClientData"]
+
+        self.log(f"Session created - Token: ✓, ProjectID: {self.creds.get('projectId', 'N/A')}")
 
         session.headers.update(headers)
         return session
