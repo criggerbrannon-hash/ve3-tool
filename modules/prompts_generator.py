@@ -657,7 +657,28 @@ class PromptGenerator:
     def _generate_content(self, prompt: str, temperature: float = 0.7, max_tokens: int = 8192) -> str:
         """Generate content using available AI providers (DeepSeek + Ollama)."""
         return self.ai_client.generate_content(prompt, temperature, max_tokens)
-    
+
+    def _generate_content_large(self, prompt: str, temperature: float = 0.7, max_tokens: int = 16000) -> str:
+        """
+        Generate content với ưu tiên Ollama cho response dài.
+
+        DeepSeek có giới hạn max_tokens=8192, không đủ cho Director's Shooting Plan.
+        Nếu Ollama khả dụng, dùng Ollama trước (không giới hạn tokens).
+        Nếu không có Ollama, dùng DeepSeek với max_tokens=8192 và repair JSON nếu cần.
+        """
+        # Kiểm tra xem Ollama có khả dụng không
+        if hasattr(self.ai_client, 'ollama_available') and self.ai_client.ollama_available:
+            self.logger.info("[LargeContent] Dùng Ollama (không giới hạn tokens)...")
+            try:
+                # Gọi trực tiếp Ollama
+                return self.ai_client._call_ollama(prompt, temperature)
+            except Exception as e:
+                self.logger.warning(f"[LargeContent] Ollama failed: {e}, falling back to DeepSeek...")
+
+        # Fallback: dùng DeepSeek (sẽ bị cap ở 8192 tokens)
+        self.logger.info("[LargeContent] Dùng DeepSeek (giới hạn 8192 tokens)...")
+        return self.ai_client.generate_content(prompt, temperature, max_tokens)
+
     def generate_for_project(
         self,
         project_dir: Path,
@@ -1213,8 +1234,9 @@ class PromptGenerator:
             self.logger.info("[Director's Shooting Plan] Đạo diễn đang lên kế hoạch quay...")
             self.logger.info("=" * 50)
 
-            # Tăng max_tokens vì shooting plan có thể rất dài (nhiều scenes)
-            response = self._generate_content(prompt, temperature=0.4, max_tokens=16000)
+            # Director's Shooting Plan cần response rất dài (nhiều scenes)
+            # DeepSeek bị giới hạn 8192 tokens nên ưu tiên Ollama nếu có
+            response = self._generate_content_large(prompt, temperature=0.4, max_tokens=16000)
 
             # DEBUG: Log response để xem AI trả về gì
             self.logger.info(f"[Director's Shooting Plan] Response length: {len(response) if response else 0}")
