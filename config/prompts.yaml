@@ -602,6 +602,21 @@ smart_divide_scenes: |
   WRONG: "I built my house" → 30yo man at courthouse
   RIGHT: "I built my house" → 28yo MAN hammering at construction site!
 
+  ## !!! CHILD POLICY - API SAFETY !!!
+
+  CHILDREN (is_child=true) → NO REFERENCE IMAGE!
+  - Do NOT include child IDs in reference_files (causes API policy violation)
+  - Instead: DESCRIBE child FULLY in img_prompt using character_lock
+  - Only use adult + location references
+
+  Example for CHILDHOOD scene:
+  ```
+  characters_in_scene: ["nv1_young", "nvc1"]     // Both listed here
+  reference_files: ["nv1_young.png", "loc_apartment.png"]  // NO nvc1.png!
+  img_prompt: "...32yo mother HUGGING a young 8-year-old boy with messy brown hair, innocent blue eyes, freckles, wearing old faded t-shirt..."
+  ```
+  ↑ Child described INLINE, not referenced!
+
   ## DECISION TREE - For EACH SRT segment:
 
   Q1: Does it mention CHILDHOOD or MOTHER'S SACRIFICE?
@@ -672,6 +687,9 @@ smart_divide_scenes: |
   - SUCCESS content → proud, accomplished, satisfied (OK to smile here)
   - CHILDHOOD HAPPY → nostalgic warmth, innocent joy (OK to smile here)
 
+  ## GLOBAL STYLE (MUST append to EVERY img_prompt!):
+  {global_style}
+
   ## CHARACTERS:
   {characters_info}
 
@@ -680,6 +698,10 @@ smart_divide_scenes: |
 
   ## SRT SEGMENTS:
   {srt_with_timestamps}
+
+  ## STYLE CONSISTENCY RULE:
+  EVERY img_prompt MUST END with the GLOBAL STYLE above!
+  This ensures all images have consistent colors and quality.
 
   ## OUTPUT FORMAT:
 
@@ -691,6 +713,7 @@ smart_divide_scenes: |
         "scene_type": "FRAME_PRESENT",
         "location_id": "loc_courthouse",
         "characters_in_scene": ["nvc"],
+        "reference_files": ["nvc.png", "loc_courthouse.png"],
         "img_prompt": "Medium shot. 30yo man with brown hair, tired eyes, gray t-shirt, SITTING on courthouse steps, CLUTCHING documents in trembling hands. Courthouse exterior. Overcast. Cinematic."
       }},
       {{
@@ -699,6 +722,7 @@ smart_divide_scenes: |
         "scene_type": "CHILDHOOD_FLASHBACK",
         "location_id": "loc_dryclean",
         "characters_in_scene": ["nv1_young"],
+        "reference_files": ["nv1_young.png", "loc_dryclean.png"],
         "img_prompt": "Medium shot. 32yo blonde mother in work uniform, PRESSING shirts at industrial machine, exhausted face, sweat on forehead. 1990s dry cleaning shop, fluorescent lights, clock 9PM. Warm nostalgic. Cinematic."
       }},
       {{
@@ -707,7 +731,8 @@ smart_divide_scenes: |
         "scene_type": "CHILDHOOD_FLASHBACK",
         "location_id": "loc_apartment",
         "characters_in_scene": ["nv1_young", "nvc1"],
-        "img_prompt": "Wide shot. 32yo blonde mother HUGGING 8yo boy tightly in small apartment. Worn furniture, single lamp. Warm tungsten light. Emotional moment. Cinematic."
+        "reference_files": ["nv1_young.png", "loc_apartment.png"],
+        "img_prompt": "Wide shot. 32yo blonde mother HUGGING a young 8-year-old Caucasian boy with messy brown hair, innocent blue eyes, freckles, wearing old faded t-shirt tightly. Small 1990s apartment, worn furniture, single lamp. Warm tungsten light. Emotional moment. Cinematic."
       }},
       {{
         "scene_id": 4,
@@ -715,6 +740,7 @@ smart_divide_scenes: |
         "scene_type": "ADULT_FLASHBACK",
         "location_id": "loc_construction",
         "characters_in_scene": ["nvc_young"],
+        "reference_files": ["nvc_young.png", "loc_construction.png"],
         "img_prompt": "Medium shot. 28yo muscular man SWINGING HAMMER at wooden beam, sawdust on face, sweat dripping, DETERMINED expression, tool belt. House frame behind. Sunny day, golden hour. Cinematic."
       }},
       {{
@@ -723,6 +749,7 @@ smart_divide_scenes: |
         "scene_type": "ADULT_FLASHBACK",
         "location_id": "loc_construction",
         "characters_in_scene": ["nvc_young"],
+        "reference_files": ["nvc_young.png", "loc_construction.png"],
         "img_prompt": "Close-up. 28yo man with tired eyes, STUDYING blueprints intently, SERIOUS face showing weight of decision, calloused hands gripping paper. Construction site background. Late afternoon. Cinematic."
       }},
       {{
@@ -731,6 +758,7 @@ smart_divide_scenes: |
         "scene_type": "ADULT_FLASHBACK",
         "location_id": "loc_finished_house",
         "characters_in_scene": ["nvc_young", "nv1"],
+        "reference_files": ["nvc_young.png", "nv1.png", "loc_finished_house.png"],
         "img_prompt": "Medium shot. 55yo graying blonde woman CRYING tears of joy, hand over mouth, 28yo muscular man beside her looking PROUD but emotional. New house interior, warm evening light. Cinematic."
       }},
       {{
@@ -739,6 +767,7 @@ smart_divide_scenes: |
         "scene_type": "ADULT_FLASHBACK",
         "location_id": "loc_finished_house",
         "characters_in_scene": ["nvc_young", "nv1"],
+        "reference_files": ["nvc_young.png", "nv1.png", "loc_finished_house.png"],
         "img_prompt": "Close-up. 55yo mother EMBRACING 28yo son tightly, tears streaming, face showing overwhelming PRIDE and love. Warm golden interior light. Emotional moment. Cinematic."
       }},
       {{
@@ -747,6 +776,7 @@ smart_divide_scenes: |
         "scene_type": "FRAME_PRESENT",
         "location_id": "loc_courthouse",
         "characters_in_scene": ["nvc"],
+        "reference_files": ["nvc.png", "loc_courthouse.png"],
         "img_prompt": "Medium shot. 30yo man CLUTCHING legal documents, SHOCKED expression, disbelief in eyes, jaw tense. Courthouse steps. Overcast sky. Cinematic."
       }}
     ]
@@ -762,6 +792,8 @@ smart_divide_scenes: |
   [ ] ACTIONS are ACTIVE (SWINGING not HOLDING!)
   [ ] Hard work = DETERMINED/EXHAUSTED face, NOT smiling!
   [ ] Mother versions: CHILDHOOD=nv1_young(32), ADULT=nv1(55)!
+  [ ] CHILDREN: NOT in reference_files! Describe FULLY in img_prompt!
+  [ ] STYLE CONSISTENCY: Every img_prompt ends with GLOBAL STYLE!
 
   OUTPUT: JSON only, NO markdown code blocks.
 

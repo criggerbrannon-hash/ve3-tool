@@ -200,6 +200,54 @@ class MultiAIClient:
         except:
             return False
 
+    def _is_child_character(self, char_id: str) -> bool:
+        """
+        Check if a character ID represents a child (cannot use reference image).
+        Children cause API policy violations when used as reference images.
+
+        Child patterns:
+        - nvc1: narrator as child
+        - IDs ending with numbers that indicate child versions
+        - Or any ID marked with is_child=true in analyze_story
+        """
+        if not char_id:
+            return False
+
+        # Remove .png extension if present
+        char_id_clean = char_id.replace('.png', '').lower()
+
+        # Known child character patterns
+        child_patterns = ['nvc1', 'nv1c', 'child']
+
+        for pattern in child_patterns:
+            if pattern in char_id_clean:
+                return True
+
+        return False
+
+    def _filter_children_from_refs(self, ref_files: list) -> list:
+        """
+        Filter out child characters from reference_files list.
+        Children should be described inline in img_prompt, not referenced.
+
+        Args:
+            ref_files: List of reference file names (e.g., ["nvc.png", "nvc1.png", "loc.png"])
+
+        Returns:
+            Filtered list without child characters
+        """
+        if not ref_files:
+            return []
+
+        filtered = []
+        for ref in ref_files:
+            if self._is_child_character(ref):
+                self.logger.info(f"  -> Filtered out child character from references: {ref}")
+                continue
+            filtered.append(ref)
+
+        return filtered
+
     def _test_groq_key(self, key: str) -> bool:
         """Test Groq key với request nhỏ."""
         try:
@@ -876,7 +924,7 @@ class PromptGenerator:
 
         # Step 2: Chia scene THÔNG MINH theo nội dung (dựa trên Director's Treatment)
         self.logger.info("Chia scene theo nội dung (AI Smart Division)...")
-        scenes_data = self._smart_divide_scenes(srt_entries, characters, locations, directors_treatment)
+        scenes_data = self._smart_divide_scenes(srt_entries, characters, locations, directors_treatment, global_style)
 
         self.logger.info(f"Chia thành {len(scenes_data)} scenes")
 
@@ -1052,9 +1100,10 @@ class PromptGenerator:
 
                 # Chọn nhân vật dựa trên loại scene
                 if scene_type == "CHILDHOOD_FLASHBACK":
-                    # Flashback tuổi thơ: mẹ trẻ + con nhỏ
-                    default_chars = ["nv1_young.png", "nvc1.png"]
-                    self.logger.info(f"Scene {scene_data['scene_id']}: CHILDHOOD_FLASHBACK → using young mother + child")
+                    # Flashback tuổi thơ: CHỈ dùng mẹ trẻ (KHÔNG dùng child reference - API policy!)
+                    # Child sẽ được mô tả chi tiết trong img_prompt thay vì dùng reference
+                    default_chars = ["nv1_young.png"]
+                    self.logger.info(f"Scene {scene_data['scene_id']}: CHILDHOOD_FLASHBACK → using young mother only (child described in prompt)")
                 elif scene_type == "ADULT_FLASHBACK":
                     # Flashback trưởng thành: narrator trẻ
                     default_chars = ["nvc_young.png"]
@@ -1075,6 +1124,10 @@ class PromptGenerator:
                     # Có loc nhưng không có nhân vật → thêm nhân vật vào đầu
                     for char in reversed(default_chars):
                         ref_files.insert(0, char)
+
+            # === QUAN TRỌNG: Filter children từ reference_files (API policy violation) ===
+            # Children phải được mô tả trong img_prompt, không dùng reference image
+            ref_files = self._filter_children_from_refs(ref_files)
 
             chars_str = json.dumps(chars_used) if isinstance(chars_used, list) else str(chars_used)
             refs_str = json.dumps(ref_files) if isinstance(ref_files, list) else str(ref_files)
@@ -1242,7 +1295,7 @@ class PromptGenerator:
             self.logger.error(f"Failed to load prompt {prompt_name}: {e}")
             return None
 
-    def _smart_divide_scenes(self, srt_entries: List, characters: List = None, locations: List = None, directors_treatment: Dict = None) -> List[Dict[str, Any]]:
+    def _smart_divide_scenes(self, srt_entries: List, characters: List = None, locations: List = None, directors_treatment: Dict = None, global_style: str = "") -> List[Dict[str, Any]]:
         """
         Chia scene theo hướng: TIME-BASED trước (max 8s), rồi AI phân tích nội dung.
         Sử dụng Director's Treatment để hướng dẫn visual strategy.
@@ -1256,6 +1309,7 @@ class PromptGenerator:
             srt_entries: List các SrtEntry từ file SRT
             characters: List các Character đã phân tích
             locations: List các Location đã phân tích
+            global_style: Global style string for consistent image styling
 
         Returns:
             List các scene data với: scene_id, start_time, end_time, text, srt_start, srt_end
@@ -1331,17 +1385,22 @@ class PromptGenerator:
             self.logger.warning("Smart divide prompt not found, returning time-based scenes")
             return self._format_time_based_scenes(time_based_scenes)
 
+        # Get default global style if not provided
+        if not global_style:
+            global_style = get_global_style()
+
         # Build full prompt với context + Director's Treatment
         try:
             prompt = prompt_template.format(
                 srt_with_timestamps=scenes_for_ai,
                 characters_info=chars_info,
                 locations_info=locs_info,
-                directors_treatment=treatment_info or "No director's treatment available - analyze story structure yourself"
+                directors_treatment=treatment_info or "No director's treatment available - analyze story structure yourself",
+                global_style=global_style
             )
         except KeyError:
             # Fallback nếu template không có placeholder
-            prompt = prompt_template.format(srt_with_timestamps=scenes_for_ai)
+            prompt = prompt_template.format(srt_with_timestamps=scenes_for_ai, global_style=global_style)
             # Prepend context
             context_parts = []
             if treatment_info:
@@ -1977,12 +2036,16 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
 
             img_prompt = ". ".join([p for p in parts if p])
 
+            # Build reference_files, filtering out children (API policy)
+            all_refs = [f"{c}.png" for c in chars_in_scene] + ([f"{location_id}.png"] if location_id else [])
+            filtered_refs = self._filter_children_from_refs(all_refs)
+
             result.append({
                 "img_prompt": img_prompt,
                 "video_prompt": img_prompt,
                 "characters_used": chars_in_scene,
                 "location_used": location_id,
-                "reference_files": [f"{c}.png" for c in chars_in_scene] + ([f"{location_id}.png"] if location_id else [])
+                "reference_files": filtered_refs
             })
 
         self.logger.info(f"[Fallback] Đã tạo {len(result)} fallback prompts")
