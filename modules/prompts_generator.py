@@ -71,8 +71,8 @@ class MultiAIClient:
         self.deepseek_keys = [k for k in config.get("deepseek_api_keys", []) if k and k.strip()]
         self.gemini_models = config.get("gemini_models", ["gemini-2.0-flash", "gemini-1.5-flash"])
 
-        # Ollama local model
-        self.ollama_model = config.get("ollama_model", "gemma3:27b")
+        # Ollama model (fallback)
+        self.ollama_model = config.get("ollama_model", "deepseek-v3.1:67b-cloud")
         self.ollama_endpoint = config.get("ollama_endpoint", "http://localhost:11434")
         self.OLLAMA_URL = f"{self.ollama_endpoint}/api/generate"
         self.ollama_available = False
