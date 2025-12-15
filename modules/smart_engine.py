@@ -1398,23 +1398,20 @@ class SmartEngine:
                 # Video không có audio
                 temp_video = Path(temp_dir) / "temp_video.mp4"
 
-                # Fade in/out cho mỗi ảnh (đơn giản, ổn định hơn xfade)
-                FADE_DURATION = 0.3  # 0.3 giây fade
-                self.log(f"  Dang tao {len(images)} clips voi fade effect...")
+                # Random transitions: fade (tối dần) hoặc mix (dissolve)
+                import random
+                TRANSITION_DURATION = 0.5  # 0.5 giây transition
+                self.log(f"  Dang tao {len(images)} clips voi random transitions...")
 
-                # Tạo từng clip với fade in/out
+                # Tạo từng clip (raw, không transition)
                 clip_paths = []
                 for i, img in enumerate(images):
                     clip_path = Path(temp_dir) / f"clip_{i:03d}.mp4"
                     abs_path = str(Path(img['path']).resolve()).replace('\\', '/')
                     duration = img['duration']
 
-                    # Fade filter: fade in 0.3s đầu, fade out 0.3s cuối
-                    fade_out_start = max(0, duration - FADE_DURATION)
-                    fade_filter = f"fade=t=in:st=0:d={FADE_DURATION},fade=t=out:st={fade_out_start}:d={FADE_DURATION}"
-
-                    # Scale + Fade filter
-                    vf = f"scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,{fade_filter}"
+                    # Scale filter only (transitions sẽ thêm sau)
+                    vf = "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2"
 
                     cmd_clip = [
                         "ffmpeg", "-y",
@@ -1426,23 +1423,13 @@ class SmartEngine:
                     ]
                     result = subprocess.run(cmd_clip, capture_output=True, text=True)
                     if result.returncode != 0:
-                        self.log(f"  Clip {i} error, skip fade...", "WARN")
-                        # Fallback: không có fade
-                        vf_simple = "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2"
-                        cmd_simple = [
-                            "ffmpeg", "-y",
-                            "-loop", "1", "-t", str(duration),
-                            "-i", abs_path,
-                            "-vf", vf_simple,
-                            "-c:v", "libx264", "-pix_fmt", "yuv420p",
-                            "-r", "30", str(clip_path)
-                        ]
-                        result = subprocess.run(cmd_simple, capture_output=True, text=True)
-                        if result.returncode != 0:
-                            self.log(f"  Clip {i} failed: {result.stderr[-100:]}", "ERROR")
-                            continue
+                        self.log(f"  Clip {i} failed: {result.stderr[-100:]}", "ERROR")
+                        continue
 
-                    clip_paths.append(clip_path)
+                    clip_paths.append({
+                        'path': clip_path,
+                        'duration': duration
+                    })
 
                     # Progress log mỗi 10 clips
                     if (i + 1) % 10 == 0:
@@ -1452,25 +1439,90 @@ class SmartEngine:
                     self.log("  Khong tao duoc clip nao!", "ERROR")
                     return None
 
-                self.log(f"  Da tao {len(clip_paths)} clips, dang ghep...")
+                self.log(f"  Da tao {len(clip_paths)} clips, dang ghep voi xfade...")
 
-                # Tạo file list để concat
-                list_file = Path(temp_dir) / "clips.txt"
-                with open(list_file, 'w', encoding='utf-8') as f:
-                    for cp in clip_paths:
-                        f.write(f"file '{str(cp).replace(chr(92), '/')}'\n")
+                # Ghép clips với xfade transitions (batches để tránh quá dài)
+                # Random: fadeblack (tối dần) hoặc dissolve (mix)
+                BATCH_SIZE = 8  # Ghép 8 clips mỗi batch
+                batch_outputs = []
 
-                # Concat tất cả clips
-                cmd_concat = [
-                    "ffmpeg", "-y", "-f", "concat", "-safe", "0",
-                    "-i", str(list_file),
-                    "-c", "copy", str(temp_video)
-                ]
-                result = subprocess.run(cmd_concat, capture_output=True, text=True)
-                if result.returncode != 0:
-                    error_lines = result.stderr.strip().split('\n')
-                    self.log(f"  Concat error: {error_lines[-1]}", "ERROR")
-                    return None
+                for batch_idx in range(0, len(clip_paths), BATCH_SIZE):
+                    batch = clip_paths[batch_idx:batch_idx + BATCH_SIZE]
+                    batch_output = Path(temp_dir) / f"batch_{batch_idx:03d}.mp4"
+
+                    if len(batch) == 1:
+                        # Chỉ 1 clip, copy trực tiếp
+                        import shutil
+                        shutil.copy(batch[0]['path'], batch_output)
+                    else:
+                        # Ghép với xfade
+                        # Build filter complex
+                        inputs = []
+                        filter_parts = []
+
+                        for j, clip in enumerate(batch):
+                            inputs.extend(["-i", str(clip['path'])])
+
+                        # Xfade chain: [0][1]xfade -> [v1], [v1][2]xfade -> [v2], ...
+                        prev_label = "0:v"
+                        for j in range(1, len(batch)):
+                            # Random transition type
+                            trans_type = random.choice(["fadeblack", "dissolve"])
+                            # Offset = tổng duration trước đó - transition_duration
+                            offset = sum(b['duration'] for b in batch[:j]) - TRANSITION_DURATION * j
+                            offset = max(0, offset)
+
+                            out_label = f"v{j}"
+                            filter_parts.append(
+                                f"[{prev_label}][{j}:v]xfade=transition={trans_type}:duration={TRANSITION_DURATION}:offset={offset:.3f}[{out_label}]"
+                            )
+                            prev_label = out_label
+
+                        filter_complex = ";".join(filter_parts)
+
+                        cmd_xfade = [
+                            "ffmpeg", "-y"
+                        ] + inputs + [
+                            "-filter_complex", filter_complex,
+                            "-map", f"[{prev_label}]",
+                            "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                            str(batch_output)
+                        ]
+                        result = subprocess.run(cmd_xfade, capture_output=True, text=True)
+                        if result.returncode != 0:
+                            # Fallback: concat không có transition
+                            self.log(f"  Batch {batch_idx} xfade failed, fallback concat...", "WARN")
+                            list_file = Path(temp_dir) / f"batch_{batch_idx}.txt"
+                            with open(list_file, 'w') as f:
+                                for clip in batch:
+                                    f.write(f"file '{str(clip['path']).replace(chr(92), '/')}'\n")
+                            cmd_concat = [
+                                "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                                "-i", str(list_file), "-c", "copy", str(batch_output)
+                            ]
+                            subprocess.run(cmd_concat, capture_output=True, text=True)
+
+                    batch_outputs.append(batch_output)
+                    self.log(f"  Batch {batch_idx // BATCH_SIZE + 1}/{(len(clip_paths) + BATCH_SIZE - 1) // BATCH_SIZE}")
+
+                # Concat tất cả batches
+                if len(batch_outputs) == 1:
+                    import shutil
+                    shutil.copy(batch_outputs[0], temp_video)
+                else:
+                    list_file = Path(temp_dir) / "batches.txt"
+                    with open(list_file, 'w') as f:
+                        for bo in batch_outputs:
+                            f.write(f"file '{str(bo).replace(chr(92), '/')}'\n")
+                    cmd_concat = [
+                        "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                        "-i", str(list_file), "-c", "copy", str(temp_video)
+                    ]
+                    result = subprocess.run(cmd_concat, capture_output=True, text=True)
+                    if result.returncode != 0:
+                        error_lines = result.stderr.strip().split('\n')
+                        self.log(f"  Final concat error: {error_lines[-1]}", "ERROR")
+                        return None
 
                 # Thêm audio
                 temp_with_audio = Path(temp_dir) / "with_audio.mp4"
