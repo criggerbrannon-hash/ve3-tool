@@ -1187,15 +1187,17 @@ class SmartEngine:
         self.log("[STEP 6] Xuat TXT & SRT...")
         self._export_scenes(excel_path, proj_dir, name)
 
-        # === 7. COMPOSE VIDEO (luôn chạy nếu không có lỗi) ===
-        if results.get("failed", 0) == 0:
-            self.log("[STEP 7] Ghep video...")
-            video_path = self._compose_video(proj_dir, excel_path, name)
-            if video_path:
-                self.log(f"  -> Video: {video_path.name}", "OK")
-                results["video"] = str(video_path)
-            else:
-                self.log("  Video composer khong kha dung hoac thieu file", "WARN")
+        # === 7. COMPOSE VIDEO (LUON chay - du co vai anh fail) ===
+        self.log("[STEP 7] Ghep video...")
+        if results.get("failed", 0) > 0:
+            self.log(f"  CANH BAO: {results['failed']} anh fail, nhung van ghep video voi anh co san!", "WARN")
+
+        video_path = self._compose_video(proj_dir, excel_path, name)
+        if video_path:
+            self.log(f"  -> Video: {video_path.name}", "OK")
+            results["video"] = str(video_path)
+        else:
+            self.log("  Video composer khong kha dung hoac thieu file", "WARN")
 
         return results
 
