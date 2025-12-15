@@ -14,7 +14,7 @@ from dataclasses import dataclass
 import tempfile
 import shutil
 
-from modules.excel_manager import ProjectWorkbook, Scene
+from modules.excel_manager import PromptWorkbook, Scene
 
 
 @dataclass
@@ -118,7 +118,7 @@ class VideoComposer:
             self.logger.info("=" * 50)
 
             # 1. Load scenes từ Excel
-            workbook = ProjectWorkbook(excel_path)
+            workbook = PromptWorkbook(excel_path)
             scenes = workbook.get_scenes()
 
             if not scenes:
