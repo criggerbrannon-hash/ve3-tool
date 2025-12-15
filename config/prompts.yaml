@@ -558,6 +558,15 @@ generate_scenes: |
   - Walking: dang buoc di, lung quay lai
   - Working: dang viet, dang doc, dang lam viec
 
+  ## CAM XUC GUIDE (Match emotion to content!):
+  - KHONG DUOC dung "SMILING" mac dinh!
+  - Lam viec cuc kho → DETERMINED, EXHAUSTED, sweat on face
+  - Hy sinh → TIRED, WEARY, dark circles, worn but LOVING
+  - Ngheo kho → WORRIED, STRUGGLING, worn clothing
+  - Bi phan boi → SHOCKED, HURT, disbelief
+  - Thanh cong → PROUD, satisfied (OK cuoi)
+  - Tuoi tho vui → nostalgic warmth, innocent joy (OK cuoi)
+
   ## KHONG DUOC LAM:
   - KHONG: "looking at camera", "facing viewer", "portrait shot"
   - KHONG: "neutral expression", "standing straight"
@@ -622,6 +631,39 @@ smart_divide_scenes: |
       → characters: ["nvc"]
       → SHOW: Narrator speaking to camera
 
+  ## !!! EMOTION MATCHING - CRITICAL !!!
+
+  NEVER use "SMILING" by default! Match emotion to CONTENT:
+
+  | Content Type | WRONG | CORRECT Emotion |
+  |--------------|-------|-----------------|
+  | "10 years hard work" | SMILING | DETERMINED, sweat on face, EXHAUSTED but PROUD |
+  | "I became a carpenter" | HOLDING hammer | SWINGING hammer, FOCUSED expression |
+  | "Mom worked 2 jobs" | SMILING mother | EXHAUSTED face, dark circles, WEARY but LOVING |
+  | "$72,000 every penny" | Casual smile | SERIOUS face, weight of decision |
+  | "She took me to court" | SMILING | SHOCKED, BETRAYED, disbelief |
+  | "We had nothing" | SMILING | WORRIED, STRUGGLING, but HOPEFUL |
+  | "I built this house" | HOLDING blueprints | HAMMERING, SAWING, SWEATING |
+
+  ## ACTION VERBS - Use ACTIVE not PASSIVE:
+
+  | WRONG (passive) | CORRECT (active) |
+  |-----------------|------------------|
+  | HOLDING hammer | SWINGING hammer, HAMMERING nails |
+  | HOLDING blueprints | STUDYING blueprints, POINTING at plans |
+  | HOLDING documents | CLUTCHING documents, READING papers |
+  | Standing with tools | WORKING, BUILDING, SAWING wood |
+  | Sitting with food | EATING, COOKING, SERVING food |
+
+  ## EMOTIONAL WEIGHT GUIDE:
+
+  - SACRIFICE content → tired, weary, exhausted, determined
+  - HARD WORK content → sweating, focused, strained, working hard
+  - POVERTY content → worried, struggling, worn clothing, humble
+  - BETRAYAL content → shocked, hurt, disbelief, pain
+  - SUCCESS content → proud, accomplished, satisfied (OK to smile here)
+  - CHILDHOOD HAPPY → nostalgic warmth, innocent joy (OK to smile here)
+
   ## CHARACTERS:
   {characters_info}
 
@@ -665,7 +707,23 @@ smart_divide_scenes: |
         "scene_type": "ADULT_FLASHBACK",
         "location_id": "loc_construction",
         "characters_in_scene": ["nvc_young"],
-        "img_prompt": "Medium shot. 28yo muscular man SWINGING HAMMER at wooden beam, sawdust on face, tool belt. House frame behind. Sunny day, golden hour. Pride visible. Cinematic."
+        "img_prompt": "Medium shot. 28yo muscular man SWINGING HAMMER at wooden beam, sawdust on face, sweat dripping, DETERMINED expression, tool belt. House frame behind. Sunny day, golden hour. Cinematic."
+      }},
+      {{
+        "scene_id": 5,
+        "srt_text": "It cost me $72,000 every penny I had earned over 10 years...",
+        "scene_type": "ADULT_FLASHBACK",
+        "location_id": "loc_construction",
+        "characters_in_scene": ["nvc_young"],
+        "img_prompt": "Close-up. 28yo man with tired eyes, STUDYING blueprints intently, SERIOUS face showing weight of decision, calloused hands gripping paper. Construction site background. Late afternoon. Cinematic."
+      }},
+      {{
+        "scene_id": 6,
+        "srt_text": "She took me to court for everything I had built...",
+        "scene_type": "FRAME_PRESENT",
+        "location_id": "loc_courthouse",
+        "characters_in_scene": ["nvc"],
+        "img_prompt": "Medium shot. 30yo man CLUTCHING legal documents, SHOCKED expression, disbelief in eyes, jaw tense. Courthouse steps. Overcast sky. Cinematic."
       }}
     ]
   }}
@@ -675,6 +733,9 @@ smart_divide_scenes: |
   [ ] Every BUILDING scene → nvc_young at construction NOT courthouse!
   [ ] Different memories = DIFFERENT locations!
   [ ] NO narration text in img_prompt!
+  [ ] EMOTIONS match content (NO default SMILING!)
+  [ ] ACTIONS are ACTIVE (SWINGING not HOLDING!)
+  [ ] Hard work = DETERMINED/EXHAUSTED face, NOT smiling!
 
   OUTPUT: JSON only, NO markdown code blocks.
 
