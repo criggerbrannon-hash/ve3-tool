@@ -2365,44 +2365,28 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
                 # Lấy text từ { đến hết
                 json_str = clean_text[start_idx:]
 
-                # Tìm vị trí cuối cùng có thể là JSON hợp lệ (trước dấu , hoặc sau value)
-                # Truncate tại vị trí cuối của một value hoàn chỉnh
-                truncate_patterns = [
-                    r'("[^"]*")\s*$',           # Ends with string
-                    r'(\d+)\s*$',               # Ends with number
-                    r'(true|false|null)\s*$',   # Ends with boolean/null
-                    r'(\])\s*$',                # Ends with ]
-                    r'(\})\s*$',                # Ends with }
+                # Chiến lược repair mạnh mẽ hơn
+                repair_attempts = [
+                    # Attempt 1: Find last complete scene object and close there
+                    lambda s: self._truncate_at_last_complete_scene(s, brace_count, bracket_count),
+                    # Attempt 2: Find last complete string value and close
+                    lambda s: self._truncate_at_last_complete_value(s, brace_count, bracket_count),
+                    # Attempt 3: Simple close with ]} pattern
+                    lambda s: self._simple_json_close(s, brace_count, bracket_count),
                 ]
 
-                # Thử đóng JSON
-                for attempt in range(3):
-                    repair_suffix = ''
-                    # Đóng brackets trước
-                    if bracket_count > 0:
-                        repair_suffix += ']' * bracket_count
-                    # Đóng braces
-                    repair_suffix += '}' * brace_count
-
-                    # Thử các điểm truncate khác nhau
-                    test_json = json_str
-                    if attempt == 1:
-                        # Remove trailing comma and incomplete value
-                        test_json = re.sub(r',\s*"[^"]*$', '', json_str)
-                        test_json = re.sub(r',\s*$', '', test_json)
-                    elif attempt == 2:
-                        # More aggressive: remove last incomplete object
-                        test_json = re.sub(r',\s*\{[^}]*$', '', json_str)
-                        test_json = re.sub(r',\s*"[^"]*":\s*[^,}\]]*$', '', test_json)
-
-                    repaired = test_json.rstrip() + repair_suffix
-
+                for attempt, repair_fn in enumerate(repair_attempts):
                     try:
-                        result = json.loads(repaired)
-                        self.logger.info(f"[_extract_json] Successfully repaired truncated JSON (attempt {attempt + 1})")
-                        return result
+                        repaired = repair_fn(json_str)
+                        if repaired:
+                            result = json.loads(repaired)
+                            self.logger.info(f"[_extract_json] Successfully repaired truncated JSON (strategy {attempt + 1})")
+                            return result
                     except json.JSONDecodeError as e:
-                        self.logger.debug(f"[_extract_json] Repair attempt {attempt + 1} failed: {e.msg} at {e.pos}")
+                        self.logger.debug(f"[_extract_json] Repair strategy {attempt + 1} failed: {e.msg}")
+                        continue
+                    except Exception as e:
+                        self.logger.debug(f"[_extract_json] Repair strategy {attempt + 1} error: {e}")
                         continue
 
                 self.logger.warning(f"[_extract_json] Could not repair truncated JSON")
@@ -2418,3 +2402,120 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
         self.logger.warning(f"[_extract_json] Could not extract JSON. Response length: {len(text)}")
         self.logger.warning(f"[_extract_json] Response starts with: {text[:200] if text else 'EMPTY'}")
         return None
+
+    def _truncate_at_last_complete_scene(self, json_str: str, brace_count: int, bracket_count: int) -> Optional[str]:
+        """
+        Tìm scene cuối cùng hoàn chỉnh (có đầy đủ img_prompt) và truncate tại đó.
+        Director's Shooting Plan trả về array of scenes, mỗi scene có img_prompt.
+        """
+        import re
+
+        # Tìm tất cả các scene objects hoàn chỉnh (có cả img_prompt với closing quote)
+        # Pattern: { ... "img_prompt": "..." ... }
+        scene_pattern = r'\{\s*"scene_id"[^}]*"img_prompt"\s*:\s*"[^"]*"[^}]*\}'
+
+        matches = list(re.finditer(scene_pattern, json_str, re.DOTALL))
+
+        if matches:
+            # Lấy vị trí kết thúc của scene cuối cùng hoàn chỉnh
+            last_match = matches[-1]
+            truncated = json_str[:last_match.end()]
+
+            # Đếm lại braces/brackets trong phần truncated
+            new_brace_count = truncated.count('{') - truncated.count('}')
+            new_bracket_count = truncated.count('[') - truncated.count(']')
+
+            # Đóng JSON
+            suffix = ']' * max(0, new_bracket_count) + '}' * max(0, new_brace_count)
+            return truncated + suffix
+
+        return None
+
+    def _truncate_at_last_complete_value(self, json_str: str, brace_count: int, bracket_count: int) -> Optional[str]:
+        """
+        Tìm vị trí cuối cùng có value hoàn chỉnh (string đóng đúng, number, boolean).
+        """
+        import re
+
+        # Tìm pattern cuối cùng là một value hoàn chỉnh
+        # Pattern: "key": "value" hoặc "key": number hoặc "key": true/false/null
+        complete_value_patterns = [
+            # String value với closing quote, có thể theo sau bởi , hoặc }
+            r'"[^"]+"\s*:\s*"[^"]*"(?=\s*[,}\]])',
+            # Number value
+            r'"[^"]+"\s*:\s*-?\d+\.?\d*(?=\s*[,}\]])',
+            # Boolean/null
+            r'"[^"]+"\s*:\s*(?:true|false|null)(?=\s*[,}\]])',
+            # Array/Object close
+            r'[\]}](?=\s*[,}\]])',
+        ]
+
+        last_pos = 0
+        for pattern in complete_value_patterns:
+            for match in re.finditer(pattern, json_str):
+                if match.end() > last_pos:
+                    last_pos = match.end()
+
+        if last_pos > 0:
+            # Truncate tại vị trí này
+            truncated = json_str[:last_pos]
+
+            # Xử lý trailing comma
+            truncated = re.sub(r',\s*$', '', truncated)
+
+            # Đếm lại braces/brackets
+            new_brace_count = truncated.count('{') - truncated.count('}')
+            new_bracket_count = truncated.count('[') - truncated.count(']')
+
+            # Đóng JSON
+            suffix = ']' * max(0, new_bracket_count) + '}' * max(0, new_brace_count)
+            return truncated + suffix
+
+        return None
+
+    def _simple_json_close(self, json_str: str, brace_count: int, bracket_count: int) -> Optional[str]:
+        """
+        Phương pháp đơn giản: tìm điểm an toàn cuối cùng và đóng.
+        """
+        import re
+
+        # Tìm vị trí của closing quote cuối cùng (kết thúc một string value)
+        # Sau đó truncate tại đó
+        last_quote_pos = json_str.rfind('"')
+
+        if last_quote_pos > 0:
+            # Kiểm tra xem quote này có phải là closing quote không
+            # (không phải escaped và số lượng quotes trước đó là lẻ)
+            substr = json_str[:last_quote_pos + 1]
+
+            # Đếm quotes không escaped
+            quote_count = len(re.findall(r'(?<!\\)"', substr))
+
+            if quote_count % 2 == 0:
+                # Đây là closing quote của một string
+                truncated = substr
+
+                # Tìm và xóa incomplete key-value sau string này
+                # Pattern: , "incomplete_key  hoặc , incomplete_value
+                truncated = re.sub(r',\s*"[^"]*$', '', truncated)
+                truncated = re.sub(r',\s*$', '', truncated)
+
+                # Đếm lại braces/brackets
+                new_brace_count = truncated.count('{') - truncated.count('}')
+                new_bracket_count = truncated.count('[') - truncated.count(']')
+
+                # Đóng JSON
+                suffix = ']' * max(0, new_bracket_count) + '}' * max(0, new_brace_count)
+                return truncated + suffix
+
+        # Fallback: đơn giản thêm closing braces
+        # Loại bỏ phần cuối có thể không hoàn chỉnh
+        truncated = re.sub(r',\s*"[^"]*$', '', json_str)  # Incomplete key
+        truncated = re.sub(r':\s*"[^"]*$', '""', truncated)  # Incomplete string value -> empty string
+        truncated = re.sub(r',\s*$', '', truncated)
+
+        new_brace_count = truncated.count('{') - truncated.count('}')
+        new_bracket_count = truncated.count('[') - truncated.count(']')
+
+        suffix = ']' * max(0, new_bracket_count) + '}' * max(0, new_brace_count)
+        return truncated + suffix
