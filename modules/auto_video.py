@@ -903,59 +903,111 @@ class VideoGenerator:
     def _generate_video_project_url(self, media_id: str, prompt: str) -> Optional[List[Dict]]:
         """Generate video using project-based URL (Flow 2).
 
-        Endpoint pattern giống với image: /v1/projects/{projectId}/flowMedia:batchGenerateVideos
+        Thử nhiều endpoint patterns dựa trên:
+        - Labs Flow pattern: /v1/projects/{projectId}/flowMedia:xxx
+        - Vertex AI pattern: /v1/projects/{projectId}/...
         """
-        # Try multiple possible video endpoints
+        # Try multiple possible video endpoints (based on research)
         endpoints_to_try = [
+            # Labs Flow patterns (giống image generation)
             f"{self.BASE_URL}/v1/projects/{self.project_id}/flowMedia:batchGenerateVideos",
             f"{self.BASE_URL}/v1/projects/{self.project_id}/flowMedia:generateVideo",
-            f"{self.BASE_URL}/v1/projects/{self.project_id}/video:batchAsyncGenerate",
+            f"{self.BASE_URL}/v1/projects/{self.project_id}/flowMedia:batchAsyncGenerateVideo",
+            # Video-specific patterns
+            f"{self.BASE_URL}/v1/projects/{self.project_id}/video:generate",
+            f"{self.BASE_URL}/v1/projects/{self.project_id}/video:batchGenerate",
+            f"{self.BASE_URL}/v1/projects/{self.project_id}/videos:generate",
+            # Media patterns
+            f"{self.BASE_URL}/v1/projects/{self.project_id}/media:generateVideo",
+            f"{self.BASE_URL}/v1/projects/{self.project_id}/media:batchGenerateVideo",
+            # Veo model patterns (based on Vertex AI)
+            f"{self.BASE_URL}/v1/projects/{self.project_id}/models/veo:generateVideo",
+            f"{self.BASE_URL}/v1/projects/{self.project_id}/models/veo:predict",
         ]
 
-        # Simplified payload for project-based flow
-        payload = {
-            "requests": [{
-                "referenceImages": [{
-                    "mediaId": media_id,
-                    "imageUsageType": "IMAGE_USAGE_TYPE_ASSET"
+        # Payloads to try (different formats)
+        payloads_to_try = [
+            # Format 1: Original Labs Flow format
+            {
+                "requests": [{
+                    "referenceImages": [{
+                        "mediaId": media_id,
+                        "imageUsageType": "IMAGE_USAGE_TYPE_ASSET"
+                    }],
+                    "textInput": {"prompt": prompt},
+                    "aspectRatio": "VIDEO_ASPECT_RATIO_LANDSCAPE",
+                    "videoModelKey": "veo_3_0_r2v_fast_ultra",
+                    "seed": random.randint(1000, 99999),
+                    "metadata": {"sceneId": str(uuid.uuid4())}
+                }]
+            },
+            # Format 2: Vertex AI style (instances/parameters)
+            {
+                "instances": [{
+                    "prompt": prompt,
+                    "image": {"mediaId": media_id}
                 }],
-                "textInput": {"prompt": prompt},
-                "aspectRatio": "VIDEO_ASPECT_RATIO_LANDSCAPE",
-                "videoModelKey": "veo_3_0_r2v_fast_ultra",
-                "seed": random.randint(1000, 99999),
-                "metadata": {"sceneId": str(uuid.uuid4())}
-            }]
-        }
+                "parameters": {
+                    "sampleCount": 1,
+                    "aspectRatio": "16:9",
+                    "durationSeconds": 4
+                }
+            },
+            # Format 3: Simplified
+            {
+                "prompt": prompt,
+                "mediaId": media_id,
+                "aspectRatio": "16:9"
+            }
+        ]
 
+        # Try each endpoint with each payload format
         for url in endpoints_to_try:
-            try:
-                self.log(f"  Trying: {url.split('/')[-1]}")
-                resp = self.session.post(url, data=json.dumps(payload), timeout=120)
+            endpoint_name = url.split('/')[-1]
 
-                if resp.status_code == 200:
-                    data = resp.json()
+            for i, payload in enumerate(payloads_to_try):
+                try:
+                    self.log(f"  Trying: {endpoint_name} (format {i+1})")
+                    resp = self.session.post(url, data=json.dumps(payload), timeout=120)
 
-                    # Try multiple response formats
-                    ops = (
-                        data.get("operations") or
-                        data.get("results") or
-                        [data] if data.get("name") else None
-                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
 
-                    if ops:
-                        self.log(f"  ✓ Got {len(ops)} operation(s)")
-                        return ops
+                        # Try multiple response formats
+                        ops = (
+                            data.get("operations") or
+                            data.get("results") or
+                            data.get("predictions") or
+                            [data] if data.get("name") else None
+                        )
 
-                    self.log(f"  Response (no ops): {str(data)[:200]}")
+                        if ops:
+                            self.log(f"  ✓ SUCCESS! Got {len(ops)} operation(s)")
+                            self.log(f"    Endpoint: {endpoint_name}")
+                            self.log(f"    Payload format: {i+1}")
+                            return ops
 
-                elif resp.status_code == 404:
-                    continue  # Try next endpoint
-                else:
-                    self.log(f"  Response ({resp.status_code}): {resp.text[:200]}")
+                        # Check for video URL directly in response
+                        video_url = self._extract_video_url(data)
+                        if video_url:
+                            self.log(f"  ✓ SUCCESS! Got video URL directly")
+                            return [{"videoUrl": video_url, "status": "COMPLETED"}]
 
-            except Exception as e:
-                self.log(f"  Error: {e}")
-                continue
+                        self.log(f"    Response (no ops): {str(data)[:150]}")
+
+                    elif resp.status_code == 404:
+                        break  # Try next endpoint
+                    elif resp.status_code == 400:
+                        # Bad request - try next payload format
+                        self.log(f"    400 Bad Request - trying next format...")
+                        continue
+                    else:
+                        self.log(f"    Response ({resp.status_code}): {resp.text[:150]}")
+                        break  # Try next endpoint
+
+                except Exception as e:
+                    self.log(f"    Error: {e}")
+                    continue
 
         return None
 
@@ -1189,6 +1241,100 @@ class VideoGenerator:
 # ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
+
+def test_all_endpoints(token: str, project_id: str, image_path: str = None) -> Dict:
+    """
+    Test tất cả endpoints khả thi để tìm endpoint đúng.
+
+    Chạy function này để xem endpoint nào hoạt động với token + projectId của bạn.
+
+    Args:
+        token: Bearer token (ya29.xxx)
+        project_id: Project ID (uuid)
+        image_path: Đường dẫn ảnh để test (optional)
+
+    Returns:
+        Dict với kết quả test cho mỗi endpoint
+
+    Example:
+        results = test_all_endpoints(
+            token="ya29.xxx",
+            project_id="uuid-here"
+        )
+        for endpoint, result in results.items():
+            print(f"{endpoint}: {result['status']}")
+    """
+    BASE_URL = "https://aisandbox-pa.googleapis.com"
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "text/plain;charset=UTF-8",
+        "Accept": "*/*",
+        "Origin": "https://labs.google",
+        "Referer": "https://labs.google/",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+
+    # Endpoints to test
+    endpoints = [
+        # Upload endpoints
+        f"/v1/projects/{project_id}/flowMedia:uploadImage",
+        f"/v1:uploadUserImage",
+        # Video generation endpoints
+        f"/v1/projects/{project_id}/flowMedia:batchGenerateVideos",
+        f"/v1/projects/{project_id}/flowMedia:generateVideo",
+        f"/v1/projects/{project_id}/flowMedia:batchAsyncGenerateVideo",
+        f"/v1/projects/{project_id}/video:generate",
+        f"/v1/projects/{project_id}/video:batchGenerate",
+        f"/v1/projects/{project_id}/videos:generate",
+        f"/v1/projects/{project_id}/media:generateVideo",
+        f"/v1/video:batchAsyncGenerateVideoReferenceImages",
+        # Image generation (for reference)
+        f"/v1/projects/{project_id}/flowMedia:batchGenerateImages",
+    ]
+
+    results = {}
+    print("=" * 60)
+    print("TESTING ALL ENDPOINTS")
+    print("=" * 60)
+
+    for endpoint in endpoints:
+        url = BASE_URL + endpoint
+        name = endpoint.split('/')[-1]
+
+        try:
+            # HEAD request to check if endpoint exists
+            resp = requests.head(url, headers=headers, timeout=10)
+            status = resp.status_code
+
+            if status == 405:  # Method not allowed = endpoint exists but needs POST
+                results[name] = {"status": "EXISTS (needs POST)", "code": status}
+                print(f"✓ {name}: EXISTS (needs POST)")
+            elif status == 200:
+                results[name] = {"status": "OK", "code": status}
+                print(f"✓ {name}: OK")
+            elif status == 404:
+                results[name] = {"status": "NOT FOUND", "code": status}
+                print(f"✗ {name}: NOT FOUND")
+            elif status == 401:
+                results[name] = {"status": "UNAUTHORIZED", "code": status}
+                print(f"? {name}: UNAUTHORIZED (token invalid?)")
+            else:
+                results[name] = {"status": f"HTTP {status}", "code": status}
+                print(f"? {name}: HTTP {status}")
+
+        except Exception as e:
+            results[name] = {"status": "ERROR", "error": str(e)}
+            print(f"✗ {name}: ERROR - {e}")
+
+    print("=" * 60)
+    print("\nEndpoints có khả năng hoạt động:")
+    for name, result in results.items():
+        if result.get("code") in [200, 405]:
+            print(f"  - {name}")
+
+    return results
+
 
 def create_simple_credentials(token: str, project_id: str) -> Dict:
     """
@@ -1495,6 +1641,43 @@ def main():
     print("=" * 60)
     print("AUTO VIDEO GENERATOR")
     print("=" * 60)
+
+    # Check for special commands
+    if len(sys.argv) > 1:
+        cmd = sys.argv[1].lower()
+
+        # Test endpoints command
+        if cmd == "test" or cmd == "--test":
+            print("\n[TEST MODE] - Kiểm tra các endpoints khả dụng")
+            token = input("Nhập token (ya29.xxx): ").strip()
+            if token.startswith("Bearer "):
+                token = token[7:]
+            project_id = input("Nhập projectId (uuid): ").strip()
+
+            if token and project_id:
+                test_all_endpoints(token, project_id)
+            else:
+                print("Cần cả token và projectId!")
+            return
+
+        # Help command
+        if cmd == "help" or cmd == "--help" or cmd == "-h":
+            print("""
+Usage:
+    python auto_video.py                  # Interactive mode
+    python auto_video.py test             # Test all API endpoints
+    python auto_video.py [folder] [prompt]  # Process folder
+
+Để capture API traffic từ tool khác:
+1. Cài Fiddler Classic: https://www.telerik.com/download/fiddler
+2. Bật HTTPS decryption (Tools → Options → HTTPS → Check all)
+3. Chạy tool kia và tìm requests tới aisandbox-pa.googleapis.com
+4. Copy URL và payload từ request đó
+
+Hoặc dùng HTTP Toolkit (dễ hơn):
+https://httptoolkit.com/
+""")
+            return
 
     # Load saved credentials
     creds_file = Path(__file__).parent.parent / "config" / "video_credentials.json"
