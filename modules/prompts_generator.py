@@ -228,7 +228,7 @@ class MultiAIClient:
             for attempt in range(max_retries):
                 try:
                     print(f"[Ollama] Dang goi local model ({self.ollama_model})...")
-                    result = self._call_ollama(prompt, temperature)
+                    result = self._call_ollama(prompt, temperature, max_tokens)
                     if result:
                         print(f"[Ollama] Thanh cong!")
                         return result
@@ -295,20 +295,27 @@ class MultiAIClient:
             print(f"[DeepSeek] Error {resp.status_code}: {error_text}")
             raise requests.RequestException(f"DeepSeek API error {resp.status_code}: {error_text}")
 
-    def _call_ollama(self, prompt: str, temperature: float) -> str:
-        """Call Ollama local API."""
+    def _call_ollama(self, prompt: str, temperature: float, max_tokens: int = 16000) -> str:
+        """Call Ollama local API.
+
+        Args:
+            prompt: The prompt to send
+            temperature: Temperature for generation
+            max_tokens: Max output tokens (default 16000 for large responses like Director's Shooting Plan)
+        """
         data = {
             "model": self.ollama_model,
             "prompt": prompt,
             "stream": False,
             "options": {
                 "temperature": temperature,
-                "num_predict": 8192,  # Max tokens
+                "num_predict": max_tokens,  # Higher for Director's Shooting Plan
+                "num_ctx": 32768,  # Context window - gemma3:27b supports up to 128k
             }
         }
 
-        self.logger.debug(f"Calling Ollama API: model={self.ollama_model}")
-        print(f"[Ollama] Dang xu ly... (co the mat 1-5 phut tuy cau hinh may)")
+        self.logger.debug(f"Calling Ollama API: model={self.ollama_model}, max_tokens={max_tokens}")
+        print(f"[Ollama] Dang xu ly voi {self.ollama_model}... (co the mat 2-5 phut)")
 
         # Ollama can be slow, increase timeout
         resp = requests.post(self.OLLAMA_URL, json=data, timeout=600)
@@ -660,23 +667,30 @@ class PromptGenerator:
 
     def _generate_content_large(self, prompt: str, temperature: float = 0.7, max_tokens: int = 16000) -> str:
         """
-        Generate content với ưu tiên Ollama cho response dài.
+        Generate content với ưu tiên Ollama cho response dài (Director's Shooting Plan).
 
         DeepSeek có giới hạn max_tokens=8192, không đủ cho Director's Shooting Plan.
-        Nếu Ollama khả dụng, dùng Ollama trước (không giới hạn tokens).
-        Nếu không có Ollama, dùng DeepSeek với max_tokens=8192 và repair JSON nếu cần.
+        Ollama không có giới hạn tokens và gemma3:27b là model mạnh.
+
+        Priority cho QUALITY:
+        1. Ollama (gemma3:27b) - Model mạnh, không giới hạn tokens, chất lượng cao
+        2. DeepSeek - Nếu không có Ollama, dùng với JSON repair
         """
-        # Kiểm tra xem Ollama có khả dụng không
+        # Ưu tiên Ollama cho chất lượng tốt nhất
         if hasattr(self.ai_client, 'ollama_available') and self.ai_client.ollama_available:
-            self.logger.info("[LargeContent] Dùng Ollama (không giới hạn tokens)...")
+            print(f"[Director] Dùng Ollama {self.ai_client.ollama_model} (chất lượng cao, không giới hạn tokens)")
             try:
-                # Gọi trực tiếp Ollama
-                return self.ai_client._call_ollama(prompt, temperature)
+                # Gọi Ollama với max_tokens cao
+                result = self.ai_client._call_ollama(prompt, temperature, max_tokens)
+                if result:
+                    print(f"[Director] Ollama trả về {len(result)} ký tự")
+                    return result
             except Exception as e:
-                self.logger.warning(f"[LargeContent] Ollama failed: {e}, falling back to DeepSeek...")
+                self.logger.warning(f"[Director] Ollama failed: {e}, falling back to DeepSeek...")
+                print(f"[Director] Ollama thất bại: {e}, chuyển sang DeepSeek...")
 
         # Fallback: dùng DeepSeek (sẽ bị cap ở 8192 tokens)
-        self.logger.info("[LargeContent] Dùng DeepSeek (giới hạn 8192 tokens)...")
+        print("[Director] Dùng DeepSeek (giới hạn 8192 tokens, có thể bị truncate)")
         return self.ai_client.generate_content(prompt, temperature, max_tokens)
 
     def generate_for_project(
