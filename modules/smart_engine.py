@@ -1389,7 +1389,7 @@ class SmartEngine:
                 if img['duration'] <= 0:
                     img['duration'] = (total_duration - img['start']) / (len(images) - i)
 
-            # 4. Tạo video với FFmpeg + Transitions
+            # 4. Tạo video với FFmpeg + Fade Transitions
             with tempfile.TemporaryDirectory() as temp_dir:
                 # Debug: show first image (absolute path)
                 self.log(f"  First image: {Path(images[0]['path']).resolve()}")
@@ -1398,27 +1398,73 @@ class SmartEngine:
                 # Video không có audio
                 temp_video = Path(temp_dir) / "temp_video.mp4"
 
-                # Transition: Dùng concat đơn giản (ổn định nhất)
-                # Fade transitions phức tạp với nhiều ảnh, skip để đảm bảo video xuất ra
-                self.log("  Dang ghep anh...")
+                # Fade in/out cho mỗi ảnh (đơn giản, ổn định hơn xfade)
+                FADE_DURATION = 0.3  # 0.3 giây fade
+                self.log(f"  Dang tao {len(images)} clips voi fade effect...")
 
-                # Tạo file list cho FFmpeg concat
-                list_file = Path(temp_dir) / "images.txt"
+                # Tạo từng clip với fade in/out
+                clip_paths = []
+                for i, img in enumerate(images):
+                    clip_path = Path(temp_dir) / f"clip_{i:03d}.mp4"
+                    abs_path = str(Path(img['path']).resolve()).replace('\\', '/')
+                    duration = img['duration']
+
+                    # Fade filter: fade in 0.3s đầu, fade out 0.3s cuối
+                    fade_out_start = max(0, duration - FADE_DURATION)
+                    fade_filter = f"fade=t=in:st=0:d={FADE_DURATION},fade=t=out:st={fade_out_start}:d={FADE_DURATION}"
+
+                    # Scale + Fade filter
+                    vf = f"scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,{fade_filter}"
+
+                    cmd_clip = [
+                        "ffmpeg", "-y",
+                        "-loop", "1", "-t", str(duration),
+                        "-i", abs_path,
+                        "-vf", vf,
+                        "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                        "-r", "30", str(clip_path)
+                    ]
+                    result = subprocess.run(cmd_clip, capture_output=True, text=True)
+                    if result.returncode != 0:
+                        self.log(f"  Clip {i} error, skip fade...", "WARN")
+                        # Fallback: không có fade
+                        vf_simple = "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2"
+                        cmd_simple = [
+                            "ffmpeg", "-y",
+                            "-loop", "1", "-t", str(duration),
+                            "-i", abs_path,
+                            "-vf", vf_simple,
+                            "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                            "-r", "30", str(clip_path)
+                        ]
+                        result = subprocess.run(cmd_simple, capture_output=True, text=True)
+                        if result.returncode != 0:
+                            self.log(f"  Clip {i} failed: {result.stderr[-100:]}", "ERROR")
+                            continue
+
+                    clip_paths.append(clip_path)
+
+                    # Progress log mỗi 10 clips
+                    if (i + 1) % 10 == 0:
+                        self.log(f"  ... {i + 1}/{len(images)} clips")
+
+                if not clip_paths:
+                    self.log("  Khong tao duoc clip nao!", "ERROR")
+                    return None
+
+                self.log(f"  Da tao {len(clip_paths)} clips, dang ghep...")
+
+                # Tạo file list để concat
+                list_file = Path(temp_dir) / "clips.txt"
                 with open(list_file, 'w', encoding='utf-8') as f:
-                    for img in images:
-                        abs_path = str(Path(img['path']).resolve()).replace('\\', '/')
-                        f.write(f"file '{abs_path}'\n")
-                        f.write(f"duration {img['duration']:.3f}\n")
-                    # Thêm ảnh cuối (FFmpeg requirement)
-                    f.write(f"file '{abs_path}'\n")
+                    for cp in clip_paths:
+                        f.write(f"file '{str(cp).replace(chr(92), '/')}'\n")
 
-                # Concat ảnh thành video
+                # Concat tất cả clips
                 cmd_concat = [
                     "ffmpeg", "-y", "-f", "concat", "-safe", "0",
                     "-i", str(list_file),
-                    "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2",
-                    "-c:v", "libx264", "-pix_fmt", "yuv420p",
-                    "-r", "30", str(temp_video)
+                    "-c", "copy", str(temp_video)
                 ]
                 result = subprocess.run(cmd_concat, capture_output=True, text=True)
                 if result.returncode != 0:
