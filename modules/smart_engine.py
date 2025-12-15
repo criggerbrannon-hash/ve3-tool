@@ -1298,14 +1298,18 @@ class SmartEngine:
             with tempfile.TemporaryDirectory() as temp_dir:
                 # Tạo file list cho FFmpeg concat
                 list_file = Path(temp_dir) / "images.txt"
-                with open(list_file, 'w') as f:
+                with open(list_file, 'w', encoding='utf-8') as f:
                     for img in images:
-                        # Escape path
-                        escaped_path = str(img['path']).replace("'", "'\\''")
+                        # Windows: dùng forward slash cho FFmpeg
+                        escaped_path = str(img['path']).replace('\\', '/')
                         f.write(f"file '{escaped_path}'\n")
-                        f.write(f"duration {img['duration']}\n")
+                        f.write(f"duration {img['duration']:.3f}\n")
                     # Thêm ảnh cuối một lần nữa (FFmpeg requirement)
                     f.write(f"file '{escaped_path}'\n")
+
+                # Debug: show first image
+                self.log(f"  First image: {images[0]['path']}")
+                self.log(f"  Duration: {images[0]['duration']:.2f}s")
 
                 # Video không có audio
                 temp_video = Path(temp_dir) / "temp_video.mp4"
@@ -1320,7 +1324,10 @@ class SmartEngine:
                 ]
                 result = subprocess.run(cmd1, capture_output=True, text=True)
                 if result.returncode != 0:
-                    self.log(f"  FFmpeg error: {result.stderr[:200]}", "ERROR")
+                    # Lấy dòng cuối của stderr (error thực sự)
+                    error_lines = result.stderr.strip().split('\n')
+                    actual_error = error_lines[-1] if error_lines else "Unknown error"
+                    self.log(f"  FFmpeg error: {actual_error}", "ERROR")
                     return None
 
                 # Thêm audio
