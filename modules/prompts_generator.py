@@ -1381,10 +1381,24 @@ class PromptGenerator:
             self.logger.info("=" * 50)
 
             response = self._generate_content(prompt, temperature=0.4, max_tokens=8000)
+
+            # DEBUG: Log response để xem AI trả về gì
+            self.logger.info(f"[Director's Shooting Plan] Response length: {len(response) if response else 0}")
+            if response:
+                self.logger.info(f"[Director's Shooting Plan] Response preview: {response[:500]}...")
+
             json_data = self._extract_json(response)
+
+            # DEBUG: Log json_data
+            if json_data:
+                self.logger.info(f"[Director's Shooting Plan] JSON keys: {list(json_data.keys())}")
+            else:
+                self.logger.warning(f"[Director's Shooting Plan] Failed to extract JSON from response")
 
             if not json_data or "shooting_plan" not in json_data:
                 self.logger.warning("[Director's Shooting Plan] AI không trả về shooting_plan")
+                if json_data:
+                    self.logger.warning(f"[Director's Shooting Plan] Available keys: {list(json_data.keys())}")
                 return None
 
             shooting_plan = json_data["shooting_plan"]
