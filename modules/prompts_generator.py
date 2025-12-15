@@ -384,6 +384,9 @@ class MultiAIClient:
         # Determine if prompt expects JSON response
         expects_json = any(kw in prompt.lower() for kw in ['json', 'output format', '{"', "{'"])
 
+        # DeepSeek max_tokens limit is 8192
+        deepseek_max_tokens = min(max_tokens, 8192)
+
         data = {
             "model": "deepseek-chat",
             "messages": [
@@ -394,14 +397,14 @@ class MultiAIClient:
                 {"role": "user", "content": prompt}
             ],
             "temperature": temperature,
-            "max_tokens": max_tokens
+            "max_tokens": deepseek_max_tokens
         }
 
         # Force JSON mode if prompt expects JSON
         if expects_json:
             data["response_format"] = {"type": "json_object"}
 
-        print(f"[DeepSeek] Dang goi API... (prompt: {len(prompt)} ky tu, json_mode={expects_json}, cho 60-180s)")
+        print(f"[DeepSeek] Dang goi API... (prompt: {len(prompt)} ky tu, json_mode={expects_json}, max_tokens={deepseek_max_tokens}, cho 60-180s)")
 
         resp = requests.post(self.DEEPSEEK_URL, headers=headers, json=data, timeout=180)
 
@@ -433,6 +436,9 @@ class MultiAIClient:
         # Determine if prompt expects JSON response
         expects_json = any(kw in prompt.lower() for kw in ['json', 'output format', '{"', "{'"])
 
+        # Groq max_tokens limit varies by model, llama-3.3-70b is 32768
+        groq_max_tokens = min(max_tokens, 32768)
+
         data = {
             "model": "llama-3.3-70b-versatile",
             "messages": [
@@ -443,14 +449,14 @@ class MultiAIClient:
                 {"role": "user", "content": prompt}
             ],
             "temperature": temperature,
-            "max_tokens": max_tokens
+            "max_tokens": groq_max_tokens
         }
 
         # Force JSON mode if prompt expects JSON
         if expects_json:
             data["response_format"] = {"type": "json_object"}
 
-        self.logger.debug(f"Calling Groq API (key #{self.groq_index + 1}, json_mode={expects_json})...")
+        self.logger.debug(f"Calling Groq API (key #{self.groq_index + 1}, json_mode={expects_json}, max_tokens={groq_max_tokens})...")
 
         resp = requests.post(self.GROQ_URL, headers=headers, json=data, timeout=120)
 
