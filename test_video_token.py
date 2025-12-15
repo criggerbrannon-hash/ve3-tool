@@ -3,21 +3,24 @@ Test Video Token Extraction
 ============================
 Flow:
 1. Mo Chrome
-2. Inject capture script
+2. Inject capture script (capture token + full request info)
 3. Click dropdown -> "Tạo video từ các thành phần"
 4. Click "Tạo một video bằng văn bản và các thành phần…"
 5. Paste prompt
 6. Click nút "add" để thêm media
 7. Click chọn ảnh đã tải trước đó
-8. Nhấn Enter -> Lấy token
+8. Click nút "Tạo" (arrow_forward) -> Lấy token + request info
+9. Test tạo video từ ảnh
 """
 
 import sys
 import time
 import subprocess
 import json
+import base64
+import requests
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict, Any
 
 try:
     import pyautogui as pag
@@ -42,6 +45,14 @@ class VideoTokenTest:
     def __init__(self, chrome_path: str = None, profile_path: str = None):
         self.chrome_path = chrome_path or r"C:\Program Files\Google\Chrome\Application\chrome.exe"
         self.profile_path = profile_path
+        # Store captured data
+        self.captured_data = {
+            "token": None,
+            "project_id": None,
+            "requests": [],  # All captured requests
+            "last_url": None,
+            "last_payload": None
+        }
 
     def log(self, msg: str):
         print(f"[VideoToken] {msg}")
@@ -63,14 +74,83 @@ class VideoTokenTest:
             return False
 
     def inject_capture_script(self) -> bool:
-        """Inject script để bắt token từ network requests."""
+        """
+        Inject script để bắt TOÀN BỘ thông tin từ network requests:
+        - Token
+        - URL endpoint
+        - Request payload
+        - Response data
+        """
         if not pag or not pyperclip:
             return False
 
-        self.log("Inject capture script...")
+        self.log("Inject FULL capture script...")
 
-        # Script hook fetch để capture token
-        capture_script = '''window._tk=null;window._pj=null;(function(){var f=window.fetch;window.fetch=function(u,o){var s=u?u.toString():'';if(s.includes('flowMedia')||s.includes('aisandbox')||s.includes('video')){var h=o&&o.headers?o.headers:{};var a=h.Authorization||h.authorization||'';if(a.startsWith('Bearer ')){window._tk=a.substring(7);var m=s.match(/\\/projects\\/([^\\/]+)\\//);if(m)window._pj=m[1];console.log('TOKEN CAPTURED! URL:',s.substring(0,100));}}return f.apply(this,arguments);};console.log('Video capture ready');})();'''
+        # Script hook fetch để capture token + full request info
+        capture_script = '''
+window._tk=null;
+window._pj=null;
+window._requests=[];
+window._lastUrl=null;
+window._lastPayload=null;
+window._lastResponse=null;
+
+(function(){
+    var originalFetch = window.fetch;
+
+    window.fetch = function(url, options) {
+        var urlStr = url ? url.toString() : '';
+
+        // Capture requests liên quan đến video/media
+        if(urlStr.includes('flowMedia') || urlStr.includes('aisandbox') || urlStr.includes('video') || urlStr.includes('generateVideo')) {
+
+            var headers = options && options.headers ? options.headers : {};
+            var auth = headers.Authorization || headers.authorization || '';
+
+            // Capture token
+            if(auth.startsWith('Bearer ')) {
+                window._tk = auth.substring(7);
+                var match = urlStr.match(/\\/projects\\/([^\\/]+)\\//);
+                if(match) window._pj = match[1];
+            }
+
+            // Capture full request
+            var reqData = {
+                url: urlStr,
+                method: options ? options.method : 'GET',
+                headers: headers,
+                body: options ? options.body : null,
+                timestamp: new Date().toISOString()
+            };
+
+            window._requests.push(reqData);
+            window._lastUrl = urlStr;
+            window._lastPayload = options ? options.body : null;
+
+            console.log('=== CAPTURED REQUEST ===');
+            console.log('URL:', urlStr);
+            console.log('Method:', reqData.method);
+            if(reqData.body) console.log('Body preview:', String(reqData.body).substring(0, 500));
+        }
+
+        // Call original fetch and capture response
+        return originalFetch.apply(this, arguments).then(function(response) {
+            if(urlStr.includes('flowMedia') || urlStr.includes('video') || urlStr.includes('generateVideo')) {
+                response.clone().text().then(function(text) {
+                    window._lastResponse = text;
+                    console.log('=== CAPTURED RESPONSE ===');
+                    console.log('Status:', response.status);
+                    console.log('Response preview:', text.substring(0, 500));
+                });
+            }
+            return response;
+        });
+    };
+
+    console.log('=== FULL CAPTURE READY ===');
+    console.log('Will capture: token, URL, payload, response');
+})();
+'''
 
         try:
             # Mở DevTools
@@ -89,7 +169,7 @@ class VideoTokenTest:
             pag.hotkey("ctrl", "shift", "j")
             time.sleep(0.5)
 
-            self.log("Capture script injected!")
+            self.log("FULL capture script injected!")
             return True
         except Exception as e:
             self.log(f"Inject error: {e}")
@@ -352,38 +432,94 @@ class VideoTokenTest:
             self.log(f"Click media error: {e}")
             return False
 
-    def press_enter_to_send(self) -> bool:
-        """Nhấn Enter để gửi prompt + media."""
-        if not pag:
+    def click_create_button(self) -> bool:
+        """
+        Click nút "Tạo" (có icon arrow_forward) để gửi prompt + media.
+        KHÔNG dùng Enter mà click trực tiếp vào button.
+        """
+        if not pag or not pyperclip:
             return False
 
-        self.log("Nhấn Enter để gửi...")
+        self.log("Click nút TẠO (arrow_forward)...")
+
+        # Tìm button có icon arrow_forward hoặc text "Tạo"
+        js = '''(function(){
+            // Cách 1: Tìm button có icon arrow_forward
+            var buttons = document.querySelectorAll('button');
+            for(var btn of buttons){
+                var icon = btn.querySelector('i.google-symbols');
+                if(icon && icon.textContent.trim() === 'arrow_forward'){
+                    btn.click();
+                    console.log('Clicked CREATE button (by icon)');
+                    return true;
+                }
+            }
+
+            // Cách 2: Tìm button có span text "Tạo"
+            for(var btn of buttons){
+                var spans = btn.querySelectorAll('span');
+                for(var span of spans){
+                    if(span.textContent.trim() === 'Tạo'){
+                        btn.click();
+                        console.log('Clicked CREATE button (by text)');
+                        return true;
+                    }
+                }
+            }
+
+            // Cách 3: Tìm theo class pattern
+            var createBtn = document.querySelector('button[class*="408537d4"]');
+            if(createBtn){
+                createBtn.click();
+                console.log('Clicked CREATE button (by class)');
+                return true;
+            }
+
+            console.log('Khong tim thay CREATE button');
+            return false;
+        })();'''
 
         try:
+            pag.hotkey("ctrl", "shift", "j")
+            time.sleep(1)
+            pyperclip.copy(js)
+            pag.hotkey("ctrl", "v")
+            time.sleep(0.2)
             pag.press("enter")
+            time.sleep(1)
+            pag.hotkey("ctrl", "shift", "j")
             time.sleep(0.5)
-            self.log("Đã gửi!")
+            self.log("Đã click nút TẠO")
             return True
         except Exception as e:
-            self.log(f"Enter error: {e}")
+            self.log(f"Click CREATE error: {e}")
             return False
 
-    def get_token(self) -> Tuple[Optional[str], Optional[str]]:
-        """Lấy token từ DevTools."""
+    def get_captured_data(self) -> Dict[str, Any]:
+        """Lấy TOÀN BỘ data đã capture từ DevTools."""
         if not pag or not pyperclip:
-            return None, None
+            return {}
 
         try:
             pag.hotkey("ctrl", "shift", "j")
             time.sleep(1.2)
 
-            js = 'copy(JSON.stringify({t:window._tk,p:window._pj}))'
+            # Lấy tất cả captured data
+            js = '''copy(JSON.stringify({
+                token: window._tk,
+                project_id: window._pj,
+                requests: window._requests,
+                last_url: window._lastUrl,
+                last_payload: window._lastPayload,
+                last_response: window._lastResponse
+            }))'''
+
             pyperclip.copy(js)
             time.sleep(0.2)
             pag.hotkey("ctrl", "v")
             time.sleep(0.2)
             pag.press("enter")
-            time.sleep(0.8)
+            time.sleep(1)
 
             pag.hotkey("ctrl", "shift", "j")
             time.sleep(0.3)
@@ -391,16 +527,17 @@ class VideoTokenTest:
             try:
                 text = pyperclip.paste()
                 if text and text.startswith('{'):
-                    data = json.loads(text)
-                    tk = data.get("t")
-                    pj = data.get("p")
-                    if tk and len(str(tk)) > 50:
-                        return tk, pj
+                    return json.loads(text)
             except:
                 pass
-            return None, None
+            return {}
         except:
-            return None, None
+            return {}
+
+    def get_token(self) -> Tuple[Optional[str], Optional[str]]:
+        """Lấy token từ DevTools."""
+        data = self.get_captured_data()
+        return data.get("token"), data.get("project_id")
 
     def extract_token(self, timeout: int = 90) -> Tuple[Optional[str], Optional[str], str]:
         """
@@ -416,8 +553,8 @@ class VideoTokenTest:
         7. Paste prompt (CHƯA gửi)
         8. Click nút ADD để thêm media
         9. Click chọn ảnh đã tải trước đó
-        10. Nhấn Enter để gửi
-        11. Đợi và lấy token
+        10. Click nút "Tạo" (arrow_forward) để gửi
+        11. Đợi và lấy token + request info
         """
         if not pag:
             return None, None, "Thiếu pyautogui"
@@ -474,22 +611,34 @@ class VideoTokenTest:
             self.click_uploaded_media()
             time.sleep(2)
 
-            # === 11. Nhấn Enter để gửi ===
-            self.press_enter_to_send()
+            # === 11. Click nút "Tạo" (KHÔNG dùng Enter) ===
+            self.log("Click nút TẠO...")
+            self.click_create_button()
 
-            # === 12. Đợi và lấy token ===
-            self.log("Đợi capture token (60s)...")
+            # === 12. Đợi và lấy token + full data ===
+            self.log("Đợi capture token + request info (60s)...")
 
             for i in range(20):
                 time.sleep(3)
                 self.log(f"Kiểm tra #{i+1}...")
 
-                token, proj = self.get_token()
+                data = self.get_captured_data()
+                token = data.get("token")
+                proj = data.get("project_id")
 
                 if token:
                     self.log("=== ĐÃ LẤY ĐƯỢC TOKEN! ===")
                     self.log(f"Token: {token[:50]}...")
                     self.log(f"Project ID: {proj}")
+
+                    # Lưu thêm request info
+                    self.captured_data = data
+
+                    if data.get("last_url"):
+                        self.log(f"Last URL: {data['last_url']}")
+                    if data.get("requests"):
+                        self.log(f"Captured {len(data['requests'])} requests")
+
                     return token, proj, ""
 
             return None, None, "Không lấy được token. Thử lại."
@@ -498,21 +647,154 @@ class VideoTokenTest:
             return None, None, f"Lỗi: {e}"
 
 
+# =============================================================================
+# VIDEO API TEST
+# =============================================================================
+
+class VideoAPITest:
+    """Test gọi API tạo video từ ảnh."""
+
+    BASE_URL = "https://aisandbox-pa.googleapis.com"
+
+    def __init__(self, token: str, project_id: str):
+        self.token = token
+        self.project_id = project_id
+        self.session = self._create_session()
+
+    def _create_session(self) -> requests.Session:
+        session = requests.Session()
+        session.headers.update({
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json",
+            "Accept": "*/*",
+            "Origin": "https://labs.google",
+            "Referer": "https://labs.google/",
+        })
+        return session
+
+    def log(self, msg: str):
+        print(f"[VideoAPI] {msg}")
+
+    def image_to_base64(self, image_path: str) -> Optional[str]:
+        """Convert ảnh sang base64."""
+        try:
+            path = Path(image_path)
+            if not path.exists():
+                self.log(f"File không tồn tại: {image_path}")
+                return None
+
+            with open(path, "rb") as f:
+                data = f.read()
+
+            b64 = base64.b64encode(data).decode("utf-8")
+            self.log(f"Converted image to base64: {len(b64)} chars")
+            return b64
+        except Exception as e:
+            self.log(f"Error: {e}")
+            return None
+
+    def generate_video_from_image(
+        self,
+        image_path: str,
+        prompt: str = "Animate this image with smooth motion"
+    ) -> Dict[str, Any]:
+        """
+        Thử tạo video từ ảnh.
+
+        NOTE: Endpoint và payload có thể cần điều chỉnh sau khi capture được
+        request thực tế từ Chrome.
+        """
+        self.log(f"Generating video from: {image_path}")
+        self.log(f"Prompt: {prompt}")
+
+        # Convert image to base64
+        image_b64 = self.image_to_base64(image_path)
+        if not image_b64:
+            return {"success": False, "error": "Cannot read image"}
+
+        # Các endpoint có thể thử
+        endpoints_to_try = [
+            f"/v1/projects/{self.project_id}/flowMedia:generateVideo",
+            f"/v1/projects/{self.project_id}/flowMedia:batchGenerateVideos",
+            f"/v1/projects/{self.project_id}/flowMedia:imageToVideo",
+            f"/v1/projects/{self.project_id}/videos:generate",
+        ]
+
+        # Payload mẫu (cần điều chỉnh sau khi capture request thực)
+        payload = {
+            "prompt": prompt,
+            "imageInputs": [image_b64],
+            "clientContext": {
+                "projectId": self.project_id,
+                "tool": "PINHOLE"
+            }
+        }
+
+        results = []
+
+        for endpoint in endpoints_to_try:
+            url = f"{self.BASE_URL}{endpoint}"
+            self.log(f"Trying: {url}")
+
+            try:
+                response = self.session.post(
+                    url,
+                    json=payload,
+                    timeout=60
+                )
+
+                result = {
+                    "endpoint": endpoint,
+                    "status": response.status_code,
+                    "response": response.text[:500] if response.text else None
+                }
+                results.append(result)
+
+                self.log(f"  Status: {response.status_code}")
+
+                if response.status_code == 200:
+                    self.log("  SUCCESS!")
+                    return {
+                        "success": True,
+                        "endpoint": endpoint,
+                        "response": response.json() if response.text else None
+                    }
+
+            except Exception as e:
+                self.log(f"  Error: {e}")
+                results.append({
+                    "endpoint": endpoint,
+                    "error": str(e)
+                })
+
+        return {
+            "success": False,
+            "tried_endpoints": results,
+            "message": "Không tìm được endpoint đúng. Cần capture request từ Chrome để xem endpoint thực."
+        }
+
+
+# =============================================================================
+# MAIN
+# =============================================================================
+
 def main():
     """Test function."""
-    print("=" * 50)
-    print("VIDEO TOKEN TEST")
-    print("=" * 50)
+    print("=" * 60)
+    print("VIDEO TOKEN + API TEST")
+    print("=" * 60)
 
     # Config - thay đổi theo máy của bạn
     chrome_path = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
     profile_path = None  # Hoặc path đến profile: r"C:\Users\...\Profile 1"
 
+    # Test image path
+    test_image = r"D:\AUTO\ve3-tool\1.png"
+
     # Load từ config nếu có
     config_file = Path(__file__).parent / "config" / "accounts.json"
     if config_file.exists():
         try:
-            import json
             with open(config_file, 'r', encoding='utf-8') as f:
                 config = json.load(f)
             chrome_path = config.get("chrome_path", chrome_path)
@@ -525,34 +807,74 @@ def main():
 
     print(f"Chrome: {chrome_path}")
     print(f"Profile: {profile_path}")
+    print(f"Test image: {test_image}")
     print()
 
-    # Run test
+    # === STEP 1: Lấy token ===
+    print("=" * 60)
+    print("STEP 1: LẤY TOKEN")
+    print("=" * 60)
+
     tester = VideoTokenTest(chrome_path, profile_path)
     token, project_id, error = tester.extract_token()
 
-    print()
-    print("=" * 50)
-    print("KẾT QUẢ:")
-    print("=" * 50)
-
-    if token:
-        print(f"✓ TOKEN: {token[:80]}...")
-        print(f"✓ PROJECT ID: {project_id}")
-
-        # Save để dùng sau
-        result = {
-            "token": token,
-            "project_id": project_id,
-            "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
-        }
-        with open("video_token_result.json", "w") as f:
-            json.dump(result, f, indent=2)
-        print("✓ Đã lưu vào video_token_result.json")
-    else:
+    if not token:
         print(f"✗ LỖI: {error}")
+        return False
 
-    return token is not None
+    print(f"✓ TOKEN: {token[:80]}...")
+    print(f"✓ PROJECT ID: {project_id}")
+
+    # Save captured data
+    result = {
+        "token": token,
+        "project_id": project_id,
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "captured_data": tester.captured_data
+    }
+
+    with open("video_token_result.json", "w", encoding="utf-8") as f:
+        json.dump(result, f, indent=2, ensure_ascii=False)
+    print("✓ Đã lưu vào video_token_result.json")
+
+    # In thông tin captured requests
+    if tester.captured_data.get("requests"):
+        print()
+        print("=== CAPTURED REQUESTS ===")
+        for req in tester.captured_data["requests"]:
+            print(f"  URL: {req.get('url', 'N/A')[:100]}")
+            print(f"  Method: {req.get('method', 'N/A')}")
+            if req.get('body'):
+                print(f"  Body: {str(req['body'])[:200]}...")
+            print()
+
+    # === STEP 2: Test Video API ===
+    print()
+    print("=" * 60)
+    print("STEP 2: TEST VIDEO API")
+    print("=" * 60)
+
+    if not Path(test_image).exists():
+        print(f"✗ Test image không tồn tại: {test_image}")
+        print("  Bỏ qua test video API")
+        return True
+
+    api_tester = VideoAPITest(token, project_id)
+    video_result = api_tester.generate_video_from_image(
+        test_image,
+        prompt="Animate this beautiful scene with gentle motion"
+    )
+
+    print()
+    print("=== VIDEO API RESULT ===")
+    print(json.dumps(video_result, indent=2, ensure_ascii=False)[:1000])
+
+    # Save video result
+    with open("video_api_result.json", "w", encoding="utf-8") as f:
+        json.dump(video_result, f, indent=2, ensure_ascii=False)
+    print("✓ Đã lưu vào video_api_result.json")
+
+    return True
 
 
 if __name__ == "__main__":
