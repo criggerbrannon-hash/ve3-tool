@@ -1168,6 +1168,96 @@ class SmartEngine:
         except Exception as e:
             self.log(f"  Export error: {e}", "WARN")
 
+    def _process_srt_for_video(self, srt_path: Path, output_path: Path, max_chars: int = 50) -> Path:
+        """
+        Xử lý SRT: tách dòng dài thành nhiều dòng ngắn (max 50 ký tự).
+        Chia đều timestamp theo số từ.
+        """
+        import re
+
+        def parse_time(time_str: str) -> float:
+            """Parse SRT timestamp to seconds."""
+            h, m, s = time_str.replace(',', '.').split(':')
+            return int(h) * 3600 + int(m) * 60 + float(s)
+
+        def format_time(seconds: float) -> str:
+            """Format seconds to SRT timestamp."""
+            h = int(seconds // 3600)
+            m = int((seconds % 3600) // 60)
+            s = seconds % 60
+            return f"{h:02d}:{m:02d}:{s:06.3f}".replace('.', ',')
+
+        def split_text(text: str, max_len: int) -> list:
+            """Tách text thành các đoạn <= max_len ký tự, tách theo từ."""
+            words = text.split()
+            chunks = []
+            current = []
+            current_len = 0
+
+            for word in words:
+                word_len = len(word) + (1 if current else 0)  # +1 for space
+                if current_len + word_len <= max_len:
+                    current.append(word)
+                    current_len += word_len
+                else:
+                    if current:
+                        chunks.append(' '.join(current))
+                    current = [word]
+                    current_len = len(word)
+
+            if current:
+                chunks.append(' '.join(current))
+
+            return chunks if chunks else [text[:max_len]]
+
+        try:
+            with open(srt_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            # Parse SRT entries
+            pattern = r'(\d+)\n(\d{2}:\d{2}:\d{2},\d{3}) --> (\d{2}:\d{2}:\d{2},\d{3})\n(.*?)(?=\n\n|\Z)'
+            entries = re.findall(pattern, content, re.DOTALL)
+
+            new_entries = []
+            new_index = 1
+
+            for idx, start, end, text in entries:
+                text = text.strip().replace('\n', ' ')
+                start_sec = parse_time(start)
+                end_sec = parse_time(end)
+                duration = end_sec - start_sec
+
+                # Tách text nếu quá dài
+                if len(text) <= max_chars:
+                    new_entries.append((new_index, start, end, text))
+                    new_index += 1
+                else:
+                    chunks = split_text(text, max_chars)
+                    chunk_duration = duration / len(chunks)
+
+                    for i, chunk in enumerate(chunks):
+                        chunk_start = start_sec + i * chunk_duration
+                        chunk_end = start_sec + (i + 1) * chunk_duration
+                        new_entries.append((
+                            new_index,
+                            format_time(chunk_start),
+                            format_time(chunk_end),
+                            chunk
+                        ))
+                        new_index += 1
+
+            # Write new SRT
+            with open(output_path, 'w', encoding='utf-8') as f:
+                for idx, start, end, text in new_entries:
+                    f.write(f"{idx}\n{start} --> {end}\n{text}\n\n")
+
+            self.log(f"  SRT processed: {len(entries)} -> {len(new_entries)} entries (max {max_chars} chars)")
+            return output_path
+
+        except Exception as e:
+            self.log(f"  SRT process error: {e}", "WARN")
+            return srt_path  # Return original if error
+
     def _compose_video(self, proj_dir: Path, excel_path: Path, name: str) -> Optional[Path]:
         """
         Tự động ghép video từ ảnh + voice + SRT.
@@ -1197,6 +1287,11 @@ class SmartEngine:
         # Tìm SRT file
         srt_files = list(proj_dir.glob("srt/*.srt")) + list(proj_dir.glob("*.srt"))
         srt_path = srt_files[0] if srt_files else None
+
+        # Xử lý SRT: tách dòng dài (max 50 ký tự)
+        if srt_path:
+            processed_srt = proj_dir / f"{name}_video.srt"
+            srt_path = self._process_srt_for_video(srt_path, processed_srt, max_chars=50)
 
         output_path = proj_dir / f"{name}_final.mp4"
         img_dir = proj_dir / "img"
@@ -1397,18 +1492,18 @@ class SmartEngine:
                     # Font path - Anton Regular
                     font_dir = "C\\:/Users/admin/AppData/Local/Microsoft/Windows/Fonts"
 
-                    # Style: Chữ trắng, viền đen, font Anton
+                    # Style: Chữ trắng, viền đen, font Anton, TO (48px)
                     # PrimaryColour format: &HAABBGGRR (Alpha, Blue, Green, Red)
                     # &H00FFFFFF = white, &H00000000 = black
                     subtitle_style = (
                         "FontName=Anton,"
-                        "FontSize=32,"
+                        "FontSize=48,"  # To hon cho de doc
                         "PrimaryColour=&H00FFFFFF,"  # Trắng
                         "OutlineColour=&H00000000,"  # Đen
                         "BorderStyle=1,"
-                        "Outline=3,"
+                        "Outline=4,"  # Vien day hon
                         "Shadow=0,"
-                        "MarginV=50,"
+                        "MarginV=40,"
                         "Alignment=2"  # Bottom center
                     )
 
@@ -1426,7 +1521,7 @@ class SmartEngine:
                         self.log(f"  Subtitle burn failed: {result.stderr[-200:]}", "WARN")
                         # Fallback: thử không có custom font
                         self.log("  Thu lai voi font mac dinh...", "WARN")
-                        vf_simple = f"subtitles='{srt_escaped}':force_style='FontSize=28,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2'"
+                        vf_simple = f"subtitles='{srt_escaped}':force_style='FontSize=48,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=4'"
                         cmd3_simple = [
                             "ffmpeg", "-y",
                             "-i", str(temp_with_audio),
@@ -1512,8 +1607,8 @@ class SmartEngine:
         # Burn subtitles nếu có
         if srt_path and srt_path.exists():
             srt_escaped = str(srt_path).replace('\\', '/').replace(':', '\\:')
-            # Style: Chữ trắng viền đen
-            vf_filter = f"subtitles='{srt_escaped}':force_style='FontSize=28,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2'"
+            # Style: Chữ trắng viền đen, font 48px
+            vf_filter = f"subtitles='{srt_escaped}':force_style='FontSize=48,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=4'"
             cmd3 = [
                 "ffmpeg", "-y",
                 "-i", str(temp_with_audio),
