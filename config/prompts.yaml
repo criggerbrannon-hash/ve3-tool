@@ -463,29 +463,57 @@ directors_treatment: |
 
 directors_shooting_plan: |
   You are a FILM DIRECTOR creating a SHOOTING PLAN for a video.
+  Think like a REAL FILM DIRECTOR - first understand the story, then plan the shots.
 
-  Your job is to decide:
-  1. How many images are needed for each story part
-  2. What each image should show (KEY VISUAL MOMENTS)
-  3. What camera angle/shot type for each image (for VARIETY)
-  4. The exact img_prompt for each image
+  ## YOUR WORKFLOW (2 STEPS):
+
+  ### STEP 1: ANALYZE THE STORY (from TXT)
+  Read the full story and identify:
+  - How many PARTS/SECTIONS does this story have?
+  - What is the KEY MESSAGE of each part?
+  - What KEY IMAGES are needed to VISUALLY TELL each part?
+
+  Example analysis:
+  ```
+  HOOK: Courthouse betrayal → KEY IMAGE: Man alone on courthouse steps
+  PART 1: Poor childhood → KEY IMAGES: Old house, Mother-son at market
+  PART 2: Working hard → KEY IMAGES: Building house, Sweating
+  PART 3: Completion → KEY IMAGE: Finished house, Mother crying happy
+  PART 4: Betrayal → KEY IMAGES: Eviction, Court summons
+  ```
+
+  ### STEP 2: PLAN THE SHOTS (using SRT timestamps)
+  For each KEY IMAGE, determine:
+  - Which SRT segment does it belong to?
+  - How many SHOTS needed based on duration (duration ÷ 8s)?
+  - What CAMERA ANGLES to use for variety?
+  - Create detailed img_prompt for each shot
 
   ## RULES:
   - Maximum 8 seconds per image
-  - Each story part needs: duration ÷ 8 = number of images (round up)
-  - Use DIFFERENT camera angles to create variety (like a real film!)
-  - Focus on KEY MOMENTS that tell the story visually
+  - Each story part: duration ÷ 8 = number of shots (round up)
+  - Use DIFFERENT camera angles for variety (like a real film!)
+  - Images must TELL THE STORY, not just illustrate words
+  - KEY IMAGES first, then break into shots
 
   ## CAMERA ANGLE SEQUENCE (for variety):
-  For a 60-second scene needing 8 images, use this pattern:
-  1. WIDE/ESTABLISHING - Set the scene
+  1. WIDE/ESTABLISHING - Set the scene, show location
   2. MEDIUM - Show character in context
-  3. CLOSE-UP - Emotional detail
-  4. OVER-SHOULDER / TWO-SHOT - Interaction
-  5. MEDIUM - Action continues
-  6. EXTREME CLOSE-UP - Detail (hands, object)
-  7. LOW/HIGH ANGLE - Dramatic emphasis
-  8. WIDE - Scene conclusion
+  3. CLOSE-UP - Emotional detail, face
+  4. EXTREME CLOSE-UP - Detail (hands, object, tears)
+  5. OVER-SHOULDER / TWO-SHOT - Interaction between characters
+  6. LOW/HIGH ANGLE - Dramatic emphasis
+
+  IMPORTANT: Vary your angles! Don't use same angle twice in a row.
+
+  ## EMOTION & ACTION RULES:
+  - Match EMOTION to content (hard work = DETERMINED, not SMILING)
+  - Use ACTION VERBS: BUILDING, SWEATING, CRYING (not HOLDING, STANDING)
+  - Show the STRUGGLE, not just the pose
+
+  ## CHILD CHARACTER RULES:
+  - Children should NOT be in reference_files (API policy)
+  - Describe children INLINE in img_prompt: "(Child: 8yo Vietnamese boy, thin, hopeful eyes)"
 
   ## INPUT:
 
@@ -507,108 +535,82 @@ directors_shooting_plan: |
   ## OUTPUT FORMAT:
 
   {{
+    "story_analysis": {{
+      "total_parts": 5,
+      "parts_overview": [
+        {{"part": "HOOK", "message": "Betrayal at courthouse", "key_images": ["Man alone on steps", "Face of disbelief"]}},
+        {{"part": "PART 1", "message": "Poor childhood", "key_images": ["Old thatched house", "Mother-son at market"]}},
+        {{"part": "PART 2", "message": "Hard work building", "key_images": ["Construction site", "Hands building"]}},
+        {{"part": "PART 3", "message": "Completion joy", "key_images": ["Finished house", "Mother crying happy"]}},
+        {{"part": "PART 4", "message": "Betrayal", "key_images": ["Eviction scene", "Court summons"]}}
+      ],
+      "total_key_images": 10
+    }},
     "shooting_plan": {{
-      "total_duration": "5:30",
-      "total_images": 42,
+      "total_duration": "2:30",
+      "total_shots": 20,
       "story_parts": [
         {{
           "part_number": 1,
-          "part_name": "THE HOOK",
-          "time_range": "00:00 - 00:45",
-          "duration_seconds": 45,
-          "images_needed": 6,
-          "emotional_tone": "Tension, disbelief",
+          "part_name": "HOOK - Courthouse Betrayal",
+          "key_message": "Son betrayed by mother, sitting alone at courthouse",
+          "time_range": "00:00 - 00:15",
+          "duration_seconds": 15,
+          "key_images_in_part": ["Man alone on courthouse steps", "Face showing disbelief"],
+          "shots_needed": 2,
+          "emotional_tone": "Shock, betrayal, devastation",
           "location": "loc_courthouse",
           "characters": ["nvc"],
           "shots": [
             {{
               "shot_number": 1,
+              "key_image": "Man alone on courthouse steps",
               "srt_range": "00:00 - 00:08",
-              "srt_text": "I am sitting on the courthouse steps...",
+              "srt_text": "Tôi ngồi trên bậc thềm tòa án...",
               "shot_type": "WIDE SHOT",
               "camera_angle": "Eye level, 24mm",
-              "visual_description": "Establishing - courthouse exterior with small figure on steps",
+              "visual_description": "Establishing - imposing courthouse, tiny figure on steps",
               "characters_in_shot": ["nvc"],
               "reference_files": ["nvc.png", "loc_courthouse.png"],
-              "img_prompt": "Wide shot, 24mm lens. Imposing courthouse exterior, gray stone steps, white columns. Small figure of 30yo man sitting alone on steps, hunched over, holding papers. Overcast sky, ominous mood. Cinematic, 4K photorealistic."
+              "img_prompt": "Wide shot, 24mm lens. Imposing Vietnamese courthouse exterior, gray concrete steps, tall columns. Small figure of 30yo man SITTING ALONE on steps, HUNCHED OVER, head bowed, holding crumpled papers. Overcast sky, ominous atmosphere. Expression of DEVASTATION. Cinematic, 4K photorealistic."
             }},
             {{
               "shot_number": 2,
-              "srt_range": "00:08 - 00:16",
-              "srt_text": "My own mother took me to court...",
-              "shot_type": "MEDIUM SHOT",
-              "camera_angle": "Eye level, 50mm",
-              "visual_description": "Narrator's disbelief, face and upper body",
-              "characters_in_shot": ["nvc"],
-              "reference_files": ["nvc.png", "loc_courthouse.png"],
-              "img_prompt": "Medium shot, 50mm lens. 30yo man with brown hair, tired blue eyes, gray t-shirt, SITTING on courthouse steps, head in hands, DEVASTATED expression. Legal documents scattered beside him. Courthouse columns in background. Overcast light. Cinematic, 4K photorealistic."
-            }},
-            {{
-              "shot_number": 3,
-              "srt_range": "00:16 - 00:24",
-              "srt_text": "For the house that I built...",
+              "key_image": "Face showing disbelief",
+              "srt_range": "00:08 - 00:15",
+              "srt_text": "Mẹ tôi đã kiện tôi...",
               "shot_type": "CLOSE-UP",
               "camera_angle": "Slight low angle, 85mm",
-              "visual_description": "Emotional close-up of face showing pain",
+              "visual_description": "Emotional close-up - face of betrayal",
               "characters_in_shot": ["nvc"],
               "reference_files": ["nvc.png"],
-              "img_prompt": "Close-up, 85mm lens, slight low angle. 30yo man's face, tired blue eyes WELLING with tears, jaw clenched, stubble visible. Expression of DISBELIEF and BETRAYAL. Soft overcast lighting on face. Cinematic, 4K photorealistic."
-            }},
-            {{
-              "shot_number": 4,
-              "srt_range": "00:24 - 00:32",
-              "srt_text": "With my own two hands...",
-              "shot_type": "EXTREME CLOSE-UP",
-              "camera_angle": "Top down, 100mm macro",
-              "visual_description": "Detail shot - calloused hands holding legal papers",
-              "characters_in_shot": ["nvc"],
-              "reference_files": ["nvc.png"],
-              "img_prompt": "Extreme close-up, 100mm macro lens, top-down angle. Calloused working hands with scars, TREMBLING while gripping legal documents. Paper shows 'COURT SUMMONS' text. Stone step texture visible. Shallow depth of field. Cinematic, 4K photorealistic."
-            }},
-            {{
-              "shot_number": 5,
-              "srt_range": "00:32 - 00:40",
-              "srt_text": "Let me tell you how we got here...",
-              "shot_type": "MEDIUM WIDE",
-              "camera_angle": "Slight high angle, 35mm",
-              "visual_description": "Transition shot - narrator looking up, about to tell story",
-              "characters_in_shot": ["nvc"],
-              "reference_files": ["nvc.png", "loc_courthouse.png"],
-              "img_prompt": "Medium wide shot, 35mm lens, slight high angle looking down. 30yo man LOOKING UP at sky, REFLECTIVE expression, sitting on courthouse steps. Documents in lap. Courthouse facade behind. Moment of remembering. Cinematic, 4K photorealistic."
-            }},
-            {{
-              "shot_number": 6,
-              "srt_range": "00:40 - 00:45",
-              "srt_text": "It all started when I was a kid...",
-              "shot_type": "CLOSE-UP",
-              "camera_angle": "Eye level, 85mm",
-              "visual_description": "Transition to flashback - eyes distant, remembering",
-              "characters_in_shot": ["nvc"],
-              "reference_files": ["nvc.png"],
-              "img_prompt": "Close-up, 85mm lens. 30yo man's face in profile, eyes DISTANT and NOSTALGIC, looking into the distance. Soft focus background. Beginning of memory. Warm color shift suggesting flashback transition. Cinematic, 4K photorealistic."
+              "img_prompt": "Close-up, 85mm lens, slight low angle. 30yo Vietnamese man's face, eyes RED and WELLING with tears, jaw CLENCHED, expression of DISBELIEF and BETRAYAL. Stubble visible. Soft overcast light. Cinematic, 4K photorealistic."
             }}
           ]
         }},
         {{
           "part_number": 2,
-          "part_name": "CHILDHOOD MEMORIES",
-          "time_range": "00:46 - 02:00",
-          "duration_seconds": 74,
-          "images_needed": 10,
-          "emotional_tone": "Warmth, nostalgia, sacrifice",
-          "location": "loc_apartment, loc_dryclean",
+          "part_name": "CHILDHOOD - Poor but Loving",
+          "key_message": "Growing up poor with hardworking mother",
+          "time_range": "00:15 - 00:45",
+          "duration_seconds": 30,
+          "key_images_in_part": ["Old thatched house", "Mother and son at market"],
+          "shots_needed": 4,
+          "emotional_tone": "Nostalgia, hardship, love",
+          "location": "loc_old_house, loc_market",
           "characters": ["nv1_young", "nvc1"],
           "shots": [
             {{
-              "shot_number": 7,
-              "srt_range": "00:46 - 00:54",
-              "srt_text": "We grew up poor in a small town in Ohio...",
+              "shot_number": 3,
+              "key_image": "Old thatched house",
+              "srt_range": "00:15 - 00:22",
+              "srt_text": "Năm tôi 8 tuổi, ba mẹ ly hôn...",
               "shot_type": "WIDE SHOT",
-              "camera_angle": "Eye level, 24mm",
-              "visual_description": "Establishing - small cramped apartment",
+              "camera_angle": "Eye level, 24mm, golden hour",
+              "visual_description": "Establishing - poor countryside, thatched house",
               "characters_in_shot": ["nv1_young", "nvc1"],
-              "reference_files": ["nv1_young.png", "loc_apartment.png"],
-              "img_prompt": "Wide shot, 24mm lens. Small 1990s apartment living room, worn brown carpet, old CRT TV, faded floral sofa. 32yo blonde mother in tired ponytail SITTING with 8-year-old boy with messy brown hair on worn couch. Warm tungsten lamp light. Nostalgic, intimate. Cinematic, 4K photorealistic."
+              "reference_files": ["nv1_young.png", "loc_old_house.png"],
+              "img_prompt": "Wide shot, 24mm lens, warm golden hour light. Vietnamese countryside, small THATCHED-ROOF HOUSE with HOLES in roof, dirt path. 32yo mother in simple worn clothes WALKING with hand on son's shoulder. Nostalgic, slightly faded warm colors. Cinematic, 4K photorealistic. (Child: 8yo Vietnamese boy, thin, wearing patched clothes, looking up at mother)"
             }}
           ]
         }}
