@@ -1114,28 +1114,29 @@ class SmartEngine:
 
         if not prompts:
             self.log("Tat ca anh da ton tai!", "OK")
-            return {"success": 0, "failed": 0, "skipped": "all_exist"}
-
-        # === 4. TAO ANH (Tokens da duoc prefetch) ===
-        self.log("[STEP 4] Tao anh (tokens da san sang)...")
-
-        # Tao anh - khong can lay token nua vi da prefetch o Step 2
-        results = self.generate_images_parallel(prompts)
-
-        # === 5. FINAL CHECK ===
-        self.log("[STEP 5] Kiem tra ket qua...")
-
-        if results["failed"] > 0:
-            self.log(f"CON {results['failed']} ANH CHUA XONG!", "WARN")
+            # Vẫn ghép video nếu đủ nguyên liệu
+            results = {"success": 0, "failed": 0, "skipped": "all_exist"}
         else:
-            self.log("TAT CA ANH DA HOAN THANH!", "OK")
+            # === 4. TAO ANH (Tokens da duoc prefetch) ===
+            self.log("[STEP 4] Tao anh (tokens da san sang)...")
+
+            # Tao anh - khong can lay token nua vi da prefetch o Step 2
+            results = self.generate_images_parallel(prompts)
+
+            # === 5. FINAL CHECK ===
+            self.log("[STEP 5] Kiem tra ket qua...")
+
+            if results["failed"] > 0:
+                self.log(f"CON {results['failed']} ANH CHUA XONG!", "WARN")
+            else:
+                self.log("TAT CA ANH DA HOAN THANH!", "OK")
 
         # === 6. EXPORT TXT & SRT ===
         self.log("[STEP 6] Xuat TXT & SRT...")
         self._export_scenes(excel_path, proj_dir, name)
 
-        # === 7. COMPOSE VIDEO ===
-        if results["failed"] == 0:
+        # === 7. COMPOSE VIDEO (luôn chạy nếu không có lỗi) ===
+        if results.get("failed", 0) == 0:
             self.log("[STEP 7] Ghep video...")
             video_path = self._compose_video(proj_dir, excel_path, name)
             if video_path:
