@@ -72,7 +72,9 @@ class MultiAIClient:
         self.gemini_models = config.get("gemini_models", ["gemini-2.0-flash", "gemini-1.5-flash"])
 
         # Ollama local model
-        self.ollama_model = config.get("ollama_model", "qwen2.5:7b")
+        self.ollama_model = config.get("ollama_model", "gemma3:27b")
+        self.ollama_endpoint = config.get("ollama_endpoint", "http://localhost:11434")
+        self.OLLAMA_URL = f"{self.ollama_endpoint}/api/generate"
         self.ollama_available = False
 
         self.deepseek_index = 0

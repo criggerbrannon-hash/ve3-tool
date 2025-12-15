@@ -66,6 +66,10 @@ class SmartEngine:
         self.groq_keys: List[Resource] = []
         self.gemini_keys: List[Resource] = []
 
+        # Ollama local model (fallback when all APIs fail)
+        self.ollama_model: str = "gemma3:27b"
+        self.ollama_endpoint: str = "http://localhost:11434"
+
         # Settings - TOI UU TOC DO (PARALLEL OPTIMIZED)
         self.parallel = 20  # Tang len 20 - dung TAT CA tokens co san
         self.delay = 0.3    # Giam xuong 0.3s - may khoe chay nhanh
@@ -142,6 +146,12 @@ class SmartEngine:
             for k in api.get('gemini', []):
                 if k and not k.startswith('THAY_BANG') and not k.startswith('AIzaSy_YOUR'):
                     self.gemini_keys.append(Resource(type='gemini', value=k))
+
+            # Ollama local (fallback)
+            ollama_cfg = api.get('ollama', {})
+            if ollama_cfg:
+                self.ollama_model = ollama_cfg.get('model', 'gemma3:27b')
+                self.ollama_endpoint = ollama_cfg.get('endpoint', 'http://localhost:11434')
 
             # Settings
             settings = data.get('settings', {})
@@ -570,11 +580,15 @@ class SmartEngine:
             with open(cfg_file, "r", encoding="utf-8") as f:
                 cfg = yaml.safe_load(f) or {}
 
-        # Add API keys (thu tu uu tien: Gemini > Groq > DeepSeek)
+        # Add API keys (thu tu uu tien: Gemini > Groq > DeepSeek > Ollama)
         cfg['gemini_api_keys'] = [k.value for k in self.gemini_keys if k.status != 'exhausted']
         cfg['groq_api_keys'] = [k.value for k in self.groq_keys if k.status != 'exhausted']
         cfg['deepseek_api_keys'] = [k.value for k in self.deepseek_keys if k.status != 'exhausted']
         cfg['preferred_provider'] = 'gemini' if self.gemini_keys else ('groq' if self.groq_keys else 'deepseek')
+
+        # Ollama local model (fallback khi tat ca API fail)
+        cfg['ollama_model'] = self.ollama_model
+        cfg['ollama_endpoint'] = self.ollama_endpoint
 
         # Retry with different keys
         for attempt in range(self.max_retries):
