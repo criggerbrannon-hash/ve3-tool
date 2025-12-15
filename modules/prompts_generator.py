@@ -1415,7 +1415,8 @@ class PromptGenerator:
             self.logger.info("[Director's Shooting Plan] Đạo diễn đang lên kế hoạch quay...")
             self.logger.info("=" * 50)
 
-            response = self._generate_content(prompt, temperature=0.4, max_tokens=8000)
+            # Tăng max_tokens vì shooting plan có thể rất dài (nhiều scenes)
+            response = self._generate_content(prompt, temperature=0.4, max_tokens=16000)
 
             # DEBUG: Log response để xem AI trả về gì
             self.logger.info(f"[Director's Shooting Plan] Response length: {len(response) if response else 0}")
@@ -2394,6 +2395,7 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
         Trích xuất JSON từ response text.
 
         Hỗ trợ nhiều format: raw JSON, markdown code block, DeepSeek <think> tags.
+        Cũng xử lý JSON bị truncated (chưa đóng đủ braces).
         """
         if not text:
             self.logger.warning("[_extract_json] Empty text received")
@@ -2408,7 +2410,7 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
         try:
             return json.loads(clean_text)
         except json.JSONDecodeError as e:
-            self.logger.debug(f"[_extract_json] Direct parse failed: {e}")
+            self.logger.warning(f"[_extract_json] Direct parse failed at position {e.pos}: {e.msg}")
 
         # Bước 3: Thử tìm JSON trong code block ```json ... ```
         json_block = re.search(r'```(?:json)?\s*\n?([\s\S]*?)\n?```', clean_text)
@@ -2419,37 +2421,92 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
                 self.logger.debug(f"[_extract_json] Code block parse failed: {e}")
 
         # Bước 4: Tìm JSON object bắt đầu bằng { và kết thúc bằng }
-        # Tìm cặp {} ngoài cùng
         start_idx = clean_text.find('{')
         if start_idx != -1:
-            # Đếm balanced braces
+            # Đếm balanced braces và brackets
             brace_count = 0
-            end_idx = start_idx
+            bracket_count = 0
+            end_idx = -1
+            last_brace_idx = start_idx
+
             for i, char in enumerate(clean_text[start_idx:], start_idx):
                 if char == '{':
                     brace_count += 1
+                    last_brace_idx = i
                 elif char == '}':
                     brace_count -= 1
+                    last_brace_idx = i
                     if brace_count == 0:
                         end_idx = i
                         break
+                elif char == '[':
+                    bracket_count += 1
+                elif char == ']':
+                    bracket_count -= 1
 
+            # Nếu tìm được JSON balanced
             if end_idx > start_idx:
                 json_str = clean_text[start_idx:end_idx + 1]
                 try:
                     return json.loads(json_str)
                 except json.JSONDecodeError as e:
-                    self.logger.debug(f"[_extract_json] Balanced brace parse failed: {e}")
-
-                    # Thử fix trailing commas trước } hoặc ]
+                    self.logger.debug(f"[_extract_json] Balanced parse failed: {e}")
+                    # Thử fix trailing commas
                     fixed_json = re.sub(r',(\s*[}\]])', r'\1', json_str)
                     try:
                         return json.loads(fixed_json)
-                    except json.JSONDecodeError as e2:
-                        self.logger.warning(f"[_extract_json] All parse attempts failed. Last error: {e2}")
-                        self.logger.warning(f"[_extract_json] Response preview (first 500 chars): {clean_text[:500]}")
+                    except json.JSONDecodeError:
+                        pass
 
-        # Bước 5: Fallback - tìm bất kỳ JSON object nào
+            # Bước 4b: JSON bị truncated - thử repair bằng cách đóng braces
+            elif brace_count > 0:
+                self.logger.warning(f"[_extract_json] JSON truncated! Unclosed braces: {brace_count}, brackets: {bracket_count}")
+                # Lấy text từ { đến hết
+                json_str = clean_text[start_idx:]
+
+                # Tìm vị trí cuối cùng có thể là JSON hợp lệ (trước dấu , hoặc sau value)
+                # Truncate tại vị trí cuối của một value hoàn chỉnh
+                truncate_patterns = [
+                    r'("[^"]*")\s*$',           # Ends with string
+                    r'(\d+)\s*$',               # Ends with number
+                    r'(true|false|null)\s*$',   # Ends with boolean/null
+                    r'(\])\s*$',                # Ends with ]
+                    r'(\})\s*$',                # Ends with }
+                ]
+
+                # Thử đóng JSON
+                for attempt in range(3):
+                    repair_suffix = ''
+                    # Đóng brackets trước
+                    if bracket_count > 0:
+                        repair_suffix += ']' * bracket_count
+                    # Đóng braces
+                    repair_suffix += '}' * brace_count
+
+                    # Thử các điểm truncate khác nhau
+                    test_json = json_str
+                    if attempt == 1:
+                        # Remove trailing comma and incomplete value
+                        test_json = re.sub(r',\s*"[^"]*$', '', json_str)
+                        test_json = re.sub(r',\s*$', '', test_json)
+                    elif attempt == 2:
+                        # More aggressive: remove last incomplete object
+                        test_json = re.sub(r',\s*\{[^}]*$', '', json_str)
+                        test_json = re.sub(r',\s*"[^"]*":\s*[^,}\]]*$', '', test_json)
+
+                    repaired = test_json.rstrip() + repair_suffix
+
+                    try:
+                        result = json.loads(repaired)
+                        self.logger.info(f"[_extract_json] Successfully repaired truncated JSON (attempt {attempt + 1})")
+                        return result
+                    except json.JSONDecodeError as e:
+                        self.logger.debug(f"[_extract_json] Repair attempt {attempt + 1} failed: {e.msg} at {e.pos}")
+                        continue
+
+                self.logger.warning(f"[_extract_json] Could not repair truncated JSON")
+
+        # Bước 5: Fallback - regex greedy
         json_match = re.search(r'\{[\s\S]*\}', clean_text)
         if json_match:
             try:
