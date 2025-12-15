@@ -2357,32 +2357,71 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
     def _extract_json(self, text: str) -> Optional[Dict]:
         """
         Trích xuất JSON từ response text.
-        
-        Gemini có thể trả về JSON trong markdown code block hoặc raw.
+
+        Hỗ trợ nhiều format: raw JSON, markdown code block, DeepSeek <think> tags.
         """
-        # Thử parse trực tiếp
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            pass
-        
-        # Thử tìm JSON trong code block
+        if not text:
+            self.logger.warning("[_extract_json] Empty text received")
+            return None
+
         import re
-        
-        # Pattern cho ```json ... ```
-        json_block = re.search(r'```(?:json)?\s*\n?([\s\S]*?)\n?```', text)
+
+        # Bước 1: Loại bỏ DeepSeek <think>...</think> tags
+        clean_text = re.sub(r'<think>[\s\S]*?</think>', '', text).strip()
+
+        # Bước 2: Thử parse trực tiếp
+        try:
+            return json.loads(clean_text)
+        except json.JSONDecodeError as e:
+            self.logger.debug(f"[_extract_json] Direct parse failed: {e}")
+
+        # Bước 3: Thử tìm JSON trong code block ```json ... ```
+        json_block = re.search(r'```(?:json)?\s*\n?([\s\S]*?)\n?```', clean_text)
         if json_block:
             try:
                 return json.loads(json_block.group(1))
-            except json.JSONDecodeError:
-                pass
-        
-        # Thử tìm JSON object bắt đầu bằng {
-        json_match = re.search(r'\{[\s\S]*\}', text)
+            except json.JSONDecodeError as e:
+                self.logger.debug(f"[_extract_json] Code block parse failed: {e}")
+
+        # Bước 4: Tìm JSON object bắt đầu bằng { và kết thúc bằng }
+        # Tìm cặp {} ngoài cùng
+        start_idx = clean_text.find('{')
+        if start_idx != -1:
+            # Đếm balanced braces
+            brace_count = 0
+            end_idx = start_idx
+            for i, char in enumerate(clean_text[start_idx:], start_idx):
+                if char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        end_idx = i
+                        break
+
+            if end_idx > start_idx:
+                json_str = clean_text[start_idx:end_idx + 1]
+                try:
+                    return json.loads(json_str)
+                except json.JSONDecodeError as e:
+                    self.logger.debug(f"[_extract_json] Balanced brace parse failed: {e}")
+
+                    # Thử fix trailing commas trước } hoặc ]
+                    fixed_json = re.sub(r',(\s*[}\]])', r'\1', json_str)
+                    try:
+                        return json.loads(fixed_json)
+                    except json.JSONDecodeError as e2:
+                        self.logger.warning(f"[_extract_json] All parse attempts failed. Last error: {e2}")
+                        self.logger.warning(f"[_extract_json] Response preview (first 500 chars): {clean_text[:500]}")
+
+        # Bước 5: Fallback - tìm bất kỳ JSON object nào
+        json_match = re.search(r'\{[\s\S]*\}', clean_text)
         if json_match:
             try:
                 return json.loads(json_match.group(0))
             except json.JSONDecodeError:
                 pass
-        
+
+        self.logger.warning(f"[_extract_json] Could not extract JSON. Response length: {len(text)}")
+        self.logger.warning(f"[_extract_json] Response starts with: {text[:200] if text else 'EMPTY'}")
         return None
