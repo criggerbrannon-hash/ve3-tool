@@ -7,6 +7,8 @@
 - 🎤 **Voice to SRT** - Chuyển audio thành phụ đề
 - 📝 **SRT to Prompts** - AI tạo prompt từ nội dung
 - 🖼️ **Prompts to Images** - Tạo ảnh bằng Google Flow
+- 🎬 **Images to Video** - Tạo video slideshow từ ảnh + audio
+- 🤖 **AI Video** - Tạo video AI từ ảnh (Google Flow API)
 - 🚀 **1 Click** - Tự động toàn bộ quy trình
 - ⚡ **Song song** - Nhiều accounts chạy cùng lúc
 

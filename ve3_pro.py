@@ -61,14 +61,20 @@ class VE3ToolPro:
         self._running = False
         self._stop = False
         self._engine = None
-        
+
         # Current project data
         self.current_project_dir: Optional[Path] = None
         self.characters: List[Dict] = []
         self.scenes: List[Dict] = []
-        
+
         # Image cache
         self.image_cache = {}
+
+        # Video options
+        self.create_slideshow = tk.BooleanVar(value=True)
+        self.create_ai_video = tk.BooleanVar(value=False)
+        self.video_credentials: Dict = {}
+        self.video_prompt = tk.StringVar(value="Animate this image with smooth motion")
         
         # Load config
         self.load_config()
@@ -211,10 +217,35 @@ class VE3ToolPro:
         ttk.Button(btn_row, text="⚙️ Cài đặt", command=self.open_settings).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(btn_row, text="🔄 Reload", command=self.reload_config).pack(side=tk.LEFT)
         
-        # === 5. QUICK ACTIONS ===
+        # === 5. VIDEO OPTIONS ===
+        video_frame = ttk.LabelFrame(parent, text=" 🎬 Video ", padding=10)
+        video_frame.pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Checkbutton(
+            video_frame,
+            text="Tạo video slideshow (ảnh + audio)",
+            variable=self.create_slideshow
+        ).pack(anchor=tk.W)
+
+        ttk.Checkbutton(
+            video_frame,
+            text="Tạo AI video (cần credentials)",
+            variable=self.create_ai_video
+        ).pack(anchor=tk.W)
+
+        # AI Video credentials button
+        cred_row = ttk.Frame(video_frame)
+        cred_row.pack(fill=tk.X, pady=(5, 0))
+
+        self.cred_status_label = ttk.Label(cred_row, text="AI: Chưa có", foreground='gray')
+        self.cred_status_label.pack(side=tk.LEFT)
+
+        ttk.Button(cred_row, text="🔑 Lấy Credentials", command=self.capture_video_credentials).pack(side=tk.RIGHT)
+
+        # === 6. QUICK ACTIONS ===
         actions_frame = ttk.LabelFrame(parent, text=" ⚡ Thao tác nhanh ", padding=10)
         actions_frame.pack(fill=tk.X)
-        
+
         ttk.Button(actions_frame, text="📂 Mở Output", command=self.open_output_folder).pack(fill=tk.X, pady=(0, 5))
         ttk.Button(actions_frame, text="🔑 Lấy Token thủ công", command=self.get_token_manual).pack(fill=tk.X, pady=(0, 5))
         ttk.Button(actions_frame, text="📋 Mở Config", command=self.open_config_file).pack(fill=tk.X)
@@ -674,12 +705,12 @@ class VE3ToolPro:
         """Process single file in background thread."""
         try:
             from modules.smart_engine import SmartEngine
-            
+
             path = self.input_path.get()
-            
+
             engine = SmartEngine()
             self._engine = engine
-            
+
             def log_cb(msg):
                 # Parse level from message
                 level = "INFO"
@@ -689,14 +720,29 @@ class VE3ToolPro:
                     level = "ERROR"
                 elif "[WARN]" in msg:
                     level = "WARN"
-                
+
                 self.root.after(0, lambda: self.log(msg, level))
-            
-            results = engine.run(path, callback=log_cb)
-            
+
+            # Check video options
+            create_slideshow = self.create_slideshow.get()
+            create_ai_video = self.create_ai_video.get() and self.video_credentials.get("token")
+
+            if create_slideshow or create_ai_video:
+                # Use run_with_video method
+                results = engine.run_with_video(
+                    path,
+                    callback=log_cb,
+                    create_slideshow=create_slideshow,
+                    create_ai_video=create_ai_video,
+                    video_credentials=self.video_credentials if create_ai_video else None,
+                    video_prompt=self.video_prompt.get()
+                )
+            else:
+                results = engine.run(path, callback=log_cb)
+
             # Update UI
             self.root.after(0, lambda: self._on_complete(results))
-            
+
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -775,7 +821,7 @@ class VE3ToolPro:
         if path:
             name = Path(path).stem
             self.current_project_dir = PROJECTS_DIR / name
-        
+
         if 'error' in results:
             err = results['error']
             if err == 'missing_requirements':
@@ -787,17 +833,31 @@ class VE3ToolPro:
         else:
             success = results.get('success', 0)
             failed = results.get('failed', 0)
-            
+
             self.update_progress(100, "Hoàn tất!")
-            
+
             # Auto refresh preview
             self.refresh_preview()
-            
+
+            # Build summary message
+            summary = f"✅ Ảnh: {success}"
             if failed > 0:
-                messagebox.showwarning("Chưa hoàn thành",
-                    f"✅ Thành công: {success}\n❌ Thất bại: {failed}\n\nXem log để biết chi tiết.")
+                summary += f" | ❌ Thất bại: {failed}"
+
+            # Video results
+            if results.get('video_path'):
+                summary += f"\n🎬 Video slideshow: ✓"
+                self.log(f"Video: {results['video_path']}", "OK")
+
+            if results.get('ai_videos'):
+                ai_success = results.get('ai_video_success', 0)
+                ai_total = len(results['ai_videos'])
+                summary += f"\n🤖 AI Videos: {ai_success}/{ai_total}"
+
+            if failed > 0:
+                messagebox.showwarning("Chưa hoàn thành", summary + "\n\nXem log để biết chi tiết.")
             else:
-                messagebox.showinfo("Hoàn tất!", f"✅ Đã tạo {success} ảnh!")
+                messagebox.showinfo("Hoàn tất!", summary)
     
     def _reset_ui(self):
         """Reset UI after processing."""
@@ -1062,33 +1122,184 @@ class VE3ToolPro:
         if not self.profiles:
             messagebox.showerror("Lỗi", "Chưa có Chrome profile!\n\nThêm vào config/accounts.json")
             return
-        
+
         self.log("🔑 Đang lấy token thủ công...")
-        
+
         def worker():
             try:
                 from modules.auto_token import ChromeAutoToken
-                
+
                 extractor = ChromeAutoToken(
                     chrome_path=self.chrome_path,
                     profile_path=self.profiles[0]
                 )
-                
+
                 def log_cb(msg):
                     self.root.after(0, lambda: self.log(msg))
-                
+
                 token, proj_id, error = extractor.extract_token(callback=log_cb)
-                
+
                 if token:
                     self.root.after(0, lambda: self.log(f"✅ Token: {token[:40]}...", "OK"))
                     self.root.after(0, lambda: messagebox.showinfo("OK", "Đã lấy được token!"))
                 else:
                     self.root.after(0, lambda: self.log(f"❌ {error}", "ERROR"))
-                    
+
             except Exception as e:
                 self.root.after(0, lambda: self.log(f"Lỗi: {e}", "ERROR"))
-        
+
         threading.Thread(target=worker, daemon=True).start()
+
+    def capture_video_credentials(self):
+        """Capture credentials for AI video generation."""
+        self.log("🎬 Capture AI Video Credentials...")
+
+        # Load saved credentials
+        creds_file = CONFIG_DIR / "video_credentials.json"
+        if creds_file.exists():
+            try:
+                with open(creds_file, 'r', encoding='utf-8') as f:
+                    saved_creds = json.load(f)
+
+                if saved_creds.get("token"):
+                    use_saved = messagebox.askyesno(
+                        "Credentials đã lưu",
+                        "Có credentials đã lưu. Sử dụng lại?\n\n"
+                        f"Token: {saved_creds.get('token', '')[:30]}...\n"
+                        f"x-browser-validation: {'✓' if saved_creds.get('xBrowserValidation') else '✗'}"
+                    )
+                    if use_saved:
+                        self.video_credentials = saved_creds
+                        self._update_cred_status()
+                        self.log("✅ Đã load credentials từ file", "OK")
+                        return
+            except:
+                pass
+
+        # Show capture dialog
+        win = tk.Toplevel(self.root)
+        win.title("🎬 Capture AI Video Credentials")
+        win.geometry("600x500")
+        win.transient(self.root)
+        win.grab_set()
+
+        ttk.Label(win, text="Capture Credentials cho AI Video", font=('Segoe UI', 14, 'bold')).pack(pady=10)
+
+        ttk.Label(win, text="Cách làm:", font=('Segoe UI', 10, 'bold')).pack(anchor=tk.W, padx=20)
+
+        instructions = """
+1. Mở Google Flow: https://labs.google/fx/vi/tools/flow
+2. Đăng nhập tài khoản Google
+3. Mở DevTools (F12) → Tab Network
+4. Tạo 1 video bất kỳ (upload ảnh + nhập prompt + click Tạo)
+5. Tìm request tới 'aisandbox-pa.googleapis.com'
+6. Copy các giá trị sau từ Request Headers:
+   - Authorization (bỏ 'Bearer ' ở đầu)
+   - x-browser-validation
+7. Dán vào các ô bên dưới
+"""
+        ttk.Label(win, text=instructions, justify=tk.LEFT, font=('Segoe UI', 9)).pack(anchor=tk.W, padx=20)
+
+        # Input fields
+        input_frame = ttk.Frame(win)
+        input_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+
+        ttk.Label(input_frame, text="Token (Authorization):").pack(anchor=tk.W)
+        token_entry = ttk.Entry(input_frame, width=70)
+        token_entry.pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Label(input_frame, text="x-browser-validation:").pack(anchor=tk.W)
+        xbv_entry = ttk.Entry(input_frame, width=70)
+        xbv_entry.pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Label(input_frame, text="RecaptchaToken (optional):").pack(anchor=tk.W)
+        recaptcha_entry = ttk.Entry(input_frame, width=70)
+        recaptcha_entry.pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Label(input_frame, text="ProjectID (optional):").pack(anchor=tk.W)
+        project_entry = ttk.Entry(input_frame, width=70)
+        project_entry.pack(fill=tk.X)
+
+        def save_creds():
+            token = token_entry.get().strip()
+            xbv = xbv_entry.get().strip()
+
+            if not token:
+                messagebox.showerror("Lỗi", "Cần nhập Token!")
+                return
+
+            self.video_credentials = {
+                "token": token,
+                "xBrowserValidation": xbv,
+                "recaptchaToken": recaptcha_entry.get().strip(),
+                "projectId": project_entry.get().strip()
+            }
+
+            # Save to file
+            creds_file.parent.mkdir(exist_ok=True)
+            with open(creds_file, 'w', encoding='utf-8') as f:
+                json.dump(self.video_credentials, f, indent=2)
+
+            self._update_cred_status()
+            self.log("✅ Đã lưu AI Video credentials", "OK")
+            win.destroy()
+
+        ttk.Button(win, text="💾 Lưu Credentials", command=save_creds).pack(pady=10)
+
+        # Auto capture button
+        def auto_capture():
+            win.destroy()
+            self._auto_capture_video_creds()
+
+        ttk.Button(win, text="🤖 Tự động Capture (thử nghiệm)", command=auto_capture).pack()
+
+    def _auto_capture_video_creds(self):
+        """Auto capture video credentials using auto_video module."""
+        self.log("🤖 Bắt đầu auto capture...")
+
+        def worker():
+            try:
+                from modules.auto_video import CredentialCapture
+
+                capturer = CredentialCapture(
+                    chrome_path=self.chrome_path,
+                    profile_path=self.profiles[0] if self.profiles else None
+                )
+
+                def log_cb(msg):
+                    self.root.after(0, lambda: self.log(msg))
+
+                capturer.callback = log_cb
+                creds = capturer.capture_manual()
+
+                if creds and creds.get("token"):
+                    self.video_credentials = creds
+
+                    # Save
+                    creds_file = CONFIG_DIR / "video_credentials.json"
+                    with open(creds_file, 'w', encoding='utf-8') as f:
+                        json.dump(creds, f, indent=2)
+
+                    self.root.after(0, self._update_cred_status)
+                    self.root.after(0, lambda: self.log("✅ Capture thành công!", "OK"))
+                else:
+                    self.root.after(0, lambda: self.log("❌ Capture thất bại", "ERROR"))
+
+            except Exception as e:
+                self.root.after(0, lambda: self.log(f"❌ Lỗi: {e}", "ERROR"))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _update_cred_status(self):
+        """Update credential status label."""
+        if self.video_credentials.get("token"):
+            has_xbv = "✓" if self.video_credentials.get("xBrowserValidation") else "✗"
+            self.cred_status_label.config(
+                text=f"AI: ✓ Token, {has_xbv} XBV",
+                foreground='green'
+            )
+        else:
+            self.cred_status_label.config(text="AI: Chưa có", foreground='gray')
     
     # ========== RUN ==========
     

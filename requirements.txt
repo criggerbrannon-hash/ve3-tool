@@ -19,3 +19,7 @@ pyperclip>=1.8.2
 # Voice to SRT (optional - chi can neu dung voice)
 # pip install openai-whisper
 # hoac: pip install whisper-timestamped
+
+# Video generation (optional - chi can neu muon tao video)
+# pip install moviepy
+# FFmpeg cung can duoc cai dat tren he thong

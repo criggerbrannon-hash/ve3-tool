@@ -607,13 +607,134 @@ class SmartEngine:
         
         # === 6. FINAL CHECK ===
         self.log("[STEP 6] Kiem tra ket qua...")
-        
+
         if results["failed"] > 0:
             self.log(f"CON {results['failed']} ANH CHUA XONG!", "WARN")
-            # TODO: Could try alternative methods here
         else:
             self.log("TAT CA ANH DA HOAN THANH!", "OK")
-        
+
+        # === 7. VIDEO GENERATION (Optional) ===
+        results["video_path"] = None
+        results["ai_videos"] = []
+
+        return results
+
+    def run_with_video(
+        self,
+        input_path: str,
+        output_dir: str = None,
+        callback: Callable = None,
+        create_slideshow: bool = True,
+        create_ai_video: bool = False,
+        video_credentials: Dict = None,
+        video_prompt: str = "Animate this image with smooth motion"
+    ) -> Dict:
+        """
+        CHAY TAT CA + TAO VIDEO.
+
+        Args:
+            input_path: Voice file hoac Excel
+            output_dir: Thu muc output
+            callback: Ham log callback
+            create_slideshow: Tao video slideshow tu anh
+            create_ai_video: Tao AI video (can credentials)
+            video_credentials: Credentials cho AI video
+            video_prompt: Prompt cho AI video
+
+        Returns:
+            Dict with success/failed counts + video paths
+        """
+        # Run normal pipeline first
+        results = self.run(input_path, output_dir, callback)
+
+        if 'error' in results:
+            return results
+
+        # Get project dir
+        inp = Path(input_path)
+        name = inp.stem
+        if output_dir:
+            proj_dir = Path(output_dir)
+        else:
+            proj_dir = Path("PROJECTS") / name
+
+        # === SLIDESHOW VIDEO ===
+        if create_slideshow:
+            self.log("[STEP 7] Tao video slideshow...")
+            try:
+                from modules.image_to_video import ImageToVideo, VideoSettings
+
+                settings = VideoSettings(
+                    width=1920,
+                    height=1080,
+                    fps=30,
+                    default_image_duration=5.0
+                )
+
+                converter = ImageToVideo(settings=settings)
+
+                # Find audio
+                audio_path = None
+                for ext in ['.mp3', '.wav']:
+                    audio_file = proj_dir / f"{name}{ext}"
+                    if audio_file.exists():
+                        audio_path = audio_file
+                        break
+
+                success, video_path, error = converter.convert(
+                    proj_dir,
+                    audio_path=audio_path,
+                    callback=self.callback
+                )
+
+                if success:
+                    results["video_path"] = str(video_path)
+                    self.log(f"Video slideshow: {video_path}", "OK")
+                else:
+                    self.log(f"Video slideshow error: {error}", "WARN")
+
+            except Exception as e:
+                self.log(f"Video slideshow error: {e}", "WARN")
+
+        # === AI VIDEO ===
+        if create_ai_video and video_credentials:
+            self.log("[STEP 8] Tao AI videos tu anh...")
+            try:
+                from modules.auto_video import VideoGenerator
+
+                generator = VideoGenerator(video_credentials)
+                generator.callback = self.callback
+
+                img_dir = proj_dir / "img"
+                vid_dir = proj_dir / "vid" / "ai"
+                vid_dir.mkdir(parents=True, exist_ok=True)
+
+                images = sorted(img_dir.glob("*.png"))
+                ai_results = []
+
+                for i, img_path in enumerate(images[:5]):  # Limit to 5 for now
+                    if self.stop_flag:
+                        break
+
+                    self.log(f"AI Video {i+1}/{min(len(images), 5)}: {img_path.name}")
+                    result = generator.process_image(
+                        str(img_path),
+                        video_prompt,
+                        str(vid_dir)
+                    )
+                    ai_results.append(result)
+
+                    if result.get("success"):
+                        self.log(f"  -> {result.get('output')}", "OK")
+                    else:
+                        self.log(f"  -> Error: {result.get('error')}", "WARN")
+
+                results["ai_videos"] = ai_results
+                results["ai_video_success"] = sum(1 for r in ai_results if r.get("success"))
+
+            except Exception as e:
+                self.log(f"AI video error: {e}", "WARN")
+
         return results
     
     def _load_prompts(self, excel_path: Path, proj_dir: Path) -> List[Dict]:
