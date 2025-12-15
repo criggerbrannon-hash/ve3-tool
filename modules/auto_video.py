@@ -735,14 +735,25 @@ class CredentialCapture:
 # ============================================================================
 
 class VideoGenerator:
-    """Generate video từ ảnh sử dụng Google Flow API."""
+    """Generate video từ ảnh sử dụng Google Flow API.
+
+    Có 2 flow:
+    - Flow 1: uploadUserImage → batchAsyncGenerateVideoReferenceImages (cần nhiều headers)
+    - Flow 2: Dùng projectId trong URL path (giống flow tạo ảnh) - CHỈ CẦN token + projectId
+
+    Flow 2 được ưu tiên vì đơn giản hơn và tương thích với các tool khác.
+    """
 
     BASE_URL = "https://aisandbox-pa.googleapis.com"
 
     def __init__(self, credentials: Dict):
         self.creds = credentials
+        self.project_id = credentials.get('projectId')
         self.session = self._create_session()
         self.callback = None
+
+        # Detect which flow to use based on available credentials
+        self.use_project_url = bool(self.project_id)
 
     def _create_session(self) -> requests.Session:
         """Tạo session với headers từ credentials."""
@@ -786,7 +797,10 @@ class VideoGenerator:
             self.callback(msg)
 
     def upload_image(self, image_path: str) -> Optional[str]:
-        """Upload ảnh → lấy mediaId."""
+        """Upload ảnh → lấy mediaId.
+
+        Sử dụng projectId-in-URL nếu có projectId (Flow 2).
+        """
         self.log(f"Upload: {Path(image_path).name}")
 
         path = Path(image_path)
@@ -798,6 +812,59 @@ class VideoGenerator:
         with open(image_path, "rb") as f:
             raw_bytes = base64.b64encode(f.read()).decode("utf-8")
 
+        # Chọn URL endpoint dựa trên flow
+        if self.use_project_url and self.project_id:
+            # Flow 2: projectId trong URL path (giống image generation)
+            url = f"{self.BASE_URL}/v1/projects/{self.project_id}/flowMedia:uploadImage"
+            payload = {
+                "rawImageBytes": raw_bytes,
+                "mimeType": "image/png" if image_path.lower().endswith('.png') else "image/jpeg"
+            }
+            self.log(f"  Using project URL: /projects/{self.project_id[:8]}...")
+        else:
+            # Flow 1: Original endpoint
+            url = f"{self.BASE_URL}/v1:uploadUserImage"
+            payload = {"imageInput": {"rawImageBytes": raw_bytes}}
+
+        try:
+            resp = self.session.post(url, data=json.dumps(payload), timeout=120)
+
+            if resp.status_code == 200:
+                data = resp.json()
+
+                # Try multiple response formats
+                media_id = (
+                    data.get("mediaGenerationId", {}).get("mediaGenerationId") or
+                    data.get("mediaId") or
+                    data.get("id") or
+                    data.get("name", "").split("/")[-1] if data.get("name") else None
+                )
+
+                if media_id:
+                    self.log(f"  ✓ mediaId: {media_id[:40]}...")
+                    return media_id
+                else:
+                    # Log full response to debug
+                    self.log(f"  ✗ No mediaId. Response keys: {list(data.keys())}")
+                    self.log(f"  Response preview: {str(data)[:200]}")
+                    return None
+            else:
+                self.log(f"  ✗ Upload failed: {resp.status_code}")
+                self.log(f"  Response: {resp.text[:300]}")
+
+                # Fallback: try alternate endpoint if project URL failed
+                if self.use_project_url:
+                    self.log("  Trying fallback endpoint...")
+                    return self._upload_image_fallback(image_path, raw_bytes)
+
+                return None
+
+        except Exception as e:
+            self.log(f"  ✗ Error: {e}")
+            return None
+
+    def _upload_image_fallback(self, image_path: str, raw_bytes: str) -> Optional[str]:
+        """Fallback upload using original endpoint."""
         url = f"{self.BASE_URL}/v1:uploadUserImage"
         payload = {"imageInput": {"rawImageBytes": raw_bytes}}
 
@@ -808,24 +875,92 @@ class VideoGenerator:
                 data = resp.json()
                 media_id = data.get("mediaGenerationId", {}).get("mediaGenerationId")
                 if media_id:
-                    self.log(f"  ✓ mediaId: {media_id[:40]}...")
+                    self.log(f"  ✓ (fallback) mediaId: {media_id[:40]}...")
                     return media_id
-                else:
-                    self.log(f"  ✗ No mediaId in response")
-                    return None
-            else:
-                self.log(f"  ✗ Upload failed: {resp.status_code}")
-                self.log(f"  Response: {resp.text[:300]}")
-                return None
-
-        except Exception as e:
-            self.log(f"  ✗ Error: {e}")
+            return None
+        except:
             return None
 
     def generate_video(self, media_id: str, prompt: str) -> Optional[List[Dict]]:
-        """Generate video từ mediaId → operations."""
+        """Generate video từ mediaId → operations.
+
+        Thử nhiều endpoint khác nhau:
+        1. Project URL: /v1/projects/{projectId}/flowMedia:batchGenerateVideos
+        2. Original: /v1/video:batchAsyncGenerateVideoReferenceImages
+        """
         self.log(f"Generate video: {prompt[:50]}...")
 
+        # Thử project URL trước nếu có projectId
+        if self.use_project_url and self.project_id:
+            result = self._generate_video_project_url(media_id, prompt)
+            if result:
+                return result
+            self.log("  Project URL failed, trying fallback...")
+
+        # Fallback: Original endpoint
+        return self._generate_video_original(media_id, prompt)
+
+    def _generate_video_project_url(self, media_id: str, prompt: str) -> Optional[List[Dict]]:
+        """Generate video using project-based URL (Flow 2).
+
+        Endpoint pattern giống với image: /v1/projects/{projectId}/flowMedia:batchGenerateVideos
+        """
+        # Try multiple possible video endpoints
+        endpoints_to_try = [
+            f"{self.BASE_URL}/v1/projects/{self.project_id}/flowMedia:batchGenerateVideos",
+            f"{self.BASE_URL}/v1/projects/{self.project_id}/flowMedia:generateVideo",
+            f"{self.BASE_URL}/v1/projects/{self.project_id}/video:batchAsyncGenerate",
+        ]
+
+        # Simplified payload for project-based flow
+        payload = {
+            "requests": [{
+                "referenceImages": [{
+                    "mediaId": media_id,
+                    "imageUsageType": "IMAGE_USAGE_TYPE_ASSET"
+                }],
+                "textInput": {"prompt": prompt},
+                "aspectRatio": "VIDEO_ASPECT_RATIO_LANDSCAPE",
+                "videoModelKey": "veo_3_0_r2v_fast_ultra",
+                "seed": random.randint(1000, 99999),
+                "metadata": {"sceneId": str(uuid.uuid4())}
+            }]
+        }
+
+        for url in endpoints_to_try:
+            try:
+                self.log(f"  Trying: {url.split('/')[-1]}")
+                resp = self.session.post(url, data=json.dumps(payload), timeout=120)
+
+                if resp.status_code == 200:
+                    data = resp.json()
+
+                    # Try multiple response formats
+                    ops = (
+                        data.get("operations") or
+                        data.get("results") or
+                        [data] if data.get("name") else None
+                    )
+
+                    if ops:
+                        self.log(f"  ✓ Got {len(ops)} operation(s)")
+                        return ops
+
+                    self.log(f"  Response (no ops): {str(data)[:200]}")
+
+                elif resp.status_code == 404:
+                    continue  # Try next endpoint
+                else:
+                    self.log(f"  Response ({resp.status_code}): {resp.text[:200]}")
+
+            except Exception as e:
+                self.log(f"  Error: {e}")
+                continue
+
+        return None
+
+    def _generate_video_original(self, media_id: str, prompt: str) -> Optional[List[Dict]]:
+        """Generate video using original endpoint (Flow 1)."""
         url = f"{self.BASE_URL}/v1/video:batchAsyncGenerateVideoReferenceImages"
 
         payload = {
@@ -867,7 +1002,41 @@ class VideoGenerator:
             return None
 
     def check_status(self, operations: List[Dict]) -> Optional[Dict]:
-        """Check status của video generation."""
+        """Check status của video generation.
+
+        Hỗ trợ cả 2 flows:
+        - Project URL: check via operation name
+        - Original: batchCheckAsyncVideoGenerationStatus
+        """
+        # Check nếu operation có format của project-based flow
+        if operations and operations[0].get("name"):
+            return self._check_status_project(operations)
+
+        return self._check_status_original(operations)
+
+    def _check_status_project(self, operations: List[Dict]) -> Optional[Dict]:
+        """Check status for project-based operations."""
+        try:
+            results = []
+            for op in operations:
+                name = op.get("name", "")
+                if name:
+                    # Operation name format: projects/{projectId}/operations/{opId}
+                    url = f"{self.BASE_URL}/v1/{name}"
+                    resp = self.session.get(url, timeout=60)
+
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        results.append(data)
+                    else:
+                        results.append(op)
+
+            return {"operations": results} if results else None
+        except:
+            return None
+
+    def _check_status_original(self, operations: List[Dict]) -> Optional[Dict]:
+        """Check status using original endpoint."""
         url = f"{self.BASE_URL}/v1/video:batchCheckAsyncVideoGenerationStatus"
         payload = {"operations": operations}
 
@@ -896,11 +1065,21 @@ class VideoGenerator:
 
                     all_done = True
                     for op in updated:
-                        status = op.get("status", "")
-                        if "COMPLETED" in status:
+                        # Check status - support multiple formats
+                        status = (
+                            op.get("status", "") or
+                            op.get("metadata", {}).get("state", "") or
+                            ("done" if op.get("done") else "")
+                        )
+
+                        # Normalize status
+                        status_str = str(status).upper()
+
+                        if "COMPLETED" in status_str or "DONE" in status_str or op.get("done"):
                             continue
-                        elif "FAILED" in status:
-                            self.log(f"  ✗ FAILED")
+                        elif "FAILED" in status_str or "ERROR" in status_str:
+                            error = op.get("error", {}).get("message", "Unknown error")
+                            self.log(f"  ✗ FAILED: {error}")
                             return None
                         else:
                             all_done = False
@@ -962,13 +1141,9 @@ class VideoGenerator:
             result["error"] = "Video generation failed or timeout"
             return result
 
-        # 4. Download
+        # 4. Download - support multiple response formats
         for op in completed.get("operations", []):
-            video_url = (
-                op.get("videoUrl") or
-                op.get("generatedVideo", {}).get("videoUrl") or
-                op.get("generatedVideo", {}).get("fifeUrl")
-            )
+            video_url = self._extract_video_url(op)
 
             if video_url:
                 filename = Path(image_path).stem + "_video.mp4"
@@ -981,6 +1156,106 @@ class VideoGenerator:
                 break
 
         return result
+
+    def _extract_video_url(self, op: Dict) -> Optional[str]:
+        """Extract video URL from operation result - support multiple formats."""
+        # Try various possible locations for video URL
+        video_url = (
+            op.get("videoUrl") or
+            op.get("generatedVideo", {}).get("videoUrl") or
+            op.get("generatedVideo", {}).get("fifeUrl") or
+            op.get("response", {}).get("videoUrl") or
+            op.get("response", {}).get("generatedVideo", {}).get("videoUrl") or
+            op.get("result", {}).get("videoUrl") or
+            op.get("metadata", {}).get("videoUrl")
+        )
+
+        # Also check for media outputs
+        if not video_url:
+            media_outputs = (
+                op.get("mediaOutputs") or
+                op.get("response", {}).get("mediaOutputs") or
+                []
+            )
+            for media in media_outputs:
+                if media.get("type") == "VIDEO" or media.get("mimeType", "").startswith("video/"):
+                    video_url = media.get("url") or media.get("fifeUrl")
+                    if video_url:
+                        break
+
+        return video_url
+
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+
+def create_simple_credentials(token: str, project_id: str) -> Dict:
+    """
+    Tạo credentials đơn giản CHỈ CẦN token + projectId.
+
+    Đây là cách dễ nhất để sử dụng - chỉ cần 2 thông tin:
+    1. token (ya29.xxx) - lấy từ Chrome DevTools
+    2. projectId (uuid) - lấy từ URL hoặc Chrome DevTools
+
+    Args:
+        token: Bearer token (ya29.xxx)
+        project_id: Project ID (uuid format)
+
+    Returns:
+        Dict credentials để dùng với VideoGenerator
+
+    Example:
+        creds = create_simple_credentials(
+            token="ya29.a0AfH6SMB...",
+            project_id="fdac9d59-0fed-48a3-9120-4a2c30efda4e"
+        )
+        generator = VideoGenerator(creds)
+    """
+    return {
+        "token": token,
+        "projectId": project_id
+    }
+
+
+def quick_generate_video(
+    image_path: str,
+    token: str,
+    project_id: str,
+    prompt: str = "Animate this image with smooth, natural motion",
+    output_dir: str = None
+) -> Dict[str, Any]:
+    """
+    Quick function để generate video - CHỈ CẦN 3 THÔNG TIN.
+
+    Args:
+        image_path: Đường dẫn đến ảnh
+        token: Bearer token (ya29.xxx)
+        project_id: Project ID (uuid)
+        prompt: Prompt cho video (optional)
+        output_dir: Thư mục output (optional, mặc định cùng folder với ảnh)
+
+    Returns:
+        Dict với keys: success, output, video_url, error
+
+    Example:
+        result = quick_generate_video(
+            image_path="path/to/image.jpg",
+            token="ya29.a0AfH6SMB...",
+            project_id="fdac9d59-0fed-48a3-9120-4a2c30efda4e"
+        )
+        if result["success"]:
+            print(f"Video saved to: {result['output']}")
+    """
+    creds = create_simple_credentials(token, project_id)
+    generator = VideoGenerator(creds)
+
+    if output_dir is None:
+        output_dir = str(Path(image_path).parent)
+
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+    return generator.process_image(image_path, prompt, output_dir)
 
 
 # ============================================================================
@@ -1081,23 +1356,59 @@ def main():
         with open(creds_file, "r", encoding="utf-8") as f:
             credentials = json.load(f)
 
-        use_saved = input(f"\nCó credentials đã lưu. Dùng lại? (y/n): ").strip().lower()
+        print(f"\n✓ Có credentials đã lưu:")
+        print(f"  - Token: {'✓' if credentials.get('token') else '✗'}")
+        print(f"  - ProjectID: {credentials.get('projectId', 'N/A')[:20]}...")
+
+        use_saved = input("\nDùng lại credentials? (y/n): ").strip().lower()
         if use_saved != 'y':
             credentials = {}
 
-    # Capture nếu chưa có
-    if not credentials.get("token") or not credentials.get("recaptchaToken"):
-        print("\nChọn phương thức capture:")
-        print("1. Tự động (auto click)")
-        print("2. Bán tự động (inject script, bạn làm thủ công)")
+    # Nếu chưa có credentials, cho phép nhập đơn giản
+    if not credentials.get("token") or not credentials.get("projectId"):
+        print("\n" + "=" * 60)
+        print("NHẬP CREDENTIALS")
+        print("=" * 60)
+        print("Chọn phương thức:")
+        print("1. Nhập đơn giản (CHỈ CẦN token + projectId)")
+        print("2. Tự động capture (auto click)")
+        print("3. Bán tự động (inject script, làm thủ công)")
+        print("=" * 60)
 
-        choice = input("Chọn (1/2): ").strip()
+        choice = input("\nChọn (1/2/3): ").strip()
 
-        capturer = CredentialCapture()
+        if choice == "1":
+            # Simple input - CHỈ CẦN 2 THÔNG TIN
+            print("\n" + "-" * 40)
+            print("CÁCH LẤY TOKEN + PROJECT ID:")
+            print("-" * 40)
+            print("1. Mở Chrome → labs.google/fx/vi/tools/flow")
+            print("2. Nhấn F12 (DevTools) → tab Network")
+            print("3. Tạo 1 project mới bất kỳ")
+            print("4. Tìm request tới 'aisandbox-pa.googleapis.com'")
+            print("5. Click vào → Headers:")
+            print("   - Authorization: Bearer ya29.xxx → copy phần sau Bearer")
+            print("   - Request URL: .../projects/{projectId}/... → copy projectId")
+            print("-" * 40)
 
-        if choice == "2":
+            token = input("\nNhập token (ya29.xxx): ").strip()
+            if token.startswith("Bearer "):
+                token = token[7:]
+
+            project_id = input("Nhập projectId (uuid): ").strip()
+
+            if token and project_id:
+                credentials = create_simple_credentials(token, project_id)
+                print(f"\n✓ Credentials OK! (Simple mode - chỉ token + projectId)")
+            else:
+                print("✗ Cần cả token và projectId!")
+                return
+
+        elif choice == "3":
+            capturer = CredentialCapture()
             credentials = capturer.capture_manual()
         else:
+            capturer = CredentialCapture()
             credentials = capturer.capture()
 
         if not credentials.get("token"):
@@ -1110,31 +1421,11 @@ def main():
             json.dump(credentials, f, indent=2)
         print(f"✓ Đã lưu credentials vào {creds_file}")
 
-    # Kiểm tra x-browser-validation
-    if not credentials.get("xBrowserValidation"):
-        print("\n" + "=" * 60)
-        print("⚠️  THIẾU x-browser-validation!")
-        print("=" * 60)
-        print("Cần lấy thủ công từ Chrome DevTools:")
-        print("1. Mở Chrome DevTools (F12)")
-        print("2. Vào tab Network")
-        print("3. Tạo 1 video bất kỳ")
-        print("4. Tìm request tới 'aisandbox-pa.googleapis.com'")
-        print("5. Click vào request → Headers → Request Headers")
-        print("6. Copy giá trị 'x-browser-validation'")
-        print("=" * 60)
-
-        xbv = input("\nDán x-browser-validation vào đây (hoặc Enter để skip): ").strip()
-        if xbv:
-            credentials["xBrowserValidation"] = xbv
-            with open(creds_file, "w", encoding="utf-8") as f:
-                json.dump(credentials, f, indent=2)
-            print("✓ Đã lưu x-browser-validation!")
-        else:
-            print("⚠️ Không có x-browser-validation - upload có thể fail!")
-            cont = input("Tiếp tục không? (y/n): ").strip().lower()
-            if cont != 'y':
-                return
+    # Thông báo mode
+    if credentials.get("projectId") and not credentials.get("recaptchaToken"):
+        print("\n✓ Using SIMPLE mode (token + projectId only)")
+    else:
+        print("\n✓ Using FULL mode (all credentials)")
 
     # Get folder path
     if len(sys.argv) > 1:
