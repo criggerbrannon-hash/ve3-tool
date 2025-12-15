@@ -81,17 +81,12 @@ class MultiAIClient:
         self.deepseek_keys = [k for k in config.get("deepseek_api_keys", []) if k and k.strip()]
         self.gemini_models = config.get("gemini_models", ["gemini-2.0-flash", "gemini-1.5-flash"])
 
-        # Ollama local model - support both flat and nested config
-        ollama_config = config.get("ollama", {})
-        self.ollama_model = config.get("ollama_model") or ollama_config.get("model", "gemma3:27b")
-        self.ollama_endpoint = config.get("ollama_endpoint") or ollama_config.get("endpoint", "http://localhost:11434")
-        self.ollama_priority = config.get("ollama_priority", False) or ollama_config.get("priority", False)
-        self.ollama_available = False
-
-        # DEBUG: Log ollama config
-        print(f"[DEBUG] ollama_model: {self.ollama_model}")
-        print(f"[DEBUG] ollama_priority: {self.ollama_priority}")
-        print(f"[DEBUG] config keys: {list(config.keys())}")
+        # Ollama local model - TEMPORARILY DISABLED (too slow)
+        # TODO: Re-enable after optimization
+        self.ollama_model = "gemma3:27b"
+        self.ollama_endpoint = "http://localhost:11434"
+        self.ollama_priority = False  # DISABLED
+        self.ollama_available = False  # DISABLED - skip Ollama completely
 
         self.deepseek_index = 0
         self.groq_index = 0
@@ -161,8 +156,8 @@ class MultiAIClient:
                 elif provider == 'deepseek':
                     futures.append(executor.submit(test_deepseek, (i, key)))
 
-            # Submit Ollama test
-            futures.append(executor.submit(test_ollama))
+            # Submit Ollama test - DISABLED temporarily
+            # futures.append(executor.submit(test_ollama))
 
             # Process results as they complete
             for future in as_completed(futures):
