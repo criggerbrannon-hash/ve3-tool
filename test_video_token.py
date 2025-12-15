@@ -826,35 +826,56 @@ class VideoAPITest:
         endpoint = "/v1/video:batchCheckAsyncVideoGenerationStatus"
         url = f"{self.BASE_URL}{endpoint}"
 
-        payload = {
-            "clientContext": {
-                "sessionId": f";{int(time.time() * 1000)}",
-                "projectId": self.project_id,
-                "tool": "PINHOLE"
+        # Thử nhiều format field name khác nhau
+        payloads_to_try = [
+            {
+                "clientContext": {
+                    "sessionId": f";{int(time.time() * 1000)}",
+                    "projectId": self.project_id,
+                    "tool": "PINHOLE"
+                },
+                "operations": [{"name": name} for name in operation_names]
             },
-            "operationNames": operation_names
+            {
+                "clientContext": {
+                    "sessionId": f";{int(time.time() * 1000)}",
+                    "projectId": self.project_id,
+                    "tool": "PINHOLE"
+                },
+                "names": operation_names
+            },
+            {
+                "clientContext": {
+                    "sessionId": f";{int(time.time() * 1000)}",
+                    "projectId": self.project_id,
+                    "tool": "PINHOLE"
+                },
+                "generationOperations": [{"name": name} for name in operation_names]
+            }
+        ]
+
+        for payload in payloads_to_try:
+            try:
+                response = self.session.post(
+                    url,
+                    data=json.dumps(payload),
+                    timeout=60
+                )
+
+                if response.status_code == 200:
+                    return {
+                        "success": True,
+                        "response": response.json()
+                    }
+            except Exception as e:
+                continue
+
+        # Last try failed, return error
+        return {
+            "success": False,
+            "status": response.status_code if 'response' in dir() else 0,
+            "response": response.text if 'response' in dir() else "All payload formats failed"
         }
-
-        try:
-            response = self.session.post(
-                url,
-                data=json.dumps(payload),
-                timeout=60
-            )
-
-            if response.status_code == 200:
-                return {
-                    "success": True,
-                    "response": response.json()
-                }
-            else:
-                return {
-                    "success": False,
-                    "status": response.status_code,
-                    "response": response.text
-                }
-        except Exception as e:
-            return {"success": False, "error": str(e)}
 
     def wait_for_video(
         self,
