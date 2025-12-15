@@ -201,8 +201,10 @@ window._captured = {
                 self.log(f"\n✓ Captured sau {elapsed}s!")
                 self.log(f"  Token: {data['token'][:50]}...")
                 self.log(f"  ProjectID: {data.get('projectId')}")
-                self.log(f"  RecaptchaToken: {data.get('recaptchaToken', '')[:50]}...")
-                self.log(f"  X-Browser-Validation: {data.get('xBrowserValidation', '')[:30]}...")
+                recaptcha = data.get('recaptchaToken') or ''
+                self.log(f"  RecaptchaToken: {recaptcha[:50]}..." if recaptcha else "  RecaptchaToken: (none)")
+                xbv = data.get('xBrowserValidation') or ''
+                self.log(f"  X-Browser-Validation: {xbv[:30]}..." if xbv else "  X-Browser-Validation: (none)")
 
                 self.credentials = data
                 return data
