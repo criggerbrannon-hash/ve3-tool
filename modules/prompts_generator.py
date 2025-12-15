@@ -76,10 +76,11 @@ class MultiAIClient:
         auto_filter: Tự động test và loại bỏ API keys không hoạt động
         """
         self.config = config
-        self.gemini_keys = [k for k in config.get("gemini_api_keys", []) if k and k.strip()]
+        # GEMINI DISABLED - quota issues, use Groq/DeepSeek only
+        self.gemini_keys = []  # DISABLED: [k for k in config.get("gemini_api_keys", []) if k and k.strip()]
         self.groq_keys = [k for k in config.get("groq_api_keys", []) if k and k.strip()]
         self.deepseek_keys = [k for k in config.get("deepseek_api_keys", []) if k and k.strip()]
-        self.gemini_models = config.get("gemini_models", ["gemini-2.0-flash", "gemini-1.5-flash"])
+        self.gemini_models = []  # DISABLED
 
         # Ollama local model - TEMPORARILY DISABLED (too slow)
         # TODO: Re-enable after optimization
@@ -796,13 +797,11 @@ class PromptGenerator:
         self.settings = settings
         self.logger = get_logger("prompt_generator")
         
-        # Sử dụng MultiAIClient (hỗ trợ Groq + Gemini)
+        # Sử dụng MultiAIClient (Groq > DeepSeek - NO GEMINI)
         self.ai_client = MultiAIClient(settings)
-        
-        # Legacy: Fallback to GeminiClient nếu cần
-        api_keys = settings.get("gemini_api_keys") or [settings.get("gemini_api_key")]
-        models = settings.get("gemini_models") or [settings.get("gemini_model", "gemini-2.0-flash")]
-        self.gemini = GeminiClient(api_keys=api_keys, models=models)
+
+        # NOTE: GeminiClient DISABLED - quota issues
+        # self.gemini = None
         
         # Scene grouping settings
         self.min_scene_duration = settings.get("min_scene_duration", 3)  # Min 3s
@@ -862,13 +861,9 @@ class PromptGenerator:
         return filtered
 
     def _generate_content(self, prompt: str, temperature: float = 0.7, max_tokens: int = 8192) -> str:
-        """Generate content using available AI providers."""
-        # Try MultiAIClient first
-        try:
-            return self.ai_client.generate_content(prompt, temperature, max_tokens)
-        except Exception as e:
-            self.logger.warning(f"MultiAI failed: {e}, falling back to Gemini...")
-            return self.gemini.generate_content(prompt, temperature, max_tokens)
+        """Generate content using available AI providers (Groq > DeepSeek)."""
+        # Use MultiAIClient only - no Gemini fallback (quota issues)
+        return self.ai_client.generate_content(prompt, temperature, max_tokens)
     
     def generate_for_project(
         self,
