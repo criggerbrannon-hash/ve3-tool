@@ -143,12 +143,6 @@ class SmartEngine:
                 if k and not k.startswith('THAY_BANG') and not k.startswith('AIzaSy_YOUR'):
                     self.gemini_keys.append(Resource(type='gemini', value=k))
 
-            # Ollama local config
-            ollama_config = api.get('ollama', {})
-            self.ollama_model = ollama_config.get('model', 'gemma3:27b')
-            self.ollama_endpoint = ollama_config.get('endpoint', 'http://localhost:11434')
-            self.ollama_priority = ollama_config.get('priority', False)
-
             # Settings
             settings = data.get('settings', {})
             self.parallel = settings.get('parallel', 2)
@@ -576,19 +570,11 @@ class SmartEngine:
             with open(cfg_file, "r", encoding="utf-8") as f:
                 cfg = yaml.safe_load(f) or {}
 
-        # Add API keys (thu tu uu tien: Ollama > Gemini > Groq > DeepSeek)
+        # Add API keys (thu tu uu tien: Gemini > Groq > DeepSeek)
         cfg['gemini_api_keys'] = [k.value for k in self.gemini_keys if k.status != 'exhausted']
         cfg['groq_api_keys'] = [k.value for k in self.groq_keys if k.status != 'exhausted']
         cfg['deepseek_api_keys'] = [k.value for k in self.deepseek_keys if k.status != 'exhausted']
-
-        # Ollama local config
-        cfg['ollama_model'] = getattr(self, 'ollama_model', 'gemma3:27b')
-        cfg['ollama_endpoint'] = getattr(self, 'ollama_endpoint', 'http://localhost:11434')
-        cfg['ollama_priority'] = getattr(self, 'ollama_priority', False)
-
-        cfg['preferred_provider'] = 'ollama' if getattr(self, 'ollama_priority', False) else (
-            'gemini' if self.gemini_keys else ('groq' if self.groq_keys else 'deepseek')
-        )
+        cfg['preferred_provider'] = 'gemini' if self.gemini_keys else ('groq' if self.groq_keys else 'deepseek')
 
         # Retry with different keys
         for attempt in range(self.max_retries):
@@ -651,40 +637,6 @@ class SmartEngine:
         sanitized = re.sub(r'\s+', ' ', sanitized).strip()
 
         return sanitized
-
-    def _create_simple_prompt(self, prompt: str) -> str:
-        """
-        Tạo prompt đơn giản nhất khi các retry khác fail.
-        Loại bỏ tất cả mô tả chi tiết về người, chỉ giữ bối cảnh.
-        """
-        import re
-
-        # Loại bỏ mô tả tuổi, giới tính chi tiết
-        simple = re.sub(r'\d+yo\s*(man|woman|boy|girl|child|kid|mother|father)', 'person', prompt, flags=re.IGNORECASE)
-        simple = re.sub(r'\b(young|old|teenage|elderly|middle-aged)\s*(man|woman|boy|girl|person)', 'person', simple, flags=re.IGNORECASE)
-
-        # Loại bỏ mô tả trẻ em hoàn toàn
-        simple = re.sub(r'\b(child|kid|boy|girl|baby|infant|toddler|teenager)\b', 'person', simple, flags=re.IGNORECASE)
-        simple = re.sub(r'\(Child:.*?\)', '', simple, flags=re.IGNORECASE)
-
-        # Loại bỏ mô tả chi tiết về ngoại hình
-        simple = re.sub(r'\b(with|has|having)\s+(brown|black|blonde|red|white|gray)\s+(hair|eyes|skin)\b', '', simple, flags=re.IGNORECASE)
-
-        # Giữ lại phần style
-        style_match = re.search(r'(cinematic|photorealistic|4K|8K|realistic|dramatic)[^.]*$', simple, re.IGNORECASE)
-        style = style_match.group(0) if style_match else "cinematic, photorealistic"
-
-        # Giữ lại shot type nếu có
-        shot_match = re.search(r'^(Wide shot|Medium shot|Close-up|Extreme close-up)[^.]*', simple, re.IGNORECASE)
-        shot = shot_match.group(0) if shot_match else ""
-
-        # Tạo prompt đơn giản
-        if shot:
-            simple = f"{shot}. Scene with people. {style}"
-        else:
-            simple = f"Scene with people in a room. {style}"
-
-        return simple.strip()
 
     def generate_single_image(self, prompt_data: Dict, profile: Resource, retry_count: int = 0) -> tuple:
         """
@@ -828,31 +780,14 @@ class SmartEngine:
 
                 # Check for policy violation - retry with sanitized prompt
                 is_policy_error = '400' in error_str or 'policy' in error_str or 'blocked' in error_str or 'safety' in error_str
-                if is_policy_error and retry_count < 3:
-                    prompt_data_copy = prompt_data.copy()
-
-                    if retry_count == 0:
-                        # Lần 1: Sanitize prompt, giữ references
-                        self.log(f"  -> Policy violation, thu lai voi prompt da dieu chinh...", "WARN")
-                        sanitized = self._sanitize_prompt(prompt)
+                if is_policy_error and retry_count < 2:
+                    self.log(f"  -> Policy violation, thu lai voi prompt da dieu chinh...", "WARN")
+                    # Sanitize prompt and retry
+                    sanitized = self._sanitize_prompt(prompt)
+                    if sanitized != prompt:
+                        prompt_data_copy = prompt_data.copy()
                         prompt_data_copy['prompt'] = sanitized
-
-                    elif retry_count == 1:
-                        # Lần 2: Sanitize prompt + bỏ references (có thể do mô tả trẻ con + ref)
-                        self.log(f"  -> Policy violation lan 2, thu lai KHONG CO references...", "WARN")
-                        sanitized = self._sanitize_prompt(prompt)
-                        prompt_data_copy['prompt'] = sanitized
-                        prompt_data_copy['references'] = []  # Bỏ references
-
-                    else:
-                        # Lần 3: Prompt đơn giản nhất
-                        self.log(f"  -> Policy violation lan 3, thu voi prompt don gian...", "WARN")
-                        # Giữ lại phần mô tả cơ bản, bỏ chi tiết nhạy cảm
-                        simple_prompt = self._create_simple_prompt(prompt)
-                        prompt_data_copy['prompt'] = simple_prompt
-                        prompt_data_copy['references'] = []
-
-                    return self.generate_single_image(prompt_data_copy, profile, retry_count + 1)
+                        return self.generate_single_image(prompt_data_copy, profile, retry_count + 1)
 
                 self.log(f"Generate failed {pid}: {error}", "ERROR")
                 return False, False
@@ -1199,77 +1134,17 @@ class SmartEngine:
         self.log("[STEP 6] Xuat TXT & SRT...")
         self._export_scenes(excel_path, proj_dir, name)
 
-        # === 7. AUTO COMPOSE VIDEO ===
-        if results["failed"] == 0 or results["success"] > 0:
-            self.log("[STEP 7] Tu dong ghep video...")
+        # === 7. COMPOSE VIDEO ===
+        if results["failed"] == 0:
+            self.log("[STEP 7] Ghep video...")
             video_path = self._compose_video(proj_dir, excel_path, name)
             if video_path:
-                results["video_path"] = str(video_path)
+                self.log(f"  -> Video: {video_path.name}", "OK")
+                results["video"] = str(video_path)
+            else:
+                self.log("  Video composer khong kha dung hoac thieu file", "WARN")
 
         return results
-
-    def _compose_video(self, proj_dir: Path, excel_path: Path, name: str) -> Optional[Path]:
-        """
-        Tự động ghép video từ ảnh + voice + SRT.
-
-        Sử dụng thời gian từ Excel (Director's Shooting Plan):
-        - Mỗi ảnh bắt đầu tại srt_start
-        - Mỗi ảnh kết thúc tại srt_start của ảnh tiếp theo (lấp khoảng trống)
-        """
-        try:
-            from modules.video_composer import VideoComposer, VideoConfig
-        except ImportError:
-            self.log("  Video composer not available. Cai FFmpeg truoc.", "WARN")
-            return None
-
-        # Tìm voice file
-        voice_files = list(proj_dir.glob("*.mp3")) + list(proj_dir.glob("*.wav"))
-        if not voice_files:
-            self.log("  Khong tim thay voice file (.mp3/.wav)", "WARN")
-            return None
-        voice_path = voice_files[0]
-
-        # Tìm SRT file
-        srt_files = list(proj_dir.glob("*.srt"))
-        srt_path = srt_files[0] if srt_files else None
-
-        # Output path
-        output_path = proj_dir / f"{name}_final.mp4"
-
-        self.log(f"  Voice: {voice_path.name}")
-        self.log(f"  SRT: {srt_path.name if srt_path else 'Khong co'}")
-        self.log(f"  Excel: {excel_path.name}")
-        self.log(f"  Output: {output_path.name}")
-
-        try:
-            config = VideoConfig(
-                width=1920,
-                height=1080,
-                fps=30,
-                font_size=48,
-                font_color="white",
-                subtitle_bg=True
-            )
-
-            composer = VideoComposer(config)
-
-            if composer.compose_video(
-                excel_path=str(excel_path),
-                voice_path=str(voice_path),
-                output_path=str(output_path),
-                srt_path=str(srt_path) if srt_path else None
-            ):
-                self.log(f"  -> Video: {output_path.name}", "OK")
-                return output_path
-            else:
-                self.log("  Ghep video that bai!", "ERROR")
-                return None
-
-        except Exception as e:
-            self.log(f"  Video compose error: {e}", "ERROR")
-            import traceback
-            traceback.print_exc()
-            return None
 
     def _export_scenes(self, excel_path: Path, proj_dir: Path, name: str) -> None:
         """Export scenes ra TXT va SRT de ho tro video editing."""
@@ -1291,6 +1166,56 @@ class SmartEngine:
 
         except Exception as e:
             self.log(f"  Export error: {e}", "WARN")
+
+    def _compose_video(self, proj_dir: Path, excel_path: Path, name: str) -> Optional[Path]:
+        """
+        Tự động ghép video từ ảnh + voice + SRT.
+
+        Sử dụng thời gian từ Excel (Director's Shooting Plan):
+        - start_time: thời điểm bắt đầu hiển thị ảnh
+        - Thời lượng mỗi ảnh = start_time của ảnh tiếp theo - start_time hiện tại
+        """
+        try:
+            from modules.video_composer import VideoComposer, VideoConfig
+        except ImportError:
+            self.log("  Video composer not available. Cai FFmpeg truoc.", "WARN")
+            return None
+
+        # Tìm voice file
+        voice_files = list(proj_dir.glob("*.mp3")) + list(proj_dir.glob("*.wav"))
+        if not voice_files:
+            self.log("  Khong tim thay voice file (.mp3/.wav)", "WARN")
+            return None
+        voice_path = voice_files[0]
+
+        # Tìm SRT file
+        srt_files = list(proj_dir.glob("srt/*.srt")) + list(proj_dir.glob("*.srt"))
+        srt_path = srt_files[0] if srt_files else None
+
+        output_path = proj_dir / f"{name}_final.mp4"
+
+        self.log(f"  Voice: {voice_path.name}")
+        self.log(f"  SRT: {srt_path.name if srt_path else 'None'}")
+        self.log(f"  Excel: {excel_path.name}")
+
+        try:
+            config = VideoConfig(
+                resolution=(1920, 1080),
+                fps=30,
+                audio_codec='aac',
+                audio_bitrate='192k'
+            )
+            composer = VideoComposer(config)
+
+            if composer.compose_video(str(excel_path), str(voice_path), str(output_path), str(srt_path) if srt_path else None):
+                return output_path
+            else:
+                self.log("  Ghep video that bai!", "ERROR")
+                return None
+
+        except Exception as e:
+            self.log(f"  Video compose error: {e}", "ERROR")
+            return None
 
     def _load_prompts(self, excel_path: Path, proj_dir: Path) -> List[Dict]:
         """Load prompts tu Excel - doc TAT CA sheets."""

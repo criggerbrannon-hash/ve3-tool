@@ -143,8 +143,8 @@ class MultiAIClient:
                 elif provider == 'deepseek':
                     futures.append(executor.submit(test_deepseek, (i, key)))
 
-            # Submit Ollama test - DISABLED (too slow)
-            # futures.append(executor.submit(test_ollama))
+            # Submit Ollama test
+            futures.append(executor.submit(test_ollama))
 
             # Process results as they complete
             for future in as_completed(futures):
@@ -352,21 +352,21 @@ class MultiAIClient:
                         self.logger.error(f"DeepSeek error: {e}")
                         break
 
-        # 4. Fallback to Ollama - DISABLED (too slow)
-        # if self.ollama_available:
-        #     for attempt in range(max_retries):
-        #         try:
-        #             print(f"[Ollama] Dang goi local model ({self.ollama_model})...")
-        #             result = self._call_ollama(prompt, temperature)
-        #             if result:
-        #                 print(f"[Ollama] Thanh cong!")
-        #                 return result
-        #         except Exception as e:
-        #             last_error = e
-        #             self.logger.error(f"Ollama error: {e}")
-        #             if attempt < max_retries - 1:
-        #                 time.sleep(2)
-        #             continue
+        # 4. Fallback to Ollama (local, free, offline)
+        if self.ollama_available:
+            for attempt in range(max_retries):
+                try:
+                    print(f"[Ollama] Dang goi local model ({self.ollama_model})...")
+                    result = self._call_ollama(prompt, temperature)
+                    if result:
+                        print(f"[Ollama] Thanh cong!")
+                        return result
+                except Exception as e:
+                    last_error = e
+                    self.logger.error(f"Ollama error: {e}")
+                    if attempt < max_retries - 1:
+                        time.sleep(2)
+                    continue
 
         if last_error:
             raise last_error
@@ -1380,23 +1380,12 @@ class PromptGenerator:
             self.logger.info("[Director's Shooting Plan] Đạo diễn đang lên kế hoạch quay...")
             self.logger.info("=" * 50)
 
-            response = self._generate_content(prompt, temperature=0.4, max_tokens=12000)
+            response = self._generate_content(prompt, temperature=0.4, max_tokens=8000)
 
             # DEBUG: Log response để xem AI trả về gì
             self.logger.info(f"[Director's Shooting Plan] Response length: {len(response) if response else 0}")
             if response:
                 self.logger.info(f"[Director's Shooting Plan] Response preview: {response[:500]}...")
-                # Check for truncation
-                stripped = response.strip()
-                if not stripped.endswith('}') and not stripped.endswith('```'):
-                    self.logger.warning(f"[Director's Shooting Plan] Response có thể bị TRUNCATED! Ends with: '{stripped[-50:]}'")
-                    # Write full response to debug file
-                    try:
-                        with open('/tmp/directors_shooting_plan_response.txt', 'w') as f:
-                            f.write(response)
-                        self.logger.info("[Director's Shooting Plan] Full response written to /tmp/directors_shooting_plan_response.txt")
-                    except Exception as write_err:
-                        self.logger.debug(f"Could not write debug file: {write_err}")
 
             json_data = self._extract_json(response)
 
@@ -2368,80 +2357,32 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
     def _extract_json(self, text: str) -> Optional[Dict]:
         """
         Trích xuất JSON từ response text.
-
+        
         Gemini có thể trả về JSON trong markdown code block hoặc raw.
         """
-        if not text:
-            self.logger.warning("[_extract_json] Empty text received")
-            return None
-
-        import re
-
-        def try_parse_json(json_str: str, source: str = "") -> Optional[Dict]:
-            """Thử parse JSON với các bước fix phổ biến"""
-            # Bước 1: Parse trực tiếp
-            try:
-                return json.loads(json_str)
-            except json.JSONDecodeError as e:
-                self.logger.debug(f"[_extract_json] {source} Direct parse failed: {e}")
-
-            # Bước 2: Fix trailing commas
-            try:
-                fixed = re.sub(r',\s*([}\]])', r'\1', json_str)
-                return json.loads(fixed)
-            except json.JSONDecodeError:
-                pass
-
-            # Bước 3: Fix unescaped newlines in strings
-            try:
-                fixed = json_str.replace('\n', '\\n').replace('\t', '\\t')
-                return json.loads(fixed)
-            except json.JSONDecodeError:
-                pass
-
-            return None
-
         # Thử parse trực tiếp
-        result = try_parse_json(text, "raw")
-        if result:
-            return result
-
-        # Thử tìm JSON trong code block ```json ... ```
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+        
+        # Thử tìm JSON trong code block
+        import re
+        
+        # Pattern cho ```json ... ```
         json_block = re.search(r'```(?:json)?\s*\n?([\s\S]*?)\n?```', text)
         if json_block:
-            result = try_parse_json(json_block.group(1), "code_block")
-            if result:
-                return result
-
-        # Thử tìm JSON object bắt đầu bằng { đến } cuối cùng
+            try:
+                return json.loads(json_block.group(1))
+            except json.JSONDecodeError:
+                pass
+        
+        # Thử tìm JSON object bắt đầu bằng {
         json_match = re.search(r'\{[\s\S]*\}', text)
         if json_match:
-            result = try_parse_json(json_match.group(0), "regex_match")
-            if result:
-                return result
-
-            # Nếu vẫn fail, thử tìm JSON object đầy đủ (balance braces)
             try:
-                start = text.find('{')
-                if start >= 0:
-                    depth = 0
-                    for i, c in enumerate(text[start:], start):
-                        if c == '{':
-                            depth += 1
-                        elif c == '}':
-                            depth -= 1
-                            if depth == 0:
-                                balanced_json = text[start:i+1]
-                                result = try_parse_json(balanced_json, "balanced_braces")
-                                if result:
-                                    return result
-                                break
-            except Exception as e:
-                self.logger.debug(f"[_extract_json] Balanced braces failed: {e}")
-
-        # Log full response for debugging khi fail
-        self.logger.warning(f"[_extract_json] All extraction methods failed!")
-        self.logger.warning(f"[_extract_json] Response first 1000 chars: {text[:1000]}")
-        self.logger.warning(f"[_extract_json] Response last 500 chars: {text[-500:] if len(text) > 500 else text}")
-
+                return json.loads(json_match.group(0))
+            except json.JSONDecodeError:
+                pass
+        
         return None
