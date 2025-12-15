@@ -580,46 +580,105 @@ generate_scenes: |
 # =============================================================================
 
 smart_divide_scenes: |
-  You are an AI Director creating a FILM from narration. Your job is to TRANSLATE spoken words into VISUAL STORYTELLING.
+  ## !!! CRITICAL - READ THIS FIRST !!!
 
-  ## CRITICAL CONCEPT: NARRATION → VISUAL TRANSLATION
+  SHOW THE MEMORY, NOT THE PERSON REMEMBERING!
 
-  The narrator SPEAKS the story. You must CREATE the VISUALS that SHOW the story.
-  DO NOT just describe "man standing". SHOW what the narration is ABOUT!
+  WRONG: "When I was a kid..." → 30yo man at courthouse thinking
+  RIGHT: "When I was a kid..." → 8yo CHILD + 32yo MOTHER in apartment!
 
-  ### TRANSLATION EXAMPLES:
+  WRONG: "My mother worked two jobs" → 30yo man talking about mom
+  RIGHT: "My mother worked two jobs" → 32yo MOTHER at dry cleaning shop!
 
-  | Narration (what narrator says) | BAD Visual (generic) | GOOD Visual (story-telling) |
-  |-------------------------------|---------------------|----------------------------|
-  | "By the time I was 28, I saved enough to buy land" | "Man standing" | "28yo man standing proudly on empty grass lot, holding property deed, hopeful smile, surveying his new land" |
-  | "My mother worked two jobs" | "Woman at work" | "Exhausted 32yo mother in faded work uniform, pressing shirts at dry cleaning machine, sweat on brow, late evening" |
-  | "She would come home smelling like detergent" | "Woman at door" | "Tired mother entering small apartment, 8yo boy running to hug her, her work clothes wrinkled, warm loving embrace" |
-  | "I built the house with my own hands" | "Man with tools" | "Muscular 25yo man hammering wooden beam on house frame, sawdust in hair, proud determined expression, golden hour sunlight" |
-  | "She took me to court for my house" | "Man at courthouse" | "30yo man sitting defeated on courthouse steps, crumpled legal papers in trembling hands, mother visible through courthouse doors behind him" |
-  | "It cost me $72,000 - every penny I had earned" | "Man with money" | "Close-up of calloused working hands counting worn dollar bills, years of savings visible in weathered wallet, bittersweet moment" |
+  WRONG: "I built my house" → 30yo man at courthouse
+  RIGHT: "I built my house" → 28yo MAN hammering at construction site!
 
-  ## DIRECTOR'S TREATMENT (Your Visual Blueprint):
-  ---
-  {directors_treatment}
-  ---
+  ## DECISION TREE - For EACH SRT segment:
 
-  ## CHARACTERS AND LOCATIONS:
+  Q1: Does it mention CHILDHOOD or MOTHER'S SACRIFICE?
+      Keywords: "when I was a kid", "my mother", "she worked", "growing up"
+      → scene_type: CHILDHOOD_FLASHBACK
+      → characters: ["nv1_young"] or ["nv1_young", "nvc1"]
+      → location: loc_dryclean, loc_apartment, loc_convenience
+      → SHOW: 32yo mother + 8yo child, NOT 30yo narrator!
+
+  Q2: Does it mention BUILDING HOUSE or CAREER?
+      Keywords: "I built", "carpenter", "saved money", "bought land"
+      → scene_type: ADULT_FLASHBACK
+      → characters: ["nvc_young"]
+      → location: loc_construction, loc_land
+      → SHOW: 28yo man working, NOT 30yo narrator talking!
+
+  Q3: Is it PRESENT MOMENT?
+      Keywords: "right now", "sitting here", "today", "courthouse"
+      → scene_type: FRAME_PRESENT
+      → characters: ["nvc"]
+      → location: loc_courthouse
+      → SHOW: 30yo narrator at courthouse with ACTION
+
+  Q4: Is it YOUTUBE CTA?
+      Keywords: "subscribe", "like button", "comment"
+      → scene_type: YOUTUBE_CTA
+      → characters: ["nvc"]
+      → SHOW: Narrator speaking to camera
+
+  ## CHARACTERS:
   {characters_info}
 
+  ## LOCATIONS:
   {locations_info}
 
-  ## INPUT - SRT Segments (max 8s each):
-  ---
+  ## SRT SEGMENTS:
   {srt_with_timestamps}
-  ---
 
-  ## YOUR TASK:
-  For EACH SRT segment:
-  1. UNDERSTAND what the narration is ABOUT (not just the words)
-  2. CREATE a visual that SHOWS that meaning
-  3. Include SPECIFIC ACTIONS, EMOTIONS, DETAILS
+  ## OUTPUT FORMAT:
 
-  ## SCENE TYPE CLASSIFICATION:
+  {{
+    "scenes": [
+      {{
+        "scene_id": 1,
+        "srt_text": "I am sitting on the courthouse steps right now...",
+        "scene_type": "FRAME_PRESENT",
+        "location_id": "loc_courthouse",
+        "characters_in_scene": ["nvc"],
+        "img_prompt": "Medium shot. 30yo man with brown hair, tired eyes, gray t-shirt, SITTING on courthouse steps, CLUTCHING documents in trembling hands. Courthouse exterior. Overcast. Cinematic."
+      }},
+      {{
+        "scene_id": 2,
+        "srt_text": "My mother used to sacrifice everything for me...",
+        "scene_type": "CHILDHOOD_FLASHBACK",
+        "location_id": "loc_dryclean",
+        "characters_in_scene": ["nv1_young"],
+        "img_prompt": "Medium shot. 32yo blonde mother in work uniform, PRESSING shirts at industrial machine, exhausted face, sweat on forehead. 1990s dry cleaning shop, fluorescent lights, clock 9PM. Warm nostalgic. Cinematic."
+      }},
+      {{
+        "scene_id": 3,
+        "srt_text": "When I was a kid we had nothing but each other...",
+        "scene_type": "CHILDHOOD_FLASHBACK",
+        "location_id": "loc_apartment",
+        "characters_in_scene": ["nv1_young", "nvc1"],
+        "img_prompt": "Wide shot. 32yo blonde mother HUGGING 8yo boy tightly in small apartment. Worn furniture, single lamp. Warm tungsten light. Emotional moment. Cinematic."
+      }},
+      {{
+        "scene_id": 4,
+        "srt_text": "Then I built my first house with my own two hands...",
+        "scene_type": "ADULT_FLASHBACK",
+        "location_id": "loc_construction",
+        "characters_in_scene": ["nvc_young"],
+        "img_prompt": "Medium shot. 28yo muscular man SWINGING HAMMER at wooden beam, sawdust on face, tool belt. House frame behind. Sunny day, golden hour. Pride visible. Cinematic."
+      }}
+    ]
+  }}
+
+  ## FINAL CHECKLIST:
+  [ ] Every CHILDHOOD memory → nv1_young (mother) NOT nvc!
+  [ ] Every BUILDING scene → nvc_young at construction NOT courthouse!
+  [ ] Different memories = DIFFERENT locations!
+  [ ] NO narration text in img_prompt!
+
+  OUTPUT: JSON only.
+
+  ## SCENE TYPE DETAILS:
 
   ### 1. FRAME_PRESENT (Return to this often!)
   When narrator describes their CURRENT situation:
