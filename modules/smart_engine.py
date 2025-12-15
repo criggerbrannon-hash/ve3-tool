@@ -638,6 +638,41 @@ class SmartEngine:
 
         return sanitized
 
+    def _simplify_prompt(self, prompt: str) -> str:
+        """
+        Đơn giản hóa prompt khi các retry khác thất bại.
+        Giữ lại phần cơ bản nhất: shot type + subject + action.
+        """
+        import re
+
+        # Loại bỏ các phần phức tạp
+        simplified = prompt
+
+        # Bỏ phần style dài ở cuối (Cinematic, 4K, ...)
+        simplified = re.sub(r'Cinematic.*$', '', simplified, flags=re.IGNORECASE)
+        simplified = re.sub(r'4K.*$', '', simplified, flags=re.IGNORECASE)
+        simplified = re.sub(r'photorealistic.*$', '', simplified, flags=re.IGNORECASE)
+
+        # Bỏ các chi tiết về lens, camera
+        simplified = re.sub(r'\d+mm lens[,.]?\s*', '', simplified, flags=re.IGNORECASE)
+        simplified = re.sub(r'shot on [^,]+,?\s*', '', simplified, flags=re.IGNORECASE)
+
+        # Bỏ các chi tiết về lighting
+        simplified = re.sub(r'(soft|warm|cold|dramatic|natural) (light|lighting)[^,]*,?\s*', '', simplified, flags=re.IGNORECASE)
+
+        # Bỏ các emotion words có thể gây policy violation
+        simplified = re.sub(r'\b(devastated|terrified|horrified|anguished|tormented)\b', 'thoughtful', simplified, flags=re.IGNORECASE)
+
+        # Giữ lại tối đa 150 ký tự (phần đầu quan trọng nhất)
+        if len(simplified) > 150:
+            simplified = simplified[:150].rsplit(' ', 1)[0]
+
+        # Thêm style đơn giản
+        simplified = simplified.strip().rstrip(',.')
+        simplified += ". High quality, professional photograph."
+
+        return simplified
+
     def generate_single_image(self, prompt_data: Dict, profile: Resource, retry_count: int = 0) -> tuple:
         """
         Tao 1 anh voi 1 profile, ho tro reference images.
@@ -778,15 +813,32 @@ class SmartEngine:
                     profile.token = ""  # Clear expired token
                     return False, token_expired
 
-                # Check for policy violation - retry with sanitized prompt
-                is_policy_error = '400' in error_str or 'policy' in error_str or 'blocked' in error_str or 'safety' in error_str
-                if is_policy_error and retry_count < 2:
-                    self.log(f"  -> Policy violation, thu lai voi prompt da dieu chinh...", "WARN")
-                    # Sanitize prompt and retry
-                    sanitized = self._sanitize_prompt(prompt)
-                    if sanitized != prompt:
-                        prompt_data_copy = prompt_data.copy()
-                        prompt_data_copy['prompt'] = sanitized
+                # Check for policy violation or invalid argument - retry with fixes
+                is_policy_error = '400' in error_str or 'policy' in error_str or 'blocked' in error_str or 'safety' in error_str or 'invalid' in error_str
+                if is_policy_error and retry_count < 3:
+                    prompt_data_copy = prompt_data.copy()
+
+                    if retry_count == 0:
+                        # Retry 1: Sanitize prompt
+                        self.log(f"  -> Error 400, thu lai voi prompt da dieu chinh...", "WARN")
+                        sanitized = self._sanitize_prompt(prompt)
+                        if sanitized != prompt:
+                            prompt_data_copy['prompt'] = sanitized
+                            return self.generate_single_image(prompt_data_copy, profile, retry_count + 1)
+
+                    if retry_count <= 1:
+                        # Retry 2: Remove reference images (might be expired/invalid)
+                        self.log(f"  -> Thu lai KHONG co reference images...", "WARN")
+                        prompt_data_copy['reference_images'] = []
+                        prompt_data_copy['prompt'] = self._sanitize_prompt(prompt)
+                        return self.generate_single_image(prompt_data_copy, profile, retry_count + 1)
+
+                    if retry_count == 2:
+                        # Retry 3: Simplify prompt completely
+                        self.log(f"  -> Thu lai voi prompt don gian...", "WARN")
+                        simple_prompt = self._simplify_prompt(prompt)
+                        prompt_data_copy['prompt'] = simple_prompt
+                        prompt_data_copy['reference_images'] = []
                         return self.generate_single_image(prompt_data_copy, profile, retry_count + 1)
 
                 self.log(f"Generate failed {pid}: {error}", "ERROR")
