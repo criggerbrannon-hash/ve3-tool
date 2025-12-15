@@ -1373,8 +1373,8 @@ class SmartEngine:
             headers = [cell.value for cell in scenes_sheet[1]]
             self.log(f"  Headers: {headers[:5]}...")
 
-            # Tìm cột cần thiết
-            id_col = start_col = end_col = None
+            # Tìm cột cần thiết (chỉ cần ID và Start Time)
+            id_col = start_col = None
             for i, h in enumerate(headers):
                 if h is None:
                     continue
@@ -1383,14 +1383,12 @@ class SmartEngine:
                     id_col = i
                 if 'start' in h_lower and 'time' in h_lower:
                     start_col = i
-                if 'end' in h_lower and 'time' in h_lower:
-                    end_col = i
 
             if id_col is None:
                 self.log("  Khong tim thay cot ID!", "ERROR")
                 return None
 
-            self.log(f"  Columns: ID={id_col}, Start={start_col}, End={end_col}")
+            self.log(f"  Columns: ID={id_col}, Start={start_col}")
 
             # 2. Load images với timestamps
             images = []
@@ -1409,19 +1407,15 @@ class SmartEngine:
                 if not img_path.exists():
                     continue
 
-                # Parse start_time và end_time
+                # Parse start_time
                 start_time = 0.0
-                end_time = None
                 if start_col is not None and row[start_col]:
                     start_time = self._parse_timestamp(str(row[start_col]))
-                if end_col is not None and row[end_col]:
-                    end_time = self._parse_timestamp(str(row[end_col]))
 
                 images.append({
                     'id': scene_id,
                     'path': str(img_path),
-                    'start': start_time,
-                    'end': end_time
+                    'start': start_time
                 })
 
             if not images:
@@ -1432,7 +1426,7 @@ class SmartEngine:
             images.sort(key=lambda x: x['start'])
             self.log(f"  Tim thay {len(images)} anh")
 
-            # 3. Tính duration cho mỗi ảnh (ưu tiên end_time từ Excel)
+            # 3. Tính duration cho mỗi ảnh (CHỈ dựa vào start_time)
             # Lấy tổng thời lượng từ voice
             probe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration",
                         "-of", "default=noprint_wrappers=1:nokey=1", str(voice_path)]
@@ -1440,31 +1434,19 @@ class SmartEngine:
             total_duration = float(result.stdout.strip()) if result.stdout.strip() else 60.0
             self.log(f"  Voice duration: {total_duration:.1f}s")
 
-            # Tính duration mỗi ảnh - ƯU TIÊN end_time từ Excel
+            # Tính duration mỗi ảnh = start_time[i+1] - start_time[i]
+            # Nếu thiếu ảnh, ảnh trước sẽ tự động kéo dài đến ảnh tiếp theo
             for i, img in enumerate(images):
-                # Ưu tiên 1: Dùng end_time từ Excel nếu có
-                if img.get('end') is not None:
-                    img['duration'] = img['end'] - img['start']
-                # Ưu tiên 2: Dùng start_time của ảnh tiếp theo
-                elif i < len(images) - 1:
+                if i < len(images) - 1:
+                    # Duration = thời điểm ảnh tiếp theo bắt đầu - thời điểm ảnh này bắt đầu
                     img['duration'] = images[i + 1]['start'] - img['start']
-                # Ưu tiên 3: Dùng thời lượng còn lại của voice
                 else:
+                    # Ảnh cuối: kéo dài đến hết voice
                     img['duration'] = total_duration - img['start']
 
                 # Đảm bảo duration hợp lệ (tối thiểu 0.5s)
                 if img['duration'] <= 0:
                     img['duration'] = max(0.5, (total_duration - img['start']) / max(1, len(images) - i))
-
-            # Kiểm tra gaps giữa các ảnh
-            for i in range(len(images) - 1):
-                current_end = images[i]['start'] + images[i]['duration']
-                next_start = images[i + 1]['start']
-                gap = next_start - current_end
-                if gap > 0.1:  # Gap > 0.1s
-                    # Kéo dài ảnh hiện tại để fill gap
-                    self.log(f"    Gap {gap:.1f}s giua #{images[i]['id']} va #{images[i+1]['id']}, keo dai anh truoc", "WARN")
-                    images[i]['duration'] += gap
 
             # 4. Tạo video với FFmpeg + Fade Transitions
             with tempfile.TemporaryDirectory() as temp_dir:
