@@ -1222,7 +1222,7 @@ class SmartEngine:
             new_index = 1
 
             for idx, start, end, text in entries:
-                text = text.strip().replace('\n', ' ')
+                text = text.strip().replace('\n', ' ').upper()  # Viết hoa
                 start_sec = parse_time(start)
                 end_sec = parse_time(end)
                 duration = end_sec - start_sec
