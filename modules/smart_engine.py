@@ -1393,17 +1393,50 @@ class SmartEngine:
                     self.log("  Dang burn phu de...")
                     # Escape SRT path cho FFmpeg filter
                     srt_escaped = str(srt_path).replace('\\', '/').replace(':', '\\:')
+
+                    # Font path - Anton Regular
+                    font_dir = "C\\:/Users/admin/AppData/Local/Microsoft/Windows/Fonts"
+
+                    # Style: Chữ trắng, viền đen, font Anton
+                    # PrimaryColour format: &HAABBGGRR (Alpha, Blue, Green, Red)
+                    # &H00FFFFFF = white, &H00000000 = black
+                    subtitle_style = (
+                        "FontName=Anton,"
+                        "FontSize=32,"
+                        "PrimaryColour=&H00FFFFFF,"  # Trắng
+                        "OutlineColour=&H00000000,"  # Đen
+                        "BorderStyle=1,"
+                        "Outline=3,"
+                        "Shadow=0,"
+                        "MarginV=50,"
+                        "Alignment=2"  # Bottom center
+                    )
+
+                    # FFmpeg command với custom font
+                    vf_filter = f"subtitles='{srt_escaped}':fontsdir='{font_dir}':force_style='{subtitle_style}'"
+
                     cmd3 = [
                         "ffmpeg", "-y",
                         "-i", str(temp_with_audio),
-                        "-vf", f"subtitles='{srt_escaped}'",
+                        "-vf", vf_filter,
                         "-c:a", "copy", str(output_path)
                     ]
                     result = subprocess.run(cmd3, capture_output=True, text=True)
                     if result.returncode != 0:
-                        self.log(f"  Subtitle burn failed, copy without subs", "WARN")
-                        import shutil
-                        shutil.copy(temp_with_audio, output_path)
+                        self.log(f"  Subtitle burn failed: {result.stderr[-200:]}", "WARN")
+                        # Fallback: thử không có custom font
+                        self.log("  Thu lai voi font mac dinh...", "WARN")
+                        vf_simple = f"subtitles='{srt_escaped}':force_style='FontSize=28,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2'"
+                        cmd3_simple = [
+                            "ffmpeg", "-y",
+                            "-i", str(temp_with_audio),
+                            "-vf", vf_simple,
+                            "-c:a", "copy", str(output_path)
+                        ]
+                        result = subprocess.run(cmd3_simple, capture_output=True, text=True)
+                        if result.returncode != 0:
+                            import shutil
+                            shutil.copy(temp_with_audio, output_path)
                 else:
                     import shutil
                     shutil.copy(temp_with_audio, output_path)
@@ -1479,10 +1512,12 @@ class SmartEngine:
         # Burn subtitles nếu có
         if srt_path and srt_path.exists():
             srt_escaped = str(srt_path).replace('\\', '/').replace(':', '\\:')
+            # Style: Chữ trắng viền đen
+            vf_filter = f"subtitles='{srt_escaped}':force_style='FontSize=28,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2'"
             cmd3 = [
                 "ffmpeg", "-y",
                 "-i", str(temp_with_audio),
-                "-vf", f"subtitles='{srt_escaped}'",
+                "-vf", vf_filter,
                 "-c:a", "copy", str(output_path)
             ]
             result = subprocess.run(cmd3, capture_output=True, text=True)
