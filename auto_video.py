@@ -758,6 +758,32 @@ def main():
             json.dump(credentials, f, indent=2)
         print(f"✓ Đã lưu credentials vào {creds_file}")
 
+    # Kiểm tra x-browser-validation
+    if not credentials.get("xBrowserValidation"):
+        print("\n" + "=" * 60)
+        print("⚠️  THIẾU x-browser-validation!")
+        print("=" * 60)
+        print("Cần lấy thủ công từ Chrome DevTools:")
+        print("1. Mở Chrome DevTools (F12)")
+        print("2. Vào tab Network")
+        print("3. Tìm request tới 'aisandbox-pa.googleapis.com'")
+        print("4. Click vào request → Headers → Request Headers")
+        print("5. Copy giá trị 'x-browser-validation'")
+        print("=" * 60)
+
+        xbv = input("\nDán x-browser-validation vào đây: ").strip()
+        if xbv:
+            credentials["xBrowserValidation"] = xbv
+            # Save lại
+            with open(creds_file, "w", encoding="utf-8") as f:
+                json.dump(credentials, f, indent=2)
+            print("✓ Đã lưu x-browser-validation!")
+        else:
+            print("✗ Không có x-browser-validation, upload sẽ fail!")
+            cont = input("Tiếp tục không? (y/n): ").strip().lower()
+            if cont != 'y':
+                return
+
     # Get folder path
     if len(sys.argv) > 1:
         folder_path = sys.argv[1]
