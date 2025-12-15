@@ -18,17 +18,17 @@
         "Mo browser de lay token (visible).",
         "",
         "== AI PROVIDERS ==",
-        "Thu tu uu tien: Ollama (local) > Gemini > Groq > DeepSeek",
+        "Thu tu uu tien: DeepSeek (primary) > Ollama (local fallback)",
         "",
-        "  - Ollama (FREE LOCAL - UU TIEN #1):",
+        "  - DeepSeek (RE, MANH):",
+        "    Dang ky: https://platform.deepseek.com/api_keys",
+        "    Gia re: ~$0.14/1M input, ~$0.28/1M output",
+        "",
+        "  - Ollama (FREE LOCAL - FALLBACK):",
         "    1. Cai dat: https://ollama.ai",
         "    2. Pull model: ollama pull gemma3:27b",
         "    3. Chay server: ollama serve",
-        "    4. Config: ollama_model trong api_keys",
-        "",
-        "  - Gemini (FREE): https://aistudio.google.com/app/apikey",
-        "  - Groq (FREE): https://console.groq.com/keys",
-        "  - DeepSeek (RE): https://platform.deepseek.com/api_keys"
+        "    4. Config: ollama_model trong api_keys"
     ],
 
     "headless_accounts": [
@@ -45,21 +45,13 @@
     ],
 
     "api_keys": {
-        "ollama": {
-            "model": "gemma3:27b",
-            "endpoint": "http://localhost:11434",
-            "priority": true
-        },
-        "gemini": [
-            "THAY_BANG_GEMINI_KEY"
-        ],
-        "groq": [
-            "THAY_BANG_GROQ_KEY_1",
-            "THAY_BANG_GROQ_KEY_2"
-        ],
         "deepseek": [
             "THAY_BANG_DEEPSEEK_KEY"
-        ]
+        ],
+        "ollama": {
+            "model": "gemma3:27b",
+            "endpoint": "http://localhost:11434"
+        }
     },
 
     "settings": {

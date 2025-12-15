@@ -2,7 +2,7 @@
 VE3 Tool - Prompts Generator Module
 ===================================
 Sử dụng AI API để phân tích SRT và tạo prompts cho ảnh/video.
-Hỗ trợ: DeepSeek (rẻ), Groq (free), Gemini
+Hỗ trợ: DeepSeek (primary), Ollama (local fallback)
 """
 
 import json
@@ -36,20 +36,18 @@ from modules.prompts_loader import (
 
 
 # ============================================================================
-# MULTI AI CLIENT (DeepSeek + Groq + Gemini)
+# MULTI AI CLIENT (DeepSeek + Ollama)
 # ============================================================================
 
 class MultiAIClient:
     """
-    Client hỗ trợ nhiều AI providers.
-    Ưu tiên: Gemini (chất lượng cao) > Groq (nhanh) > DeepSeek (rẻ, chậm) > Ollama (local)
+    Client hỗ trợ AI providers.
+    Ưu tiên: DeepSeek (primary) > Ollama (local fallback)
 
     Tự động test và loại bỏ API keys không hoạt động khi khởi tạo.
     """
 
     DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
-    GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-    GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta"
     OLLAMA_URL = "http://localhost:11434/api/generate"  # Local Ollama
 
     def __init__(self, config: dict, auto_filter: bool = True):
@@ -57,30 +55,21 @@ class MultiAIClient:
         Config format:
         {
             "deepseek_api_keys": ["key1"],
-            "groq_api_keys": ["key1", "key2"],
-            "gemini_api_keys": ["key1"],
-            "gemini_models": ["gemini-2.0-flash"],
-            "ollama_model": "qwen2.5:7b",  # Optional: local model
+            "ollama_model": "gemma3:27b",  # Optional: local model fallback
         }
 
         auto_filter: Tự động test và loại bỏ API keys không hoạt động
         """
         self.config = config
-        self.gemini_keys = [k for k in config.get("gemini_api_keys", []) if k and k.strip()]
-        self.groq_keys = [k for k in config.get("groq_api_keys", []) if k and k.strip()]
         self.deepseek_keys = [k for k in config.get("deepseek_api_keys", []) if k and k.strip()]
-        self.gemini_models = config.get("gemini_models", ["gemini-2.0-flash", "gemini-1.5-flash"])
 
         # Ollama model (fallback)
-        self.ollama_model = config.get("ollama_model", "deepseek-v3.1:67b-cloud")
+        self.ollama_model = config.get("ollama_model", "gemma3:27b")
         self.ollama_endpoint = config.get("ollama_endpoint", "http://localhost:11434")
         self.OLLAMA_URL = f"{self.ollama_endpoint}/api/generate"
         self.ollama_available = False
 
         self.deepseek_index = 0
-        self.groq_index = 0
-        self.gemini_key_index = 0
-        self.gemini_model_index = 0
 
         # Parallel processing settings
         self.max_parallel_requests = config.get("max_parallel_requests", 5)
@@ -95,25 +84,13 @@ class MultiAIClient:
 
     def _filter_working_apis(self):
         """Test và loại bỏ API keys không hoạt động - PARALLEL VERSION."""
-        print("\n[API Filter] Dang kiem tra API keys (parallel)...")
+        print("\n[API Filter] Dang kiem tra API keys...")
 
         results = {
-            'gemini': [],
-            'groq': [],
             'deepseek': [],
             'ollama': False
         }
         results_lock = threading.Lock()
-
-        def test_gemini(key_info: Tuple[int, str]) -> Tuple[str, int, str, bool]:
-            i, key = key_info
-            result = self._test_gemini_key(key)
-            return ('gemini', i, key, result)
-
-        def test_groq(key_info: Tuple[int, str]) -> Tuple[str, int, str, bool]:
-            i, key = key_info
-            result = self._test_groq_key(key)
-            return ('groq', i, key, result)
 
         def test_deepseek(key_info: Tuple[int, str]) -> Tuple[str, int, str, bool]:
             i, key = key_info
@@ -126,23 +103,17 @@ class MultiAIClient:
 
         # Prepare all test tasks
         tasks = []
-        tasks.extend([('gemini', i, key) for i, key in enumerate(self.gemini_keys)])
-        tasks.extend([('groq', i, key) for i, key in enumerate(self.groq_keys)])
         tasks.extend([('deepseek', i, key) for i, key in enumerate(self.deepseek_keys)])
 
         # Use ThreadPoolExecutor for parallel API testing
-        max_workers = min(len(tasks) + 1, 20)  # Max 20 parallel connections
+        max_workers = min(len(tasks) + 1, 10)
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = []
 
             # Submit all API tests
             for provider, i, key in tasks:
-                if provider == 'gemini':
-                    futures.append(executor.submit(test_gemini, (i, key)))
-                elif provider == 'groq':
-                    futures.append(executor.submit(test_groq, (i, key)))
-                elif provider == 'deepseek':
+                if provider == 'deepseek':
                     futures.append(executor.submit(test_deepseek, (i, key)))
 
             # Submit Ollama test
@@ -166,55 +137,20 @@ class MultiAIClient:
                     self.logger.error(f"API test error: {e}")
 
         # Update with working keys only
-        self.gemini_keys = results['gemini']
-        self.groq_keys = results['groq']
         self.deepseek_keys = results['deepseek']
         self.ollama_available = results['ollama']
 
-        total_working = len(self.gemini_keys) + len(self.groq_keys) + len(self.deepseek_keys)
         ollama_str = ", Ollama: OK" if self.ollama_available else ""
-        print(f"[API Filter] Ket qua: {len(self.gemini_keys)} Gemini, {len(self.groq_keys)} Groq, {len(self.deepseek_keys)} DeepSeek{ollama_str}")
+        print(f"[API Filter] Ket qua: {len(self.deepseek_keys)} DeepSeek{ollama_str}")
 
-        if total_working == 0 and not self.ollama_available:
+        if len(self.deepseek_keys) == 0 and not self.ollama_available:
             print("[API Filter] CANH BAO: Khong co API nao hoat dong! Cai Ollama de dung offline.")
         else:
             # Show priority order
-            if self.gemini_keys:
-                print(f"[API Filter] Se dung: Gemini (uu tien)")
-            elif self.groq_keys:
-                print(f"[API Filter] Se dung: Groq (uu tien)")
-            elif self.deepseek_keys:
-                print(f"[API Filter] Se dung: DeepSeek")
+            if self.deepseek_keys:
+                print(f"[API Filter] Se dung: DeepSeek (uu tien)")
             elif self.ollama_available:
-                print(f"[API Filter] Se dung: Ollama (local)")
-
-    def _test_gemini_key(self, key: str) -> bool:
-        """Test Gemini key với request nhỏ."""
-        try:
-            model = self.gemini_models[0] if self.gemini_models else "gemini-2.0-flash"
-            url = f"{self.GEMINI_URL}/models/{model}:generateContent?key={key}"
-            payload = {
-                "contents": [{"parts": [{"text": "Say OK"}]}],
-                "generationConfig": {"maxOutputTokens": 5}
-            }
-            resp = requests.post(url, json=payload, timeout=10)
-            return resp.status_code == 200
-        except:
-            return False
-
-    def _test_groq_key(self, key: str) -> bool:
-        """Test Groq key với request nhỏ."""
-        try:
-            headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
-            data = {
-                "model": "llama-3.3-70b-versatile",
-                "messages": [{"role": "user", "content": "Say OK"}],
-                "max_tokens": 5
-            }
-            resp = requests.post(self.GROQ_URL, headers=headers, json=data, timeout=10)
-            return resp.status_code == 200
-        except:
-            return False
+                print(f"[API Filter] Se dung: Ollama (local fallback)")
 
     def _test_deepseek_key(self, key: str) -> bool:
         """Test DeepSeek key với request nhỏ."""
@@ -251,81 +187,14 @@ class MultiAIClient:
         max_retries: int = 3
     ) -> str:
         """Generate content using available AI providers.
-        Priority: Gemini (best quality) > Groq (fast) > DeepSeek (cheap, slow)
+        Priority: DeepSeek (primary) > Ollama (local fallback)
 
         Chi thu cac API da duoc filter la hoat dong.
         """
 
         last_error = None
 
-        # 1. Try Gemini first (best quality, fastest)
-        if self.gemini_keys:
-            for attempt in range(max_retries):
-                try:
-                    print(f"[Gemini] Dang goi API (attempt {attempt + 1})...")
-                    result = self._call_gemini(prompt, temperature, max_tokens)
-                    if result:
-                        print(f"[Gemini] Thanh cong!")
-                        return result
-                except Exception as e:
-                    last_error = e
-                    error_str = str(e).lower()
-
-                    if "leaked" in error_str:
-                        self.logger.error("Gemini key leaked! Removing...")
-                        if self.gemini_keys:
-                            self.gemini_keys.pop(self.gemini_key_index)
-                            if self.gemini_keys:
-                                self.gemini_key_index = self.gemini_key_index % len(self.gemini_keys)
-                        break  # Move to next provider
-                    elif "429" in error_str or "quota" in error_str:
-                        self.logger.warning("Gemini quota exceeded, removing key...")
-                        if self.gemini_keys:
-                            self.gemini_keys.pop(self.gemini_key_index)
-                            if self.gemini_keys:
-                                self.gemini_key_index = self.gemini_key_index % len(self.gemini_keys)
-                            else:
-                                break  # No more keys, move to next provider
-                        continue
-                    elif "404" in error_str:
-                        self.gemini_model_index = (self.gemini_model_index + 1) % len(self.gemini_models)
-                        continue
-                    else:
-                        self.logger.error(f"Gemini error: {e}")
-                        break
-
-        # 2. Fallback to Groq (fast, free but rate limited)
-        if self.groq_keys:
-            for attempt in range(max_retries):
-                try:
-                    print(f"[Groq] Dang goi API (attempt {attempt + 1})...")
-                    result = self._call_groq(prompt, temperature, max_tokens)
-                    if result:
-                        print(f"[Groq] Thanh cong!")
-                        return result
-                except Exception as e:
-                    last_error = e
-                    error_str = str(e).lower()
-
-                    if "rate" in error_str or "429" in error_str:
-                        self.logger.warning("Groq rate limit, trying next key...")
-                        self.groq_index = (self.groq_index + 1) % len(self.groq_keys)
-                        time.sleep(3)
-                        continue
-                    elif "invalid" in error_str or "unauthorized" in error_str:
-                        self.logger.warning("Groq key invalid, removing...")
-                        if self.groq_keys:
-                            self.groq_keys.pop(self.groq_index)
-                            if self.groq_keys:
-                                self.groq_index = self.groq_index % len(self.groq_keys)
-                            else:
-                                break
-                        continue
-                    else:
-                        self.logger.error(f"Groq error: {e}")
-                        break
-
-        # 3. Fallback to DeepSeek (cheap, stable but slow)
+        # 1. Try DeepSeek first (primary)
         if self.deepseek_keys:
             for attempt in range(max_retries):
                 try:
@@ -354,7 +223,7 @@ class MultiAIClient:
                         self.logger.error(f"DeepSeek error: {e}")
                         break
 
-        # 4. Fallback to Ollama (local, free, offline)
+        # 2. Fallback to Ollama (local, free, offline)
         if self.ollama_available:
             for attempt in range(max_retries):
                 try:
@@ -426,75 +295,6 @@ class MultiAIClient:
             print(f"[DeepSeek] Error {resp.status_code}: {error_text}")
             raise requests.RequestException(f"DeepSeek API error {resp.status_code}: {error_text}")
 
-    def _call_groq(self, prompt: str, temperature: float, max_tokens: int) -> str:
-        """Call Groq API."""
-        api_key = self.groq_keys[self.groq_index]
-
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        }
-
-        # Determine if prompt expects JSON response
-        expects_json = any(kw in prompt.lower() for kw in ['json', 'output format', '{"', "{'"])
-
-        # Groq max_tokens limit varies by model, llama-3.3-70b is 32768
-        groq_max_tokens = min(max_tokens, 32768)
-
-        data = {
-            "model": "llama-3.3-70b-versatile",
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "You are a helpful assistant. When asked to output JSON, respond ONLY with valid JSON, no markdown code blocks."
-                },
-                {"role": "user", "content": prompt}
-            ],
-            "temperature": temperature,
-            "max_tokens": groq_max_tokens
-        }
-
-        # Force JSON mode if prompt expects JSON
-        if expects_json:
-            data["response_format"] = {"type": "json_object"}
-
-        self.logger.debug(f"Calling Groq API (key #{self.groq_index + 1}, json_mode={expects_json}, max_tokens={groq_max_tokens})...")
-
-        resp = requests.post(self.GROQ_URL, headers=headers, json=data, timeout=120)
-
-        if resp.status_code == 200:
-            result = resp.json()
-            return result["choices"][0]["message"]["content"]
-        else:
-            raise requests.RequestException(f"Groq API error {resp.status_code}: {resp.text[:200]}")
-    
-    def _call_gemini(self, prompt: str, temperature: float, max_tokens: int) -> str:
-        """Call Gemini API."""
-        api_key = self.gemini_keys[self.gemini_key_index]
-        model = self.gemini_models[self.gemini_model_index]
-        
-        url = f"{self.GEMINI_URL}/models/{model}:generateContent?key={api_key}"
-        
-        headers = {"Content-Type": "application/json"}
-        
-        payload = {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "temperature": temperature,
-                "maxOutputTokens": max_tokens,
-            }
-        }
-        
-        self.logger.debug(f"Calling Gemini API: model={model}, key=#{self.gemini_key_index + 1}")
-        
-        resp = requests.post(url, headers=headers, json=payload, timeout=120)
-        
-        if resp.status_code == 200:
-            result = resp.json()
-            return result["candidates"][0]["content"]["parts"][0]["text"]
-        else:
-            raise requests.RequestException(f"Gemini API error {resp.status_code}: {resp.text[:300]}")
-
     def _call_ollama(self, prompt: str, temperature: float) -> str:
         """Call Ollama local API."""
         data = {
@@ -548,7 +348,7 @@ class MultiAIClient:
         # Determine worker count
         if max_workers is None:
             # Use total available API keys as max workers
-            total_keys = len(self.gemini_keys) + len(self.groq_keys) + len(self.deepseek_keys)
+            total_keys = len(self.deepseek_keys)
             if self.ollama_available:
                 total_keys += 1  # Ollama can handle 1 at a time
             max_workers = min(self.max_parallel_requests, max(1, total_keys))
@@ -775,33 +575,28 @@ class GeminiClient:
 
 class PromptGenerator:
     """
-    Class tạo prompts từ file SRT sử dụng Gemini API.
-    
+    Class tạo prompts từ file SRT sử dụng AI API (DeepSeek + Ollama).
+
     Flow:
     1. Đọc SRT và gom thành scenes
-    2. Gọi Gemini để phân tích nhân vật
-    3. Gọi Gemini để tạo prompt cho từng scene
+    2. Gọi AI để phân tích nhân vật
+    3. Gọi AI để tạo prompt cho từng scene
     4. Lưu vào Excel
     """
-    
+
     def __init__(self, settings: Dict[str, Any]):
         """
         Khởi tạo PromptGenerator.
-        
+
         Args:
             settings: Dictionary cấu hình từ settings.yaml
         """
         self.settings = settings
         self.logger = get_logger("prompt_generator")
-        
-        # Sử dụng MultiAIClient (hỗ trợ Groq + Gemini)
+
+        # Sử dụng MultiAIClient (DeepSeek + Ollama)
         self.ai_client = MultiAIClient(settings)
-        
-        # Legacy: Fallback to GeminiClient nếu cần
-        api_keys = settings.get("gemini_api_keys") or [settings.get("gemini_api_key")]
-        models = settings.get("gemini_models") or [settings.get("gemini_model", "gemini-2.0-flash")]
-        self.gemini = GeminiClient(api_keys=api_keys, models=models)
-        
+
         # Scene grouping settings
         self.min_scene_duration = settings.get("min_scene_duration", 3)  # Min 3s
         self.max_scene_duration = settings.get("max_scene_duration", 8)  # Max 8s per scene
@@ -860,13 +655,8 @@ class PromptGenerator:
         return filtered
 
     def _generate_content(self, prompt: str, temperature: float = 0.7, max_tokens: int = 8192) -> str:
-        """Generate content using available AI providers."""
-        # Try MultiAIClient first
-        try:
-            return self.ai_client.generate_content(prompt, temperature, max_tokens)
-        except Exception as e:
-            self.logger.warning(f"MultiAI failed: {e}, falling back to Gemini...")
-            return self.gemini.generate_content(prompt, temperature, max_tokens)
+        """Generate content using available AI providers (DeepSeek + Ollama)."""
+        return self.ai_client.generate_content(prompt, temperature, max_tokens)
     
     def generate_for_project(
         self,

@@ -419,19 +419,16 @@ class MultiAIClient:
     """
     Client ho tro nhieu AI providers.
     Tu dong test va loai bo API khong hoat dong khi khoi tao.
-    Thu tu uu tien: Ollama (local) > Gemini > Groq > DeepSeek > OpenRouter
+    Thu tu uu tien: DeepSeek > Ollama (local fallback)
     """
 
     def __init__(self, config: Dict[str, Any], auto_filter: bool = True):
         """
         Config format:
         {
-            "ollama_model": "gemma3:27b",  # Model Ollama (local)
+            "deepseek_api_keys": ["key1"],  # Primary - DeepSeek
+            "ollama_model": "gemma3:27b",  # Fallback - Ollama local
             "ollama_endpoint": "http://localhost:11434",  # Optional
-            "gemini_api_keys": ["key1", "key2"],
-            "groq_api_keys": ["key1", "key2"],
-            "deepseek_api_keys": ["key1"],
-            "openrouter_api_keys": ["key1"],
         }
 
         auto_filter: Tu dong test va loai bo API khong hoat dong
@@ -449,12 +446,27 @@ class MultiAIClient:
             return False
 
     def _init_clients(self, auto_filter: bool = True):
-        """Khoi tao cac clients theo thu tu uu tien: Ollama > Gemini > Groq > DeepSeek."""
+        """Khoi tao cac clients theo thu tu uu tien: DeepSeek > Ollama (local fallback)."""
 
         if auto_filter:
             print("\n[API Filter] Dang kiem tra API keys...")
 
-        # 0. Ollama (LOCAL, FREE, khong rate limit!)
+        # 1. DeepSeek (PRIMARY - re, on dinh, manh)
+        deepseek_keys = self.config.get("deepseek_api_keys", [])
+        for i, key in enumerate(deepseek_keys):
+            if key and key.strip():
+                client = DeepSeekClient(key.strip())
+                if auto_filter:
+                    print(f"  Testing DeepSeek key #{i+1}...", end=" ")
+                    if self._test_client("deepseek", client):
+                        print("OK")
+                        self.clients.append(("deepseek", client))
+                    else:
+                        print("SKIP (error)")
+                else:
+                    self.clients.append(("deepseek", client))
+
+        # 2. Ollama (FALLBACK - LOCAL, FREE, khong rate limit!)
         ollama_model = self.config.get("ollama_model")
         if ollama_model:
             ollama_endpoint = self.config.get("ollama_endpoint", "http://localhost:11434")
@@ -474,66 +486,6 @@ class MultiAIClient:
             else:
                 self.clients.append(("ollama", client))
 
-        # 1. Gemini (chat luong cao nhat, nhanh nhat)
-        gemini_keys = self.config.get("gemini_api_keys", [])
-        for i, key in enumerate(gemini_keys):
-            if key and key.strip():
-                client = GeminiClient(key.strip())
-                if auto_filter:
-                    print(f"  Testing Gemini key #{i+1}...", end=" ")
-                    if self._test_client("gemini", client):
-                        print("OK")
-                        self.clients.append(("gemini", client))
-                    else:
-                        print("SKIP (quota/error)")
-                else:
-                    self.clients.append(("gemini", client))
-
-        # 2. Groq (nhanh, mien phi nhung hay rate limit)
-        groq_keys = self.config.get("groq_api_keys", [])
-        for i, key in enumerate(groq_keys):
-            if key and key.strip():
-                client = GroqClient(key.strip())
-                if auto_filter:
-                    print(f"  Testing Groq key #{i+1}...", end=" ")
-                    if self._test_client("groq", client):
-                        print("OK")
-                        self.clients.append(("groq", client))
-                    else:
-                        print("SKIP (rate limit/error)")
-                else:
-                    self.clients.append(("groq", client))
-
-        # 3. DeepSeek (re, on dinh, nhung cham)
-        deepseek_keys = self.config.get("deepseek_api_keys", [])
-        for i, key in enumerate(deepseek_keys):
-            if key and key.strip():
-                client = DeepSeekClient(key.strip())
-                if auto_filter:
-                    print(f"  Testing DeepSeek key #{i+1}...", end=" ")
-                    if self._test_client("deepseek", client):
-                        print("OK")
-                        self.clients.append(("deepseek", client))
-                    else:
-                        print("SKIP (error)")
-                else:
-                    self.clients.append(("deepseek", client))
-
-        # 4. OpenRouter (backup)
-        openrouter_keys = self.config.get("openrouter_api_keys", [])
-        for i, key in enumerate(openrouter_keys):
-            if key and key.strip():
-                client = OpenRouterClient(key.strip())
-                if auto_filter:
-                    print(f"  Testing OpenRouter key #{i+1}...", end=" ")
-                    if self._test_client("openrouter", client):
-                        print("OK")
-                        self.clients.append(("openrouter", client))
-                    else:
-                        print("SKIP (error)")
-                else:
-                    self.clients.append(("openrouter", client))
-
         if auto_filter:
             # Count by provider type
             counts = {}
@@ -541,14 +493,10 @@ class MultiAIClient:
                 counts[name] = counts.get(name, 0) + 1
 
             result_parts = []
-            if counts.get('ollama', 0):
-                result_parts.append(f"{counts['ollama']} Ollama")
-            if counts.get('gemini', 0):
-                result_parts.append(f"{counts['gemini']} Gemini")
-            if counts.get('groq', 0):
-                result_parts.append(f"{counts['groq']} Groq")
             if counts.get('deepseek', 0):
                 result_parts.append(f"{counts['deepseek']} DeepSeek")
+            if counts.get('ollama', 0):
+                result_parts.append(f"{counts['ollama']} Ollama")
 
             print(f"[API Filter] Ket qua: {', '.join(result_parts) if result_parts else 'Khong co provider nao'}")
 
