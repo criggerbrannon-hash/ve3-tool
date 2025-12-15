@@ -23,3 +23,7 @@ pyperclip>=1.8.2
 # Video generation (optional - chi can neu muon tao video)
 # pip install moviepy
 # FFmpeg cung can duoc cai dat tren he thong
+
+# AI Video generation (browser-based with stealth mode)
+# pip install playwright playwright-stealth
+# playwright install chromium

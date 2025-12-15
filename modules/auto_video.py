@@ -1258,6 +1258,154 @@ def quick_generate_video(
     return generator.process_image(image_path, prompt, output_dir)
 
 
+def quick_generate_video_browser(
+    image_path: str,
+    token: str,
+    project_id: str,
+    prompt: str = "Animate this image with smooth, natural motion",
+    output_dir: str = None,
+    headless: bool = True
+) -> Dict[str, Any]:
+    """
+    Generate video bằng BROWSER MODE (giống tool kia).
+
+    Cách này sử dụng browser automation với stealth mode,
+    bypass được bot detection của Google.
+
+    Yêu cầu:
+        pip install playwright playwright-stealth
+        playwright install chromium
+
+    Args:
+        image_path: Đường dẫn đến ảnh
+        token: Bearer token (ya29.xxx)
+        project_id: Project ID (uuid)
+        prompt: Prompt cho video
+        output_dir: Thư mục output
+        headless: Chạy browser ẩn (True) hay hiển thị (False để debug)
+
+    Returns:
+        Dict với keys: success, output, video_url, error
+
+    Example:
+        result = quick_generate_video_browser(
+            image_path="path/to/image.jpg",
+            token="ya29.xxx",
+            project_id="uuid-here",
+            headless=False  # Hiển thị browser để debug
+        )
+    """
+    try:
+        from modules.browser_video import BrowserVideoSync
+
+        gen = BrowserVideoSync(token, project_id, headless=headless)
+
+        try:
+            if gen.start():
+                result = gen.generate_video(image_path, prompt, output_dir)
+                return result
+            else:
+                return {"success": False, "error": "Failed to start browser"}
+        finally:
+            gen.close()
+
+    except ImportError:
+        return {
+            "success": False,
+            "error": "Cần cài: pip install playwright playwright-stealth && playwright install chromium"
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def process_folder_browser(
+    folder_path: str,
+    prompt: str,
+    token: str,
+    project_id: str,
+    headless: bool = True,
+    callback: Callable[[str], None] = None
+) -> Dict[str, Any]:
+    """
+    Xử lý tất cả ảnh trong folder bằng BROWSER MODE.
+
+    Args:
+        folder_path: Đường dẫn folder chứa ảnh
+        prompt: Prompt cho video
+        token: Bearer token
+        project_id: Project ID
+        headless: Chạy browser ẩn
+        callback: Log callback
+
+    Returns:
+        Dict với summary
+    """
+    folder = Path(folder_path)
+
+    def log(msg):
+        print(msg)
+        if callback:
+            callback(msg)
+
+    if not folder.exists():
+        log(f"Folder không tồn tại: {folder_path}")
+        return {"error": "Folder not found"}
+
+    images = list(folder.glob("*.jpg")) + list(folder.glob("*.jpeg")) + list(folder.glob("*.png"))
+
+    if not images:
+        log(f"Không tìm thấy ảnh trong: {folder_path}")
+        return {"error": "No images found"}
+
+    log(f"\nTìm thấy {len(images)} ảnh")
+    log("Sử dụng BROWSER MODE...")
+
+    output_dir = folder / "videos"
+    output_dir.mkdir(exist_ok=True)
+
+    try:
+        from modules.browser_video import BrowserVideoSync
+
+        gen = BrowserVideoSync(token, project_id, headless=headless, callback=callback)
+        results = []
+
+        try:
+            if not gen.start():
+                return {"error": "Failed to start browser"}
+
+            for i, img in enumerate(images, 1):
+                log(f"\n[{i}/{len(images)}] {img.name}")
+                result = gen.generate_video(str(img), prompt, str(output_dir))
+                results.append(result)
+
+                if result["success"]:
+                    log(f"  → {result.get('output')}")
+                else:
+                    log(f"  → Error: {result.get('error')}")
+
+        finally:
+            gen.close()
+
+        success_count = sum(1 for r in results if r["success"])
+        failed_count = len(results) - success_count
+
+        log(f"\n{'='*50}")
+        log(f"HOÀN THÀNH: {success_count}/{len(images)} videos")
+        log(f"Output: {output_dir}")
+
+        return {
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "results": results,
+            "output_dir": str(output_dir)
+        }
+
+    except ImportError:
+        return {
+            "error": "Cần cài: pip install playwright playwright-stealth && playwright install chromium"
+        }
+
+
 # ============================================================================
 # BATCH PROCESSOR
 # ============================================================================
@@ -1421,11 +1569,23 @@ def main():
             json.dump(credentials, f, indent=2)
         print(f"✓ Đã lưu credentials vào {creds_file}")
 
-    # Thông báo mode
-    if credentials.get("projectId") and not credentials.get("recaptchaToken"):
-        print("\n✓ Using SIMPLE mode (token + projectId only)")
+    # Chọn mode xử lý
+    print("\n" + "=" * 60)
+    print("CHỌN MODE XỬ LÝ")
+    print("=" * 60)
+    print("1. API Mode - Gọi API trực tiếp (nhanh, có thể bị block)")
+    print("2. Browser Mode - Dùng browser với stealth (chậm hơn, ổn định hơn)")
+    print("=" * 60)
+
+    mode = input("\nChọn mode (1/2, Enter=1): ").strip() or "1"
+    use_browser = mode == "2"
+
+    if use_browser:
+        print("\n✓ Sử dụng BROWSER MODE (stealth)")
     else:
-        print("\n✓ Using FULL mode (all credentials)")
+        print("\n✓ Sử dụng API MODE")
+        if credentials.get("projectId") and not credentials.get("recaptchaToken"):
+            print("  (Simple mode - chỉ token + projectId)")
 
     # Get folder path
     if len(sys.argv) > 1:
@@ -1447,7 +1607,18 @@ def main():
         prompt = "Animate this image with smooth, natural motion"
 
     # Process
-    process_folder(folder_path, prompt, credentials)
+    if use_browser:
+        # Browser mode
+        token = credentials.get("token")
+        project_id = credentials.get("projectId")
+
+        headless_input = input("Chạy browser ẩn? (y/n, Enter=y): ").strip().lower() or "y"
+        headless = headless_input == "y"
+
+        process_folder_browser(folder_path, prompt, token, project_id, headless=headless)
+    else:
+        # API mode
+        process_folder(folder_path, prompt, credentials)
 
 
 if __name__ == "__main__":
