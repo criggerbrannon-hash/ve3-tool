@@ -178,6 +178,12 @@ class VideoComposer:
         Tạo video từ danh sách ảnh với duration từ scenes.
 
         Sử dụng FFmpeg concat demuxer với duration cho mỗi ảnh.
+
+        FIX: Xử lý gap giữa các scenes bằng cách kéo dài ảnh đến start của scene tiếp theo.
+        Ví dụ:
+          Scene 1: 00:00 - 00:05 → kéo dài đến 00:06 (start của scene 2)
+          Scene 2: 00:06 - 00:09 → kéo dài đến 00:10 (start của scene 3)
+          Scene 3: 00:10 - 00:18 → giữ nguyên (scene cuối)
         """
         try:
             # Tạo file list cho FFmpeg concat
@@ -185,16 +191,38 @@ class VideoComposer:
             list_file = os.path.join(temp_dir, "images.txt")
 
             with open(list_file, "w", encoding="utf-8") as f:
-                for scene in scenes:
-                    # Tính duration
-                    if scene.duration and scene.duration > 0:
-                        duration = scene.duration
-                    elif scene.srt_start and scene.srt_end:
-                        start = self._parse_timestamp(scene.srt_start)
-                        end = self._parse_timestamp(scene.srt_end)
-                        duration = end - start
+                for i, scene in enumerate(scenes):
+                    # Lấy start time của scene hiện tại
+                    current_start = self._parse_timestamp(scene.srt_start) if scene.srt_start else 0
+
+                    # Tính duration: kéo dài đến start của scene tiếp theo (fix gap)
+                    if i < len(scenes) - 1:
+                        # Còn scene tiếp theo → kéo dài đến start của scene tiếp theo
+                        next_scene = scenes[i + 1]
+                        next_start = self._parse_timestamp(next_scene.srt_start) if next_scene.srt_start else 0
+                        duration = next_start - current_start
+
+                        # Fallback nếu tính toán sai
+                        if duration <= 0:
+                            if scene.duration and scene.duration > 0:
+                                duration = scene.duration
+                            elif scene.srt_end:
+                                duration = self._parse_timestamp(scene.srt_end) - current_start
+                            else:
+                                duration = 5.0
                     else:
-                        duration = 5.0  # Default 5 seconds
+                        # Scene cuối cùng → dùng end time gốc
+                        if scene.duration and scene.duration > 0:
+                            duration = scene.duration
+                        elif scene.srt_start and scene.srt_end:
+                            start = self._parse_timestamp(scene.srt_start)
+                            end = self._parse_timestamp(scene.srt_end)
+                            duration = end - start
+                        else:
+                            duration = 5.0
+
+                    # Log để debug
+                    self.logger.debug(f"Scene {scene.scene_id}: start={current_start:.2f}, duration={duration:.2f}s")
 
                     # Escape path cho FFmpeg
                     img_path = scene.img_path.replace("\\", "/").replace("'", "'\\''")
