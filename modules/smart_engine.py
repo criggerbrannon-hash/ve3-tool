@@ -1492,18 +1492,18 @@ class SmartEngine:
                     # Font path - Anton Regular
                     font_dir = "C\\:/Users/admin/AppData/Local/Microsoft/Windows/Fonts"
 
-                    # Style: Chữ trắng, viền đen, font Anton, TO (48px)
+                    # Style: Chữ trắng, viền đen, font Anton
                     # PrimaryColour format: &HAABBGGRR (Alpha, Blue, Green, Red)
                     # &H00FFFFFF = white, &H00000000 = black
                     subtitle_style = (
                         "FontName=Anton,"
-                        "FontSize=48,"  # To hon cho de doc
+                        "FontSize=32,"  # Vua phai, 1 dong ~ 50 ky tu
                         "PrimaryColour=&H00FFFFFF,"  # Trắng
                         "OutlineColour=&H00000000,"  # Đen
                         "BorderStyle=1,"
-                        "Outline=4,"  # Vien day hon
+                        "Outline=2,"  # Vien mong
                         "Shadow=0,"
-                        "MarginV=40,"
+                        "MarginV=30,"
                         "Alignment=2"  # Bottom center
                     )
 
@@ -1521,7 +1521,7 @@ class SmartEngine:
                         self.log(f"  Subtitle burn failed: {result.stderr[-200:]}", "WARN")
                         # Fallback: thử không có custom font
                         self.log("  Thu lai voi font mac dinh...", "WARN")
-                        vf_simple = f"subtitles='{srt_escaped}':force_style='FontSize=48,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=4'"
+                        vf_simple = f"subtitles='{srt_escaped}':force_style='FontSize=32,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2'"
                         cmd3_simple = [
                             "ffmpeg", "-y",
                             "-i", str(temp_with_audio),
@@ -1607,8 +1607,8 @@ class SmartEngine:
         # Burn subtitles nếu có
         if srt_path and srt_path.exists():
             srt_escaped = str(srt_path).replace('\\', '/').replace(':', '\\:')
-            # Style: Chữ trắng viền đen, font 48px
-            vf_filter = f"subtitles='{srt_escaped}':force_style='FontSize=48,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=4'"
+            # Style: Chữ trắng viền đen, font 32px
+            vf_filter = f"subtitles='{srt_escaped}':force_style='FontSize=32,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2'"
             cmd3 = [
                 "ffmpeg", "-y",
                 "-i", str(temp_with_audio),
