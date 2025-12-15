@@ -6,7 +6,10 @@ Flow:
 2. Inject capture script
 3. Click dropdown -> "Tạo video từ các thành phần"
 4. Click "Tạo một video bằng văn bản và các thành phần…"
-5. Paste prompt -> Lay token
+5. Paste prompt
+6. Click nút "add" để thêm media
+7. Click chọn ảnh đã tải trước đó
+8. Nhấn Enter -> Lấy token
 """
 
 import sys
@@ -225,24 +228,144 @@ class VideoTokenTest:
         except:
             return False
 
-    def send_prompt(self, prompt: str) -> bool:
-        """Gửi prompt bằng PyAutoGUI."""
+    def paste_prompt(self, prompt: str) -> bool:
+        """Paste prompt (KHÔNG nhấn Enter, chờ thêm ảnh trước)."""
         if not pag or not pyperclip:
             return False
 
-        self.log(f"Gửi prompt: {prompt[:50]}...")
+        self.log(f"Paste prompt: {prompt[:50]}...")
 
         try:
             pyperclip.copy(prompt)
             time.sleep(0.2)
             pag.hotkey("ctrl", "v")
             time.sleep(0.5)
-            pag.press("enter")
-            time.sleep(0.5)
-            self.log("Prompt sent!")
+            self.log("Prompt pasted! (chưa gửi)")
             return True
         except Exception as e:
-            self.log(f"Send error: {e}")
+            self.log(f"Paste error: {e}")
+            return False
+
+    def click_add_button(self) -> bool:
+        """
+        Click nút "add" để thêm media.
+        Button có class chứa icon "add" google-symbols
+        """
+        if not pag or not pyperclip:
+            return False
+
+        self.log("Click nút ADD...")
+
+        # Tìm button có icon "add"
+        js = '''(function(){
+            // Tìm button có icon add
+            var buttons = document.querySelectorAll('button');
+            for(var btn of buttons){
+                var icon = btn.querySelector('i.google-symbols');
+                if(icon && icon.textContent.trim() === 'add'){
+                    btn.click();
+                    console.log('Clicked ADD button');
+                    return true;
+                }
+            }
+            console.log('Khong tim thay ADD button');
+            return false;
+        })();'''
+
+        try:
+            pag.hotkey("ctrl", "shift", "j")
+            time.sleep(1)
+            pyperclip.copy(js)
+            pag.hotkey("ctrl", "v")
+            time.sleep(0.2)
+            pag.press("enter")
+            time.sleep(1)
+            pag.hotkey("ctrl", "shift", "j")
+            time.sleep(0.5)
+            self.log("Đã click ADD button")
+            return True
+        except Exception as e:
+            self.log(f"Click ADD error: {e}")
+            return False
+
+    def click_uploaded_media(self) -> bool:
+        """
+        Click chọn ảnh đã tải lên trước đó.
+        Button có span text: "Một thành phần nội dung nghe nhìn mà bạn đã tải lên hoặc chọn trước đây"
+        """
+        if not pag or not pyperclip:
+            return False
+
+        self.log("Click chọn ảnh đã tải...")
+
+        # Tìm button chứa text về uploaded media
+        js = '''(async function(){
+            await new Promise(r=>setTimeout(r,500));
+
+            // Cách 1: Tìm button có span chứa text về uploaded media
+            var buttons = document.querySelectorAll('button');
+            for(var btn of buttons){
+                var spans = btn.querySelectorAll('span');
+                for(var span of spans){
+                    var t = span.textContent || '';
+                    if(t.includes('đã tải lên') || t.includes('chọn trước đây') || t.includes('nội dung nghe nhìn')){
+                        btn.click();
+                        console.log('Clicked uploaded media button (by span)');
+                        return true;
+                    }
+                }
+            }
+
+            // Cách 2: Tìm theo class pattern
+            var mediaBtn = document.querySelector('button[class*="fbea20b2"]');
+            if(mediaBtn){
+                mediaBtn.click();
+                console.log('Clicked uploaded media button (by class)');
+                return true;
+            }
+
+            // Cách 3: Click vào item đầu tiên trong media grid/list
+            var mediaItems = document.querySelectorAll('[role="listitem"] button, [role="option"] button');
+            if(mediaItems.length > 0){
+                mediaItems[0].click();
+                console.log('Clicked first media item');
+                return true;
+            }
+
+            console.log('Khong tim thay uploaded media button');
+            return false;
+        })();'''
+
+        try:
+            pag.hotkey("ctrl", "shift", "j")
+            time.sleep(1)
+            pyperclip.copy(js)
+            pag.hotkey("ctrl", "v")
+            time.sleep(0.2)
+            pag.press("enter")
+            time.sleep(1.5)
+            pag.hotkey("ctrl", "shift", "j")
+            time.sleep(0.5)
+            self.log("Đã chọn ảnh")
+            return True
+        except Exception as e:
+            self.log(f"Click media error: {e}")
+            return False
+
+    def press_enter_to_send(self) -> bool:
+        """Nhấn Enter để gửi prompt + media."""
+        if not pag:
+            return False
+
+        self.log("Nhấn Enter để gửi...")
+
+        try:
+            pag.press("enter")
+            time.sleep(0.5)
+            self.log("Đã gửi!")
+            return True
+        except Exception as e:
+            self.log(f"Enter error: {e}")
             return False
 
     def get_token(self) -> Tuple[Optional[str], Optional[str]]:
@@ -289,8 +412,12 @@ class VideoTokenTest:
         3. Click "Dự án mới"
         4. Click dropdown -> "Tạo video từ các thành phần"
         5. Click "Tạo một video bằng văn bản và các thành phần…"
-        6. Focus textarea -> Paste prompt -> Enter
-        7. Đợi và lấy token
+        6. Focus textarea
+        7. Paste prompt (CHƯA gửi)
+        8. Click nút ADD để thêm media
+        9. Click chọn ảnh đã tải trước đó
+        10. Nhấn Enter để gửi
+        11. Đợi và lấy token
         """
         if not pag:
             return None, None, "Thiếu pyautogui"
@@ -332,11 +459,25 @@ class VideoTokenTest:
             self.focus_textarea()
             time.sleep(1)
 
-            # === 8. Gửi prompt ===
+            # === 8. Paste prompt (CHƯA gửi) ===
             prompt = "A beautiful sunset over the ocean with waves crashing"
-            self.send_prompt(prompt)
+            self.paste_prompt(prompt)
+            time.sleep(1)
 
-            # === 9. Đợi và lấy token ===
+            # === 9. Click nút ADD để thêm media ===
+            self.log("Click ADD button...")
+            self.click_add_button()
+            time.sleep(2)
+
+            # === 10. Click chọn ảnh đã tải trước đó ===
+            self.log("Chọn ảnh đã tải...")
+            self.click_uploaded_media()
+            time.sleep(2)
+
+            # === 11. Nhấn Enter để gửi ===
+            self.press_enter_to_send()
+
+            # === 12. Đợi và lấy token ===
             self.log("Đợi capture token (60s)...")
 
             for i in range(20):
