@@ -2182,13 +2182,27 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
 
         style_suffix = global_style or "Cinematic, 4K photorealistic, natural lighting"
 
+        # Shot type rotation for variety (HOOK + variety pattern)
+        shot_types_hook = ["WIDE LOW ANGLE", "EXTREME CLOSE-UP", "EXTREME CLOSE-UP"]  # First 3 scenes
+        shot_types_cycle = ["WIDE", "CLOSE-UP", "MEDIUM", "EXTREME CLOSE-UP", "LOW ANGLE", "TWO-SHOT"]
+
         result = []
-        for scene in scenes_data:
+        for idx, scene in enumerate(scenes_data):
             # Get scene info
             # IMPORTANT: Ưu tiên visual_moment (đã được AI xử lý), KHÔNG dùng text (narration)!
             visual_moment = scene.get("visual_moment", "")
             scene_type = scene.get("scene_type", "FRAME_PRESENT")
-            shot_type = scene.get("shot_type", "Medium shot")
+
+            # SHOT TYPE VARIETY - Critical for cinematic feel!
+            if scene.get("shot_type") and scene.get("shot_type") != "Medium shot":
+                shot_type = scene.get("shot_type")
+            elif idx < 3:
+                # HOOK scenes (1-3) - must be dramatic!
+                shot_type = shot_types_hook[idx]
+            else:
+                # Cycle through variety for remaining scenes
+                shot_type = shot_types_cycle[(idx - 3) % len(shot_types_cycle)]
+
             location_id = scene.get("location_id", "loc1")
             chars_in_scene = scene.get("characters_in_scene", [])
 
@@ -2229,6 +2243,30 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
             else:
                 # Create STORY-AWARE visual based on scene_type and scene text
                 scene_text = scene.get("text", "").lower()
+
+                # 🔥 HOOK SCENES (1-3) - CRITICAL FOR VIEWER RETENTION!
+                # These scenes need EXTRA dramatic visuals to hook viewers immediately
+                if idx < 3:
+                    hook_visual = self._create_hook_visual(idx, scene_text, char_parts, loc_part)
+                    if hook_visual:
+                        parts.append(hook_visual)
+                        # Skip normal processing for HOOK scenes
+                        # Location and style will be added below
+                        if loc_part:
+                            parts.append(loc_part)
+                        parts.append(style_suffix)
+                        img_prompt = ". ".join([p for p in parts if p])
+                        # Build reference_files, filtering out children (API policy)
+                        all_refs = [f"{c}.png" for c in chars_in_scene] + ([f"{location_id}.png"] if location_id else [])
+                        filtered_refs = self._filter_children_from_refs(all_refs)
+                        result.append({
+                            "img_prompt": img_prompt,
+                            "video_prompt": img_prompt,
+                            "characters_used": chars_in_scene,
+                            "location_used": location_id,
+                            "reference_files": filtered_refs
+                        })
+                        continue  # Skip to next scene
 
                 if scene_type == "CHILDHOOD_FLASHBACK":
                     # Analyze scene text for specific childhood visuals
@@ -2336,6 +2374,71 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
         ]
 
         return any(narration_patterns)
+
+    def _create_hook_visual(self, scene_idx: int, scene_text: str, char_parts: List[str], loc_part: str) -> str:
+        """Create dramatic HOOK visual for scenes 1-3 (idx 0-2).
+
+        HOOK scenes are CRITICAL for viewer retention. They must be:
+        - Scene 1 (idx=0): WIDE LOW ANGLE - character DEVASTATED, ISOLATED, overwhelming environment
+        - Scene 2 (idx=1): EXTREME CLOSE-UP - face with RAW emotion, tears, pain
+        - Scene 3 (idx=2): EXTREME CLOSE-UP - meaningful detail (trembling hands, documents, etc.)
+
+        These visuals MUST include CHARACTER - never empty locations!
+        """
+        if scene_idx == 0:
+            # SCENE 1: THE GRABBER - Tiny figure in overwhelming environment
+            # MUST show character in state of devastation/isolation
+
+            # Analyze scene_text for context clues
+            if any(w in scene_text for w in ["court", "legal", "lawsuit", "judge"]):
+                return "TINY figure hunched ALONE on MASSIVE courthouse steps, head in hands, DEVASTATED posture, dwarfed by towering columns, morning fog, dramatic low angle emphasizing isolation"
+            elif any(w in scene_text for w in ["hospital", "doctor", "sick", "ill"]):
+                return "TINY figure sitting ALONE in vast hospital corridor, hunched over in despair, fluorescent lights stretching endlessly, dramatic low angle emphasizing vulnerability"
+            elif any(w in scene_text for w in ["house", "home", "evict", "lost"]):
+                return "TINY figure standing ALONE before house, shoulders slumped in defeat, belongings scattered, dramatic low angle, overwhelming sky"
+            elif any(w in scene_text for w in ["grave", "funeral", "death", "die"]):
+                return "TINY figure kneeling ALONE at gravestone, hunched in grief, cemetery stretching endlessly, dramatic low angle, overcast sky"
+            elif any(w in scene_text for w in ["mother", "mom", "parent"]):
+                return "TINY figure sitting ALONE, head bowed in sorrow, clutching photograph of mother, DEVASTATING isolation visible, dramatic low angle"
+            else:
+                # Default dramatic opening
+                return "TINY figure hunched ALONE in vast empty space, ISOLATED and OVERWHELMED, head bowed in despair, dramatic low angle emphasizing human fragility against overwhelming circumstances"
+
+        elif scene_idx == 1:
+            # SCENE 2: EMOTIONAL IMPACT - Face with raw emotion
+            # MUST show extreme close-up of face with visible emotion
+
+            if any(w in scene_text for w in ["betray", "trust", "lie", "deceive"]):
+                return "EXTREME CLOSE-UP of face, eyes glistening with TEARS of betrayal, jaw clenched fighting back sobs, single tear rolling down cheek, raw disbelief visible"
+            elif any(w in scene_text for w in ["remember", "memory", "past"]):
+                return "EXTREME CLOSE-UP of face, eyes distant and glistening with painful memories, nostalgic ache visible, bittersweet pain etched in expression"
+            elif any(w in scene_text for w in ["lost", "gone", "never"]):
+                return "EXTREME CLOSE-UP of face, eyes red and swollen, DEVASTATED expression, lips trembling, the weight of loss carved into every feature"
+            elif any(w in scene_text for w in ["mother", "mom"]):
+                return "EXTREME CLOSE-UP of face, eyes filling with tears thinking of mother, profound grief and longing visible, chin trembling with emotion"
+            else:
+                # Default emotional close-up
+                return "EXTREME CLOSE-UP of face showing RAW EMOTION, eyes glistening with unshed tears, profound pain visible in every feature, intimate and vulnerable moment"
+
+        elif scene_idx == 2:
+            # SCENE 3: DETAIL SHOT - Meaningful object or body part
+            # Close-up on detail that tells the story
+
+            if any(w in scene_text for w in ["court", "legal", "document", "paper"]):
+                return "EXTREME CLOSE-UP of trembling hands clutching crumpled legal documents, knuckles white with tension, papers slightly shaking, desperation visible"
+            elif any(w in scene_text for w in ["ring", "wedding", "marriage"]):
+                return "EXTREME CLOSE-UP of trembling finger touching wedding ring, the weight of broken vows visible, intimate painful detail"
+            elif any(w in scene_text for w in ["photo", "picture", "memory"]):
+                return "EXTREME CLOSE-UP of weathered hands holding faded photograph, edges worn from years of touching, precious memory captured"
+            elif any(w in scene_text for w in ["mother", "mom"]):
+                return "EXTREME CLOSE-UP of hands clutching mother's keepsake, fingers tracing familiar pattern, tears visible on skin, profound connection"
+            elif any(w in scene_text for w in ["key", "house", "home"]):
+                return "EXTREME CLOSE-UP of trembling hands gripping house keys, knuckles white, the weight of losing everything visible in the tension"
+            else:
+                # Default detail shot
+                return "EXTREME CLOSE-UP of trembling hands, knuckles white with tension, the weight of the moment visible in every crease and tremor, intimate emotional detail"
+
+        return ""  # Should not reach here
 
     def _clean_narration_from_prompt(self, img_prompt: str, scene_text: str) -> str:
         """Remove any narration/dialogue text that might have been included in img_prompt.
