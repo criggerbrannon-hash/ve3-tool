@@ -491,7 +491,7 @@ class VideoGenerator:
         print(f"[VideoGen] {msg}")
 
     def upload_image(self, image_path: str) -> Optional[str]:
-        """Upload ảnh → mediaId."""
+        """Upload ảnh → mediaId. Thử nhiều format."""
         self.log(f"Upload: {Path(image_path).name}")
 
         path = Path(image_path)
@@ -499,41 +499,73 @@ class VideoGenerator:
             self.log(f"  ✗ File not found: {image_path}")
             return None
 
-        # Check file size
         file_size = path.stat().st_size
         self.log(f"  File size: {file_size / 1024:.1f} KB")
 
         with open(image_path, "rb") as f:
-            raw_bytes = base64.b64encode(f.read()).decode("utf-8")
+            image_data = f.read()
+
+        raw_bytes = base64.b64encode(image_data).decode("utf-8")
+
+        # Detect mime type
+        mime_type = "image/png" if image_path.lower().endswith(".png") else "image/jpeg"
 
         url = f"{self.BASE_URL}/v1:uploadUserImage"
-        payload = {"imageInput": {"rawImageBytes": raw_bytes}}
 
-        self.log(f"  Payload size: {len(json.dumps(payload)) / 1024:.1f} KB")
+        # Thử nhiều payload format
+        payloads_to_try = [
+            # Format 1: Original
+            {"imageInput": {"rawImageBytes": raw_bytes}},
+            # Format 2: With mime type
+            {"imageInput": {"rawImageBytes": raw_bytes, "mimeType": mime_type}},
+            # Format 3: Direct rawImageBytes
+            {"rawImageBytes": raw_bytes},
+            # Format 4: image field
+            {"image": {"rawImageBytes": raw_bytes}},
+            # Format 5: bytesBase64Encoded
+            {"imageInput": {"bytesBase64Encoded": raw_bytes}},
+        ]
+
         self.log(f"  Token: {self.creds.get('token', '')[:30]}...")
         self.log(f"  x-browser-validation: {'✓' if self.creds.get('xBrowserValidation') else '✗'}")
 
+        for i, payload in enumerate(payloads_to_try):
+            self.log(f"  Trying format {i+1}...")
+
+            try:
+                # Try both content types
+                for ct in ["text/plain;charset=UTF-8", "application/json"]:
+                    headers = {"Content-Type": ct}
+
+                    if ct == "application/json":
+                        resp = self.session.post(url, json=payload, headers=headers, timeout=60)
+                    else:
+                        resp = self.session.post(url, data=json.dumps(payload), headers=headers, timeout=60)
+
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        media_id = data.get("mediaGenerationId", {}).get("mediaGenerationId")
+                        if media_id:
+                            self.log(f"  ✓ SUCCESS with format {i+1}, CT: {ct}")
+                            self.log(f"  ✓ mediaId: {media_id[:40]}...")
+                            return media_id
+                        # Try other response structures
+                        media_id = data.get("mediaId") or data.get("id")
+                        if media_id:
+                            self.log(f"  ✓ mediaId (alt): {media_id[:40]}...")
+                            return media_id
+
+            except Exception as e:
+                continue
+
+        # All failed - show last error
+        self.log(f"  ✗ All formats failed")
         try:
-            resp = self.session.post(url, data=json.dumps(payload), timeout=120)
-
-            self.log(f"  Response status: {resp.status_code}")
-
-            if resp.status_code == 200:
-                data = resp.json()
-                media_id = data.get("mediaGenerationId", {}).get("mediaGenerationId")
-                if media_id:
-                    self.log(f"  ✓ mediaId: {media_id[:40]}...")
-                    return media_id
-                else:
-                    self.log(f"  ✗ No mediaId in response: {json.dumps(data)[:200]}")
-                    return None
-            else:
-                self.log(f"  ✗ Upload failed: {resp.status_code}")
-                self.log(f"  Response: {resp.text[:500]}")
-                return None
-        except Exception as e:
-            self.log(f"  ✗ Error: {e}")
-            return None
+            resp = self.session.post(url, json=payloads_to_try[0], timeout=60)
+            self.log(f"  Last response: {resp.status_code} - {resp.text[:300]}")
+        except:
+            pass
+        return None
 
     def generate_video(self, media_id: str, prompt: str) -> Optional[List[Dict]]:
         """Generate video → operations."""
