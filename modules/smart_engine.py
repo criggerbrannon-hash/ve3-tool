@@ -1171,15 +1171,20 @@ class SmartEngine:
     def _compose_video(self, proj_dir: Path, excel_path: Path, name: str) -> Optional[Path]:
         """
         Tự động ghép video từ ảnh + voice + SRT.
-
-        Sử dụng thời gian từ Excel (Director's Shooting Plan):
-        - start_time: thời điểm bắt đầu hiển thị ảnh
-        - Thời lượng mỗi ảnh = start_time của ảnh tiếp theo - start_time hiện tại
+        Đọc trực tiếp từ Excel format của prompts generator.
         """
+        import subprocess
+        import openpyxl
+        import tempfile
+
+        # Check FFmpeg
         try:
-            from modules.video_composer import VideoComposer, VideoConfig
-        except ImportError:
-            self.log("  Video composer not available. Cai FFmpeg truoc.", "WARN")
+            result = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True)
+            if result.returncode != 0:
+                self.log("  FFmpeg khong hoat dong!", "ERROR")
+                return None
+        except FileNotFoundError:
+            self.log("  FFmpeg chua cai! https://ffmpeg.org/download.html", "ERROR")
             return None
 
         # Tìm voice file
@@ -1194,34 +1199,187 @@ class SmartEngine:
         srt_path = srt_files[0] if srt_files else None
 
         output_path = proj_dir / f"{name}_final.mp4"
+        img_dir = proj_dir / "img"
 
         self.log(f"  Voice: {voice_path.name}")
         self.log(f"  SRT: {srt_path.name if srt_path else 'None'}")
         self.log(f"  Excel: {excel_path.name}")
 
         try:
-            config = VideoConfig(
-                width=1920,
-                height=1080,
-                fps=30,
-                audio_codec='aac'
-            )
-            composer = VideoComposer(config)
+            # 1. Load scenes từ Excel (Scenes sheet)
+            wb = openpyxl.load_workbook(excel_path)
 
-            if composer.compose_video(str(excel_path), str(voice_path), str(output_path), str(srt_path) if srt_path else None):
-                return output_path
-            else:
-                self.log("  Ghep video that bai!", "ERROR")
+            # Tìm sheet Scenes
+            scenes_sheet = None
+            for sheet_name in wb.sheetnames:
+                if 'scene' in sheet_name.lower():
+                    scenes_sheet = wb[sheet_name]
+                    break
+
+            if not scenes_sheet:
+                self.log("  Khong tim thay sheet 'Scenes' trong Excel!", "ERROR")
                 return None
 
-        except RuntimeError as e:
-            # FFmpeg not found
-            self.log(f"  {e}", "ERROR")
-            self.log("  Hay cai FFmpeg: https://ffmpeg.org/download.html", "WARN")
-            return None
+            # Đọc headers
+            headers = [cell.value for cell in scenes_sheet[1]]
+            self.log(f"  Headers: {headers[:5]}...")
+
+            # Tìm cột cần thiết
+            id_col = start_col = None
+            for i, h in enumerate(headers):
+                if h is None:
+                    continue
+                h_lower = str(h).lower()
+                if 'id' in h_lower and id_col is None:
+                    id_col = i
+                if 'start' in h_lower and 'time' in h_lower:
+                    start_col = i
+
+            if id_col is None:
+                self.log("  Khong tim thay cot ID!", "ERROR")
+                return None
+
+            # 2. Load images với timestamps
+            images = []
+            for row in scenes_sheet.iter_rows(min_row=2, values_only=True):
+                if row[id_col] is None:
+                    continue
+
+                scene_id = str(row[id_col]).strip()
+
+                # Chỉ lấy scenes có số (1, 2, 3...), bỏ qua nv1, loc1
+                if not scene_id.isdigit():
+                    continue
+
+                # Tìm ảnh
+                img_path = img_dir / f"{scene_id}.png"
+                if not img_path.exists():
+                    continue
+
+                # Parse start_time
+                start_time = 0.0
+                if start_col and row[start_col]:
+                    start_time = self._parse_timestamp(str(row[start_col]))
+
+                images.append({
+                    'id': scene_id,
+                    'path': str(img_path),
+                    'start': start_time
+                })
+
+            if not images:
+                self.log("  Khong tim thay anh nao trong img/ folder!", "ERROR")
+                return None
+
+            # Sắp xếp theo start_time
+            images.sort(key=lambda x: x['start'])
+            self.log(f"  Tim thay {len(images)} anh")
+
+            # 3. Tính duration cho mỗi ảnh
+            # Lấy tổng thời lượng từ voice
+            probe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                        "-of", "default=noprint_wrappers=1:nokey=1", str(voice_path)]
+            result = subprocess.run(probe_cmd, capture_output=True, text=True)
+            total_duration = float(result.stdout.strip()) if result.stdout.strip() else 60.0
+            self.log(f"  Voice duration: {total_duration:.1f}s")
+
+            # Tính duration mỗi ảnh
+            for i, img in enumerate(images):
+                if i < len(images) - 1:
+                    img['duration'] = images[i + 1]['start'] - img['start']
+                else:
+                    img['duration'] = total_duration - img['start']
+
+                # Đảm bảo duration hợp lệ
+                if img['duration'] <= 0:
+                    img['duration'] = (total_duration - img['start']) / (len(images) - i)
+
+            # 4. Tạo video với FFmpeg
+            with tempfile.TemporaryDirectory() as temp_dir:
+                # Tạo file list cho FFmpeg concat
+                list_file = Path(temp_dir) / "images.txt"
+                with open(list_file, 'w') as f:
+                    for img in images:
+                        # Escape path
+                        escaped_path = str(img['path']).replace("'", "'\\''")
+                        f.write(f"file '{escaped_path}'\n")
+                        f.write(f"duration {img['duration']}\n")
+                    # Thêm ảnh cuối một lần nữa (FFmpeg requirement)
+                    f.write(f"file '{escaped_path}'\n")
+
+                # Video không có audio
+                temp_video = Path(temp_dir) / "temp_video.mp4"
+
+                self.log("  Dang ghep anh thanh video...")
+                cmd1 = [
+                    "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                    "-i", str(list_file),
+                    "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                    "-r", "30", str(temp_video)
+                ]
+                result = subprocess.run(cmd1, capture_output=True, text=True)
+                if result.returncode != 0:
+                    self.log(f"  FFmpeg error: {result.stderr[:200]}", "ERROR")
+                    return None
+
+                # Thêm audio
+                temp_with_audio = Path(temp_dir) / "with_audio.mp4"
+                self.log("  Dang them voice...")
+                cmd2 = [
+                    "ffmpeg", "-y",
+                    "-i", str(temp_video),
+                    "-i", str(voice_path),
+                    "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                    "-shortest", str(temp_with_audio)
+                ]
+                result = subprocess.run(cmd2, capture_output=True, text=True)
+                if result.returncode != 0:
+                    self.log(f"  FFmpeg error: {result.stderr[:200]}", "ERROR")
+                    return None
+
+                # Burn subtitles nếu có
+                if srt_path and srt_path.exists():
+                    self.log("  Dang burn phu de...")
+                    # Escape SRT path cho FFmpeg filter
+                    srt_escaped = str(srt_path).replace('\\', '/').replace(':', '\\:')
+                    cmd3 = [
+                        "ffmpeg", "-y",
+                        "-i", str(temp_with_audio),
+                        "-vf", f"subtitles='{srt_escaped}'",
+                        "-c:a", "copy", str(output_path)
+                    ]
+                    result = subprocess.run(cmd3, capture_output=True, text=True)
+                    if result.returncode != 0:
+                        self.log(f"  Subtitle burn failed, copy without subs", "WARN")
+                        import shutil
+                        shutil.copy(temp_with_audio, output_path)
+                else:
+                    import shutil
+                    shutil.copy(temp_with_audio, output_path)
+
+            self.log(f"  Video hoan thanh: {output_path.name}", "OK")
+            return output_path
+
         except Exception as e:
             self.log(f"  Video compose error: {e}", "ERROR")
+            import traceback
+            traceback.print_exc()
             return None
+
+    def _parse_timestamp(self, timestamp: str) -> float:
+        """Parse timestamp SRT format (00:01:23,456) sang giây."""
+        if not timestamp:
+            return 0.0
+        timestamp = timestamp.replace(",", ".")
+        parts = timestamp.split(":")
+        if len(parts) == 3:
+            h, m, s = parts
+            return int(h) * 3600 + int(m) * 60 + float(s)
+        elif len(parts) == 2:
+            m, s = parts
+            return int(m) * 60 + float(s)
+        return float(timestamp) if timestamp else 0.0
 
     def _load_prompts(self, excel_path: Path, proj_dir: Path) -> List[Dict]:
         """Load prompts tu Excel - doc TAT CA sheets."""
