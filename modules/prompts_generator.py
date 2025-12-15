@@ -85,8 +85,13 @@ class MultiAIClient:
         ollama_config = config.get("ollama", {})
         self.ollama_model = config.get("ollama_model") or ollama_config.get("model", "gemma3:27b")
         self.ollama_endpoint = config.get("ollama_endpoint") or ollama_config.get("endpoint", "http://localhost:11434")
-        self.ollama_priority = config.get("ollama_priority") or ollama_config.get("priority", False)
+        self.ollama_priority = config.get("ollama_priority", False) or ollama_config.get("priority", False)
         self.ollama_available = False
+
+        # DEBUG: Log ollama config
+        print(f"[DEBUG] ollama_model: {self.ollama_model}")
+        print(f"[DEBUG] ollama_priority: {self.ollama_priority}")
+        print(f"[DEBUG] config keys: {list(config.keys())}")
 
         self.deepseek_index = 0
         self.groq_index = 0
