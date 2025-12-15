@@ -200,54 +200,6 @@ class MultiAIClient:
         except:
             return False
 
-    def _is_child_character(self, char_id: str) -> bool:
-        """
-        Check if a character ID represents a child (cannot use reference image).
-        Children cause API policy violations when used as reference images.
-
-        Child patterns:
-        - nvc1: narrator as child
-        - IDs ending with numbers that indicate child versions
-        - Or any ID marked with is_child=true in analyze_story
-        """
-        if not char_id:
-            return False
-
-        # Remove .png extension if present
-        char_id_clean = char_id.replace('.png', '').lower()
-
-        # Known child character patterns
-        child_patterns = ['nvc1', 'nv1c', 'child']
-
-        for pattern in child_patterns:
-            if pattern in char_id_clean:
-                return True
-
-        return False
-
-    def _filter_children_from_refs(self, ref_files: list) -> list:
-        """
-        Filter out child characters from reference_files list.
-        Children should be described inline in img_prompt, not referenced.
-
-        Args:
-            ref_files: List of reference file names (e.g., ["nvc.png", "nvc1.png", "loc.png"])
-
-        Returns:
-            Filtered list without child characters
-        """
-        if not ref_files:
-            return []
-
-        filtered = []
-        for ref in ref_files:
-            if self._is_child_character(ref):
-                self.logger.info(f"  -> Filtered out child character from references: {ref}")
-                continue
-            filtered.append(ref)
-
-        return filtered
-
     def _test_groq_key(self, key: str) -> bool:
         """Test Groq key với request nhỏ."""
         try:
@@ -815,6 +767,54 @@ class PromptGenerator:
         self.parallel_enabled = settings.get("parallel_enabled", True)
         self.max_parallel_batches = settings.get("max_parallel_batches", 3)  # Parallel batch processing
         self.batch_size = settings.get("prompt_batch_size", 10)  # Scenes per batch
+
+    def _is_child_character(self, char_id: str) -> bool:
+        """
+        Check if a character ID represents a child (cannot use reference image).
+        Children cause API policy violations when used as reference images.
+
+        Child patterns:
+        - nvc1: narrator as child
+        - IDs ending with numbers that indicate child versions
+        - Or any ID marked with is_child=true in analyze_story
+        """
+        if not char_id:
+            return False
+
+        # Remove .png extension if present
+        char_id_clean = char_id.replace('.png', '').lower()
+
+        # Known child character patterns
+        child_patterns = ['nvc1', 'nv1c', 'child']
+
+        for pattern in child_patterns:
+            if pattern in char_id_clean:
+                return True
+
+        return False
+
+    def _filter_children_from_refs(self, ref_files: list) -> list:
+        """
+        Filter out child characters from reference_files list.
+        Children should be described inline in img_prompt, not referenced.
+
+        Args:
+            ref_files: List of reference file names (e.g., ["nvc.png", "nvc1.png", "loc.png"])
+
+        Returns:
+            Filtered list without child characters
+        """
+        if not ref_files:
+            return []
+
+        filtered = []
+        for ref in ref_files:
+            if self._is_child_character(ref):
+                self.logger.info(f"  -> Filtered out child character from references: {ref}")
+                continue
+            filtered.append(ref)
+
+        return filtered
 
     def _generate_content(self, prompt: str, temperature: float = 0.7, max_tokens: int = 8192) -> str:
         """Generate content using available AI providers."""
