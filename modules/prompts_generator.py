@@ -922,11 +922,29 @@ class PromptGenerator:
         if directors_treatment:
             self.logger.info(f"[Director's Treatment] Story parts: {len(directors_treatment.get('story_parts', []))}")
 
-        # Step 2: Chia scene THÔNG MINH theo nội dung (dựa trên Director's Treatment)
-        self.logger.info("Chia scene theo nội dung (AI Smart Division)...")
-        scenes_data = self._smart_divide_scenes(srt_entries, characters, locations, directors_treatment, global_style)
+        # Step 2: DIRECTOR'S SHOOTING PLAN - Đạo diễn lên kế hoạch quay
+        self.logger.info("=" * 50)
+        self.logger.info("Step 2: DIRECTOR'S SHOOTING PLAN - Đạo diễn quyết định ảnh!")
+        self.logger.info("=" * 50)
 
-        self.logger.info(f"Chia thành {len(scenes_data)} scenes")
+        directors_shooting = self._create_directors_shooting_plan(
+            full_story, srt_entries, characters, locations, global_style
+        )
+
+        using_director_prompts = False  # Flag để biết có dùng prompts từ đạo diễn không
+
+        if directors_shooting and directors_shooting.get("shooting_plan"):
+            # Dùng kế hoạch quay từ đạo diễn
+            scenes_data = self._convert_shooting_plan_to_scenes(directors_shooting["shooting_plan"])
+            using_director_prompts = True
+            self.logger.info(f"[Director] ✓ Sử dụng {len(scenes_data)} shots từ đạo diễn")
+        else:
+            # Fallback: Dùng smart_divide_scenes cũ
+            self.logger.warning("[Director] Không có kế hoạch quay, sử dụng smart_divide_scenes...")
+            scenes_data = self._smart_divide_scenes(srt_entries, characters, locations, directors_treatment, global_style)
+            using_director_prompts = False
+
+        self.logger.info(f"Tổng cộng {len(scenes_data)} scenes")
 
         # Step 3: Tạo prompts cho từng batch scenes (PARALLEL)
         self.logger.info("=" * 50)
@@ -937,75 +955,94 @@ class PromptGenerator:
             self.logger.error("KHÔNG CÓ SCENES DATA! Dừng.")
             return False
 
-        # Chia scenes thành batches để tránh vượt quá context limit
-        batch_size = self.batch_size
-        batches = []
-        for i in range(0, len(scenes_data), batch_size):
-            batches.append(scenes_data[i:i + batch_size])
-
-        total_batches = len(batches)
-        self.logger.info(f"Chia thanh {total_batches} batches, moi batch {batch_size} scenes")
-
         all_scene_prompts = []
 
-        if self.parallel_enabled and total_batches > 1:
-            # PARALLEL PROCESSING: Process multiple batches concurrently
-            self.logger.info(f"[Parallel] Xu ly {total_batches} batches song song (max {self.max_parallel_batches} workers)...")
-
-            def process_batch(batch_info: Tuple[int, List]) -> Tuple[int, List]:
-                """Process single batch and return (batch_idx, prompts)."""
-                batch_idx, batch = batch_info
-                prompts = self._generate_scene_prompts(
-                    characters, batch, context_lock,
-                    locations=locations,
-                    global_style_override=global_style
-                )
-                return (batch_idx, prompts)
-
-            # Results placeholder (preserve order)
-            batch_results = [None] * total_batches
-
-            with ThreadPoolExecutor(max_workers=self.max_parallel_batches) as executor:
-                futures = [
-                    executor.submit(process_batch, (i, batch))
-                    for i, batch in enumerate(batches)
-                ]
-
-                # Process as completed with progress
-                completed = 0
-                for future in as_completed(futures):
-                    try:
-                        batch_idx, prompts = future.result()
-                        batch_results[batch_idx] = prompts
-                        completed += 1
-                        print(f"[Parallel] Batch {completed}/{total_batches} hoan thanh")
-                    except Exception as e:
-                        self.logger.error(f"Batch failed: {e}")
-
-            # Flatten results in order
-            for prompts in batch_results:
-                if prompts:
-                    all_scene_prompts.extend(prompts)
-                else:
-                    # Batch failed, add empty prompts
-                    self.logger.warning("Some batch failed, using empty prompts")
-
-            print(f"[Parallel] Hoan thanh {len(all_scene_prompts)} scene prompts")
+        # === NẾU ĐẠO DIỄN ĐÃ TẠO PROMPTS → DÙ LUÔN, KHÔNG CẦN GỌI AI NỮA ===
+        if using_director_prompts:
+            self.logger.info("[Director Flow] Đạo diễn đã tạo prompts! Sử dụng trực tiếp...")
+            for scene in scenes_data:
+                # Lấy prompts từ scene (đạo diễn đã điền)
+                all_scene_prompts.append({
+                    "img_prompt": scene.get("img_prompt", ""),
+                    "video_prompt": scene.get("img_prompt", ""),  # Dùng chung img_prompt cho video
+                    "characters_used": scene.get("characters_in_scene", []),
+                    "location_used": scene.get("location_id", ""),
+                    "reference_files": scene.get("reference_files", []),
+                    "shot_type": scene.get("shot_type", ""),
+                    "camera_angle": scene.get("camera_angle", ""),
+                })
+            self.logger.info(f"[Director Flow] ✓ Lấy {len(all_scene_prompts)} prompts từ đạo diễn")
         else:
-            # SEQUENTIAL PROCESSING (fallback)
-            for i, batch in enumerate(batches):
-                self.logger.info(f"Xu ly batch {i + 1}/{total_batches}")
+            # === FLOW CŨ: Gọi AI tạo prompts ===
+            self.logger.info("[Legacy Flow] Tạo prompts bằng AI...")
 
-                scene_prompts = self._generate_scene_prompts(
-                    characters, batch, context_lock,
-                    locations=locations,
-                    global_style_override=global_style
-                )
-                all_scene_prompts.extend(scene_prompts)
+            # Chia scenes thành batches để tránh vượt quá context limit
+            batch_size = self.batch_size
+            batches = []
+            for i in range(0, len(scenes_data), batch_size):
+                batches.append(scenes_data[i:i + batch_size])
 
-                # Rate limiting
-                if i + 1 < total_batches:
-                    time.sleep(2)  # Tránh rate limit
+            total_batches = len(batches)
+            self.logger.info(f"Chia thanh {total_batches} batches, moi batch {batch_size} scenes")
+
+            if self.parallel_enabled and total_batches > 1:
+                # PARALLEL PROCESSING: Process multiple batches concurrently
+                self.logger.info(f"[Parallel] Xu ly {total_batches} batches song song (max {self.max_parallel_batches} workers)...")
+
+                def process_batch(batch_info: Tuple[int, List]) -> Tuple[int, List]:
+                    """Process single batch and return (batch_idx, prompts)."""
+                    batch_idx, batch = batch_info
+                    prompts = self._generate_scene_prompts(
+                        characters, batch, context_lock,
+                        locations=locations,
+                        global_style_override=global_style
+                    )
+                    return (batch_idx, prompts)
+
+                # Results placeholder (preserve order)
+                batch_results = [None] * total_batches
+
+                with ThreadPoolExecutor(max_workers=self.max_parallel_batches) as executor:
+                    futures = [
+                        executor.submit(process_batch, (i, batch))
+                        for i, batch in enumerate(batches)
+                    ]
+
+                    # Process as completed with progress
+                    completed = 0
+                    for future in as_completed(futures):
+                        try:
+                            batch_idx, prompts = future.result()
+                            batch_results[batch_idx] = prompts
+                            completed += 1
+                            print(f"[Parallel] Batch {completed}/{total_batches} hoan thanh")
+                        except Exception as e:
+                            self.logger.error(f"Batch failed: {e}")
+
+                # Flatten results in order
+                for prompts in batch_results:
+                    if prompts:
+                        all_scene_prompts.extend(prompts)
+                    else:
+                        # Batch failed, add empty prompts
+                        self.logger.warning("Some batch failed, using empty prompts")
+
+                print(f"[Parallel] Hoan thanh {len(all_scene_prompts)} scene prompts")
+            else:
+                # SEQUENTIAL PROCESSING (fallback)
+                for i, batch in enumerate(batches):
+                    self.logger.info(f"Xu ly batch {i + 1}/{total_batches}")
+
+                    scene_prompts = self._generate_scene_prompts(
+                        characters, batch, context_lock,
+                        locations=locations,
+                        global_style_override=global_style
+                    )
+                    all_scene_prompts.extend(scene_prompts)
+
+                    # Rate limiting
+                    if i + 1 < total_batches:
+                        time.sleep(2)  # Tránh rate limit
 
         # === VALIDATE: Đảm bảo all_scene_prompts có đủ số lượng như scenes_data ===
         self.logger.info(f"Scenes: {len(scenes_data)}, Prompts: {len(all_scene_prompts)}")
@@ -1282,6 +1319,154 @@ class PromptGenerator:
         except Exception as e:
             self.logger.error(f"[Director's Treatment] Failed: {e}")
             return None
+
+    def _create_directors_shooting_plan(
+        self,
+        story_text: str,
+        srt_entries: List,
+        characters: List,
+        locations: List,
+        global_style: str
+    ) -> Optional[Dict]:
+        """
+        Tạo Director's Shooting Plan - Kế hoạch quay phim chi tiết.
+        ĐÂY LÀ BƯỚC QUAN TRỌNG NHẤT - Đạo diễn quyết định tạo bao nhiêu ảnh và ảnh gì!
+
+        Args:
+            story_text: Toàn bộ nội dung câu chuyện
+            srt_entries: List các SrtEntry với timestamps
+            characters: List các Character đã phân tích
+            locations: List các Location đã phân tích
+            global_style: Global style string
+
+        Returns:
+            Dict với shooting_plan chứa tất cả shots đã lên kế hoạch
+        """
+        try:
+            # Load prompt template
+            prompt_template = self._load_prompt_template("directors_shooting_plan")
+            if not prompt_template:
+                self.logger.warning("[Director's Shooting Plan] Không tìm thấy prompt template")
+                return None
+
+            # Format SRT segments với timestamps
+            srt_segments = "\n".join([
+                f"[{self._format_timedelta(e.start)} - {self._format_timedelta(e.end)}] \"{e.text[:200]}\""
+                for e in srt_entries
+            ])
+
+            # Format characters info
+            chars_info = "NHÂN VẬT:\n" + "\n".join([
+                f"- {c.id}: {c.name} - {c.character_lock or ''}"
+                for c in characters
+            ]) if characters else "Không có thông tin nhân vật"
+
+            # Format locations info
+            locs_info = "BỐI CẢNH:\n" + "\n".join([
+                f"- {loc.id}: {loc.name} - {loc.location_lock or ''}"
+                for loc in locations
+            ]) if locations else "Không có thông tin bối cảnh"
+
+            # Build prompt
+            prompt = prompt_template.format(
+                story_text=story_text[:10000],
+                srt_segments=srt_segments[:15000],
+                characters_info=chars_info,
+                locations_info=locs_info,
+                global_style=global_style or get_global_style()
+            )
+
+            self.logger.info("=" * 50)
+            self.logger.info("[Director's Shooting Plan] Đạo diễn đang lên kế hoạch quay...")
+            self.logger.info("=" * 50)
+
+            response = self._generate_content(prompt, temperature=0.4, max_tokens=16000)
+            json_data = self._extract_json(response)
+
+            if not json_data or "shooting_plan" not in json_data:
+                self.logger.warning("[Director's Shooting Plan] AI không trả về shooting_plan")
+                return None
+
+            shooting_plan = json_data["shooting_plan"]
+
+            # Log summary
+            self.logger.info(f"[Director's Shooting Plan] Tổng thời lượng: {shooting_plan.get('total_duration', 'N/A')}")
+            self.logger.info(f"[Director's Shooting Plan] Tổng số ảnh: {shooting_plan.get('total_images', 0)}")
+
+            total_shots = 0
+            for part in shooting_plan.get("story_parts", []):
+                shots_count = len(part.get("shots", []))
+                total_shots += shots_count
+                self.logger.info(f"  Part {part.get('part_number')}: {part.get('part_name')} - {shots_count} shots")
+
+            self.logger.info(f"[Director's Shooting Plan] Tổng shots thực tế: {total_shots}")
+
+            return json_data
+
+        except Exception as e:
+            self.logger.error(f"[Director's Shooting Plan] Failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def _format_timedelta(self, td) -> str:
+        """Format timedelta thành HH:MM:SS"""
+        if hasattr(td, 'total_seconds'):
+            total_seconds = int(td.total_seconds())
+            hours = total_seconds // 3600
+            minutes = (total_seconds % 3600) // 60
+            seconds = total_seconds % 60
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        return str(td)
+
+    def _convert_shooting_plan_to_scenes(self, shooting_plan: Dict) -> List[Dict[str, Any]]:
+        """
+        Chuyển đổi shooting_plan từ đạo diễn thành scenes data.
+
+        Args:
+            shooting_plan: Output từ directors_shooting_plan
+
+        Returns:
+            List scenes với format tương thích với hệ thống hiện tại
+        """
+        scenes = []
+        scene_id = 1
+
+        for part in shooting_plan.get("story_parts", []):
+            for shot in part.get("shots", []):
+                # Parse srt_range để lấy timestamps
+                srt_range = shot.get("srt_range", "00:00 - 00:08")
+                times = srt_range.split(" - ")
+                start_time = times[0] if len(times) > 0 else "00:00:00"
+                end_time = times[1] if len(times) > 1 else "00:00:08"
+
+                scene = {
+                    "scene_id": scene_id,
+                    "srt_start": start_time,
+                    "srt_end": end_time,
+                    "start_time": start_time,
+                    "end_time": end_time,
+                    "text": shot.get("srt_text", ""),
+                    "scene_type": part.get("part_name", "SCENE"),
+                    "location_id": part.get("location", "").split(",")[0].strip() if part.get("location") else "",
+                    "characters_in_scene": shot.get("characters_in_shot", []),
+                    "reference_files": shot.get("reference_files", []),
+                    "img_prompt": shot.get("img_prompt", ""),
+                    "shot_type": shot.get("shot_type", ""),
+                    "camera_angle": shot.get("camera_angle", ""),
+                    "visual_description": shot.get("visual_description", ""),
+                    # Đánh dấu đã có prompt từ đạo diễn
+                    "from_director": True
+                }
+
+                # Filter children from reference_files
+                scene["reference_files"] = self._filter_children_from_refs(scene["reference_files"])
+
+                scenes.append(scene)
+                scene_id += 1
+
+        self.logger.info(f"[Director] Đã chuyển đổi {len(scenes)} shots thành scenes")
+        return scenes
 
     def _load_prompt_template(self, prompt_name: str) -> Optional[str]:
         """Load a specific prompt template from prompts.yaml"""
