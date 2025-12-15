@@ -1046,13 +1046,40 @@ smart_divide_scenes: |
   - SUCCESS content → proud, accomplished, satisfied (OK to smile here)
   - CHILDHOOD HAPPY → nostalgic warmth, innocent joy (OK to smile here)
 
-  ## 🎬 SHOT TYPE RULES - CRITICAL FOR CINEMATIC VARIETY!
+  ## 🔥🔥🔥 HOOK (Scene 1-3) - MOST IMPORTANT! VIEWER DECIDES TO STAY OR LEAVE! 🔥🔥🔥
 
-  ### HOOK (First 3-5 scenes) - MUST BE DRAMATIC!
-  - Scene 1: WIDE LOW ANGLE or EXTREME WIDE (imposing, dramatic, NOT Medium!)
-  - Scene 2: CLOSE-UP on face (emotion, shock, despair)
-  - Scene 3: DETAIL shot (trembling hands, documents, symbolic object)
-  - ❌ BANNED for HOOK: "Medium shot person sitting/standing" - TOO BORING!
+  ### HOOK GOAL: Make viewer think "WTF? I MUST know what happens next!"
+
+  ### SCENE 1 - THE GRABBER (CRITICAL!!!):
+  - Shot: WIDE LOW ANGLE or EXTREME WIDE
+  - ⚠️ MUST INCLUDE CHARACTER! NOT just empty location!
+  - Character must look: DEVASTATED, ISOLATED, OVERWHELMED
+  - Environment TOWERS over character (imposing, dramatic contrast)
+  - Emotion: Shock, despair, "rock bottom" moment
+  - Example: "TINY figure hunched ALONE on MASSIVE courthouse steps, documents SCATTERED"
+  - ❌ WRONG: Just courthouse without person
+  - ❌ WRONG: Person standing normally
+
+  ### SCENE 2 - THE EMOTION:
+  - Shot: EXTREME CLOSE-UP on FACE
+  - Show RAW emotion: tears welling, jaw clenched, trembling lips
+  - Eyes must tell the story: pain, betrayal, disbelief
+  - Example: "Face filling frame, eyes RED and WELLING with tears, TREMBLING lips"
+
+  ### SCENE 3 - THE DETAIL:
+  - Shot: EXTREME CLOSE-UP on symbolic object/action
+  - Hands trembling, clutching documents, wedding ring, etc.
+  - Creates mystery: "What happened? What are those papers?"
+  - Example: "TREMBLING hands CLUTCHING crumpled legal documents, knuckles WHITE"
+
+  ### ❌ BANNED for HOOK:
+  - Empty location shots (boring!)
+  - Medium shot person sitting/standing calmly
+  - Neutral expressions
+  - Person looking at camera
+  - "Smiling" or any positive emotion (this is drama!)
+
+  ## 🎬 SHOT TYPE RULES - CRITICAL FOR CINEMATIC VARIETY!
 
   ### SHOT TYPE per 5 scenes (MANDATORY MIX!):
   | Scene # | Required Shot Type | Purpose |
@@ -1248,9 +1275,15 @@ smart_divide_scenes: |
   [ ] STYLE CONSISTENCY: Every img_prompt ends with GLOBAL STYLE!
   [ ] YOUTUBE CTA: Keep story location + emotion! NO smiling, NO plain background!
 
-  ## 🎬 SHOT TYPE CHECKLIST (CRITICAL!):
-  [ ] Scene 1 (HOOK): WIDE or LOW ANGLE - NOT MEDIUM!
-  [ ] Scene 2 (HOOK): CLOSE-UP for emotion
+  ## 🔥 HOOK CHECKLIST (Scene 1-3) - MOST CRITICAL!:
+  [ ] Scene 1: WIDE LOW ANGLE with CHARACTER visible (NOT empty location!)
+  [ ] Scene 1: Character looks DEVASTATED, ISOLATED, OVERWHELMED
+  [ ] Scene 2: EXTREME CLOSE-UP on FACE with RAW emotion (tears, pain)
+  [ ] Scene 3: EXTREME CLOSE-UP on DETAIL (trembling hands, documents)
+  [ ] NO smiling or neutral expressions in HOOK!
+  [ ] HOOK creates question: "WTF happened? I must know!"
+
+  ## 🎬 SHOT TYPE CHECKLIST:
   [ ] NO 3+ MEDIUM shots in a row!
   [ ] Per 10 scenes: 2+ WIDE, 2+ CLOSE-UP, 1+ EXTREME CLOSE-UP
   [ ] Maximum 3 MEDIUM shots per 10 scenes!
