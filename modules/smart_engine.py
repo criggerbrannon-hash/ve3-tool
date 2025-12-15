@@ -1300,15 +1300,15 @@ class SmartEngine:
                 list_file = Path(temp_dir) / "images.txt"
                 with open(list_file, 'w', encoding='utf-8') as f:
                     for img in images:
-                        # Windows: dùng forward slash cho FFmpeg
-                        escaped_path = str(img['path']).replace('\\', '/')
-                        f.write(f"file '{escaped_path}'\n")
+                        # Dùng ABSOLUTE path và forward slash cho FFmpeg
+                        abs_path = str(Path(img['path']).resolve()).replace('\\', '/')
+                        f.write(f"file '{abs_path}'\n")
                         f.write(f"duration {img['duration']:.3f}\n")
                     # Thêm ảnh cuối một lần nữa (FFmpeg requirement)
-                    f.write(f"file '{escaped_path}'\n")
+                    f.write(f"file '{abs_path}'\n")
 
-                # Debug: show first image
-                self.log(f"  First image: {images[0]['path']}")
+                # Debug: show first image (absolute path)
+                self.log(f"  First image: {Path(images[0]['path']).resolve()}")
                 self.log(f"  Duration: {images[0]['duration']:.2f}s")
 
                 # Video không có audio
