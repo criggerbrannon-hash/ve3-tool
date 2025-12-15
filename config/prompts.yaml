@@ -652,7 +652,10 @@ smart_divide_scenes: |
       Keywords: "subscribe", "like button", "comment"
       → scene_type: YOUTUBE_CTA
       → characters: ["nvc"]
-      → SHOW: Narrator speaking to camera
+      → location: KEEP CURRENT STORY LOCATION (don't use "plain background"!)
+      → SHOW: Narrator at SAME LOCATION, same SERIOUS expression
+      → EMOTION: Match story context! If story is heavy → SERIOUS face, NOT smiling!
+      → NOTE: CTA does NOT mean happy! Keep the emotional weight of the story!
 
   ## !!! EMOTION MATCHING - CRITICAL !!!
 
@@ -778,9 +781,22 @@ smart_divide_scenes: |
         "characters_in_scene": ["nvc"],
         "reference_files": ["nvc.png", "loc_courthouse.png"],
         "img_prompt": "Medium shot. 30yo man CLUTCHING legal documents, SHOCKED expression, disbelief in eyes, jaw tense. Courthouse steps. Overcast sky. Cinematic."
+      }},
+      {{
+        "scene_id": 9,
+        "srt_text": "Hit that like button and subscribe if you want to hear how this story ends...",
+        "scene_type": "YOUTUBE_CTA",
+        "location_id": "loc_courthouse",
+        "characters_in_scene": ["nvc"],
+        "reference_files": ["nvc.png", "loc_courthouse.png"],
+        "img_prompt": "Medium shot. 30yo man SITTING on courthouse steps, SERIOUS expression, looking reflective, documents beside him. Courthouse exterior, overcast sky. Story context maintained. Cinematic."
       }}
     ]
   }}
+
+  ## YOUTUBE CTA - WRONG vs RIGHT:
+  WRONG: "subscribe..." → SMILING, plain background, happy mood
+  RIGHT: "subscribe..." → SAME LOCATION, SAME EMOTION as story, serious/reflective
 
   ## FINAL CHECKLIST:
   [ ] Every CHILDHOOD memory → nv1_young (32yo mother) NOT nv1!
@@ -794,6 +810,7 @@ smart_divide_scenes: |
   [ ] Mother versions: CHILDHOOD=nv1_young(32), ADULT=nv1(55)!
   [ ] CHILDREN: NOT in reference_files! Describe FULLY in img_prompt!
   [ ] STYLE CONSISTENCY: Every img_prompt ends with GLOBAL STYLE!
+  [ ] YOUTUBE CTA: Keep story location + emotion! NO smiling, NO plain background!
 
   OUTPUT: JSON only, NO markdown code blocks.
 
