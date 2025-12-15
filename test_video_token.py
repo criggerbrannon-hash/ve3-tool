@@ -821,7 +821,7 @@ class VideoAPITest:
             self.log(f"Error: {e}")
             return {"success": False, "error": str(e)}
 
-    def check_video_status(self, generation_ids: list) -> Dict[str, Any]:
+    def check_video_status(self, operation_names: list) -> Dict[str, Any]:
         """Kiểm tra status của video đang generate."""
         endpoint = "/v1/video:batchCheckAsyncVideoGenerationStatus"
         url = f"{self.BASE_URL}{endpoint}"
@@ -832,10 +832,8 @@ class VideoAPITest:
                 "projectId": self.project_id,
                 "tool": "PINHOLE"
             },
-            "generationIds": generation_ids
+            "operationNames": operation_names
         }
-
-        self.log(f"Checking status for {len(generation_ids)} videos...")
 
         try:
             response = self.session.post(
@@ -844,12 +842,188 @@ class VideoAPITest:
                 timeout=60
             )
 
-            return {
-                "status": response.status_code,
-                "response": response.json() if response.status_code == 200 else response.text
-            }
+            if response.status_code == 200:
+                return {
+                    "success": True,
+                    "response": response.json()
+                }
+            else:
+                return {
+                    "success": False,
+                    "status": response.status_code,
+                    "response": response.text
+                }
         except Exception as e:
-            return {"error": str(e)}
+            return {"success": False, "error": str(e)}
+
+    def wait_for_video(
+        self,
+        operation_name: str,
+        max_wait: int = 300,
+        poll_interval: int = 10
+    ) -> Dict[str, Any]:
+        """
+        Đợi video generate xong và trả về kết quả.
+
+        Args:
+            operation_name: Tên operation từ response generate
+            max_wait: Thời gian tối đa chờ (giây)
+            poll_interval: Khoảng cách giữa các lần check (giây)
+        """
+        self.log(f"Waiting for video: {operation_name}")
+        self.log(f"Max wait: {max_wait}s, poll every {poll_interval}s")
+
+        start_time = time.time()
+        attempt = 0
+
+        while time.time() - start_time < max_wait:
+            attempt += 1
+            elapsed = int(time.time() - start_time)
+            self.log(f"Check #{attempt} ({elapsed}s elapsed)...")
+
+            result = self.check_video_status([operation_name])
+
+            if not result.get("success"):
+                self.log(f"  Status check failed: {result}")
+                time.sleep(poll_interval)
+                continue
+
+            response = result.get("response", {})
+            operations = response.get("operations", [])
+
+            if operations:
+                op = operations[0]
+                status = op.get("status", "UNKNOWN")
+                self.log(f"  Status: {status}")
+
+                if status == "MEDIA_GENERATION_STATUS_COMPLETED":
+                    self.log("✓ Video generation COMPLETED!")
+                    # Extract video info
+                    video_info = op.get("generatedVideo", {})
+                    return {
+                        "success": True,
+                        "status": status,
+                        "video_info": video_info,
+                        "operation": op,
+                        "full_response": response
+                    }
+                elif status == "MEDIA_GENERATION_STATUS_FAILED":
+                    self.log("✗ Video generation FAILED!")
+                    return {
+                        "success": False,
+                        "status": status,
+                        "operation": op,
+                        "full_response": response
+                    }
+                # Still pending, continue polling
+
+            time.sleep(poll_interval)
+
+        return {
+            "success": False,
+            "status": "TIMEOUT",
+            "message": f"Video generation did not complete within {max_wait}s"
+        }
+
+    def download_video(
+        self,
+        video_url: str,
+        output_path: str
+    ) -> bool:
+        """Download video từ URL về local."""
+        self.log(f"Downloading video to: {output_path}")
+
+        try:
+            response = requests.get(video_url, timeout=120)
+
+            if response.status_code == 200:
+                with open(output_path, "wb") as f:
+                    f.write(response.content)
+                self.log(f"✓ Downloaded: {len(response.content)} bytes")
+                return True
+            else:
+                self.log(f"✗ Download failed: {response.status_code}")
+                return False
+        except Exception as e:
+            self.log(f"✗ Download error: {e}")
+            return False
+
+    def generate_and_download(
+        self,
+        media_id: str,
+        prompt: str,
+        output_path: str,
+        max_wait: int = 300
+    ) -> Dict[str, Any]:
+        """
+        Tạo video và download về local (full flow).
+
+        Args:
+            media_id: MediaID của ảnh
+            prompt: Mô tả video
+            output_path: Đường dẫn lưu video
+            max_wait: Thời gian tối đa chờ generate
+        """
+        self.log("=== FULL VIDEO GENERATION FLOW ===")
+
+        # Step 1: Generate
+        gen_result = self.generate_video_from_image(media_id, prompt)
+
+        if not gen_result.get("success"):
+            return gen_result
+
+        # Extract operation name
+        response_json = gen_result.get("response_json", {})
+        operations = response_json.get("operations", [])
+
+        if not operations:
+            return {"success": False, "error": "No operation in response"}
+
+        operation_name = operations[0].get("operation", {}).get("name")
+        if not operation_name:
+            return {"success": False, "error": "No operation name"}
+
+        self.log(f"Operation: {operation_name}")
+
+        # Step 2: Wait for completion
+        wait_result = self.wait_for_video(operation_name, max_wait)
+
+        if not wait_result.get("success"):
+            return wait_result
+
+        # Step 3: Extract video URL and download
+        video_info = wait_result.get("video_info", {})
+        video_url = video_info.get("videoUrl") or video_info.get("fifeUrl") or video_info.get("url")
+
+        if not video_url:
+            # Try to find URL in operation data
+            op = wait_result.get("operation", {})
+            video_url = op.get("videoUrl") or op.get("generatedVideo", {}).get("videoUrl")
+
+        if video_url:
+            self.log(f"Video URL: {video_url[:80]}...")
+            if self.download_video(video_url, output_path):
+                return {
+                    "success": True,
+                    "output_path": output_path,
+                    "video_url": video_url,
+                    "wait_result": wait_result
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": "Download failed",
+                    "video_url": video_url,
+                    "wait_result": wait_result
+                }
+        else:
+            self.log("⚠️ Could not find video URL in response")
+            self.log(f"Full response: {json.dumps(wait_result, indent=2)[:1000]}")
+            return {
+                "success": False,
+                "error": "No video URL found",
+                "wait_result": wait_result
+            }
 
     def generate_video_from_local_image(
         self,
@@ -984,7 +1158,7 @@ def main():
     # === STEP 2: Test Video API với mediaId đã capture ===
     print()
     print("=" * 60)
-    print("STEP 2: TEST VIDEO API")
+    print("STEP 2: TEST VIDEO API + DOWNLOAD")
     print("=" * 60)
 
     if not media_id:
@@ -999,26 +1173,55 @@ def main():
         browser_headers=browser_headers
     )
 
-    # Test với mediaId đã capture
-    video_result = api_tester.generate_video_from_image(
+    # Output path for video
+    output_dir = Path(__file__).parent / "output"
+    output_dir.mkdir(exist_ok=True)
+    output_path = str(output_dir / f"video_{time.strftime('%Y%m%d_%H%M%S')}.mp4")
+
+    print(f"Output path: {output_path}")
+    print()
+
+    # Full flow: Generate → Wait → Download
+    video_result = api_tester.generate_and_download(
         media_id=media_id,
-        prompt="A beautiful sunset over the ocean with waves crashing"
+        prompt="A beautiful sunset over the ocean with waves crashing",
+        output_path=output_path,
+        max_wait=300  # 5 minutes max
     )
 
     print()
-    print("=== VIDEO API RESULT ===")
-    print(json.dumps(video_result, indent=2, ensure_ascii=False)[:1500])
+    print("=== VIDEO RESULT ===")
+    # Don't print full response (too long)
+    result_summary = {
+        "success": video_result.get("success"),
+        "output_path": video_result.get("output_path"),
+        "video_url": video_result.get("video_url"),
+        "error": video_result.get("error"),
+        "status": video_result.get("status")
+    }
+    print(json.dumps(result_summary, indent=2, ensure_ascii=False))
 
-    # Save video result
+    # Save full result
     with open("video_api_result.json", "w", encoding="utf-8") as f:
-        json.dump(video_result, f, indent=2, ensure_ascii=False)
-    print("\n✓ Đã lưu vào video_api_result.json")
+        # Convert Path objects to strings for JSON
+        video_result_serializable = json.loads(
+            json.dumps(video_result, default=str, ensure_ascii=False)
+        )
+        json.dump(video_result_serializable, f, indent=2, ensure_ascii=False)
+    print("\n✓ Đã lưu chi tiết vào video_api_result.json")
 
     if video_result.get("success"):
-        print("\n🎉 VIDEO GENERATION REQUEST THÀNH CÔNG!")
-        print("   Video đang được generate...")
+        print(f"\n🎉 VIDEO ĐÃ TẠO THÀNH CÔNG!")
+        print(f"   📁 Saved to: {video_result.get('output_path')}")
     else:
-        print("\n⚠️  Request failed - cần kiểm tra lại headers hoặc payload")
+        error = video_result.get("error") or video_result.get("status")
+        print(f"\n⚠️  Video generation failed: {error}")
+
+        # If we have wait_result, print more details
+        wait_result = video_result.get("wait_result", {})
+        if wait_result:
+            print("\n=== DEBUG INFO ===")
+            print(json.dumps(wait_result, indent=2, default=str)[:2000])
 
     return video_result.get("success", False)
 
