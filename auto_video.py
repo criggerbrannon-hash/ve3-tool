@@ -37,7 +37,7 @@ except ImportError:
 
 
 class CredentialCapture:
-    """Capture credentials từ Chrome."""
+    """Capture credentials từ Chrome - TỰ ĐỘNG HOÀN TOÀN."""
 
     FLOW_URL = "https://labs.google/fx/vi/tools/flow"
 
@@ -56,6 +56,25 @@ class CredentialCapture:
             return True
         except Exception as e:
             self.log(f"Lỗi: {e}")
+            return False
+
+    def run_js(self, js_code: str, wait_after: float = 0.5) -> bool:
+        """Chạy JS trong DevTools."""
+        if not pag or not pyperclip:
+            return False
+        try:
+            pag.hotkey("ctrl", "shift", "j")
+            time.sleep(1)
+            pyperclip.copy(js_code)
+            time.sleep(0.2)
+            pag.hotkey("ctrl", "v")
+            time.sleep(0.2)
+            pag.press("enter")
+            time.sleep(wait_after)
+            pag.hotkey("ctrl", "shift", "j")
+            time.sleep(0.3)
+            return True
+        except:
             return False
 
     def inject_capture_script(self) -> bool:
@@ -83,17 +102,14 @@ window._captured = {
     window.fetch = function(url, opts) {
         var urlStr = url ? url.toString() : '';
 
-        // Capture từ mọi request đến aisandbox
         if(urlStr.includes('aisandbox')) {
             var hdrs = opts && opts.headers ? opts.headers : {};
 
-            // Token
             var auth = hdrs.Authorization || hdrs.authorization || '';
             if(auth.startsWith('Bearer ')) {
                 window._captured.token = auth.substring(7);
             }
 
-            // X-browser headers
             if(hdrs['x-browser-validation']) {
                 window._captured.xBrowserValidation = hdrs['x-browser-validation'];
             }
@@ -101,7 +117,6 @@ window._captured = {
                 window._captured.xClientData = hdrs['x-client-data'];
             }
 
-            // Capture video generate payload
             if(urlStr.includes('video:batchAsyncGenerateVideo') && opts && opts.body) {
                 window._captured.videoPayload = opts.body;
                 try {
@@ -114,17 +129,14 @@ window._captured = {
                         window._captured.mediaId = pd.requests[0].referenceImages[0].mediaId;
                     }
                 } catch(e) {}
-                console.log('=== CAPTURED VIDEO REQUEST ===');
             }
         }
 
         return origFetch.apply(this, arguments).then(function(resp) {
-            // Capture operations từ response
             if(urlStr.includes('video:batchAsyncGenerateVideo') && !urlStr.includes('Check')) {
                 resp.clone().json().then(function(data) {
                     if(data.operations) {
                         window._captured.operations = data.operations;
-                        console.log('=== CAPTURED OPERATIONS ===');
                     }
                 }).catch(function(){});
             }
@@ -132,8 +144,7 @@ window._captured = {
         });
     };
 
-    console.log('=== CAPTURE SCRIPT READY ===');
-    console.log('Hãy tạo 1 video thủ công để capture credentials!');
+    console.log('=== CAPTURE READY ===');
 })();
 '''
 
@@ -153,6 +164,136 @@ window._captured = {
         except Exception as e:
             self.log(f"Inject error: {e}")
             return False
+
+    def click_new_project(self) -> bool:
+        """Click 'Dự án mới'."""
+        self.log("Click 'Dự án mới'...")
+        js = '''(function(){var btns=document.querySelectorAll('button');for(var b of btns){if(b.textContent.includes('Dự án mới')){b.click();return true;}}return false;})();'''
+        return self.run_js(js)
+
+    def click_video_mode(self) -> bool:
+        """Chọn mode 'Tạo video từ các thành phần'."""
+        self.log("Chọn VIDEO mode...")
+        js = '''(async function(){
+            var dd=document.querySelector('button[role="combobox"]');
+            if(dd){
+                dd.click();
+                await new Promise(r=>setTimeout(r,800));
+                var all=document.querySelectorAll('*');
+                for(var el of all){
+                    var t=el.textContent||'';
+                    if(t.includes('Tạo video từ các thành phần')){
+                        var r=el.getBoundingClientRect();
+                        if(r.height>10 && r.height<80){
+                            el.click();
+                            return true;
+                        }
+                    }
+                }
+            }
+            return false;
+        })();'''
+        return self.run_js(js, 1.5)
+
+    def click_create_video_button(self) -> bool:
+        """Click 'Tạo một video bằng văn bản...'."""
+        self.log("Click 'Tạo một video bằng văn bản...'...")
+        js = '''(async function(){
+            await new Promise(r=>setTimeout(r,500));
+            var all=document.querySelectorAll('button, div[role="button"], span, p');
+            for(var el of all){
+                var t=el.textContent||'';
+                if(t.includes('Tạo một video bằng văn bản')){
+                    var r=el.getBoundingClientRect();
+                    if(r.height>10 && r.width>50){
+                        el.click();
+                        return true;
+                    }
+                }
+            }
+            return false;
+        })();'''
+        return self.run_js(js, 1)
+
+    def focus_and_paste_prompt(self, prompt: str) -> bool:
+        """Focus textarea và paste prompt."""
+        self.log(f"Paste prompt: {prompt[:40]}...")
+        js = '''(function(){var ta=document.querySelector('textarea');if(ta){ta.focus();ta.click();return true;}return false;})();'''
+        if not self.run_js(js):
+            return False
+        time.sleep(0.5)
+        if pyperclip:
+            pyperclip.copy(prompt)
+            pag.hotkey("ctrl", "v")
+            time.sleep(0.5)
+            return True
+        return False
+
+    def click_add_button(self) -> bool:
+        """Click nút ADD."""
+        self.log("Click ADD button...")
+        js = '''(function(){
+            var buttons = document.querySelectorAll('button');
+            for(var btn of buttons){
+                var icon = btn.querySelector('i.google-symbols');
+                if(icon && icon.textContent.trim() === 'add'){
+                    btn.click();
+                    return true;
+                }
+            }
+            return false;
+        })();'''
+        return self.run_js(js, 1)
+
+    def click_uploaded_media(self) -> bool:
+        """Click chọn ảnh đã upload."""
+        self.log("Chọn ảnh đã tải...")
+        js = '''(async function(){
+            await new Promise(r=>setTimeout(r,500));
+            var buttons = document.querySelectorAll('button');
+            for(var btn of buttons){
+                var spans = btn.querySelectorAll('span');
+                for(var span of spans){
+                    var t = span.textContent || '';
+                    if(t.includes('đã tải lên') || t.includes('chọn trước đây') || t.includes('nội dung nghe nhìn')){
+                        btn.click();
+                        return true;
+                    }
+                }
+            }
+            var mediaItems = document.querySelectorAll('[role="listitem"] button, [role="option"] button');
+            if(mediaItems.length > 0){
+                mediaItems[0].click();
+                return true;
+            }
+            return false;
+        })();'''
+        return self.run_js(js, 1.5)
+
+    def click_create_button(self) -> bool:
+        """Click nút TẠO (arrow_forward)."""
+        self.log("Click nút TẠO...")
+        js = '''(function(){
+            var buttons = document.querySelectorAll('button');
+            for(var btn of buttons){
+                var icon = btn.querySelector('i.google-symbols');
+                if(icon && icon.textContent.trim() === 'arrow_forward'){
+                    btn.click();
+                    return true;
+                }
+            }
+            for(var btn of buttons){
+                var spans = btn.querySelectorAll('span');
+                for(var span of spans){
+                    if(span.textContent.trim() === 'Tạo'){
+                        btn.click();
+                        return true;
+                    }
+                }
+            }
+            return false;
+        })();'''
+        return self.run_js(js, 1)
 
     def get_captured_data(self) -> Dict:
         """Lấy data đã capture."""
@@ -181,22 +322,18 @@ window._captured = {
         except:
             return {}
 
-    def wait_for_credentials(self, timeout: int = 180) -> Dict:
-        """
-        Đợi user tạo video thủ công và capture credentials.
-        """
-        self.log(f"Đợi bạn tạo 1 video thủ công (timeout: {timeout}s)...")
-        self.log("Sau khi video bắt đầu generate, credentials sẽ được capture.")
+    def wait_for_credentials(self, timeout: int = 120) -> Dict:
+        """Đợi capture credentials sau khi click TẠO."""
+        self.log(f"Đợi capture credentials (timeout: {timeout}s)...")
 
         start_time = time.time()
 
         while time.time() - start_time < timeout:
-            time.sleep(5)
+            time.sleep(3)
             elapsed = int(time.time() - start_time)
 
             data = self.get_captured_data()
 
-            # Check if we have all required data
             if data.get("token") and data.get("recaptchaToken"):
                 self.log(f"\n✓ Captured sau {elapsed}s!")
                 self.log(f"  Token: {data['token'][:50]}...")
@@ -211,42 +348,77 @@ window._captured = {
 
             self.log(f"Đợi... ({elapsed}s) - Token: {'✓' if data.get('token') else '✗'}, Recaptcha: {'✓' if data.get('recaptchaToken') else '✗'}")
 
-        self.log("✗ Timeout! Không capture được đủ credentials.")
+        self.log("✗ Timeout!")
         return {}
 
-    def capture(self) -> Dict:
+    def capture(self, prompt: str = "Animate this image with smooth motion") -> Dict:
         """
-        Full flow: Mở Chrome → Inject → Đợi user → Capture
+        Full flow TỰ ĐỘNG:
+        1. Mở Chrome
+        2. Inject script
+        3. Click Dự án mới
+        4. Chọn VIDEO mode
+        5. Click tạo video bằng văn bản
+        6. Paste prompt
+        7. Click ADD
+        8. Chọn ảnh đã upload
+        9. Click TẠO
+        10. Capture credentials
         """
         self.log("=" * 50)
-        self.log("CAPTURE CREDENTIALS TỪ CHROME")
+        self.log("TỰ ĐỘNG CAPTURE CREDENTIALS")
         self.log("=" * 50)
 
-        # Mở Chrome
+        # 1. Mở Chrome
         self.log("\n[1] Mở Chrome...")
         if not self.open_chrome():
             return {}
 
-        self.log("Đợi trang load (10s)...")
-        time.sleep(10)
+        self.log("Đợi trang load (12s)...")
+        time.sleep(12)
 
-        # Inject script
+        # 2. Inject script
         self.log("\n[2] Inject capture script...")
         if not self.inject_capture_script():
             return {}
+        time.sleep(1)
 
-        # Hướng dẫn user
-        print("\n" + "=" * 50)
-        print("HƯỚNG DẪN:")
-        print("1. Trong Chrome, tạo 1 dự án mới")
-        print("2. Chọn mode 'Tạo video từ các thành phần'")
-        print("3. Upload hoặc chọn 1 ảnh")
-        print("4. Nhập prompt và click TẠO")
-        print("5. Đợi tool capture credentials...")
-        print("=" * 50 + "\n")
+        # 3. Click Dự án mới
+        self.log("\n[3] Click 'Dự án mới'...")
+        self.click_new_project()
+        time.sleep(5)
 
-        # Đợi capture
-        self.log("\n[3] Đợi capture credentials...")
+        # 4. Chọn VIDEO mode
+        self.log("\n[4] Chọn VIDEO mode...")
+        self.click_video_mode()
+        time.sleep(3)
+
+        # 5. Click tạo video bằng văn bản
+        self.log("\n[5] Click 'Tạo một video bằng văn bản...'...")
+        self.click_create_video_button()
+        time.sleep(2)
+
+        # 6. Paste prompt
+        self.log("\n[6] Paste prompt...")
+        self.focus_and_paste_prompt(prompt)
+        time.sleep(1)
+
+        # 7. Click ADD
+        self.log("\n[7] Click ADD button...")
+        self.click_add_button()
+        time.sleep(2)
+
+        # 8. Chọn ảnh đã upload
+        self.log("\n[8] Chọn ảnh đã tải...")
+        self.click_uploaded_media()
+        time.sleep(2)
+
+        # 9. Click TẠO
+        self.log("\n[9] Click nút TẠO...")
+        self.click_create_button()
+
+        # 10. Đợi capture
+        self.log("\n[10] Đợi capture credentials...")
         return self.wait_for_credentials()
 
 
