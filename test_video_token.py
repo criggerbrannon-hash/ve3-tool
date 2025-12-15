@@ -86,7 +86,7 @@ class VideoTokenTest:
 
         self.log("Inject FULL capture script...")
 
-        # Script hook fetch để capture token + full request info + ALL HEADERS
+        # Script hook fetch để capture token + full request info + ALL HEADERS + STATUS CHECK
         capture_script = '''
 window._tk=null;
 window._pj=null;
@@ -97,6 +97,8 @@ window._lastResponse=null;
 window._browserHeaders={};
 window._videoEndpoint=null;
 window._videoPayload=null;
+window._statusCheckPayload=null;
+window._statusCheckEndpoint=null;
 
 (function(){
     var originalFetch = window.fetch;
@@ -105,7 +107,7 @@ window._videoPayload=null;
         var urlStr = url ? url.toString() : '';
 
         // Capture requests liên quan đến video/media
-        if(urlStr.includes('flowMedia') || urlStr.includes('aisandbox') || urlStr.includes('video') || urlStr.includes('generateVideo')) {
+        if(urlStr.includes('flowMedia') || urlStr.includes('aisandbox') || urlStr.includes('video') || urlStr.includes('generateVideo') || urlStr.includes('Check')) {
 
             var headers = options && options.headers ? options.headers : {};
             var auth = headers.Authorization || headers.authorization || '';
@@ -148,37 +150,53 @@ window._videoPayload=null;
             window._lastPayload = options ? options.body : null;
 
             // Capture video generation endpoint specifically
-            if(urlStr.includes('video:batchAsyncGenerateVideo') || urlStr.includes('video:generate')) {
+            if(urlStr.includes('video:batchAsyncGenerateVideo') && !urlStr.includes('Check')) {
                 window._videoEndpoint = urlStr;
                 window._videoPayload = options ? options.body : null;
                 console.log('=== VIDEO GENERATION REQUEST ===');
                 console.log('Endpoint:', urlStr);
-                console.log('Headers:', JSON.stringify(allHeaders, null, 2));
+                console.log('Payload:', options ? options.body : 'none');
+                // Extract projectId from payload
+                try {
+                    var pd = JSON.parse(options.body);
+                    if(pd.clientContext && pd.clientContext.projectId) {
+                        window._pj = pd.clientContext.projectId;
+                        console.log('PROJECT ID:', window._pj);
+                    }
+                } catch(e){}
+            }
+
+            // *** CAPTURE STATUS CHECK REQUEST ***
+            if(urlStr.includes('batchCheckAsyncVideoGenerationStatus') || urlStr.includes('CheckAsync')) {
+                window._statusCheckEndpoint = urlStr;
+                window._statusCheckPayload = options ? options.body : null;
+                console.log('=== STATUS CHECK REQUEST ===');
+                console.log('Endpoint:', urlStr);
+                console.log('PAYLOAD:', options ? options.body : 'none');
             }
 
             console.log('=== CAPTURED REQUEST ===');
             console.log('URL:', urlStr);
             console.log('Method:', reqData.method);
-            console.log('x-browser headers:', JSON.stringify(window._browserHeaders));
-            if(reqData.body) console.log('Body preview:', String(reqData.body).substring(0, 500));
+            if(reqData.body) console.log('Body:', String(reqData.body).substring(0, 800));
         }
 
         // Call original fetch and capture response
         return originalFetch.apply(this, arguments).then(function(response) {
-            if(urlStr.includes('flowMedia') || urlStr.includes('video') || urlStr.includes('generateVideo')) {
+            if(urlStr.includes('flowMedia') || urlStr.includes('video') || urlStr.includes('generateVideo') || urlStr.includes('Check')) {
                 response.clone().text().then(function(text) {
                     window._lastResponse = text;
                     console.log('=== CAPTURED RESPONSE ===');
                     console.log('Status:', response.status);
-                    console.log('Response preview:', text.substring(0, 500));
+                    console.log('Response:', text.substring(0, 800));
                 });
             }
             return response;
         });
     };
 
-    console.log('=== FULL CAPTURE READY (v2) ===');
-    console.log('Will capture: token, URL, payload, response, x-browser headers');
+    console.log('=== FULL CAPTURE READY (v3) ===');
+    console.log('Will capture: token, URL, payload, response, STATUS CHECK payload');
 })();
 '''
 
@@ -534,7 +552,7 @@ window._videoPayload=null;
             pag.hotkey("ctrl", "shift", "j")
             time.sleep(1.2)
 
-            # Lấy tất cả captured data bao gồm browser headers
+            # Lấy tất cả captured data bao gồm browser headers + status check
             js = '''copy(JSON.stringify({
                 token: window._tk,
                 project_id: window._pj,
@@ -544,7 +562,9 @@ window._videoPayload=null;
                 last_response: window._lastResponse,
                 browser_headers: window._browserHeaders,
                 video_endpoint: window._videoEndpoint,
-                video_payload: window._videoPayload
+                video_payload: window._videoPayload,
+                status_check_endpoint: window._statusCheckEndpoint,
+                status_check_payload: window._statusCheckPayload
             }))'''
 
             pyperclip.copy(js)
@@ -828,6 +848,16 @@ class VideoAPITest:
 
         # Thử nhiều format field name khác nhau
         payloads_to_try = [
+            # Format 1: operationNames (array of strings)
+            {
+                "clientContext": {
+                    "sessionId": f";{int(time.time() * 1000)}",
+                    "projectId": self.project_id,
+                    "tool": "PINHOLE"
+                },
+                "operationNames": operation_names
+            },
+            # Format 2: operations with name field
             {
                 "clientContext": {
                     "sessionId": f";{int(time.time() * 1000)}",
@@ -836,6 +866,16 @@ class VideoAPITest:
                 },
                 "operations": [{"name": name} for name in operation_names]
             },
+            # Format 3: videoOperations
+            {
+                "clientContext": {
+                    "sessionId": f";{int(time.time() * 1000)}",
+                    "projectId": self.project_id,
+                    "tool": "PINHOLE"
+                },
+                "videoOperations": [{"operationName": name} for name in operation_names]
+            },
+            # Format 4: simple names array
             {
                 "clientContext": {
                     "sessionId": f";{int(time.time() * 1000)}",
@@ -844,18 +884,21 @@ class VideoAPITest:
                 },
                 "names": operation_names
             },
+            # Format 5: requests format similar to generate
             {
                 "clientContext": {
                     "sessionId": f";{int(time.time() * 1000)}",
                     "projectId": self.project_id,
                     "tool": "PINHOLE"
                 },
-                "generationOperations": [{"name": name} for name in operation_names]
-            }
+                "requests": [{"operationName": name} for name in operation_names]
+            },
         ]
 
-        for payload in payloads_to_try:
+        last_error = None
+        for i, payload in enumerate(payloads_to_try):
             try:
+                self.log(f"  Trying payload format #{i+1}...")
                 response = self.session.post(
                     url,
                     data=json.dumps(payload),
@@ -863,18 +906,31 @@ class VideoAPITest:
                 )
 
                 if response.status_code == 200:
+                    self.log(f"  ✓ Format #{i+1} worked!")
                     return {
                         "success": True,
-                        "response": response.json()
+                        "response": response.json(),
+                        "working_format": i + 1
                     }
+                else:
+                    # Extract error field name from response
+                    try:
+                        err_data = response.json()
+                        err_msg = err_data.get("error", {}).get("message", "")
+                        self.log(f"  ✗ Format #{i+1}: {err_msg[:80]}")
+                    except:
+                        pass
+                    last_error = response.text
             except Exception as e:
+                self.log(f"  ✗ Format #{i+1} exception: {e}")
+                last_error = str(e)
                 continue
 
-        # Last try failed, return error
+        # All formats failed
         return {
             "success": False,
-            "status": response.status_code if 'response' in dir() else 0,
-            "response": response.text if 'response' in dir() else "All payload formats failed"
+            "status": response.status_code if 'response' in locals() else 0,
+            "response": last_error or "All payload formats failed"
         }
 
     def wait_for_video(
@@ -1137,19 +1193,34 @@ def main():
     else:
         print("  (Không capture được x-browser headers)")
 
-    # Extract mediaId từ captured video payload
+    # Extract mediaId và projectId từ captured video payload
     media_id = None
     if video_payload:
         try:
             payload_data = json.loads(video_payload) if isinstance(video_payload, str) else video_payload
+
+            # Extract project_id from clientContext
+            if not project_id and payload_data.get("clientContext"):
+                project_id = payload_data["clientContext"].get("projectId")
+                if project_id:
+                    print(f"\n✓ EXTRACTED PROJECT ID: {project_id}")
+
             requests_list = payload_data.get("requests", [])
             if requests_list:
                 ref_images = requests_list[0].get("referenceImages", [])
                 if ref_images:
                     media_id = ref_images[0].get("mediaId")
-                    print(f"\n✓ CAPTURED MEDIA ID: {media_id[:60]}...")
+                    print(f"✓ CAPTURED MEDIA ID: {media_id[:60]}...")
         except Exception as e:
             print(f"  Error parsing video_payload: {e}")
+
+    # Print status check payload nếu đã capture được
+    status_check_payload = captured_data.get("status_check_payload")
+    if status_check_payload:
+        print()
+        print("=== CAPTURED STATUS CHECK PAYLOAD ===")
+        print(status_check_payload[:500])
+        print("(Đây là format đúng cho status check API!)")
 
     # Save captured data
     result = {
@@ -1188,9 +1259,14 @@ def main():
         return True
 
     # Tạo API tester với browser headers
+    # Lưu ý: project_id đã được extract từ video_payload ở trên
+    if not project_id:
+        print("⚠️  Không có project_id! API có thể fail.")
+        print("   Thử chờ Chrome gọi status check để capture project_id...")
+
     api_tester = VideoAPITest(
         token=token,
-        project_id=project_id or "test-project",
+        project_id=project_id,  # Dùng project_id thật, không dùng "test-project"
         browser_headers=browser_headers
     )
 
