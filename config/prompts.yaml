@@ -611,12 +611,20 @@ smart_divide_scenes: |
       → location: loc_dryclean, loc_apartment, loc_convenience
       → SHOW: 32yo mother + 8yo child, NOT 30yo narrator!
 
-  Q2: Does it mention BUILDING HOUSE or CAREER?
+  Q2: Does it mention BUILDING HOUSE or CAREER (narrator alone)?
       Keywords: "I built", "carpenter", "saved money", "bought land"
       → scene_type: ADULT_FLASHBACK
       → characters: ["nvc_young"]
       → location: loc_construction, loc_land
       → SHOW: 28yo man working, NOT 30yo narrator talking!
+
+  Q2b: ADULT FLASHBACK with MOTHER present?
+      Keywords: "she walked in", "mom came", "she hugged", "she said", "proud of you"
+      → scene_type: ADULT_FLASHBACK
+      → characters: ["nvc_young", "nv1"]
+      → location: loc_finished_house
+      → SHOW: 28yo man + 55yo mother together!
+      → NOTE: Use nv1 (55yo), NOT nv1_young (32yo) - mother is older now!
 
   Q3: Is it PRESENT MOMENT?
       Keywords: "right now", "sitting here", "today", "courthouse"
@@ -719,6 +727,22 @@ smart_divide_scenes: |
       }},
       {{
         "scene_id": 6,
+        "srt_text": "I invited my mom over. She walked through the door and started crying...",
+        "scene_type": "ADULT_FLASHBACK",
+        "location_id": "loc_finished_house",
+        "characters_in_scene": ["nvc_young", "nv1"],
+        "img_prompt": "Medium shot. 55yo graying blonde woman CRYING tears of joy, hand over mouth, 28yo muscular man beside her looking PROUD but emotional. New house interior, warm evening light. Cinematic."
+      }},
+      {{
+        "scene_id": 7,
+        "srt_text": "She hugged me and said, Dane, I am so proud of you...",
+        "scene_type": "ADULT_FLASHBACK",
+        "location_id": "loc_finished_house",
+        "characters_in_scene": ["nvc_young", "nv1"],
+        "img_prompt": "Close-up. 55yo mother EMBRACING 28yo son tightly, tears streaming, face showing overwhelming PRIDE and love. Warm golden interior light. Emotional moment. Cinematic."
+      }},
+      {{
+        "scene_id": 8,
         "srt_text": "She took me to court for everything I had built...",
         "scene_type": "FRAME_PRESENT",
         "location_id": "loc_courthouse",
@@ -729,13 +753,15 @@ smart_divide_scenes: |
   }}
 
   ## FINAL CHECKLIST:
-  [ ] Every CHILDHOOD memory → nv1_young (mother) NOT nvc!
+  [ ] Every CHILDHOOD memory → nv1_young (32yo mother) NOT nv1!
+  [ ] Every ADULT FLASHBACK with mother → nv1 (55yo) NOT nv1_young!
   [ ] Every BUILDING scene → nvc_young at construction NOT courthouse!
   [ ] Different memories = DIFFERENT locations!
   [ ] NO narration text in img_prompt!
   [ ] EMOTIONS match content (NO default SMILING!)
   [ ] ACTIONS are ACTIVE (SWINGING not HOLDING!)
   [ ] Hard work = DETERMINED/EXHAUSTED face, NOT smiling!
+  [ ] Mother versions: CHILDHOOD=nv1_young(32), ADULT=nv1(55)!
 
   OUTPUT: JSON only, NO markdown code blocks.
 
