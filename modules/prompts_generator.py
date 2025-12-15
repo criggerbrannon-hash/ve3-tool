@@ -143,8 +143,8 @@ class MultiAIClient:
                 elif provider == 'deepseek':
                     futures.append(executor.submit(test_deepseek, (i, key)))
 
-            # Submit Ollama test
-            futures.append(executor.submit(test_ollama))
+            # Submit Ollama test - DISABLED (too slow)
+            # futures.append(executor.submit(test_ollama))
 
             # Process results as they complete
             for future in as_completed(futures):
@@ -352,21 +352,21 @@ class MultiAIClient:
                         self.logger.error(f"DeepSeek error: {e}")
                         break
 
-        # 4. Fallback to Ollama (local, free, offline)
-        if self.ollama_available:
-            for attempt in range(max_retries):
-                try:
-                    print(f"[Ollama] Dang goi local model ({self.ollama_model})...")
-                    result = self._call_ollama(prompt, temperature)
-                    if result:
-                        print(f"[Ollama] Thanh cong!")
-                        return result
-                except Exception as e:
-                    last_error = e
-                    self.logger.error(f"Ollama error: {e}")
-                    if attempt < max_retries - 1:
-                        time.sleep(2)
-                    continue
+        # 4. Fallback to Ollama - DISABLED (too slow)
+        # if self.ollama_available:
+        #     for attempt in range(max_retries):
+        #         try:
+        #             print(f"[Ollama] Dang goi local model ({self.ollama_model})...")
+        #             result = self._call_ollama(prompt, temperature)
+        #             if result:
+        #                 print(f"[Ollama] Thanh cong!")
+        #                 return result
+        #         except Exception as e:
+        #             last_error = e
+        #             self.logger.error(f"Ollama error: {e}")
+        #             if attempt < max_retries - 1:
+        #                 time.sleep(2)
+        #             continue
 
         if last_error:
             raise last_error
