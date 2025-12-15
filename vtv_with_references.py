@@ -35,6 +35,13 @@ from modules.google_flow_api import (
     GeneratedImage
 )
 
+# Video composer (optional)
+try:
+    from modules.video_composer import VideoComposer, VideoConfig, compose_final_video
+    VIDEO_COMPOSER_AVAILABLE = True
+except ImportError:
+    VIDEO_COMPOSER_AVAILABLE = False
+
 
 class VTVGenerator:
     """
@@ -388,6 +395,80 @@ class VTVGenerator:
 
         return results
 
+    def compose_video(
+        self,
+        voice_path: Optional[str] = None,
+        srt_path: Optional[str] = None,
+        output_name: str = "final_video.mp4",
+        config: Optional['VideoConfig'] = None
+    ) -> Optional[str]:
+        """
+        Ghép video từ ảnh đã generate + voice + phụ đề.
+
+        Args:
+            voice_path: Đường dẫn file voice (mp3/wav). Nếu None, tự tìm trong project.
+            srt_path: Đường dẫn file SRT. Nếu None, tự tìm trong project.
+            output_name: Tên file video output.
+            config: VideoConfig (optional).
+
+        Returns:
+            Đường dẫn video output nếu thành công.
+        """
+        if not VIDEO_COMPOSER_AVAILABLE:
+            self.log("Video composer not available. Please install FFmpeg.", "ERROR")
+            return None
+
+        self.log("=" * 50)
+        self.log("COMPOSING FINAL VIDEO")
+        self.log("=" * 50)
+
+        # Tìm voice file
+        if not voice_path:
+            voice_files = list(self.project_path.glob("*.mp3")) + list(self.project_path.glob("*.wav"))
+            if voice_files:
+                voice_path = str(voice_files[0])
+                self.log(f"Found voice: {voice_path}")
+            else:
+                self.log("No voice file found in project!", "ERROR")
+                return None
+
+        # Tìm SRT file
+        if not srt_path:
+            srt_files = list(self.project_path.glob("*.srt"))
+            if srt_files:
+                srt_path = str(srt_files[0])
+                self.log(f"Found SRT: {srt_path}")
+            else:
+                self.log("No SRT file found. Video will be without subtitles.", "WARN")
+
+        # Tìm Excel file
+        excel_files = list(self.prompts_path.glob("*.xlsx"))
+        if not excel_files:
+            self.log("No Excel file found!", "ERROR")
+            return None
+
+        excel_path = str(excel_files[0])
+        output_path = str(self.project_path / output_name)
+
+        self.log(f"Excel: {excel_path}")
+        self.log(f"Voice: {voice_path}")
+        self.log(f"SRT: {srt_path or 'None'}")
+        self.log(f"Output: {output_path}")
+
+        try:
+            composer = VideoComposer(config)
+
+            if composer.compose_video(excel_path, voice_path, output_path, srt_path):
+                self.log(f"Video created: {output_path}", "OK")
+                return output_path
+            else:
+                self.log("Failed to create video!", "ERROR")
+                return None
+
+        except Exception as e:
+            self.log(f"Video compose error: {e}", "ERROR")
+            return None
+
     def stop(self):
         """Stop processing."""
         self._stop = True
@@ -398,42 +479,69 @@ class VTVGenerator:
 # =============================================================================
 
 def main():
-    if len(sys.argv) < 3:
-        print("""
-VTV Generator với Reference Images
-===================================
-Usage:
-    python vtv_with_references.py <project_path> <bearer_token>
+    import argparse
 
-Example:
-    python vtv_with_references.py "PROJECTS/1" "ya29.a0AfH6..."
-
+    parser = argparse.ArgumentParser(
+        description="VTV Generator với Reference Images + Video Composer",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
 Project structure:
     PROJECTS/1/
     ├── nv/           # Ảnh reference (nv1.png, nv2.png, loc1.png, ...)
     ├── img/          # Output images
-    └── prompts/      # Excel file với prompts
-        └── xxx_prompts.xlsx
-            - Sheet với columns: id, english_prompt/img_prompt, references
-            - references column: "nv1, nv2, loc1" (comma-separated)
-""")
-        sys.exit(1)
+    ├── prompts/      # Excel file với prompts
+    │   └── xxx_prompts.xlsx
+    ├── voice.mp3     # Voice file (for video compose)
+    └── subtitles.srt # SRT file (for video compose)
 
-    project_path = sys.argv[1]
-    bearer_token = sys.argv[2]
+Examples:
+    # Generate images only
+    python vtv_with_references.py PROJECTS/1 "ya29.xxx..."
+
+    # Generate images + compose video
+    python vtv_with_references.py PROJECTS/1 "ya29.xxx..." --compose
+
+    # Compose video only (skip image generation)
+    python vtv_with_references.py PROJECTS/1 --compose-only
+"""
+    )
+
+    parser.add_argument("project_path", help="Đường dẫn project")
+    parser.add_argument("bearer_token", nargs="?", default="", help="Bearer token (không cần nếu --compose-only)")
+    parser.add_argument("--compose", action="store_true", help="Ghép video sau khi generate ảnh")
+    parser.add_argument("--compose-only", action="store_true", help="Chỉ ghép video (không generate ảnh)")
+    parser.add_argument("--output", default="final_video.mp4", help="Tên file video output")
+    parser.add_argument("--workers", type=int, default=2, help="Số workers parallel")
+    parser.add_argument("--delay", type=float, default=2.0, help="Delay giữa các request")
+
+    args = parser.parse_args()
+
+    # Kiểm tra args
+    if not args.compose_only and not args.bearer_token:
+        parser.error("bearer_token is required unless using --compose-only")
 
     generator = VTVGenerator(
-        project_path=project_path,
-        bearer_token=bearer_token,
-        parallel_workers=2,
-        delay=2.0,
+        project_path=args.project_path,
+        bearer_token=args.bearer_token,
+        parallel_workers=args.workers,
+        delay=args.delay,
         verbose=True
     )
 
-    results = generator.run()
+    # Flow
+    if args.compose_only:
+        # Chỉ ghép video
+        video_path = generator.compose_video(output_name=args.output)
+        sys.exit(0 if video_path else 1)
+    else:
+        # Generate images
+        results = generator.run()
 
-    # Exit code
-    sys.exit(0 if results["failed"] == 0 else 1)
+        # Ghép video nếu có flag --compose
+        if args.compose and results["success"] > 0:
+            generator.compose_video(output_name=args.output)
+
+        sys.exit(0 if results["failed"] == 0 else 1)
 
 
 if __name__ == "__main__":
