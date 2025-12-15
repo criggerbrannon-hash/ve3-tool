@@ -50,7 +50,7 @@ class MultiAIClient:
     DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
     GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
     GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta"
-    DEFAULT_OLLAMA_URL = "http://localhost:11434"  # Local Ollama
+    OLLAMA_URL = "http://localhost:11434/api/generate"  # Local Ollama
 
     def __init__(self, config: dict, auto_filter: bool = True):
         """
@@ -60,34 +60,20 @@ class MultiAIClient:
             "groq_api_keys": ["key1", "key2"],
             "gemini_api_keys": ["key1"],
             "gemini_models": ["gemini-2.0-flash"],
-            "ollama_model": "gemma3:27b",      # Model Ollama local
-            "ollama_endpoint": "http://localhost:11434",  # Optional
-            "ollama_priority": true,           # Uu tien Ollama truoc cloud providers
-        }
-
-        Hoac config dang nested:
-        {
-            "ollama": {
-                "model": "gemma3:27b",
-                "endpoint": "http://localhost:11434"
-            }
+            "ollama_model": "qwen2.5:7b",  # Optional: local model
         }
 
         auto_filter: Tự động test và loại bỏ API keys không hoạt động
         """
         self.config = config
-        # GEMINI DISABLED - quota issues, use Groq/DeepSeek only
-        self.gemini_keys = []  # DISABLED: [k for k in config.get("gemini_api_keys", []) if k and k.strip()]
+        self.gemini_keys = [k for k in config.get("gemini_api_keys", []) if k and k.strip()]
         self.groq_keys = [k for k in config.get("groq_api_keys", []) if k and k.strip()]
         self.deepseek_keys = [k for k in config.get("deepseek_api_keys", []) if k and k.strip()]
-        self.gemini_models = []  # DISABLED
+        self.gemini_models = config.get("gemini_models", ["gemini-2.0-flash", "gemini-1.5-flash"])
 
-        # Ollama local model - TEMPORARILY DISABLED (too slow)
-        # TODO: Re-enable after optimization
-        self.ollama_model = "gemma3:27b"
-        self.ollama_endpoint = "http://localhost:11434"
-        self.ollama_priority = False  # DISABLED
-        self.ollama_available = False  # DISABLED - skip Ollama completely
+        # Ollama local model
+        self.ollama_model = config.get("ollama_model", "qwen2.5:7b")
+        self.ollama_available = False
 
         self.deepseek_index = 0
         self.groq_index = 0
@@ -157,8 +143,8 @@ class MultiAIClient:
                 elif provider == 'deepseek':
                     futures.append(executor.submit(test_deepseek, (i, key)))
 
-            # Submit Ollama test - DISABLED temporarily
-            # futures.append(executor.submit(test_ollama))
+            # Submit Ollama test
+            futures.append(executor.submit(test_ollama))
 
             # Process results as they complete
             for future in as_completed(futures):
@@ -190,17 +176,15 @@ class MultiAIClient:
         if total_working == 0 and not self.ollama_available:
             print("[API Filter] CANH BAO: Khong co API nao hoat dong! Cai Ollama de dung offline.")
         else:
-            # Show priority order based on ollama_priority setting
-            if self.ollama_priority and self.ollama_available:
-                print(f"[API Filter] Se dung: Ollama ({self.ollama_model}) - UU TIEN LOCAL")
-            elif self.gemini_keys:
+            # Show priority order
+            if self.gemini_keys:
                 print(f"[API Filter] Se dung: Gemini (uu tien)")
             elif self.groq_keys:
                 print(f"[API Filter] Se dung: Groq (uu tien)")
             elif self.deepseek_keys:
                 print(f"[API Filter] Se dung: DeepSeek")
             elif self.ollama_available:
-                print(f"[API Filter] Se dung: Ollama ({self.ollama_model}) - local")
+                print(f"[API Filter] Se dung: Ollama (local)")
 
     def _test_gemini_key(self, key: str) -> bool:
         """Test Gemini key với request nhỏ."""
@@ -247,24 +231,14 @@ class MultiAIClient:
     def _test_ollama(self) -> bool:
         """Test Ollama local server."""
         try:
-            # First check if server is running
-            resp = requests.get(f"{self.ollama_endpoint}/api/tags", timeout=5)
-            if resp.status_code != 200:
-                return False
-
-            # Check if model is available
-            models = resp.json().get("models", [])
-            model_names = [m.get("name", "") for m in models]
-
-            # Check exact match or partial match (e.g., "gemma3:27b" matches "gemma3:27b-instruct-q4_0")
-            model_found = any(self.ollama_model in name or name.startswith(self.ollama_model.split(":")[0]) for name in model_names)
-
-            if not model_found:
-                print(f"    (Model '{self.ollama_model}' not found, available: {model_names[:3]}...)")
-                return False
-
-            return True
-        except Exception as e:
+            data = {
+                "model": self.ollama_model,
+                "prompt": "Say OK",
+                "stream": False
+            }
+            resp = requests.post(self.OLLAMA_URL, json=data, timeout=30)
+            return resp.status_code == 200
+        except:
             return False
 
     def generate_content(
@@ -275,30 +249,12 @@ class MultiAIClient:
         max_retries: int = 3
     ) -> str:
         """Generate content using available AI providers.
-        Priority (default): Gemini > Groq > DeepSeek > Ollama
-        Priority (ollama_priority=True): Ollama > Gemini > Groq > DeepSeek
+        Priority: Gemini (best quality) > Groq (fast) > DeepSeek (cheap, slow)
 
         Chi thu cac API da duoc filter la hoat dong.
         """
 
         last_error = None
-
-        # 0. If ollama_priority is True, try Ollama FIRST
-        if self.ollama_priority and self.ollama_available:
-            for attempt in range(max_retries):
-                try:
-                    print(f"[Ollama] Dang goi local model ({self.ollama_model}) - UU TIEN...")
-                    result = self._call_ollama(prompt, temperature, max_tokens)
-                    if result:
-                        print(f"[Ollama] Thanh cong!")
-                        return result
-                except Exception as e:
-                    last_error = e
-                    self.logger.error(f"Ollama error: {e}")
-                    if attempt < max_retries - 1:
-                        time.sleep(2)
-                    continue
-            # If Ollama fails, fall through to cloud providers
 
         # 1. Try Gemini first (best quality, fastest)
         if self.gemini_keys:
@@ -396,12 +352,12 @@ class MultiAIClient:
                         self.logger.error(f"DeepSeek error: {e}")
                         break
 
-        # 4. Fallback to Ollama (local, free, offline) - skip if already tried with priority
-        if self.ollama_available and not self.ollama_priority:
+        # 4. Fallback to Ollama (local, free, offline)
+        if self.ollama_available:
             for attempt in range(max_retries):
                 try:
                     print(f"[Ollama] Dang goi local model ({self.ollama_model})...")
-                    result = self._call_ollama(prompt, temperature, max_tokens)
+                    result = self._call_ollama(prompt, temperature)
                     if result:
                         print(f"[Ollama] Thanh cong!")
                         return result
@@ -496,25 +452,23 @@ class MultiAIClient:
         else:
             raise requests.RequestException(f"Gemini API error {resp.status_code}: {resp.text[:300]}")
 
-    def _call_ollama(self, prompt: str, temperature: float, max_tokens: int = 8192) -> str:
+    def _call_ollama(self, prompt: str, temperature: float) -> str:
         """Call Ollama local API."""
-        ollama_api_url = f"{self.ollama_endpoint}/api/generate"
-
         data = {
             "model": self.ollama_model,
             "prompt": prompt,
             "stream": False,
             "options": {
                 "temperature": temperature,
-                "num_predict": max_tokens,
+                "num_predict": 8192,  # Max tokens
             }
         }
 
-        self.logger.debug(f"Calling Ollama API: model={self.ollama_model}, endpoint={self.ollama_endpoint}")
-        print(f"[Ollama] Dang xu ly voi {self.ollama_model}... (co the mat 1-5 phut)")
+        self.logger.debug(f"Calling Ollama API: model={self.ollama_model}")
+        print(f"[Ollama] Dang xu ly... (co the mat 1-5 phut tuy cau hinh may)")
 
         # Ollama can be slow, increase timeout
-        resp = requests.post(ollama_api_url, json=data, timeout=600)
+        resp = requests.post(self.OLLAMA_URL, json=data, timeout=600)
 
         if resp.status_code == 200:
             result = resp.json()
@@ -797,11 +751,13 @@ class PromptGenerator:
         self.settings = settings
         self.logger = get_logger("prompt_generator")
         
-        # Sử dụng MultiAIClient (Groq > DeepSeek - NO GEMINI)
+        # Sử dụng MultiAIClient (hỗ trợ Groq + Gemini)
         self.ai_client = MultiAIClient(settings)
-
-        # NOTE: GeminiClient DISABLED - quota issues
-        # self.gemini = None
+        
+        # Legacy: Fallback to GeminiClient nếu cần
+        api_keys = settings.get("gemini_api_keys") or [settings.get("gemini_api_key")]
+        models = settings.get("gemini_models") or [settings.get("gemini_model", "gemini-2.0-flash")]
+        self.gemini = GeminiClient(api_keys=api_keys, models=models)
         
         # Scene grouping settings
         self.min_scene_duration = settings.get("min_scene_duration", 3)  # Min 3s
@@ -861,9 +817,13 @@ class PromptGenerator:
         return filtered
 
     def _generate_content(self, prompt: str, temperature: float = 0.7, max_tokens: int = 8192) -> str:
-        """Generate content using available AI providers (Groq > DeepSeek)."""
-        # Use MultiAIClient only - no Gemini fallback (quota issues)
-        return self.ai_client.generate_content(prompt, temperature, max_tokens)
+        """Generate content using available AI providers."""
+        # Try MultiAIClient first
+        try:
+            return self.ai_client.generate_content(prompt, temperature, max_tokens)
+        except Exception as e:
+            self.logger.warning(f"MultiAI failed: {e}, falling back to Gemini...")
+            return self.gemini.generate_content(prompt, temperature, max_tokens)
     
     def generate_for_project(
         self,
