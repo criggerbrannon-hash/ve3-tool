@@ -143,6 +143,12 @@ class SmartEngine:
                 if k and not k.startswith('THAY_BANG') and not k.startswith('AIzaSy_YOUR'):
                     self.gemini_keys.append(Resource(type='gemini', value=k))
 
+            # Ollama local config
+            ollama_config = api.get('ollama', {})
+            self.ollama_model = ollama_config.get('model', 'gemma3:27b')
+            self.ollama_endpoint = ollama_config.get('endpoint', 'http://localhost:11434')
+            self.ollama_priority = ollama_config.get('priority', False)
+
             # Settings
             settings = data.get('settings', {})
             self.parallel = settings.get('parallel', 2)
@@ -570,11 +576,19 @@ class SmartEngine:
             with open(cfg_file, "r", encoding="utf-8") as f:
                 cfg = yaml.safe_load(f) or {}
 
-        # Add API keys (thu tu uu tien: Gemini > Groq > DeepSeek)
+        # Add API keys (thu tu uu tien: Ollama > Gemini > Groq > DeepSeek)
         cfg['gemini_api_keys'] = [k.value for k in self.gemini_keys if k.status != 'exhausted']
         cfg['groq_api_keys'] = [k.value for k in self.groq_keys if k.status != 'exhausted']
         cfg['deepseek_api_keys'] = [k.value for k in self.deepseek_keys if k.status != 'exhausted']
-        cfg['preferred_provider'] = 'gemini' if self.gemini_keys else ('groq' if self.groq_keys else 'deepseek')
+
+        # Ollama local config
+        cfg['ollama_model'] = getattr(self, 'ollama_model', 'gemma3:27b')
+        cfg['ollama_endpoint'] = getattr(self, 'ollama_endpoint', 'http://localhost:11434')
+        cfg['ollama_priority'] = getattr(self, 'ollama_priority', False)
+
+        cfg['preferred_provider'] = 'ollama' if getattr(self, 'ollama_priority', False) else (
+            'gemini' if self.gemini_keys else ('groq' if self.groq_keys else 'deepseek')
+        )
 
         # Retry with different keys
         for attempt in range(self.max_retries):

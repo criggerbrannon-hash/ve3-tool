@@ -17,12 +17,18 @@
         "Khi headless khong duoc, dung Chrome profiles.",
         "Mo browser de lay token (visible).",
         "",
-        "== API KEYS ==",
-        "Thu tu uu tien: Gemini > Groq > DeepSeek > Ollama",
+        "== AI PROVIDERS ==",
+        "Thu tu uu tien: Ollama (local) > Gemini > Groq > DeepSeek",
+        "",
+        "  - Ollama (FREE LOCAL - UU TIEN #1):",
+        "    1. Cai dat: https://ollama.ai",
+        "    2. Pull model: ollama pull gemma3:27b",
+        "    3. Chay server: ollama serve",
+        "    4. Config: ollama_model trong api_keys",
+        "",
         "  - Gemini (FREE): https://aistudio.google.com/app/apikey",
         "  - Groq (FREE): https://console.groq.com/keys",
-        "  - DeepSeek (RE): https://platform.deepseek.com/api_keys",
-        "  - Ollama (FREE LOCAL): ollama pull qwen2.5:7b"
+        "  - DeepSeek (RE): https://platform.deepseek.com/api_keys"
     ],
 
     "headless_accounts": [
@@ -39,6 +45,11 @@
     ],
 
     "api_keys": {
+        "ollama": {
+            "model": "gemma3:27b",
+            "endpoint": "http://localhost:11434",
+            "priority": true
+        },
         "gemini": [
             "THAY_BANG_GEMINI_KEY"
         ],

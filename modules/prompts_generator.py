@@ -50,7 +50,7 @@ class MultiAIClient:
     DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
     GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
     GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta"
-    OLLAMA_URL = "http://localhost:11434/api/generate"  # Local Ollama
+    DEFAULT_OLLAMA_URL = "http://localhost:11434"  # Local Ollama
 
     def __init__(self, config: dict, auto_filter: bool = True):
         """
@@ -60,7 +60,17 @@ class MultiAIClient:
             "groq_api_keys": ["key1", "key2"],
             "gemini_api_keys": ["key1"],
             "gemini_models": ["gemini-2.0-flash"],
-            "ollama_model": "qwen2.5:7b",  # Optional: local model
+            "ollama_model": "gemma3:27b",      # Model Ollama local
+            "ollama_endpoint": "http://localhost:11434",  # Optional
+            "ollama_priority": true,           # Uu tien Ollama truoc cloud providers
+        }
+
+        Hoac config dang nested:
+        {
+            "ollama": {
+                "model": "gemma3:27b",
+                "endpoint": "http://localhost:11434"
+            }
         }
 
         auto_filter: Tự động test và loại bỏ API keys không hoạt động
@@ -71,8 +81,11 @@ class MultiAIClient:
         self.deepseek_keys = [k for k in config.get("deepseek_api_keys", []) if k and k.strip()]
         self.gemini_models = config.get("gemini_models", ["gemini-2.0-flash", "gemini-1.5-flash"])
 
-        # Ollama local model
-        self.ollama_model = config.get("ollama_model", "qwen2.5:7b")
+        # Ollama local model - support both flat and nested config
+        ollama_config = config.get("ollama", {})
+        self.ollama_model = config.get("ollama_model") or ollama_config.get("model", "gemma3:27b")
+        self.ollama_endpoint = config.get("ollama_endpoint") or ollama_config.get("endpoint", "http://localhost:11434")
+        self.ollama_priority = config.get("ollama_priority") or ollama_config.get("priority", False)
         self.ollama_available = False
 
         self.deepseek_index = 0
@@ -176,15 +189,17 @@ class MultiAIClient:
         if total_working == 0 and not self.ollama_available:
             print("[API Filter] CANH BAO: Khong co API nao hoat dong! Cai Ollama de dung offline.")
         else:
-            # Show priority order
-            if self.gemini_keys:
+            # Show priority order based on ollama_priority setting
+            if self.ollama_priority and self.ollama_available:
+                print(f"[API Filter] Se dung: Ollama ({self.ollama_model}) - UU TIEN LOCAL")
+            elif self.gemini_keys:
                 print(f"[API Filter] Se dung: Gemini (uu tien)")
             elif self.groq_keys:
                 print(f"[API Filter] Se dung: Groq (uu tien)")
             elif self.deepseek_keys:
                 print(f"[API Filter] Se dung: DeepSeek")
             elif self.ollama_available:
-                print(f"[API Filter] Se dung: Ollama (local)")
+                print(f"[API Filter] Se dung: Ollama ({self.ollama_model}) - local")
 
     def _test_gemini_key(self, key: str) -> bool:
         """Test Gemini key với request nhỏ."""
@@ -231,14 +246,24 @@ class MultiAIClient:
     def _test_ollama(self) -> bool:
         """Test Ollama local server."""
         try:
-            data = {
-                "model": self.ollama_model,
-                "prompt": "Say OK",
-                "stream": False
-            }
-            resp = requests.post(self.OLLAMA_URL, json=data, timeout=30)
-            return resp.status_code == 200
-        except:
+            # First check if server is running
+            resp = requests.get(f"{self.ollama_endpoint}/api/tags", timeout=5)
+            if resp.status_code != 200:
+                return False
+
+            # Check if model is available
+            models = resp.json().get("models", [])
+            model_names = [m.get("name", "") for m in models]
+
+            # Check exact match or partial match (e.g., "gemma3:27b" matches "gemma3:27b-instruct-q4_0")
+            model_found = any(self.ollama_model in name or name.startswith(self.ollama_model.split(":")[0]) for name in model_names)
+
+            if not model_found:
+                print(f"    (Model '{self.ollama_model}' not found, available: {model_names[:3]}...)")
+                return False
+
+            return True
+        except Exception as e:
             return False
 
     def generate_content(
@@ -249,12 +274,30 @@ class MultiAIClient:
         max_retries: int = 3
     ) -> str:
         """Generate content using available AI providers.
-        Priority: Gemini (best quality) > Groq (fast) > DeepSeek (cheap, slow)
+        Priority (default): Gemini > Groq > DeepSeek > Ollama
+        Priority (ollama_priority=True): Ollama > Gemini > Groq > DeepSeek
 
         Chi thu cac API da duoc filter la hoat dong.
         """
 
         last_error = None
+
+        # 0. If ollama_priority is True, try Ollama FIRST
+        if self.ollama_priority and self.ollama_available:
+            for attempt in range(max_retries):
+                try:
+                    print(f"[Ollama] Dang goi local model ({self.ollama_model}) - UU TIEN...")
+                    result = self._call_ollama(prompt, temperature, max_tokens)
+                    if result:
+                        print(f"[Ollama] Thanh cong!")
+                        return result
+                except Exception as e:
+                    last_error = e
+                    self.logger.error(f"Ollama error: {e}")
+                    if attempt < max_retries - 1:
+                        time.sleep(2)
+                    continue
+            # If Ollama fails, fall through to cloud providers
 
         # 1. Try Gemini first (best quality, fastest)
         if self.gemini_keys:
@@ -352,12 +395,12 @@ class MultiAIClient:
                         self.logger.error(f"DeepSeek error: {e}")
                         break
 
-        # 4. Fallback to Ollama (local, free, offline)
-        if self.ollama_available:
+        # 4. Fallback to Ollama (local, free, offline) - skip if already tried with priority
+        if self.ollama_available and not self.ollama_priority:
             for attempt in range(max_retries):
                 try:
                     print(f"[Ollama] Dang goi local model ({self.ollama_model})...")
-                    result = self._call_ollama(prompt, temperature)
+                    result = self._call_ollama(prompt, temperature, max_tokens)
                     if result:
                         print(f"[Ollama] Thanh cong!")
                         return result
@@ -452,23 +495,25 @@ class MultiAIClient:
         else:
             raise requests.RequestException(f"Gemini API error {resp.status_code}: {resp.text[:300]}")
 
-    def _call_ollama(self, prompt: str, temperature: float) -> str:
+    def _call_ollama(self, prompt: str, temperature: float, max_tokens: int = 8192) -> str:
         """Call Ollama local API."""
+        ollama_api_url = f"{self.ollama_endpoint}/api/generate"
+
         data = {
             "model": self.ollama_model,
             "prompt": prompt,
             "stream": False,
             "options": {
                 "temperature": temperature,
-                "num_predict": 8192,  # Max tokens
+                "num_predict": max_tokens,
             }
         }
 
-        self.logger.debug(f"Calling Ollama API: model={self.ollama_model}")
-        print(f"[Ollama] Dang xu ly... (co the mat 1-5 phut tuy cau hinh may)")
+        self.logger.debug(f"Calling Ollama API: model={self.ollama_model}, endpoint={self.ollama_endpoint}")
+        print(f"[Ollama] Dang xu ly voi {self.ollama_model}... (co the mat 1-5 phut)")
 
         # Ollama can be slow, increase timeout
-        resp = requests.post(self.OLLAMA_URL, json=data, timeout=600)
+        resp = requests.post(ollama_api_url, json=data, timeout=600)
 
         if resp.status_code == 200:
             result = resp.json()

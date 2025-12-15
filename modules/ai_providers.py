@@ -2,6 +2,7 @@
 VE3 Tool - Free AI Providers
 ============================
 Cac AI provider mien phi de thay the Gemini:
+- Ollama (FREE, local, chay tren may tinh cua ban)
 - Groq (mien phi, rat nhanh)
 - DeepSeek (re, chat nhat)
 - OpenRouter (nhieu model mien phi)
@@ -23,6 +24,108 @@ class AIProvider:
     api_key: str
     model: str
     endpoint: str
+
+
+class OllamaClient:
+    """
+    Ollama API Client - FREE, chay LOCAL tren may tinh cua ban!
+
+    Cai dat: https://ollama.ai
+    Pull model: ollama pull gemma3:27b
+
+    Models khuyen dung:
+    - gemma3:27b (Google, manh, 27B params)
+    - qwen2.5:7b (Alibaba, nhanh)
+    - llama3.1:8b (Meta)
+    - mistral:7b (Mistral AI)
+
+    Endpoint mac dinh: http://localhost:11434
+    """
+
+    DEFAULT_ENDPOINT = "http://localhost:11434"
+
+    MODELS = [
+        "gemma3:27b",       # Google Gemma 3 27B - Best quality
+        "qwen2.5:14b",      # Alibaba Qwen 2.5 14B
+        "qwen2.5:7b",       # Alibaba Qwen 2.5 7B - Fast
+        "llama3.1:8b",      # Meta Llama 3.1 8B
+        "mistral:7b",       # Mistral 7B
+    ]
+
+    def __init__(self, model: str = None, endpoint: str = None):
+        self.model = model or self.MODELS[0]
+        self.endpoint = endpoint or self.DEFAULT_ENDPOINT
+        self.chat_endpoint = f"{self.endpoint}/v1/chat/completions"
+
+    def generate(
+        self,
+        prompt: str,
+        system_prompt: str = None,
+        temperature: float = 0.7,
+        max_tokens: int = 4096
+    ) -> Optional[str]:
+        """Generate text using Ollama (OpenAI compatible API)."""
+
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        headers = {
+            "Content-Type": "application/json"
+        }
+
+        data = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": False
+        }
+
+        try:
+            resp = requests.post(
+                self.chat_endpoint,
+                headers=headers,
+                json=data,
+                timeout=300  # Ollama local can be slow on first run
+            )
+
+            if resp.status_code == 200:
+                result = resp.json()
+                return result["choices"][0]["message"]["content"]
+            else:
+                print(f"[Ollama Error] {resp.status_code}: {resp.text[:200]}")
+                return None
+
+        except requests.exceptions.ConnectionError:
+            print(f"[Ollama Error] Khong ket noi duoc! Chay 'ollama serve' truoc.")
+            return None
+        except requests.exceptions.Timeout:
+            print(f"[Ollama Error] Timeout! Model co the dang load lan dau.")
+            return None
+        except Exception as e:
+            print(f"[Ollama Error] {e}")
+            return None
+
+    def is_available(self) -> bool:
+        """Check if Ollama is running."""
+        try:
+            resp = requests.get(f"{self.endpoint}/api/tags", timeout=5)
+            return resp.status_code == 200
+        except:
+            return False
+
+    def list_models(self) -> List[str]:
+        """List available models in Ollama."""
+        try:
+            resp = requests.get(f"{self.endpoint}/api/tags", timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                return [m["name"] for m in data.get("models", [])]
+        except:
+            pass
+        return []
 
 
 class DeepSeekClient:
@@ -316,13 +419,15 @@ class MultiAIClient:
     """
     Client ho tro nhieu AI providers.
     Tu dong test va loai bo API khong hoat dong khi khoi tao.
-    Thu tu uu tien: Gemini > Groq > DeepSeek > OpenRouter
+    Thu tu uu tien: Ollama (local) > Gemini > Groq > DeepSeek > OpenRouter
     """
 
     def __init__(self, config: Dict[str, Any], auto_filter: bool = True):
         """
         Config format:
         {
+            "ollama_model": "gemma3:27b",  # Model Ollama (local)
+            "ollama_endpoint": "http://localhost:11434",  # Optional
             "gemini_api_keys": ["key1", "key2"],
             "groq_api_keys": ["key1", "key2"],
             "deepseek_api_keys": ["key1"],
@@ -344,10 +449,30 @@ class MultiAIClient:
             return False
 
     def _init_clients(self, auto_filter: bool = True):
-        """Khoi tao cac clients theo thu tu uu tien: Gemini > Groq > DeepSeek."""
+        """Khoi tao cac clients theo thu tu uu tien: Ollama > Gemini > Groq > DeepSeek."""
 
         if auto_filter:
             print("\n[API Filter] Dang kiem tra API keys...")
+
+        # 0. Ollama (LOCAL, FREE, khong rate limit!)
+        ollama_model = self.config.get("ollama_model")
+        if ollama_model:
+            ollama_endpoint = self.config.get("ollama_endpoint", "http://localhost:11434")
+            client = OllamaClient(model=ollama_model, endpoint=ollama_endpoint)
+            if auto_filter:
+                print(f"  Testing Ollama ({ollama_model})...", end=" ")
+                if client.is_available():
+                    # List models to confirm model exists
+                    available_models = client.list_models()
+                    if any(ollama_model in m for m in available_models):
+                        print(f"OK (model found)")
+                        self.clients.append(("ollama", client))
+                    else:
+                        print(f"SKIP (model '{ollama_model}' not found, available: {available_models[:3]})")
+                else:
+                    print("SKIP (ollama serve not running)")
+            else:
+                self.clients.append(("ollama", client))
 
         # 1. Gemini (chat luong cao nhat, nhanh nhat)
         gemini_keys = self.config.get("gemini_api_keys", [])
@@ -414,7 +539,18 @@ class MultiAIClient:
             counts = {}
             for name, _ in self.clients:
                 counts[name] = counts.get(name, 0) + 1
-            print(f"[API Filter] Ket qua: {counts.get('gemini', 0)} Gemini, {counts.get('groq', 0)} Groq, {counts.get('deepseek', 0)} DeepSeek")
+
+            result_parts = []
+            if counts.get('ollama', 0):
+                result_parts.append(f"{counts['ollama']} Ollama")
+            if counts.get('gemini', 0):
+                result_parts.append(f"{counts['gemini']} Gemini")
+            if counts.get('groq', 0):
+                result_parts.append(f"{counts['groq']} Groq")
+            if counts.get('deepseek', 0):
+                result_parts.append(f"{counts['deepseek']} DeepSeek")
+
+            print(f"[API Filter] Ket qua: {', '.join(result_parts) if result_parts else 'Khong co provider nao'}")
 
             if not self.clients:
                 print("[API Filter] CANH BAO: Khong co API key nao hoat dong!")

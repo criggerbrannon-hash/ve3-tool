@@ -772,7 +772,7 @@ class UnixVoiceToVideo:
                 if path and not path.startswith('THAY_BANG') and Path(path).exists():
                     self.profiles.append(path)
             
-            # API keys (thu tu uu tien: Gemini > Groq > DeepSeek)
+            # API keys (thu tu uu tien: Ollama > Gemini > Groq > DeepSeek)
             api = data.get('api_keys', {})
             self.gemini_keys = [k for k in api.get('gemini', [])
                               if k and not k.startswith('THAY_BANG')]
@@ -780,6 +780,12 @@ class UnixVoiceToVideo:
                             if k and not k.startswith('THAY_BANG')]
             self.deepseek_keys = [k for k in api.get('deepseek', [])
                                 if k and not k.startswith('THAY_BANG')]
+
+            # Ollama local config
+            ollama_config = api.get('ollama', {})
+            self.ollama_model = ollama_config.get('model', 'gemma3:27b')
+            self.ollama_endpoint = ollama_config.get('endpoint', 'http://localhost:11434')
+            self.ollama_priority = ollama_config.get('priority', False)
             
         except Exception as e:
             print(f"Load config error: {e}")
