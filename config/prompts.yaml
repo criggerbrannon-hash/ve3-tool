@@ -463,57 +463,90 @@ directors_treatment: |
 
 directors_shooting_plan: |
   You are a FILM DIRECTOR creating a SHOOTING PLAN for a video.
-  Think like a REAL FILM DIRECTOR - first understand the story, then plan the shots.
+  Think like a REAL FILM DIRECTOR - CONTENT is KING, images serve the story's GOAL.
 
-  ## YOUR WORKFLOW (2 STEPS):
+  ## CORE PRINCIPLE:
+  ```
+  TXT (Content) → Divide into PARTS → Each part has a GOAL → Images SERVE that goal
+                                              ↓
+                                   What should AUDIENCE FEEL?
+  ```
 
-  ### STEP 1: ANALYZE THE STORY (from TXT)
-  Read the full story and identify:
-  - How many PARTS/SECTIONS does this story have?
-  - What is the KEY MESSAGE of each part?
-  - What KEY IMAGES are needed to VISUALLY TELL each part?
+  ## YOUR WORKFLOW:
+
+  ### STEP 1: ANALYZE CONTENT (from TXT) - THIS IS MOST IMPORTANT!
+
+  Read the full story and for EACH PART, ask yourself:
+  1. What is this part about? (CONTENT)
+  2. What is the GOAL of this part? (PURPOSE)
+  3. What should the AUDIENCE FEEL? (EMOTION TARGET)
+  4. What VISUAL STRATEGY achieves this goal? (HOW)
+  5. What KEY IMAGES are needed? (WHAT)
 
   Example analysis:
   ```
-  HOOK: Courthouse betrayal → KEY IMAGE: Man alone on courthouse steps
-  PART 1: Poor childhood → KEY IMAGES: Old house, Mother-son at market
-  PART 2: Working hard → KEY IMAGES: Building house, Sweating
-  PART 3: Completion → KEY IMAGE: Finished house, Mother crying happy
-  PART 4: Betrayal → KEY IMAGES: Eviction, Court summons
+  HOOK (0:00-0:15):
+    Content: Mother sues son for the house he built
+    GOAL: CREATE SHOCK, spark curiosity
+    Audience should feel: "WTF? How could a mother do this?"
+    Visual strategy: Dramatic, dark, lonely, overwhelming
+    Key images: Tiny man vs imposing courthouse, devastated face
+
+  PART 1 (0:15-0:45):
+    Content: Poor childhood, mother worked hard
+    GOAL: BUILD SYMPATHY for the son
+    Audience should feel: "Poor kid, such a hard life"
+    Visual strategy: Warm, nostalgic, intimate, golden hour
+    Key images: Leaky thatched house, mother-son working together
+
+  PART 2 (0:45-1:30):
+    Content: Son builds house for mother
+    GOAL: SHOW SACRIFICE and love
+    Audience should feel: "What a devoted son, so much effort"
+    Visual strategy: Harsh sunlight, sweat, exhaustion, determination
+    Key images: Hands building, sweating under sun, calloused hands
+
+  PART 3 (1:30-2:00):
+    Content: House completed, mother cries happy
+    GOAL: EMOTIONAL PEAK - happiness
+    Audience should feel: "So beautiful, so touching"
+    Visual strategy: Radiant light, tears of joy, warm colors
+    Key images: Beautiful new house, mother crying happy, embrace
+
+  PART 4 (2:00-2:30):
+    Content: Mother evicts son, sues him
+    GOAL: SECOND SHOCK - betrayal
+    Audience should feel: "Unbelievable! After all he did?"
+    Visual strategy: Cold, dark, contrast with Part 3
+    Key images: Angry confrontation, legal papers, courthouse
   ```
 
-  ### STEP 2: PLAN THE SHOTS (using SRT timestamps)
-  For each KEY IMAGE, determine:
-  - Which SRT segment does it belong to?
-  - How many SHOTS needed based on duration (duration ÷ 8s)?
-  - What CAMERA ANGLES to use for variety?
-  - Create detailed img_prompt for each shot
+  ### STEP 2: VISUAL STRATEGY → IMAGES
+
+  Based on GOAL, choose appropriate:
+
+  | GOAL | Lighting | Colors | Camera | Expression |
+  |------|----------|--------|--------|------------|
+  | SHOCK | Dark, overcast | Cold, desaturated | Low angle, wide | DEVASTATED |
+  | SYMPATHY | Golden hour, warm | Warm, nostalgic | Eye level, intimate | TIRED but LOVING |
+  | SHOW SACRIFICE | Harsh sunlight | High contrast | Close-up details | DETERMINED, EXHAUSTED |
+  | HAPPINESS | Radiant, bright | Warm, vibrant | Medium, two-shot | TEARS OF JOY |
+  | BETRAYAL | Cold, harsh | Desaturated | Dutch angle | ANGRY, HURT |
+
+  ### STEP 3: MAP TO SRT TIMESTAMPS
+
+  SRT tells you WHEN each image appears (start/end time).
+  Duration ÷ 8s = number of shots needed.
 
   ## RULES:
   - Maximum 8 seconds per image
-  - Each story part: duration ÷ 8 = number of shots (round up)
-  - Use DIFFERENT camera angles for variety (like a real film!)
-  - Images must TELL THE STORY, not just illustrate words
-  - KEY IMAGES first, then break into shots
-
-  ## CAMERA ANGLE SEQUENCE (for variety):
-  1. WIDE/ESTABLISHING - Set the scene, show location
-  2. MEDIUM - Show character in context
-  3. CLOSE-UP - Emotional detail, face
-  4. EXTREME CLOSE-UP - Detail (hands, object, tears)
-  5. OVER-SHOULDER / TWO-SHOT - Interaction between characters
-  6. LOW/HIGH ANGLE - Dramatic emphasis
-
-  IMPORTANT: Vary your angles! Don't use same angle twice in a row.
-
-  ## EMOTION & ACTION RULES:
-  - Match EMOTION to content (hard work = DETERMINED, not SMILING)
-  - Use ACTION VERBS: BUILDING, SWEATING, CRYING (not HOLDING, STANDING)
-  - Show the STRUGGLE, not just the pose
+  - Each part: duration ÷ 8 = shots needed (round up)
+  - EVERY image must serve the part's GOAL
+  - Images are NOT illustrations - they CREATE FEELING
 
   ## CHILD CHARACTER RULES:
   - Children should NOT be in reference_files (API policy)
-  - Describe children INLINE in img_prompt: "(Child: 8yo Vietnamese boy, thin, hopeful eyes)"
+  - Describe children INLINE in img_prompt
 
   ## INPUT:
 
@@ -538,11 +571,30 @@ directors_shooting_plan: |
     "story_analysis": {{
       "total_parts": 5,
       "parts_overview": [
-        {{"part": "HOOK", "message": "Betrayal at courthouse", "key_images": ["Man alone on steps", "Face of disbelief"]}},
-        {{"part": "PART 1", "message": "Poor childhood", "key_images": ["Old thatched house", "Mother-son at market"]}},
-        {{"part": "PART 2", "message": "Hard work building", "key_images": ["Construction site", "Hands building"]}},
-        {{"part": "PART 3", "message": "Completion joy", "key_images": ["Finished house", "Mother crying happy"]}},
-        {{"part": "PART 4", "message": "Betrayal", "key_images": ["Eviction scene", "Court summons"]}}
+        {{
+          "part": "HOOK",
+          "content": "Mother sues son for the house",
+          "goal": "CREATE SHOCK, spark curiosity",
+          "audience_feeling": "WTF? How could she do this?",
+          "visual_strategy": "Dark, dramatic, lonely, imposing",
+          "key_images": ["Tiny man vs huge courthouse", "Face of devastation"]
+        }},
+        {{
+          "part": "PART 1 - Childhood",
+          "content": "Poor childhood with hardworking mother",
+          "goal": "BUILD SYMPATHY",
+          "audience_feeling": "Poor kid, such hardship",
+          "visual_strategy": "Warm, nostalgic, golden hour, intimate",
+          "key_images": ["Leaky old house", "Mother-son at market"]
+        }},
+        {{
+          "part": "PART 2 - Building",
+          "content": "Son builds house for mother",
+          "goal": "SHOW SACRIFICE",
+          "audience_feeling": "Such a devoted son",
+          "visual_strategy": "Harsh sun, sweat, exhaustion, determination",
+          "key_images": ["Sweating while building", "Calloused hands"]
+        }}
       ],
       "total_key_images": 10
     }},
@@ -552,65 +604,66 @@ directors_shooting_plan: |
       "story_parts": [
         {{
           "part_number": 1,
-          "part_name": "HOOK - Courthouse Betrayal",
-          "key_message": "Son betrayed by mother, sitting alone at courthouse",
+          "part_name": "HOOK",
+          "goal": "CREATE SHOCK",
+          "audience_feeling": "WTF? Unbelievable!",
+          "visual_strategy": {{
+            "lighting": "Dark, overcast, ominous",
+            "colors": "Desaturated, cold",
+            "mood": "Lonely, overwhelming"
+          }},
           "time_range": "00:00 - 00:15",
           "duration_seconds": 15,
-          "key_images_in_part": ["Man alone on courthouse steps", "Face showing disbelief"],
           "shots_needed": 2,
-          "emotional_tone": "Shock, betrayal, devastation",
-          "location": "loc_courthouse",
-          "characters": ["nvc"],
           "shots": [
             {{
               "shot_number": 1,
-              "key_image": "Man alone on courthouse steps",
+              "purpose": "Establish loneliness and overwhelming situation",
               "srt_range": "00:00 - 00:08",
               "srt_text": "Tôi ngồi trên bậc thềm tòa án...",
               "shot_type": "WIDE SHOT",
-              "camera_angle": "Eye level, 24mm",
-              "visual_description": "Establishing - imposing courthouse, tiny figure on steps",
+              "camera_angle": "Low angle, 24mm - makes courthouse imposing",
               "characters_in_shot": ["nvc"],
               "reference_files": ["nvc.png", "loc_courthouse.png"],
-              "img_prompt": "Wide shot, 24mm lens. Imposing Vietnamese courthouse exterior, gray concrete steps, tall columns. Small figure of 30yo man SITTING ALONE on steps, HUNCHED OVER, head bowed, holding crumpled papers. Overcast sky, ominous atmosphere. Expression of DEVASTATION. Cinematic, 4K photorealistic."
+              "img_prompt": "Wide shot, low angle, 24mm lens. IMPOSING Vietnamese courthouse with massive columns TOWERING over scene. TINY figure of 30yo man sitting ALONE on steps, hunched, defeated, holding crumpled papers. OVERCAST sky, OMINOUS atmosphere. Cold, desaturated colors. Expression of UTTER DEVASTATION. Cinematic, 4K photorealistic."
             }},
             {{
               "shot_number": 2,
-              "key_image": "Face showing disbelief",
+              "purpose": "Show emotional devastation up close",
               "srt_range": "00:08 - 00:15",
               "srt_text": "Mẹ tôi đã kiện tôi...",
               "shot_type": "CLOSE-UP",
-              "camera_angle": "Slight low angle, 85mm",
-              "visual_description": "Emotional close-up - face of betrayal",
+              "camera_angle": "Slight low angle, 85mm - dramatic",
               "characters_in_shot": ["nvc"],
               "reference_files": ["nvc.png"],
-              "img_prompt": "Close-up, 85mm lens, slight low angle. 30yo Vietnamese man's face, eyes RED and WELLING with tears, jaw CLENCHED, expression of DISBELIEF and BETRAYAL. Stubble visible. Soft overcast light. Cinematic, 4K photorealistic."
+              "img_prompt": "Close-up, 85mm lens, slight low angle. 30yo Vietnamese man's face, eyes RED and WELLING with tears, jaw CLENCHED tight, TREMBLING lips. Expression of DISBELIEF and BETRAYAL - 'how could my own mother do this?' Soft cold light. Cinematic, 4K photorealistic."
             }}
           ]
         }},
         {{
           "part_number": 2,
-          "part_name": "CHILDHOOD - Poor but Loving",
-          "key_message": "Growing up poor with hardworking mother",
+          "part_name": "CHILDHOOD",
+          "goal": "BUILD SYMPATHY",
+          "audience_feeling": "Poor kid, such a hard life",
+          "visual_strategy": {{
+            "lighting": "Golden hour, warm tungsten",
+            "colors": "Warm, slightly faded, nostalgic",
+            "mood": "Intimate, loving despite hardship"
+          }},
           "time_range": "00:15 - 00:45",
           "duration_seconds": 30,
-          "key_images_in_part": ["Old thatched house", "Mother and son at market"],
           "shots_needed": 4,
-          "emotional_tone": "Nostalgia, hardship, love",
-          "location": "loc_old_house, loc_market",
-          "characters": ["nv1_young", "nvc1"],
           "shots": [
             {{
               "shot_number": 3,
-              "key_image": "Old thatched house",
+              "purpose": "Show poverty but also warmth of home",
               "srt_range": "00:15 - 00:22",
               "srt_text": "Năm tôi 8 tuổi, ba mẹ ly hôn...",
               "shot_type": "WIDE SHOT",
-              "camera_angle": "Eye level, 24mm, golden hour",
-              "visual_description": "Establishing - poor countryside, thatched house",
+              "camera_angle": "Eye level, 24mm - intimate establishing",
               "characters_in_shot": ["nv1_young", "nvc1"],
               "reference_files": ["nv1_young.png", "loc_old_house.png"],
-              "img_prompt": "Wide shot, 24mm lens, warm golden hour light. Vietnamese countryside, small THATCHED-ROOF HOUSE with HOLES in roof, dirt path. 32yo mother in simple worn clothes WALKING with hand on son's shoulder. Nostalgic, slightly faded warm colors. Cinematic, 4K photorealistic. (Child: 8yo Vietnamese boy, thin, wearing patched clothes, looking up at mother)"
+              "img_prompt": "Wide shot, 24mm lens, GOLDEN HOUR warm light. Vietnamese countryside, small THATCHED-ROOF HOUSE with HOLES in roof, but WARM light glowing from inside. 32yo mother in worn but clean clothes, hand lovingly on young son's shoulder. NOSTALGIC, slightly faded warm colors. Despite poverty, feeling of LOVE and TOGETHERNESS. Cinematic, 4K photorealistic. (Child: 8yo Vietnamese boy, thin but bright-eyed, looking up at mother with trust)"
             }}
           ]
         }}
