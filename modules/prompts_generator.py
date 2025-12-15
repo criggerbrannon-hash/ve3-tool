@@ -1380,7 +1380,7 @@ class PromptGenerator:
             self.logger.info("[Director's Shooting Plan] Đạo diễn đang lên kế hoạch quay...")
             self.logger.info("=" * 50)
 
-            response = self._generate_content(prompt, temperature=0.4, max_tokens=16000)
+            response = self._generate_content(prompt, temperature=0.4, max_tokens=8000)
             json_data = self._extract_json(response)
 
             if not json_data or "shooting_plan" not in json_data:
@@ -1598,7 +1598,7 @@ class PromptGenerator:
                 prompt = "\n\n".join(context_parts) + "\n\n" + prompt
 
         try:
-            response = self._generate_content(prompt, temperature=0.4, max_tokens=16000)
+            response = self._generate_content(prompt, temperature=0.4, max_tokens=8000)
             json_data = self._extract_json(response)
 
             if not json_data or "scenes" not in json_data:
