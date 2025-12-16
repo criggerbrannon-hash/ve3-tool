@@ -538,21 +538,28 @@ console.log('Capture ready v3');
             self.show_chrome_window()
             time.sleep(0.5)
 
-            # Mo DevTools Console
-            pag.hotkey("ctrl", "shift", "j")
-            time.sleep(1.5)
+            # Mo DevTools Console (F12 thay vi Ctrl+Shift+J de tranh conflict)
+            pag.press("f12")
+            time.sleep(2)
 
             # Clear clipboard truoc
             pyperclip.copy("")
+            time.sleep(0.2)
 
             # Chay script lay recaptcha va copy TRONG CUNG 1 LENH
-            # Dung .then() de dam bao copy() chay sau khi co token
             js = '''grecaptcha.enterprise.execute('6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV',{action:'SUBMIT'}).then(t=>{copy(t);console.log('COPIED:',t.slice(0,30))})'''
 
             pyperclip.copy(js)
-            time.sleep(0.3)
-            pag.hotkey("ctrl", "v")
-            time.sleep(0.3)
+            time.sleep(0.5)
+
+            # Paste - dung keyDown/keyUp de tranh double paste
+            pag.keyDown("ctrl")
+            time.sleep(0.1)
+            pag.press("v")
+            time.sleep(0.1)
+            pag.keyUp("ctrl")
+            time.sleep(0.5)
+
             pag.press("enter")
             time.sleep(3)  # Doi grecaptcha execute + copy
 
@@ -560,8 +567,8 @@ console.log('Capture ready v3');
             token = pyperclip.paste()
 
             # Dong DevTools
-            pag.hotkey("ctrl", "shift", "j")
-            time.sleep(0.3)
+            pag.press("f12")
+            time.sleep(0.5)
 
             # An Chrome
             self.hide_chrome_window()
