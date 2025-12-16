@@ -270,7 +270,9 @@ class GoogleFlowAPI:
         url = f"{self.BASE_URL}/v1/projects/{self.project_id}/flowMedia:batchGenerateImages"
 
         self._log(f"POST {url}")
-        if not self.recaptcha_token:
+        if self.recaptcha_token:
+            self._log(f"reCAPTCHA token: {len(self.recaptcha_token)} chars, starts with {self.recaptcha_token[:20]}...")
+        else:
             self._log("WARNING: No reCAPTCHA token - request may fail with 403")
         
         try:
