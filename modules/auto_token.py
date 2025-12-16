@@ -563,8 +563,8 @@ console.log('Capture ready v3');
             pyperclip.copy("")
             time.sleep(0.3)
 
-            # Chay script lay recaptcha - dung site key cua Google Flow
-            js = '''grecaptcha.enterprise.execute('6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV',{action:'SUBMIT'}).then(t=>{copy(t);console.log('COPIED:',t.slice(0,30))})'''
+            # Chay script lay recaptcha - dung textarea + execCommand('copy') thay vi copy()
+            js = '''grecaptcha.enterprise.execute('6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV',{action:'SUBMIT'}).then(t=>{window._token=t;var a=document.createElement('textarea');a.value=t;a.style.position='fixed';a.style.left='-9999px';document.body.appendChild(a);a.focus();a.select();document.execCommand('copy');document.body.removeChild(a);console.log('COPIED OK:',t.slice(0,30))})'''
 
             pyperclip.copy(js)
             time.sleep(0.5)
@@ -596,8 +596,8 @@ console.log('Capture ready v3');
             # An Chrome
             self.hide_chrome_window()
 
-            # Validate token
-            if token and len(token) > 100 and token.startswith('03'):
+            # Validate token (co the bat dau bang 03, 0c, hoac 0 khac)
+            if token and len(token) > 500 and token[0] == '0':
                 self.log(f"Fresh reCAPTCHA OK: {len(token)} chars")
                 return token
 
