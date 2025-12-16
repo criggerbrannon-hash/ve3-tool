@@ -22,9 +22,10 @@ from modules.utils import get_logger
 # Cột cho sheet Characters
 CHARACTERS_COLUMNS = [
     "id",               # ID nhân vật (nvc, nvp1, nvp2, ...)
-    "role",             # Vai trò (main/supporting)
+    "role",             # Vai trò (main/supporting/location)
     "name",             # Tên nhân vật trong truyện
-    "english_prompt",   # Prompt tiếng Anh mô tả ngoại hình
+    "english_prompt",   # Prompt tiếng Anh cho ảnh tham chiếu (portrait_prompt)
+    "character_lock",   # Mô tả ngắn để paste vào scene prompts (QUAN TRỌNG!)
     "vietnamese_prompt", # Prompt tiếng Việt (nếu cần)
     "image_file",       # Tên file ảnh tham chiếu (nvc.png, nvp1.png, ...)
     "status",           # Trạng thái (pending/done/error)
@@ -33,8 +34,11 @@ CHARACTERS_COLUMNS = [
 # Cột cho sheet Scenes
 SCENES_COLUMNS = [
     "scene_id",         # ID scene (1, 2, 3, ...)
-    "srt_start",        # Index bắt đầu trong SRT
-    "srt_end",          # Index kết thúc trong SRT
+    "start_time",       # Thời gian bắt đầu (HH:MM:SS,mmm) - cho video editing
+    "end_time",         # Thời gian kết thúc (HH:MM:SS,mmm) - cho video editing
+    "duration",         # Độ dài (giây) - để kiểm tra nhanh
+    "srt_start",        # Index bắt đầu trong SRT (số thứ tự câu)
+    "srt_end",          # Index kết thúc trong SRT (số thứ tự câu)
     "srt_text",         # Nội dung text của scene
     "img_prompt",       # Prompt tạo ảnh
     "video_prompt",     # Prompt tạo video
@@ -42,6 +46,9 @@ SCENES_COLUMNS = [
     "video_path",       # Path đến video đã tạo
     "status_img",       # Trạng thái ảnh (pending/done/error)
     "status_vid",       # Trạng thái video (pending/done/error)
+    "characters_used",  # JSON list nhân vật trong scene (["nv1", "nv2"])
+    "location_used",    # ID bối cảnh ("loc1")
+    "reference_files",  # JSON list file tham chiếu (["nv1.png", "loc1.png"])
 ]
 
 
@@ -51,13 +58,14 @@ SCENES_COLUMNS = [
 
 class Character:
     """Đại diện cho một nhân vật trong truyện."""
-    
+
     def __init__(
         self,
         id: str,
         role: str = "supporting",
         name: str = "",
         english_prompt: str = "",
+        character_lock: str = "",
         vietnamese_prompt: str = "",
         image_file: str = "",
         status: str = "pending"
@@ -65,11 +73,12 @@ class Character:
         self.id = id
         self.role = role
         self.name = name
-        self.english_prompt = english_prompt
+        self.english_prompt = english_prompt  # portrait_prompt - for generating reference image
+        self.character_lock = character_lock  # short description for scene prompts
         self.vietnamese_prompt = vietnamese_prompt
         self.image_file = image_file
         self.status = status
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Chuyển đổi thành dictionary."""
         return {
@@ -77,11 +86,12 @@ class Character:
             "role": self.role,
             "name": self.name,
             "english_prompt": self.english_prompt,
+            "character_lock": self.character_lock,
             "vietnamese_prompt": self.vietnamese_prompt,
             "image_file": self.image_file,
             "status": self.status,
         }
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Character":
         """Tạo Character từ dictionary."""
@@ -90,8 +100,60 @@ class Character:
             role=str(data.get("role", "supporting")),
             name=str(data.get("name", "")),
             english_prompt=str(data.get("english_prompt", "")),
+            character_lock=str(data.get("character_lock", "")),
             vietnamese_prompt=str(data.get("vietnamese_prompt", "")),
             image_file=str(data.get("image_file", "")),
+            status=str(data.get("status", "pending")),
+        )
+
+
+# ============================================================================
+# LOCATION DATA CLASS
+# ============================================================================
+
+class Location:
+    """Đại diện cho một location/bối cảnh trong truyện."""
+
+    def __init__(
+        self,
+        id: str,
+        name: str = "",
+        english_prompt: str = "",
+        location_lock: str = "",
+        lighting_default: str = "",
+        image_file: str = "",
+        status: str = "pending"
+    ):
+        self.id = id
+        self.name = name
+        self.english_prompt = english_prompt  # location_prompt từ AI
+        self.location_lock = location_lock
+        self.lighting_default = lighting_default
+        self.image_file = image_file
+        self.status = status
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Chuyển đổi thành dictionary."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "english_prompt": self.english_prompt,
+            "location_lock": self.location_lock,
+            "lighting_default": self.lighting_default,
+            "image_file": self.image_file,
+            "status": self.status,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Location":
+        """Tạo Location từ dictionary."""
+        return cls(
+            id=str(data.get("id", "")),
+            name=str(data.get("name", "")),
+            english_prompt=str(data.get("english_prompt", data.get("location_prompt", ""))),
+            location_lock=str(data.get("location_lock", "")),
+            lighting_default=str(data.get("lighting_default", "")),
+            image_file=str(data.get("image_file", data.get("filename", ""))),
             status=str(data.get("status", "pending")),
         )
 
@@ -102,21 +164,30 @@ class Character:
 
 class Scene:
     """Đại diện cho một scene trong video."""
-    
+
     def __init__(
         self,
         scene_id: int,
-        srt_start: int = 0,
-        srt_end: int = 0,
+        start_time: str = "",           # HH:MM:SS,mmm - thời gian bắt đầu (deprecated)
+        end_time: str = "",             # HH:MM:SS,mmm - thời gian kết thúc (deprecated)
+        duration: float = 0.0,          # Độ dài (giây)
+        srt_start: str = "",            # Timestamp bắt đầu: "00:00:00,000"
+        srt_end: str = "",              # Timestamp kết thúc: "00:00:05,340"
         srt_text: str = "",
         img_prompt: str = "",
         video_prompt: str = "",
         img_path: str = "",
         video_path: str = "",
         status_img: str = "pending",
-        status_vid: str = "pending"
+        status_vid: str = "pending",
+        characters_used: str = "",      # JSON list: ["nv1", "nv2"]
+        location_used: str = "",         # Location ID: "loc1"
+        reference_files: str = ""        # JSON list: ["nv1.png", "loc1.png"]
     ):
         self.scene_id = scene_id
+        self.start_time = start_time
+        self.end_time = end_time
+        self.duration = duration
         self.srt_start = srt_start
         self.srt_end = srt_end
         self.srt_text = srt_text
@@ -126,11 +197,17 @@ class Scene:
         self.video_path = video_path
         self.status_img = status_img
         self.status_vid = status_vid
-    
+        self.characters_used = characters_used
+        self.location_used = location_used
+        self.reference_files = reference_files
+
     def to_dict(self) -> Dict[str, Any]:
         """Chuyển đổi thành dictionary."""
         return {
             "scene_id": self.scene_id,
+            "start_time": self.start_time,
+            "end_time": self.end_time,
+            "duration": self.duration,
             "srt_start": self.srt_start,
             "srt_end": self.srt_end,
             "srt_text": self.srt_text,
@@ -140,15 +217,29 @@ class Scene:
             "video_path": self.video_path,
             "status_img": self.status_img,
             "status_vid": self.status_vid,
+            "characters_used": self.characters_used,
+            "location_used": self.location_used,
+            "reference_files": self.reference_files,
         }
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Scene":
         """Tạo Scene từ dictionary."""
+        # Parse duration - có thể là string hoặc float
+        duration_val = data.get("duration", 0)
+        if isinstance(duration_val, str):
+            try:
+                duration_val = float(duration_val) if duration_val else 0.0
+            except ValueError:
+                duration_val = 0.0
+
         return cls(
             scene_id=int(data.get("scene_id", 0)),
-            srt_start=int(data.get("srt_start", 0) or 0),
-            srt_end=int(data.get("srt_end", 0) or 0),
+            start_time=str(data.get("start_time", "")),
+            end_time=str(data.get("end_time", "")),
+            duration=float(duration_val),
+            srt_start=str(data.get("srt_start", "") or ""),  # Timestamp: "00:00:00,000"
+            srt_end=str(data.get("srt_end", "") or ""),      # Timestamp: "00:00:05,340"
             srt_text=str(data.get("srt_text", "")),
             img_prompt=str(data.get("img_prompt", "")),
             video_prompt=str(data.get("video_prompt", "")),
@@ -156,6 +247,9 @@ class Scene:
             video_path=str(data.get("video_path", "")),
             status_img=str(data.get("status_img", "pending")),
             status_vid=str(data.get("status_vid", "pending")),
+            characters_used=str(data.get("characters_used", "")),
+            location_used=str(data.get("location_used", "")),
+            reference_files=str(data.get("reference_files", "")),
         )
 
 
@@ -246,6 +340,7 @@ class PromptWorkbook:
             "role": 12,
             "name": 20,
             "english_prompt": 60,
+            "character_lock": 50,
             "vietnamese_prompt": 40,
             "image_file": 15,
             "status": 10,
@@ -273,6 +368,9 @@ class PromptWorkbook:
         # Điều chỉnh độ rộng cột
         column_widths = {
             "scene_id": 10,
+            "start_time": 18,       # HH:MM:SS,mmm
+            "end_time": 18,         # HH:MM:SS,mmm
+            "duration": 10,         # Số giây
             "srt_start": 10,
             "srt_end": 10,
             "srt_text": 50,
@@ -282,6 +380,9 @@ class PromptWorkbook:
             "video_path": 30,
             "status_img": 12,
             "status_vid": 12,
+            "characters_used": 20,
+            "location_used": 15,
+            "reference_files": 30,
         }
         
         for col, column_name in enumerate(SCENES_COLUMNS, start=1):
@@ -519,3 +620,122 @@ class PromptWorkbook:
             "videos_done": sum(1 for s in scenes if s.status_vid == "done"),
             "videos_error": sum(1 for s in scenes if s.status_vid == "error"),
         }
+
+    # ========================================================================
+    # EXPORT METHODS - TXT & SRT
+    # ========================================================================
+
+    def export_scenes_txt(self, output_path: Path) -> bool:
+        """
+        Xuất danh sách scenes ra file TXT.
+
+        Format:
+        [Scene 1] 00:00:00,000 - 00:00:05,340
+        Prompt: A man walking in the park...
+        Text: Đây là nội dung thoại...
+        ---
+
+        Args:
+            output_path: Đường dẫn file TXT output
+
+        Returns:
+            True nếu thành công
+        """
+        scenes = self.get_scenes()
+        if not scenes:
+            self.logger.warning("No scenes to export")
+            return False
+
+        lines = []
+        lines.append("=" * 60)
+        lines.append("DANH SÁCH PHÂN CẢNH - SCENE LIST")
+        lines.append(f"Tổng: {len(scenes)} scenes")
+        lines.append("=" * 60)
+        lines.append("")
+
+        for scene in scenes:
+            # Scene header với timestamp
+            start = scene.srt_start or scene.start_time or "00:00:00,000"
+            end = scene.srt_end or scene.end_time or "00:00:00,000"
+            duration = f"{scene.duration:.1f}s" if scene.duration else ""
+
+            lines.append(f"[Scene {scene.scene_id}] {start} - {end} ({duration})")
+            lines.append("-" * 40)
+
+            # Prompt
+            if scene.img_prompt:
+                lines.append(f"Prompt: {scene.img_prompt[:200]}...")
+
+            # SRT text (thoại)
+            if scene.srt_text:
+                lines.append(f"Text: {scene.srt_text}")
+
+            # Image path if exists
+            if scene.img_path:
+                lines.append(f"Image: {scene.img_path}")
+
+            lines.append("")
+            lines.append("---")
+            lines.append("")
+
+        # Write to file
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("\n".join(lines), encoding="utf-8")
+
+        self.logger.info(f"Exported {len(scenes)} scenes to {output_path}")
+        return True
+
+    def export_scenes_srt(self, output_path: Path) -> bool:
+        """
+        Xuất scenes ra file SRT với thời gian để edit video.
+
+        Format SRT chuẩn:
+        1
+        00:00:00,000 --> 00:00:05,340
+        [Scene 1] Prompt preview...
+
+        Args:
+            output_path: Đường dẫn file SRT output
+
+        Returns:
+            True nếu thành công
+        """
+        scenes = self.get_scenes()
+        if not scenes:
+            self.logger.warning("No scenes to export SRT")
+            return False
+
+        lines = []
+
+        for i, scene in enumerate(scenes, 1):
+            # SRT index
+            lines.append(str(i))
+
+            # Timestamp line
+            start = scene.srt_start or scene.start_time or "00:00:00,000"
+            end = scene.srt_end or scene.end_time or "00:00:00,000"
+
+            # Đảm bảo format đúng SRT (có dấu phẩy cho milliseconds)
+            if "," not in start:
+                start = start.replace(".", ",") if "." in start else start + ",000"
+            if "," not in end:
+                end = end.replace(".", ",") if "." in end else end + ",000"
+
+            lines.append(f"{start} --> {end}")
+
+            # Content: Scene ID + preview prompt
+            prompt_preview = (scene.img_prompt or "")[:80]
+            if len(scene.img_prompt or "") > 80:
+                prompt_preview += "..."
+
+            lines.append(f"[Scene {scene.scene_id}] {prompt_preview}")
+            lines.append("")  # Blank line between entries
+
+        # Write to file
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("\n".join(lines), encoding="utf-8")
+
+        self.logger.info(f"Exported {len(scenes)} scenes to SRT: {output_path}")
+        return True

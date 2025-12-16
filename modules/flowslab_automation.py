@@ -240,6 +240,7 @@ class DriverFactory:
         
         try:
             driver = webdriver.Chrome(options=options)
+            driver.maximize_window()  # Phóng to cửa sổ để thao tác dễ hơn
             driver.execute_script(
                 "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
             )

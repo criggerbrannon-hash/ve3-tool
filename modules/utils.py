@@ -134,8 +134,8 @@ def load_settings(config_path: Path) -> Dict[str, Any]:
     settings.setdefault("max_scenes_per_account", 50)
     settings.setdefault("retry_count", 3)
     settings.setdefault("wait_timeout", 30)
-    settings.setdefault("min_scene_duration", 15)
-    settings.setdefault("max_scene_duration", 25)
+    settings.setdefault("min_scene_duration", 3)   # Min 3s per scene
+    settings.setdefault("max_scene_duration", 8)   # Max 8s per scene (for video gen)
     settings.setdefault("whisper_model", "base")
     settings.setdefault("whisper_language", "vi")
     settings.setdefault("log_level", "INFO")
@@ -146,7 +146,13 @@ def load_settings(config_path: Path) -> Dict[str, Any]:
     settings.setdefault("flow_aspect_ratio", "landscape")
     settings.setdefault("flow_delay", 3.0)
     settings.setdefault("flow_timeout", 120)
-    
+
+    # Parallel processing defaults (for powerful machines)
+    settings.setdefault("parallel_enabled", True)  # Enable parallel processing
+    settings.setdefault("max_parallel_requests", 5)  # Max parallel API calls
+    settings.setdefault("max_parallel_batches", 3)  # Max parallel batch processing
+    settings.setdefault("prompt_batch_size", 10)  # Scenes per batch
+
     return settings
 
 
@@ -360,48 +366,80 @@ def _parse_srt_fallback(content: str) -> List[SrtEntry]:
 
 def group_srt_into_scenes(
     entries: List[SrtEntry],
-    min_duration: float = 15.0,
-    max_duration: float = 25.0
+    min_duration: float = 3.0,
+    max_duration: float = 8.0
 ) -> List[Dict[str, Any]]:
     """
     Gom các SRT entries thành các scene theo thời lượng.
-    
+    QUAN TRỌNG: Mỗi scene KHÔNG được vượt quá max_duration!
+
     Args:
         entries: List các SrtEntry
-        min_duration: Thời lượng tối thiểu của scene (giây)
-        max_duration: Thời lượng tối đa của scene (giây)
-        
+        min_duration: Thời lượng tối thiểu của scene (giây), mặc định 3s
+        max_duration: Thời lượng tối đa của scene (giây), mặc định 8s (max for video gen)
+
     Returns:
         List các scene, mỗi scene có: scene_id, start_time, end_time, text, srt_indices
     """
     if not entries:
         return []
-    
+
+    # BƯỚC 1: Split các SRT entries dài hơn max_duration thành nhiều phần
+    split_entries = []
+    for entry in entries:
+        entry_duration = entry.duration
+        if entry_duration <= max_duration:
+            split_entries.append(entry)
+        else:
+            # Entry quá dài, cần chia nhỏ
+            num_parts = int(entry_duration / max_duration) + 1
+            part_duration = entry_duration / num_parts
+            words = entry.text.split()
+            words_per_part = max(1, len(words) // num_parts)
+
+            start_sec = entry.start_time.total_seconds()
+            for i in range(num_parts):
+                part_start = timedelta(seconds=start_sec + i * part_duration)
+                part_end = timedelta(seconds=min(start_sec + (i + 1) * part_duration, entry.end_time.total_seconds()))
+
+                # Chia text theo số từ
+                text_start = i * words_per_part
+                text_end = (i + 1) * words_per_part if i < num_parts - 1 else len(words)
+                part_text = " ".join(words[text_start:text_end]) or entry.text[:50]
+
+                split_entries.append(SrtEntry(
+                    index=entry.index * 100 + i,  # Unique index
+                    start_time=part_start,
+                    end_time=part_end,
+                    text=part_text
+                ))
+
+    # BƯỚC 2: Gom các entries đã split thành scenes (max_duration)
     scenes = []
     current_scene = {
-        "srt_indices": [entries[0].index],
-        "texts": [entries[0].text],
-        "start_time": entries[0].start_time,
-        "end_time": entries[0].end_time,
+        "srt_indices": [split_entries[0].index],
+        "texts": [split_entries[0].text],
+        "start_time": split_entries[0].start_time,
+        "end_time": split_entries[0].end_time,
     }
-    
-    for entry in entries[1:]:
+
+    for entry in split_entries[1:]:
         # Tính thời lượng nếu thêm entry này
         new_duration = (entry.end_time - current_scene["start_time"]).total_seconds()
-        current_duration = (current_scene["end_time"] - current_scene["start_time"]).total_seconds()
-        
-        # Nếu vượt quá max_duration và đã có đủ min_duration thì tạo scene mới
-        if new_duration > max_duration and current_duration >= min_duration:
+
+        # QUAN TRỌNG: Nếu vượt quá max_duration thì PHẢI tạo scene mới
+        if new_duration > max_duration:
             # Lưu scene hiện tại
             scenes.append({
                 "scene_id": len(scenes) + 1,
                 "start_time": current_scene["start_time"],
                 "end_time": current_scene["end_time"],
                 "text": " ".join(current_scene["texts"]),
-                "srt_start": current_scene["srt_indices"][0],
-                "srt_end": current_scene["srt_indices"][-1],
+                "srt_start": format_srt_time(current_scene["start_time"]),
+                "srt_end": format_srt_time(current_scene["end_time"]),
+                "srt_indices": current_scene["srt_indices"],
             })
-            
+
             # Bắt đầu scene mới
             current_scene = {
                 "srt_indices": [entry.index],
@@ -414,7 +452,7 @@ def group_srt_into_scenes(
             current_scene["srt_indices"].append(entry.index)
             current_scene["texts"].append(entry.text)
             current_scene["end_time"] = entry.end_time
-    
+
     # Thêm scene cuối cùng
     if current_scene["srt_indices"]:
         scenes.append({
@@ -422,10 +460,51 @@ def group_srt_into_scenes(
             "start_time": current_scene["start_time"],
             "end_time": current_scene["end_time"],
             "text": " ".join(current_scene["texts"]),
-            "srt_start": current_scene["srt_indices"][0],
-            "srt_end": current_scene["srt_indices"][-1],
+            "srt_start": format_srt_time(current_scene["start_time"]),
+            "srt_end": format_srt_time(current_scene["end_time"]),
+            "srt_indices": current_scene["srt_indices"],
         })
-    
+
+    # BƯỚC 3: POST-PROCESS - Merge scenes ngắn liên tiếp để ưu tiên gần max_duration
+    if len(scenes) > 1:
+        merged = []
+        i = 0
+        while i < len(scenes):
+            current = scenes[i]
+            current_dur = (current["end_time"] - current["start_time"]).total_seconds()
+
+            # Nếu scene ngắn hơn min và còn scene tiếp theo
+            if current_dur < min_duration and i + 1 < len(scenes):
+                next_scene = scenes[i + 1]
+                combined_dur = (next_scene["end_time"] - current["start_time"]).total_seconds()
+
+                # Merge nếu tổng <= max_duration
+                if combined_dur <= max_duration:
+                    merged.append({
+                        "scene_id": len(merged) + 1,
+                        "start_time": current["start_time"],
+                        "end_time": next_scene["end_time"],
+                        "text": current["text"] + " " + next_scene["text"],
+                        "srt_start": format_srt_time(current["start_time"]),
+                        "srt_end": format_srt_time(next_scene["end_time"]),
+                        "srt_indices": current["srt_indices"] + next_scene["srt_indices"],
+                    })
+                    i += 2  # Skip cả 2 scenes đã merge
+                    continue
+
+            # Không merge, giữ nguyên
+            current["scene_id"] = len(merged) + 1
+            merged.append(current)
+            i += 1
+
+        scenes = merged
+
+    # BƯỚC 4: VALIDATE - Double check không có scene nào > max_duration
+    for scene in scenes:
+        duration = (scene["end_time"] - scene["start_time"]).total_seconds()
+        if duration > max_duration + 0.5:  # +0.5 tolerance
+            print(f"[WARNING] Scene {scene['scene_id']} duration={duration:.1f}s > {max_duration}s!")
+
     return scenes
 
 # ============================================================================

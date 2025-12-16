@@ -92,7 +92,10 @@ class ChromeTokenExtractor:
             service = Service()
         
         self.driver = webdriver.Chrome(service=service, options=options)
-        
+
+        # Maximize window for easier interaction
+        self.driver.maximize_window()
+
         # Execute CDP command to enable network tracking
         self.driver.execute_cdp_cmd("Network.enable", {})
     

@@ -29,7 +29,60 @@ class AspectRatio(Enum):
 
 class ImageModel(Enum):
     """Model tạo ảnh."""
-    GEM_PIX = "GEM_PIX"  # Default model
+    GEM_PIX = "GEM_PIX"
+    GEM_PIX_2 = "GEM_PIX_2"  # Default model - phiên bản mới hơn
+
+
+class ImageInputType(Enum):
+    """Loại input image cho reference."""
+    REFERENCE = "IMAGE_INPUT_TYPE_REFERENCE"
+    STYLE = "IMAGE_INPUT_TYPE_STYLE"
+    SUBJECT = "IMAGE_INPUT_TYPE_SUBJECT"
+
+
+@dataclass
+class ImageInput:
+    """Input image cho reference khi generate."""
+    name: str = ""  # Media name từ response trước đó (preferred)
+    input_type: ImageInputType = ImageInputType.REFERENCE
+    base64_data: str = ""  # Base64 image data (fallback if no name)
+    mime_type: str = "image/png"  # MIME type for base64
+
+    def to_dict(self) -> Optional[Dict[str, Any]]:
+        """Convert sang dict format cho API.
+
+        CHU Y: Google Flow API CHI CHAP NHAN media_name!
+        base64/rawImageBytes KHONG HOAT DONG - luon tra ve loi 400.
+
+        Returns:
+            Dict neu co media_name, None neu khong co
+        """
+        # CHI tra ve khi co media_name - API khong chap nhan base64!
+        if not self.name:
+            return None
+
+        return {
+            "imageInputType": self.input_type.value,
+            "name": self.name
+        }
+
+    @classmethod
+    def from_file(cls, file_path: Path, input_type: ImageInputType = ImageInputType.REFERENCE) -> 'ImageInput':
+        """Create ImageInput from local file with base64 data."""
+        import base64
+        with open(file_path, 'rb') as f:
+            data = base64.b64encode(f.read()).decode('utf-8')
+
+        suffix = file_path.suffix.lower()
+        mime_types = {
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".webp": "image/webp"
+        }
+        mime = mime_types.get(suffix, "image/png")
+
+        return cls(name="", input_type=input_type, base64_data=data, mime_type=mime)
 
 
 @dataclass
@@ -38,14 +91,22 @@ class GeneratedImage:
     url: Optional[str] = None
     base64_data: Optional[str] = None
     media_id: Optional[str] = None
+    media_name: Optional[str] = None  # Name để dùng làm reference
+    workflow_id: Optional[str] = None
     seed: Optional[int] = None
     prompt: str = ""
     aspect_ratio: str = ""
     local_path: Optional[Path] = None
-    
+
     @property
     def has_data(self) -> bool:
         return bool(self.url or self.base64_data or self.media_id)
+
+    def as_reference(self, input_type: ImageInputType = ImageInputType.REFERENCE) -> Optional[ImageInput]:
+        """Chuyển thành ImageInput để dùng làm reference cho ảnh khác."""
+        if self.media_name:
+            return ImageInput(name=self.media_name, input_type=input_type)
+        return None
 
 
 class GoogleFlowAPI:
@@ -125,24 +186,59 @@ class GoogleFlowAPI:
         prompt: str,
         count: int = 2,
         aspect_ratio: AspectRatio = AspectRatio.LANDSCAPE,
-        model: ImageModel = ImageModel.GEM_PIX,
-        image_inputs: Optional[List[str]] = None
+        model: ImageModel = ImageModel.GEM_PIX_2,
+        image_inputs: Optional[List[ImageInput]] = None,
+        reference_images: Optional[List[GeneratedImage]] = None
     ) -> Tuple[bool, List[GeneratedImage], str]:
         """
         Tạo ảnh từ prompt sử dụng Flow API.
-        
+
         Args:
             prompt: Text prompt mô tả ảnh
             count: Số lượng ảnh cần tạo (1-4)
             aspect_ratio: Tỷ lệ khung hình
             model: Model tạo ảnh
-            image_inputs: List base64 images cho image-to-image (optional)
-            
+            image_inputs: List ImageInput objects cho reference images
+            reference_images: List GeneratedImage objects để dùng làm reference
+                            (sẽ tự động convert sang ImageInput)
+
         Returns:
             Tuple[success, list_of_images, error_message]
         """
         self._log(f"Generating {count} images with prompt: {prompt[:50]}...")
-        
+
+        # Build imageInputs array từ ImageInput objects hoặc GeneratedImage
+        image_inputs_data = []
+
+        # Priority 1: ImageInput objects
+        if image_inputs:
+            for img_input in image_inputs:
+                if isinstance(img_input, ImageInput):
+                    d = img_input.to_dict()
+                    if d:  # Chi add neu co media_name (to_dict tra ve None neu khong co)
+                        image_inputs_data.append(d)
+                elif isinstance(img_input, dict) and img_input.get("name"):
+                    # Support dict format - CHI khi co name (media_name)
+                    image_inputs_data.append(img_input)
+                # IGNORE: strings, dicts without name - API khong chap nhan
+
+        # Priority 2: Convert GeneratedImage objects to references
+        if reference_images:
+            for ref_img in reference_images:
+                if isinstance(ref_img, GeneratedImage) and ref_img.media_name:
+                    ref_input = ref_img.as_reference()
+                    if ref_input:
+                        image_inputs_data.append(ref_input.to_dict())
+
+        if image_inputs_data:
+            self._log(f"Using {len(image_inputs_data)} reference image(s)")
+            # Debug: Show actual imageInputs being sent
+            for i, inp in enumerate(image_inputs_data):
+                name_preview = inp.get("name", "")[:60] if inp.get("name") else "None"
+                inp_type = inp.get("imageInputType", "")
+                has_b64 = "rawImageBytes" in inp
+                self._log(f"  [{i}] name={name_preview} type={inp_type} has_base64={has_b64}")
+
         # Build requests array
         requests_data = []
         for _ in range(count):
@@ -156,7 +252,7 @@ class GoogleFlowAPI:
                 "imageModelName": model.value,
                 "imageAspectRatio": aspect_ratio.value,
                 "prompt": prompt,
-                "imageInputs": image_inputs or []
+                "imageInputs": image_inputs_data
             }
             requests_data.append(request_item)
         
@@ -180,16 +276,36 @@ class GoogleFlowAPI:
                 return False, [], "Authentication failed - Bearer token may be expired"
             
             if response.status_code == 403:
-                return False, [], "Access forbidden - check permissions"
+                # 403 can mean: rate limit, account blocked, content policy, needs re-login
+                return False, [], "403 Forbidden - rate limit hoac account can dang nhap lai"
             
             if response.status_code != 200:
                 return False, [], f"API error: {response.status_code} - {response.text[:200]}"
             
             # Parse response
             result = response.json()
-            
+
             if self.verbose:
                 self._log(f"Response: {json.dumps(result, indent=2)[:500]}")
+
+            # === DEBUG: Log raw response structure ===
+            self._log(f"=== RAW RESPONSE KEYS: {list(result.keys())}")
+            if "media" in result and result["media"]:
+                first_media = result["media"][0]
+                self._log(f"=== MEDIA[0] KEYS: {list(first_media.keys())}")
+                self._log(f"=== MEDIA[0].name: {first_media.get('name')}")
+                self._log(f"=== MEDIA[0].workflowId: {first_media.get('workflowId')}")
+                # Check nested structures
+                if "image" in first_media:
+                    img_wrapper = first_media["image"]
+                    self._log(f"=== MEDIA[0].image KEYS: {list(img_wrapper.keys())}")
+                    if "generatedImage" in img_wrapper:
+                        gen_img = img_wrapper["generatedImage"]
+                        self._log(f"=== generatedImage KEYS: {list(gen_img.keys())}")
+                        # Check for any name-like fields
+                        for k in gen_img.keys():
+                            if 'name' in k.lower() or 'media' in k.lower() or 'id' in k.lower():
+                                self._log(f"=== generatedImage.{k}: {gen_img.get(k)}")
             
             # Extract images from response
             images = self._parse_image_response(result, prompt, aspect_ratio.value)
@@ -254,19 +370,42 @@ class GoogleFlowAPI:
                 # Navigate: media[].image.generatedImage
                 image_wrapper = media_item.get("image", {})
                 gen_image = image_wrapper.get("generatedImage", {})
-                
+
+                # Extract media name và workflow ID từ media_item level
+                # Thu nhieu fields khac nhau vi API co the thay doi
+                media_name = (
+                    media_item.get("name") or  # Primary field - expected format
+                    media_item.get("mediaName") or  # Alternative naming
+                    media_item.get("resourceName") or  # GCP style
+                    gen_image.get("name") or  # Inside generatedImage
+                    gen_image.get("mediaName") or
+                    gen_image.get("resourceName")
+                )
+                workflow_id = media_item.get("workflowId")
+                media_generation_id = gen_image.get("mediaGenerationId")
+
+                # Fallback: use workflowId or mediaGenerationId if no name
+                if not media_name and workflow_id:
+                    media_name = workflow_id
+                    self._log(f"  -> Using workflowId as media_name: {workflow_id[:40]}...")
+                elif not media_name and media_generation_id:
+                    media_name = media_generation_id
+                    self._log(f"  -> Using mediaGenerationId as media_name: {media_generation_id[:40]}...")
+
                 if gen_image:
                     img = GeneratedImage(
                         url=gen_image.get("fifeUrl"),  # Direct download URL
                         base64_data=gen_image.get("encodedImage"),  # Base64 PNG
                         media_id=gen_image.get("mediaGenerationId"),
+                        media_name=media_name,  # QUAN TRỌNG: name để dùng làm reference
+                        workflow_id=workflow_id,
                         seed=gen_image.get("seed"),
                         prompt=gen_image.get("prompt", prompt),
                         aspect_ratio=gen_image.get("aspectRatio", aspect_ratio)
                     )
                     if img.has_data:
                         images.append(img)
-                        self._log(f"  ✓ Parsed image: seed={img.seed}, has_url={bool(img.url)}, has_b64={bool(img.base64_data)}")
+                        self._log(f"  ✓ Parsed image: seed={img.seed}, has_url={bool(img.url)}, has_b64={bool(img.base64_data)}, media_name={bool(media_name)}")
         
         # =====================================================================
         # FALLBACK FORMATS (for compatibility)
@@ -491,47 +630,257 @@ class GoogleFlowAPI:
         return downloaded
     
     # =========================================================================
+    # IMAGE UPLOAD (Reference Images)
+    # =========================================================================
+
+    def upload_image(
+        self,
+        image_path: Path,
+        image_type: ImageInputType = ImageInputType.REFERENCE,
+        aspect_ratio: AspectRatio = AspectRatio.LANDSCAPE
+    ) -> Tuple[bool, Optional[ImageInput], str]:
+        """
+        Upload ảnh local lên Flow để dùng làm reference.
+
+        Args:
+            image_path: Đường dẫn đến file ảnh local
+            image_type: Loại input (REFERENCE, STYLE, SUBJECT)
+            aspect_ratio: Tỷ lệ khung hình của ảnh
+
+        Returns:
+            Tuple[success, ImageInput object, error_message]
+        """
+        image_path = Path(image_path)
+
+        if not image_path.exists():
+            return False, None, f"File not found: {image_path}"
+
+        self._log(f"Uploading image: {image_path.name}...")
+
+        try:
+            # Read and encode image
+            with open(image_path, "rb") as f:
+                image_bytes = f.read()
+
+            image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+
+            # Detect mime type
+            suffix = image_path.suffix.lower()
+            mime_types = {
+                ".png": "image/png",
+                ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg",
+                ".webp": "image/webp",
+                ".gif": "image/gif"
+            }
+            mime_type = mime_types.get(suffix, "image/png")
+
+            # Build upload request - sử dụng ASSET_MANAGER tool
+            # Endpoint có thể là flowMedia:uploadImage hoặc media:upload
+            url = f"{self.BASE_URL}/v1/projects/{self.project_id}/flowMedia:uploadImage"
+
+            # Format đúng theo Flow API
+            payload = {
+                "clientContext": {
+                    "sessionId": self.session_id,
+                    "tool": "ASSET_MANAGER"  # Upload dùng ASSET_MANAGER, không phải PINHOLE
+                },
+                "imageInput": {
+                    "aspectRatio": aspect_ratio.value,
+                    "isUserUploaded": True,
+                    "mimeType": mime_type,
+                    "rawImageBytes": image_b64
+                }
+            }
+
+            self._log(f"POST {url}")
+
+            response = self.session.post(
+                url,
+                data=json.dumps(payload),
+                timeout=self.timeout
+            )
+
+            self._log(f"Response status: {response.status_code}")
+
+            if response.status_code == 401:
+                return False, None, "Authentication failed - Bearer token may be expired"
+
+            if response.status_code == 403:
+                return False, None, "Access forbidden - check permissions"
+
+            if response.status_code not in [200, 201]:
+                return False, None, f"Upload failed: {response.status_code} - {response.text[:200]}"
+
+            # Parse response to get media name
+            result = response.json()
+
+            if self.verbose:
+                self._log(f"Upload response: {json.dumps(result, indent=2)[:500]}")
+
+            # Extract name from response - thử nhiều format khác nhau
+            media_name = None
+
+            # Format 1: Direct name field
+            if "name" in result:
+                media_name = result["name"]
+            # Format 2: media array
+            elif "media" in result:
+                media = result["media"]
+                if isinstance(media, list) and len(media) > 0:
+                    media_name = media[0].get("name")
+                elif isinstance(media, dict):
+                    media_name = media.get("name")
+            # Format 3: imageInput response
+            elif "imageInput" in result:
+                img_input = result["imageInput"]
+                media_name = img_input.get("name") or img_input.get("mediaName")
+            # Format 4: mediaName field
+            elif "mediaName" in result:
+                media_name = result["mediaName"]
+
+            if media_name:
+                self._log(f"✓ Upload successful, media_name: {media_name[:50]}...")
+                return True, ImageInput(name=media_name, input_type=image_type), ""
+            else:
+                # Log full response for debugging
+                self._log(f"Response without media_name: {json.dumps(result)[:300]}")
+                return False, None, "Upload succeeded but no media name in response"
+
+        except requests.exceptions.Timeout:
+            return False, None, f"Upload timeout after {self.timeout}s"
+        except requests.exceptions.RequestException as e:
+            return False, None, f"Network error: {str(e)}"
+        except Exception as e:
+            return False, None, f"Upload error: {str(e)}"
+
+    def upload_images(
+        self,
+        image_paths: List[Path],
+        image_type: ImageInputType = ImageInputType.REFERENCE
+    ) -> Tuple[List[ImageInput], List[str]]:
+        """
+        Upload nhiều ảnh cùng lúc.
+
+        Args:
+            image_paths: List đường dẫn ảnh
+            image_type: Loại input
+
+        Returns:
+            Tuple[list of ImageInput, list of errors]
+        """
+        uploaded = []
+        errors = []
+
+        for path in image_paths:
+            success, img_input, error = self.upload_image(path, image_type)
+            if success and img_input:
+                uploaded.append(img_input)
+            else:
+                errors.append(f"{path.name}: {error}")
+
+        return uploaded, errors
+
+    # =========================================================================
     # CONVENIENCE METHODS
     # =========================================================================
-    
+
     def generate_and_download(
         self,
         prompt: str,
         output_dir: Path,
         count: int = 2,
         aspect_ratio: AspectRatio = AspectRatio.LANDSCAPE,
-        prefix: str = "flow"
+        prefix: str = "flow",
+        reference_images: Optional[List[GeneratedImage]] = None,
+        image_inputs: Optional[List[ImageInput]] = None
     ) -> Tuple[bool, List[Path], str]:
         """
         Tạo ảnh và download về local trong một lần gọi.
-        
+
         Args:
             prompt: Text prompt
             output_dir: Thư mục lưu ảnh
             count: Số lượng ảnh
             aspect_ratio: Tỷ lệ khung hình
             prefix: Prefix cho tên file
-            
+            reference_images: List GeneratedImage objects để dùng làm reference
+            image_inputs: List ImageInput objects cho reference (KHÔNG phải base64!)
+
         Returns:
             Tuple[success, list_of_paths, error_message]
         """
-        # Generate
+        # Generate with reference images
         success, images, error = self.generate_images(
             prompt=prompt,
             count=count,
-            aspect_ratio=aspect_ratio
+            aspect_ratio=aspect_ratio,
+            reference_images=reference_images,
+            image_inputs=image_inputs
         )
-        
+
         if not success:
             return False, [], error
-        
+
         # Download
         paths = self.download_all_images(images, output_dir, prefix)
-        
+
         if not paths:
             return False, [], "Generation succeeded but download failed"
-        
+
         return True, paths, ""
+
+    def generate_with_references(
+        self,
+        prompt: str,
+        reference_image_paths: List[Path],
+        output_dir: Path,
+        count: int = 1,
+        aspect_ratio: AspectRatio = AspectRatio.LANDSCAPE,
+        prefix: str = "flow"
+    ) -> Tuple[bool, List[Path], str]:
+        """
+        Tạo ảnh với reference images từ file local.
+
+        Workflow:
+        1. Upload các ảnh reference
+        2. Generate ảnh mới với references
+        3. Download kết quả
+
+        Args:
+            prompt: Text prompt
+            reference_image_paths: List đường dẫn ảnh reference
+            output_dir: Thư mục lưu ảnh
+            count: Số lượng ảnh
+            aspect_ratio: Tỷ lệ khung hình
+            prefix: Prefix cho tên file
+
+        Returns:
+            Tuple[success, list_of_paths, error_message]
+        """
+        self._log(f"Generate with {len(reference_image_paths)} reference images...")
+
+        # Step 1: Upload reference images
+        uploaded_refs, upload_errors = self.upload_images(reference_image_paths)
+
+        if upload_errors:
+            for err in upload_errors:
+                self._log(f"Upload error: {err}")
+
+        if not uploaded_refs:
+            return False, [], "Failed to upload any reference images"
+
+        self._log(f"Uploaded {len(uploaded_refs)} reference images")
+
+        # Step 2: Generate with references
+        return self.generate_and_download(
+            prompt=prompt,
+            output_dir=output_dir,
+            count=count,
+            aspect_ratio=aspect_ratio,
+            prefix=prefix,
+            image_inputs=uploaded_refs
+        )
     
     # =========================================================================
     # TOKEN MANAGEMENT
