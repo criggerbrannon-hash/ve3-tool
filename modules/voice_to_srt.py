@@ -113,20 +113,27 @@ class VoiceToSrt:
         """Load Whisper model (lazy loading)."""
         if self._model is not None:
             return
-        
+
         self.logger.info(f"Loading Whisper model: {self.model_name}")
-        
+
+        # Import torch first to avoid hanging issues
+        import torch
+
+        # Default to CPU if device not specified (avoids GPU hanging issues)
+        device = self.device or "cpu"
+        self.logger.info(f"Using device: {device}")
+
         if self.use_timestamped:
             import whisper_timestamped
             self._model = whisper_timestamped.load_model(
                 self.model_name,
-                device=self.device
+                device=device
             )
         else:
             import whisper
             self._model = whisper.load_model(
                 self.model_name,
-                device=self.device
+                device=device
             )
         
         self.logger.info("Model loaded successfully")
