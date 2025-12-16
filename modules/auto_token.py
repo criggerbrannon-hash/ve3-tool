@@ -542,17 +542,14 @@ console.log('Capture ready v3');
             pag.hotkey("ctrl", "shift", "j")
             time.sleep(1)
 
-            # Execute grecaptcha.enterprise.execute() va doi ket qua
+            # BUOC 1: Execute grecaptcha.enterprise.execute() - CHI luu vao window._rc
             # Site key cua Google Flow: 6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV
-            # Dung navigator.clipboard.writeText thay vi copy() (DevTools-only)
             js = '''(async function(){
 try{
 var token=await grecaptcha.enterprise.execute('6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV',{action:'SUBMIT'});
 window._rc=token;
-await navigator.clipboard.writeText(token);
-console.log('Fresh reCAPTCHA OK: '+token.substring(0,20)+'...');
-return token;
-}catch(e){console.log('reCAPTCHA error:',e);return null;}
+console.log('reCAPTCHA stored in window._rc');
+}catch(e){console.log('reCAPTCHA error:',e);}
 })();'''
 
             pyperclip.copy(js)
@@ -562,20 +559,17 @@ return token;
             pag.press("enter")
             time.sleep(2)  # Doi grecaptcha execute
 
-            # Doc token tu clipboard (da duoc JS copy vao)
-            token = pyperclip.paste()
+            # BUOC 2: Copy window._rc vao clipboard (copy() chi hoat dong trong DevTools)
+            copy_cmd = "copy(window._rc)"
+            pyperclip.copy(copy_cmd)
+            time.sleep(0.2)
+            pag.hotkey("ctrl", "v")
+            time.sleep(0.2)
+            pag.press("enter")
+            time.sleep(0.5)
 
-            # Neu clipboard khong co token, thu copy tu window._rc
-            if not token or len(token) < 100 or token.startswith('('):
-                self.log("Thu copy tu window._rc...")
-                copy_cmd = "copy(window._rc)"
-                pyperclip.copy(copy_cmd)
-                time.sleep(0.1)
-                pag.hotkey("ctrl", "v")
-                time.sleep(0.1)
-                pag.press("enter")
-                time.sleep(0.5)
-                token = pyperclip.paste()
+            # Doc token tu clipboard
+            token = pyperclip.paste()
 
             # Dong DevTools
             pag.hotkey("ctrl", "shift", "j")
