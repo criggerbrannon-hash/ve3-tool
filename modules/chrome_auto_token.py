@@ -135,7 +135,10 @@ class ChromeAutoToken:
             service = Service()
         
         self.driver = webdriver.Chrome(service=service, options=options)
-        
+
+        # Phóng to cửa sổ để thao tác dễ hơn
+        self.driver.maximize_window()
+
         # Enable Network domain for CDP
         self.driver.execute_cdp_cmd("Network.enable", {})
     
