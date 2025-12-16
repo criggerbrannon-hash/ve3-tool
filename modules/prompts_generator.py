@@ -1346,11 +1346,126 @@ class PromptGenerator:
                 # Filter children from reference_files
                 scene["reference_files"] = self._filter_children_from_refs(scene["reference_files"])
 
+                # VALIDATE & FIX: Check if action matches location in img_prompt
+                srt_text = shot.get("srt_text", "")
+                fixed_prompt = self._validate_and_fix_location(scene["img_prompt"], srt_text)
+                if fixed_prompt != scene["img_prompt"]:
+                    self.logger.warning(f"[Validation] Fixed location mismatch in scene {scene_id}")
+                    scene["img_prompt"] = fixed_prompt
+
                 scenes.append(scene)
                 scene_id += 1
 
         self.logger.info(f"[Director] Đã chuyển đổi {len(scenes)} shots thành scenes")
         return scenes
+
+    def _validate_and_fix_location(self, img_prompt: str, srt_text: str) -> str:
+        """
+        Validate và fix location mismatch trong img_prompt.
+
+        Ví dụ lỗi: "LYING IN BED... hotel hallway" → Sửa thành "LYING IN BED... bedroom"
+
+        Args:
+            img_prompt: Prompt từ AI
+            srt_text: Text gốc từ SRT (để xác định location đúng)
+
+        Returns:
+            Fixed img_prompt
+        """
+        if not img_prompt:
+            return img_prompt
+
+        import re
+        prompt_lower = img_prompt.lower()
+        srt_lower = srt_text.lower() if srt_text else ""
+
+        # Định nghĩa các action → location mappings
+        action_location_rules = [
+            # BED actions → must be bedroom
+            {
+                "actions": ["lying in bed", "on the bed", "in bed", "bedroom", "on bed", "fell off the bed", "jumped up from bed"],
+                "wrong_locations": ["hallway", "corridor", "street", "outdoor", "kitchen", "office", "restaurant"],
+                "correct_location": "master bedroom, king-sized bed with silk sheets, elegant furniture, soft ambient lighting"
+            },
+            # KITCHEN actions → must be kitchen
+            {
+                "actions": ["cooking", "in the kitchen", "at the stove", "preparing food"],
+                "wrong_locations": ["bedroom", "hallway", "office", "outdoor", "street"],
+                "correct_location": "modern kitchen interior, stove, countertops, cooking utensils, warm lighting"
+            },
+            # BATHROOM actions
+            {
+                "actions": ["shower", "bathtub", "bathroom", "brushing teeth", "mirror"],
+                "wrong_locations": ["bedroom", "kitchen", "office", "outdoor", "hallway"],
+                "correct_location": "elegant bathroom, marble tiles, mirror, soft lighting"
+            },
+            # OUTDOOR actions
+            {
+                "actions": ["walking on street", "driving", "in the car", "outdoor", "park", "garden"],
+                "wrong_locations": ["bedroom", "kitchen", "bathroom", "office interior"],
+                "correct_location": "outdoor scene, natural daylight"
+            },
+            # RESTAURANT actions
+            {
+                "actions": ["dining", "at restaurant", "eating dinner", "at the table"],
+                "wrong_locations": ["bedroom", "bathroom", "street", "office"],
+                "correct_location": "elegant restaurant interior, dining tables, ambient lighting"
+            },
+        ]
+
+        # Check SRT text for location hints
+        srt_location_hints = {
+            "bed": "bedroom",
+            "bedroom": "bedroom",
+            "master bedroom": "master bedroom",
+            "kitchen": "kitchen",
+            "bathroom": "bathroom",
+            "restaurant": "restaurant",
+            "office": "office",
+            "car": "car interior",
+            "street": "street",
+            "courthouse": "courthouse",
+            "hospital": "hospital",
+        }
+
+        # Find if SRT mentions a specific location
+        srt_location = None
+        for hint, loc in srt_location_hints.items():
+            if hint in srt_lower:
+                srt_location = loc
+                break
+
+        # Check each rule
+        for rule in action_location_rules:
+            # Check if any action is in the prompt
+            action_found = any(action in prompt_lower for action in rule["actions"])
+
+            if action_found:
+                # Check if wrong location is in the prompt
+                for wrong_loc in rule["wrong_locations"]:
+                    if wrong_loc in prompt_lower:
+                        self.logger.warning(f"[Validation] Action/Location mismatch: action implies {rule['actions'][0]} but found '{wrong_loc}'")
+
+                        # Use SRT location if available, otherwise use rule's correct location
+                        correct_loc = rule["correct_location"]
+                        if srt_location:
+                            if srt_location == "bedroom" or srt_location == "master bedroom":
+                                correct_loc = "master bedroom, king-sized bed with silk sheets, elegant nightstands, soft warm lighting"
+                            elif srt_location == "kitchen":
+                                correct_loc = "modern kitchen, marble countertops, stainless steel appliances, warm lighting"
+
+                        # Replace the wrong location with correct one
+                        # Find the sentence containing the wrong location and replace
+                        pattern = re.compile(r'[^.]*' + re.escape(wrong_loc) + r'[^.]*\.?', re.IGNORECASE)
+                        fixed = pattern.sub(correct_loc + '. ', img_prompt)
+
+                        # Clean up double spaces/periods
+                        fixed = re.sub(r'\s+', ' ', fixed)
+                        fixed = re.sub(r'\.\.+', '.', fixed)
+
+                        return fixed.strip()
+
+        return img_prompt
 
     def _load_prompt_template(self, prompt_name: str) -> Optional[str]:
         """Load a specific prompt template from prompts.yaml"""
