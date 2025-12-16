@@ -729,6 +729,37 @@ directors_shooting_plan: |
   6. Every img_prompt MUST end with the global_style
   7. Make it feel like a FILM with visual variety!
 
+  ## ⚠️ LOCATION CONSISTENCY - CRITICAL BUG FIX! ⚠️
+
+  **RULE: The LOCATION in img_prompt MUST MATCH the ACTION described!**
+
+  READ THE SRT TEXT CAREFULLY! If the text says:
+  - "on the bed" → Location MUST be bedroom/hotel room, NOT hallway!
+  - "in the kitchen" → Location MUST be kitchen, NOT living room!
+  - "on the street" → Location MUST be street/outdoor, NOT indoor!
+
+  **BEFORE WRITING img_prompt, ASK YOURSELF:**
+  ```
+  1. WHERE does this scene ACTUALLY take place? (Read SRT!)
+  2. Does my location description MATCH that place?
+  3. Are the characters' ACTIONS consistent with the location?
+  ```
+
+  **EXAMPLES OF WRONG (DO NOT DO!):**
+  - ❌ "Marcus LYING IN BED... Elegant hotel hallway" (BED ≠ HALLWAY!)
+  - ❌ "Woman COOKING... Modern office space" (COOKING ≠ OFFICE!)
+  - ❌ "Couple SWIMMING... Restaurant interior" (SWIMMING ≠ RESTAURANT!)
+
+  **EXAMPLES OF CORRECT:**
+  - ✅ "Marcus LYING IN BED... Master bedroom, king-sized bed, silk sheets"
+  - ✅ "Woman COOKING... Modern kitchen, stove, pots, ingredients"
+  - ✅ "Couple SWIMMING... Pool, blue water, sunlight"
+
+  **IF SRT MENTIONS A SPECIFIC ROOM/PLACE:**
+  - "master bedroom" → Use "Master bedroom, king-sized bed, elegant furniture"
+  - "courthouse" → Use "Courthouse exterior/interior, columns, official"
+  - "restaurant" → Use "Restaurant interior, tables, elegant dining"
+
   ## 🔥 HOOK RULES (FIRST 30 SECONDS) - CRITICAL FOR VIEWER RETENTION! 🔥
 
   The HOOK (first 15-30 seconds) determines if viewers stay or leave!
@@ -825,6 +856,13 @@ generate_scenes: |
   ### 4. LOCATION + LIGHTING:
   - **location_lock**: COPY NGUYEN VAN lam background
   - Them anh sang phu hop voi thoi diem trong ngay
+
+  ### 4b. ⚠️ LOCATION PHAI KHOP VOI HANH DONG! ⚠️
+  - Doc SRT text ky! "on the bed" → Location = BEDROOM, khong phai hallway!
+  - "in the kitchen" → Location = KITCHEN, khong phai living room!
+  - HANH DONG phai logic voi LOCATION:
+    - ❌ "LYING IN BED... hotel hallway" (SAI! Giuong o dau co hallway!)
+    - ✅ "LYING IN BED... master bedroom, king-sized bed, silk sheets"
 
   ### 5. GLOBAL STYLE INJECTION:
   - Ket thuc moi img_prompt bang global_style string
