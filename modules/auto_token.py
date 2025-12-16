@@ -544,12 +544,13 @@ console.log('Capture ready v3');
 
             # Execute grecaptcha.enterprise.execute() va doi ket qua
             # Site key cua Google Flow: 6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV
+            # Dung navigator.clipboard.writeText thay vi copy() (DevTools-only)
             js = '''(async function(){
 try{
 var token=await grecaptcha.enterprise.execute('6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV',{action:'SUBMIT'});
 window._rc=token;
-copy(token);
-console.log('Fresh reCAPTCHA OK');
+await navigator.clipboard.writeText(token);
+console.log('Fresh reCAPTCHA OK: '+token.substring(0,20)+'...');
 return token;
 }catch(e){console.log('reCAPTCHA error:',e);return null;}
 })();'''
@@ -561,6 +562,21 @@ return token;
             pag.press("enter")
             time.sleep(2)  # Doi grecaptcha execute
 
+            # Doc token tu clipboard (da duoc JS copy vao)
+            token = pyperclip.paste()
+
+            # Neu clipboard khong co token, thu copy tu window._rc
+            if not token or len(token) < 100 or token.startswith('('):
+                self.log("Thu copy tu window._rc...")
+                copy_cmd = "copy(window._rc)"
+                pyperclip.copy(copy_cmd)
+                time.sleep(0.1)
+                pag.hotkey("ctrl", "v")
+                time.sleep(0.1)
+                pag.press("enter")
+                time.sleep(0.5)
+                token = pyperclip.paste()
+
             # Dong DevTools
             pag.hotkey("ctrl", "shift", "j")
             time.sleep(0.3)
@@ -568,9 +584,7 @@ return token;
             # An Chrome
             self.hide_chrome_window()
 
-            # Doc token tu clipboard
-            token = pyperclip.paste()
-            if token and len(token) > 100 and not token.startswith('('):
+            if token and len(token) > 100 and not token.startswith('(') and not token.startswith('copy'):
                 self.log("Fresh reCAPTCHA token OK!")
                 return token
 
