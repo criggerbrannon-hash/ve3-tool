@@ -525,8 +525,10 @@ console.log('Capture ready v3');
 
     def get_fresh_recaptcha(self, timeout: int = 15) -> Optional[str]:
         """
-        Lay recaptcha token moi bang cach goi grecaptcha.enterprise.execute().
-        Site key: 6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV
+        Lay recaptcha token moi:
+        1. Reload trang de re-init recaptcha client
+        2. Doi grecaptcha san sang
+        3. Goi execute va copy token
 
         Returns: recaptcha_token hoac None neu fail
         """
@@ -538,7 +540,16 @@ console.log('Capture ready v3');
             self.show_chrome_window()
             time.sleep(0.5)
 
-            # Mo DevTools Console (Ctrl+Shift+J mo thang Console tab)
+            # RELOAD trang de re-init reCAPTCHA client
+            self.log("Reload page to re-init reCAPTCHA...")
+            pag.keyDown("ctrl")
+            time.sleep(0.05)
+            pag.press("r")
+            time.sleep(0.05)
+            pag.keyUp("ctrl")
+            time.sleep(5)  # Doi trang load
+
+            # Mo DevTools Console
             pag.keyDown("ctrl")
             pag.keyDown("shift")
             time.sleep(0.05)
@@ -552,7 +563,7 @@ console.log('Capture ready v3');
             pyperclip.copy("")
             time.sleep(0.3)
 
-            # Chay script lay recaptcha va copy TRONG CUNG 1 LENH
+            # Chay script lay recaptcha - dung site key cua Google Flow
             js = '''grecaptcha.enterprise.execute('6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV',{action:'SUBMIT'}).then(t=>{copy(t);console.log('COPIED:',t.slice(0,30))})'''
 
             pyperclip.copy(js)
