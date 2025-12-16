@@ -186,7 +186,7 @@ class GoogleFlowAPI:
         prompt: str,
         count: int = 2,
         aspect_ratio: AspectRatio = AspectRatio.LANDSCAPE,
-        model: ImageModel = ImageModel.GEM_PIX_2,
+        model: ImageModel = ImageModel.GEM_PIX,
         image_inputs: Optional[List[ImageInput]] = None,
         reference_images: Optional[List[GeneratedImage]] = None
     ) -> Tuple[bool, List[GeneratedImage], str]:
