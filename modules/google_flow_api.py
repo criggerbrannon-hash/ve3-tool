@@ -292,7 +292,9 @@ class GoogleFlowAPI:
                 return False, [], "403 Forbidden - rate limit hoac account can dang nhap lai"
             
             if response.status_code != 200:
-                return False, [], f"API error: {response.status_code} - {response.text[:200]}"
+                error_msg = f"API error: {response.status_code} - {response.text[:500]}"
+                self._log(f"=== ERROR RESPONSE: {error_msg}")
+                return False, [], error_msg
             
             # Parse response
             result = response.json()
