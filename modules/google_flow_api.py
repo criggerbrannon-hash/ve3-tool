@@ -276,7 +276,8 @@ class GoogleFlowAPI:
                 return False, [], "Authentication failed - Bearer token may be expired"
             
             if response.status_code == 403:
-                return False, [], "Access forbidden - check permissions"
+                # 403 can mean: rate limit, account blocked, content policy, needs re-login
+                return False, [], "403 Forbidden - rate limit hoac account can dang nhap lai"
             
             if response.status_code != 200:
                 return False, [], f"API error: {response.status_code} - {response.text[:200]}"

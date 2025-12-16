@@ -828,6 +828,15 @@ class SmartEngine:
                     profile.token = ""  # Clear expired token
                     return False, token_expired
 
+                # Check for 403 Forbidden - could be rate limit or account issue
+                is_forbidden = '403' in error_str or 'forbidden' in error_str
+                if is_forbidden:
+                    self.log(f"403 Forbidden cho {pid} - co the do rate limit hoac account bi han che", "WARN")
+                    self.log(f"  -> Thu chuyen sang account khac hoac doi 30s...", "WARN")
+                    # Mark this profile as needing refresh (might need re-login)
+                    profile.token = ""  # Force re-login
+                    return False, True  # Return token_expired=True to trigger account switch
+
                 # Check for policy violation or invalid argument - retry with fixes
                 is_policy_error = '400' in error_str or 'policy' in error_str or 'blocked' in error_str or 'safety' in error_str or 'invalid' in error_str
                 if is_policy_error and retry_count < 3:
