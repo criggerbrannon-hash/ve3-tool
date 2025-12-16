@@ -555,7 +555,7 @@ class SmartEngine:
 
         try:
             from modules.voice_to_srt import VoiceToSrt
-            conv = VoiceToSrt(model_name="tiny", language="vi")
+            conv = VoiceToSrt(model_name="tiny", language="en")
             conv.transcribe(voice_path, srt_path)
             self.log(f"OK: {srt_path.name}", "OK")
             return True
