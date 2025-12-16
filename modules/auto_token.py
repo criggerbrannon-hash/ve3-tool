@@ -235,8 +235,37 @@ class ChromeAutoToken:
         
         self.log("Inject capture script...")
         
-        # Script hook fetch de capture token + recaptchaToken
-        capture_script = '''window._tk=null;window._pj=null;window._rc=null;(function(){var f=window.fetch;window.fetch=function(u,o){var s=u?u.toString():'';if(s.includes('flowMedia')||s.includes('aisandbox')||s.includes('batchGenerate')){var h=o&&o.headers?o.headers:{};var a=h.Authorization||h.authorization||'';if(a.startsWith('Bearer ')){window._tk=a.substring(7);var m=s.match(/\\/projects\\/([^\\/]+)\\//);if(m)window._pj=m[1];}if(o&&o.body){try{var b=JSON.parse(o.body);if(b.recaptchaToken){window._rc=b.recaptchaToken;console.log('RECAPTCHA CAPTURED!');}}catch(e){}}console.log('TOKEN CAPTURED!');}return f.apply(this,arguments);};console.log('Capture ready v2');})();'''
+        # Script hook fetch + grecaptcha de capture token + recaptchaToken
+        capture_script = '''window._tk=null;window._pj=null;window._rc=null;(function(){
+var f=window.fetch;
+window.fetch=function(u,o){
+var s=u?u.toString():'';
+if(s.includes('flowMedia')||s.includes('aisandbox')||s.includes('batchGenerate')){
+var h=o&&o.headers?o.headers:{};
+var a=h.Authorization||h.authorization||'';
+if(a.startsWith('Bearer ')){window._tk=a.substring(7);var m=s.match(/\\/projects\\/([^\\/]+)\\//);if(m)window._pj=m[1];}
+if(o&&o.body){
+try{
+var bodyStr=typeof o.body==='string'?o.body:JSON.stringify(o.body);
+var b=JSON.parse(bodyStr);
+if(b&&b.recaptchaToken){window._rc=b.recaptchaToken;console.log('RECAPTCHA FROM FETCH!');}
+}catch(e){console.log('Body parse error:',e);}
+}
+console.log('TOKEN CAPTURED!');
+}
+return f.apply(this,arguments);
+};
+if(window.grecaptcha&&window.grecaptcha.enterprise){
+var orig=window.grecaptcha.enterprise.execute;
+window.grecaptcha.enterprise.execute=function(){
+return orig.apply(this,arguments).then(function(token){
+window._rc=token;console.log('RECAPTCHA FROM GRECAPTCHA!');
+return token;
+});
+};
+}
+console.log('Capture ready v3');
+})();'''
         
         try:
             # Mo DevTools
