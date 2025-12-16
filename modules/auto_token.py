@@ -517,11 +517,69 @@ console.log('Capture ready v3');
             error = f"Loi: {e}"
 
         finally:
-            # === 11. DONG Chrome ===
+            # === 11. DONG Chrome (chi khi auto_close=True) ===
             if self.auto_close:
                 self.close_chrome()
 
         return token, proj or project_id, recaptcha, error
+
+    def get_fresh_recaptcha(self, timeout: int = 10) -> Optional[str]:
+        """
+        Lay recaptcha token moi tu Chrome dang mo.
+        Goi khi can token moi cho moi request.
+
+        Returns: recaptcha_token hoac None neu fail
+        """
+        if not pag or not pyperclip:
+            return None
+
+        try:
+            # Hien Chrome window
+            self.show_chrome_window()
+            time.sleep(0.3)
+
+            # Mo DevTools
+            pag.hotkey("ctrl", "shift", "j")
+            time.sleep(1)
+
+            # Execute grecaptcha.enterprise.execute() va doi ket qua
+            # Site key cua Google Flow: 6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV
+            js = '''(async function(){
+try{
+var token=await grecaptcha.enterprise.execute('6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV',{action:'SUBMIT'});
+window._rc=token;
+copy(token);
+console.log('Fresh reCAPTCHA OK');
+return token;
+}catch(e){console.log('reCAPTCHA error:',e);return null;}
+})();'''
+
+            pyperclip.copy(js)
+            time.sleep(0.2)
+            pag.hotkey("ctrl", "v")
+            time.sleep(0.2)
+            pag.press("enter")
+            time.sleep(2)  # Doi grecaptcha execute
+
+            # Dong DevTools
+            pag.hotkey("ctrl", "shift", "j")
+            time.sleep(0.3)
+
+            # An Chrome
+            self.hide_chrome_window()
+
+            # Doc token tu clipboard
+            token = pyperclip.paste()
+            if token and len(token) > 100 and not token.startswith('('):
+                self.log("Fresh reCAPTCHA token OK!")
+                return token
+
+            self.log("Khong lay duoc fresh reCAPTCHA", "WARN")
+            return None
+
+        except Exception as e:
+            self.log(f"Fresh reCAPTCHA error: {e}", "ERROR")
+            return None
 
 
 # Aliases

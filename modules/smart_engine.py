@@ -72,6 +72,9 @@ class SmartEngine:
         self.ollama_model: str = "deepseek-v3.1:67b-cloud"
         self.ollama_endpoint: str = "http://localhost:11434"
 
+        # Chrome extractor - giu de lay fresh recaptcha token
+        self._chrome_extractor = None
+
         # Settings - TOI UU TOC DO (PARALLEL OPTIMIZED)
         self.parallel = 20  # Tang len 20 - dung TAT CA tokens co san
         self.delay = 0.3    # Giam xuong 0.3s - may khoe chay nhanh
@@ -408,16 +411,17 @@ class SmartEngine:
             return False
 
     def get_token_for_profile(self, profile: Resource) -> bool:
-        """Lay token cho 1 profile (Chrome visible)."""
+        """Lay token cho 1 profile (Chrome visible). GIU Chrome mo de lay fresh recaptcha."""
         from modules.auto_token import ChromeAutoToken
 
         self.log(f"[Chrome] Lay token: {Path(profile.value).name}...")
 
         try:
+            # KHONG dong Chrome de co the lay fresh recaptcha sau nay
             extractor = ChromeAutoToken(
                 chrome_path=self.chrome_path,
                 profile_path=profile.value,
-                auto_close=True  # Tu dong dong Chrome sau khi lay token
+                auto_close=False  # GIU Chrome mo!
             )
 
             token, proj_id, recaptcha, error = extractor.extract_token(callback=self.callback)
@@ -431,17 +435,39 @@ class SmartEngine:
                 self.log(f"[Chrome] OK: {Path(profile.value).name} - Token OK!", "OK")
                 if recaptcha:
                     self.log(f"[Chrome] reCAPTCHA token captured!", "OK")
+
+                # Luu extractor de lay fresh recaptcha sau
+                self._chrome_extractor = extractor
+                self.log(f"[Chrome] Giu Chrome mo de lay fresh reCAPTCHA")
+
                 self.save_cached_tokens()  # Luu ngay vao file
                 return True
             else:
                 profile.fail_count += 1
                 self.log(f"[Chrome] FAIL: {Path(profile.value).name} - {error}", "ERROR")
+                # Dong Chrome neu fail
+                extractor.close_chrome()
                 return False
 
         except Exception as e:
             profile.fail_count += 1
             self.log(f"[Chrome] ERROR: {e}", "ERROR")
             return False
+
+    def get_fresh_recaptcha(self) -> Optional[str]:
+        """Lay fresh reCAPTCHA token tu Chrome dang mo."""
+        if not self._chrome_extractor:
+            self.log("[reCAPTCHA] Khong co Chrome session!", "WARN")
+            return None
+
+        return self._chrome_extractor.get_fresh_recaptcha()
+
+    def close_chrome_session(self):
+        """Dong Chrome session khi da xong."""
+        if self._chrome_extractor:
+            self.log("[Chrome] Dong Chrome session...")
+            self._chrome_extractor.close_chrome()
+            self._chrome_extractor = None
 
     def get_all_tokens(self) -> int:
         """
@@ -724,6 +750,14 @@ class SmartEngine:
         is_reference_image = pid.startswith('nv') or pid.startswith('loc')
 
         try:
+            # Lay fresh reCAPTCHA token truoc moi request
+            fresh_recaptcha = self.get_fresh_recaptcha()
+            if fresh_recaptcha:
+                profile.recaptcha_token = fresh_recaptcha
+                self.log(f"[{pid}] Fresh reCAPTCHA OK")
+            else:
+                self.log(f"[{pid}] Dung recaptcha cu (co the da het han)", "WARN")
+
             # Bat verbose cho nv/loc de debug media_name
             api = GoogleFlowAPI(
                 bearer_token=profile.token,
