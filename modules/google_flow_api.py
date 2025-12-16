@@ -124,29 +124,32 @@ class GoogleFlowAPI:
         bearer_token: str,
         project_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        recaptcha_token: Optional[str] = None,
         timeout: int = 120,
         verbose: bool = False
     ):
         """
         Khởi tạo Google Flow API client.
-        
+
         Args:
             bearer_token: OAuth Bearer token (bắt đầu bằng "ya29.")
             project_id: Project ID (nếu không có sẽ tự tạo UUID)
             session_id: Session ID (nếu không có sẽ tự tạo)
+            recaptcha_token: reCAPTCHA Enterprise token (required for API calls)
             timeout: Request timeout in seconds
             verbose: Print debug info
         """
         self.bearer_token = bearer_token.strip()
         self.project_id = project_id or str(uuid.uuid4())
         self.session_id = session_id or f";{int(time.time() * 1000)}"
+        self.recaptcha_token = recaptcha_token or ""
         self.timeout = timeout
         self.verbose = verbose
-        
+
         # Validate token format
         if not self.bearer_token.startswith("ya29."):
             print("⚠️  Warning: Bearer token should start with 'ya29.'")
-        
+
         self.session = self._create_session()
     
     def _create_session(self) -> requests.Session:
@@ -256,12 +259,19 @@ class GoogleFlowAPI:
             }
             requests_data.append(request_item)
         
-        payload = {"requests": requests_data}
-        
+        # Build payload with recaptchaToken (required by Google)
+        payload = {
+            "recaptchaToken": self.recaptcha_token,
+            "sessionId": self.session_id,
+            "requests": requests_data
+        }
+
         # Build URL
         url = f"{self.BASE_URL}/v1/projects/{self.project_id}/flowMedia:batchGenerateImages"
-        
+
         self._log(f"POST {url}")
+        if not self.recaptcha_token:
+            self._log("WARNING: No reCAPTCHA token - request may fail with 403")
         
         try:
             response = self.session.post(

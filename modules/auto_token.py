@@ -235,8 +235,8 @@ class ChromeAutoToken:
         
         self.log("Inject capture script...")
         
-        # Script chi hook fetch de capture token
-        capture_script = '''window._tk=null;window._pj=null;(function(){var f=window.fetch;window.fetch=function(u,o){var s=u?u.toString():'';if(s.includes('flowMedia')||s.includes('aisandbox')){var h=o&&o.headers?o.headers:{};var a=h.Authorization||h.authorization||'';if(a.startsWith('Bearer ')){window._tk=a.substring(7);var m=s.match(/\\/projects\\/([^\\/]+)\\//);if(m)window._pj=m[1];console.log('TOKEN CAPTURED!');}}return f.apply(this,arguments);};console.log('Capture ready');})();'''
+        # Script hook fetch de capture token + recaptchaToken
+        capture_script = '''window._tk=null;window._pj=null;window._rc=null;(function(){var f=window.fetch;window.fetch=function(u,o){var s=u?u.toString():'';if(s.includes('flowMedia')||s.includes('aisandbox')||s.includes('batchGenerate')){var h=o&&o.headers?o.headers:{};var a=h.Authorization||h.authorization||'';if(a.startsWith('Bearer ')){window._tk=a.substring(7);var m=s.match(/\\/projects\\/([^\\/]+)\\//);if(m)window._pj=m[1];}if(o&&o.body){try{var b=JSON.parse(o.body);if(b.recaptchaToken){window._rc=b.recaptchaToken;console.log('RECAPTCHA CAPTURED!');}}catch(e){}}console.log('TOKEN CAPTURED!');}return f.apply(this,arguments);};console.log('Capture ready v2');})();'''
         
         try:
             # Mo DevTools
@@ -357,26 +357,27 @@ class ChromeAutoToken:
             self.log(f"Send prompt error: {e}")
             return False
     
-    def get_token_from_devtools(self) -> Tuple[Optional[str], Optional[str]]:
-        """Mo DevTools, lay token, dong."""
+    def get_token_from_devtools(self) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        """Mo DevTools, lay token + recaptcha, dong."""
         if not pag or not pyperclip:
-            return None, None
-        
+            return None, None, None
+
         try:
             pag.hotkey("ctrl", "shift", "j")
             time.sleep(1.2)
-            
-            js = 'copy(JSON.stringify({t:window._tk,p:window._pj}))'
+
+            # Lay ca token, project_id va recaptchaToken
+            js = 'copy(JSON.stringify({t:window._tk,p:window._pj,r:window._rc}))'
             pyperclip.copy(js)
             time.sleep(0.2)
             pag.hotkey("ctrl", "v")
             time.sleep(0.2)
             pag.press("enter")
             time.sleep(0.8)
-            
+
             pag.hotkey("ctrl", "shift", "j")
             time.sleep(0.3)
-            
+
             import json
             try:
                 text = pyperclip.paste()
@@ -384,35 +385,37 @@ class ChromeAutoToken:
                     data = json.loads(text)
                     tk = data.get("t")
                     pj = data.get("p")
+                    rc = data.get("r")  # recaptchaToken
                     if tk and len(str(tk)) > 50:
-                        return tk, pj
+                        return tk, pj, rc
             except:
                 pass
-            return None, None
+            return None, None, None
         except:
-            return None, None
+            return None, None, None
     
     def extract_token(
         self,
         project_id: str = None,
         callback: Callable = None,
         timeout: int = 45  # Giam tu 60 -> 45
-    ) -> Tuple[Optional[str], Optional[str], str]:
+    ) -> Tuple[Optional[str], Optional[str], Optional[str], str]:
         """
         Main function - lay token roi DONG Chrome.
         Chrome chay AN, chi hien khi can tuong tac.
 
-        Returns: (token, project_id, error_message)
+        Returns: (token, project_id, recaptcha_token, error_message)
         """
         self.callback = callback
 
         if not pag:
-            return None, None, "Thieu pyautogui"
+            return None, None, None, "Thieu pyautogui"
         if not pyperclip:
-            return None, None, "Thieu pyperclip"
+            return None, None, None, "Thieu pyperclip"
 
         token = None
         proj = None
+        recaptcha = None
         error = ""
 
         try:
@@ -469,11 +472,13 @@ class ChromeAutoToken:
                 # Hien Chrome chi de lay token
                 self.show_chrome_window()
                 time.sleep(0.2)
-                token, proj = self.get_token_from_devtools()
+                token, proj, recaptcha = self.get_token_from_devtools()
                 self.hide_chrome_window()
 
                 if token:
                     self.log("=== DA LAY DUOC TOKEN! ===")
+                    if recaptcha:
+                        self.log("=== DA LAY DUOC RECAPTCHA TOKEN! ===")
                     break
 
             if not token:
@@ -487,7 +492,7 @@ class ChromeAutoToken:
             if self.auto_close:
                 self.close_chrome()
 
-        return token, proj or project_id, error
+        return token, proj or project_id, recaptcha, error
 
 
 # Aliases

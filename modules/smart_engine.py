@@ -32,6 +32,7 @@ class Resource:
     value: str  # path hoac key
     token: str = ""
     project_id: str = ""
+    recaptcha_token: str = ""  # reCAPTCHA token cho Google Flow API
     status: str = "ready"  # ready, busy, exhausted, error
     fail_count: int = 0
     last_used: float = 0
@@ -188,6 +189,7 @@ class SmartEngine:
                     if now - token_time < self.TOKEN_EXPIRY_SECONDS:
                         profile.token = token_data.get('token', '')
                         profile.project_id = token_data.get('project_id', '')
+                        profile.recaptcha_token = token_data.get('recaptcha_token', '')  # Load recaptcha
                         profile.token_time = token_time
                         loaded += 1
                     else:
@@ -252,6 +254,7 @@ class SmartEngine:
                     data[profile_name] = {
                         'token': profile.token,
                         'project_id': profile.project_id,
+                        'recaptcha_token': profile.recaptcha_token,  # Luu recaptcha token
                         'time': profile.token_time or time.time()
                     }
 
@@ -417,14 +420,17 @@ class SmartEngine:
                 auto_close=True  # Tu dong dong Chrome sau khi lay token
             )
 
-            token, proj_id, error = extractor.extract_token(callback=self.callback)
+            token, proj_id, recaptcha, error = extractor.extract_token(callback=self.callback)
 
             if token:
                 profile.token = token
                 profile.project_id = proj_id or ""
+                profile.recaptcha_token = recaptcha or ""  # Luu recaptcha token
                 profile.token_time = time.time()  # Luu thoi gian lay token
                 profile.status = 'ready'
                 self.log(f"[Chrome] OK: {Path(profile.value).name} - Token OK!", "OK")
+                if recaptcha:
+                    self.log(f"[Chrome] reCAPTCHA token captured!", "OK")
                 self.save_cached_tokens()  # Luu ngay vao file
                 return True
             else:
@@ -722,6 +728,7 @@ class SmartEngine:
             api = GoogleFlowAPI(
                 bearer_token=profile.token,
                 project_id=profile.project_id,
+                recaptcha_token=profile.recaptcha_token,  # Required for API calls
                 verbose=is_reference_image  # Verbose for reference images to debug
             )
 
