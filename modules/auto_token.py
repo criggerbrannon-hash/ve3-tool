@@ -523,10 +523,10 @@ console.log('Capture ready v3');
 
         return token, proj or project_id, recaptcha, error
 
-    def get_fresh_recaptcha(self, timeout: int = 10) -> Optional[str]:
+    def get_fresh_recaptcha(self, timeout: int = 15) -> Optional[str]:
         """
-        Lay recaptcha token moi tu Chrome dang mo.
-        Goi khi can token moi cho moi request.
+        Lay recaptcha token moi bang cach goi grecaptcha.enterprise.execute().
+        Site key: 6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV
 
         Returns: recaptcha_token hoac None neu fail
         """
@@ -536,37 +536,25 @@ console.log('Capture ready v3');
         try:
             # Hien Chrome window
             self.show_chrome_window()
-            time.sleep(0.3)
+            time.sleep(0.5)
 
-            # Mo DevTools
+            # Mo DevTools Console
             pag.hotkey("ctrl", "shift", "j")
-            time.sleep(1)
+            time.sleep(1.5)
 
-            # BUOC 1: Execute grecaptcha.enterprise.execute() - CHI luu vao window._rc
-            # Site key cua Google Flow: 6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV
-            js = '''(async function(){
-try{
-var token=await grecaptcha.enterprise.execute('6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV',{action:'SUBMIT'});
-window._rc=token;
-console.log('reCAPTCHA stored in window._rc');
-}catch(e){console.log('reCAPTCHA error:',e);}
-})();'''
+            # Clear clipboard truoc
+            pyperclip.copy("")
+
+            # Chay script lay recaptcha va copy TRONG CUNG 1 LENH
+            # Dung .then() de dam bao copy() chay sau khi co token
+            js = '''grecaptcha.enterprise.execute('6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV',{action:'SUBMIT'}).then(t=>{copy(t);console.log('COPIED:',t.slice(0,30))})'''
 
             pyperclip.copy(js)
-            time.sleep(0.2)
+            time.sleep(0.3)
             pag.hotkey("ctrl", "v")
-            time.sleep(0.2)
+            time.sleep(0.3)
             pag.press("enter")
-            time.sleep(2)  # Doi grecaptcha execute
-
-            # BUOC 2: Copy window._rc vao clipboard (copy() chi hoat dong trong DevTools)
-            copy_cmd = "copy(window._rc)"
-            pyperclip.copy(copy_cmd)
-            time.sleep(0.2)
-            pag.hotkey("ctrl", "v")
-            time.sleep(0.2)
-            pag.press("enter")
-            time.sleep(0.5)
+            time.sleep(3)  # Doi grecaptcha execute + copy
 
             # Doc token tu clipboard
             token = pyperclip.paste()
@@ -578,11 +566,12 @@ console.log('reCAPTCHA stored in window._rc');
             # An Chrome
             self.hide_chrome_window()
 
-            if token and len(token) > 100 and not token.startswith('(') and not token.startswith('copy'):
-                self.log("Fresh reCAPTCHA token OK!")
+            # Validate token
+            if token and len(token) > 100 and token.startswith('03'):
+                self.log(f"Fresh reCAPTCHA OK: {len(token)} chars")
                 return token
 
-            self.log("Khong lay duoc fresh reCAPTCHA", "WARN")
+            self.log(f"Fresh reCAPTCHA FAIL: got '{token[:50] if token else 'empty'}...'", "WARN")
             return None
 
         except Exception as e:
