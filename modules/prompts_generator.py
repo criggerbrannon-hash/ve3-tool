@@ -684,6 +684,8 @@ class PromptGenerator:
                 result = self.ai_client._call_ollama(prompt, temperature, max_tokens)
                 if result:
                     print(f"[Director] Ollama trả về {len(result)} ký tự")
+                    # Debug: show first 200 chars to see format
+                    print(f"[Director] Response preview: {result[:200]}...")
                     return result
             except Exception as e:
                 self.logger.warning(f"[Director] Ollama failed: {e}, falling back to DeepSeek...")
@@ -2458,11 +2460,19 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
         # Bước 1: Loại bỏ DeepSeek <think>...</think> tags
         clean_text = re.sub(r'<think>[\s\S]*?</think>', '', text).strip()
 
+        # Bước 1b: Loại bỏ Ollama thinking patterns (qwen, llama có thể có)
+        # Chỉ remove nếu có { trong text
+        if '{' in clean_text:
+            clean_text = re.sub(r'^.*?(?=\{)', '', clean_text, flags=re.DOTALL)  # Remove everything before first {
+            clean_text = clean_text.strip()
+        else:
+            self.logger.warning(f"[_extract_json] No JSON object found in response. First 200 chars: {clean_text[:200]}")
+
         # Bước 2: Thử parse trực tiếp
         try:
             return json.loads(clean_text)
         except json.JSONDecodeError as e:
-            self.logger.warning(f"[_extract_json] Direct parse failed at position {e.pos}: {e.msg}")
+            self.logger.debug(f"[_extract_json] Direct parse failed at position {e.pos}: {e.msg}")
 
         # Bước 3: Thử tìm JSON trong code block ```json ... ```
         json_block = re.search(r'```(?:json)?\s*\n?([\s\S]*?)\n?```', clean_text)
