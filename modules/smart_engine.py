@@ -900,6 +900,20 @@ class SmartEngine:
         """
         self.log("=== TAO ANH BANG BROWSER ===")
 
+        # QUAN TRONG: Sort prompts - nv/loc truoc, scene sau
+        # De reference images (nhan vat, dia diem) duoc tao truoc scenes
+        def sort_key(p):
+            pid = p.get('id', '')
+            if pid.startswith('nv'):
+                return (0, pid)  # nvc, nv1, nv2... first
+            elif pid.startswith('loc'):
+                return (1, pid)  # loc1, loc2... second
+            else:
+                return (2, pid)  # scenes last
+
+        prompts = sorted(prompts, key=sort_key)
+        self.log(f"Da sap xep: {[p.get('id') for p in prompts[:5]]}... (nv/loc truoc, scene sau)")
+
         try:
             from modules.browser_flow_generator import BrowserFlowGenerator
         except ImportError:

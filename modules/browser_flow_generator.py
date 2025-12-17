@@ -421,12 +421,51 @@ class BrowserFlowGenerator:
 
         return []
 
-    def _move_downloaded_images(self, scene_id: str) -> Optional[Path]:
+    def _select_best_image(self, files: List[Path]) -> Path:
         """
-        Di chuyen anh vua download tu Downloads vao project/img/.
+        Chon anh tot nhat tu nhieu files.
+        Su dung file size lam proxy cho chat luong (lon hon = nhieu chi tiet hon).
 
         Args:
-            scene_id: ID cua scene (scene_001, scene_002, ...)
+            files: List cac file anh
+
+        Returns:
+            Path den file tot nhat
+        """
+        if len(files) == 1:
+            return files[0]
+
+        # Lay file size cua moi file
+        file_sizes = []
+        for f in files:
+            try:
+                size = f.stat().st_size
+                file_sizes.append((f, size))
+            except:
+                file_sizes.append((f, 0))
+
+        # Sort theo size giam dan (lon nhat = tot nhat)
+        file_sizes.sort(key=lambda x: x[1], reverse=True)
+
+        best_file = file_sizes[0][0]
+        best_size = file_sizes[0][1]
+
+        self._log(f"Chon anh tot nhat: {best_file.name} ({best_size/1024:.1f}KB)")
+
+        # Log comparison
+        if len(file_sizes) > 1:
+            sizes_str = ", ".join([f"{f.name}={s/1024:.1f}KB" for f, s in file_sizes])
+            self._log(f"  So sanh: {sizes_str}")
+
+        return best_file
+
+    def _move_downloaded_images(self, scene_id: str) -> Optional[Path]:
+        """
+        Di chuyen anh vua download tu Downloads vao project/img/ hoac nv/.
+        Neu co 2 anh, chon anh tot nhat (file size lon nhat).
+
+        Args:
+            scene_id: ID cua scene (1, 2, ... hoac nvc, nv1, loc1...)
 
         Returns:
             Path den file da di chuyen, hoac None
@@ -440,22 +479,31 @@ class BrowserFlowGenerator:
             self._log(f"Khong tim thay file: {pattern}", "warn")
             return None
 
-        # Chi lay file dau tien (khong can _1, _2)
-        src_file = files[0]
+        # QUAN TRONG: Chon anh tot nhat neu co nhieu file (2 anh/prompt)
+        best_file = self._select_best_image(files)
 
-        # Destination: project/img/scene_XXX.png
-        dst_file = self.img_path / f"{scene_id}.png"
+        # Xac dinh thu muc dich: nv/ cho nvc/nv*/loc*, img/ cho scenes
+        scene_id_str = str(scene_id)
+        if scene_id_str.startswith('nv') or scene_id_str.startswith('loc'):
+            dst_dir = self.nv_path
+        else:
+            dst_dir = self.img_path
+
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        dst_file = dst_dir / f"{scene_id}.png"
 
         try:
-            shutil.move(str(src_file), str(dst_file))
-            self._log(f"Da di chuyen: {src_file.name} -> {dst_file}", "success")
+            shutil.move(str(best_file), str(dst_file))
+            self._log(f"Da di chuyen: {best_file.name} -> {dst_file}", "success")
 
-            # Xoa cac file con lai (neu co _2, _3, ...)
-            for f in files[1:]:
-                try:
-                    os.remove(f)
-                except:
-                    pass
+            # Xoa cac file con lai (khong can nua)
+            for f in files:
+                if f != best_file and f.exists():
+                    try:
+                        os.remove(f)
+                        self._log(f"  Xoa file du: {f.name}")
+                    except:
+                        pass
 
             return dst_file
 
