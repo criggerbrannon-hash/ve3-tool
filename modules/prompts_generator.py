@@ -56,12 +56,16 @@ class MultiAIClient:
         {
             "deepseek_api_keys": ["key1"],
             "ollama_model": "qwen2.5:7b",  # Optional: local model fallback
+            "ai_provider": "auto"  # "auto", "deepseek", "ollama"
         }
 
         auto_filter: Tự động test và loại bỏ API keys không hoạt động
         """
         self.config = config
         self.deepseek_keys = [k for k in config.get("deepseek_api_keys", []) if k and k.strip()]
+
+        # AI Provider selection: "auto", "deepseek", "ollama"
+        self.ai_provider = config.get("ai_provider", "auto")
 
         # Ollama model (fallback)
         self.ollama_model = config.get("ollama_model", "qwen2.5:7b")
@@ -187,13 +191,60 @@ class MultiAIClient:
         max_retries: int = 3
     ) -> str:
         """Generate content using available AI providers.
-        Priority: DeepSeek (primary) > Ollama (local fallback)
+        Priority based on ai_provider setting:
+        - "auto": DeepSeek -> Ollama (fallback)
+        - "deepseek": DeepSeek only
+        - "ollama": Ollama only (local, unlimited tokens)
 
         Chi thu cac API da duoc filter la hoat dong.
         """
 
         last_error = None
 
+        # Log current provider setting
+        print(f"[AI Provider] Mode: {self.ai_provider}")
+
+        # Provider: Ollama only
+        if self.ai_provider == "ollama":
+            if self.ollama_available:
+                for attempt in range(max_retries):
+                    try:
+                        print(f"[Ollama] Dang goi local model ({self.ollama_model})...")
+                        result = self._call_ollama(prompt, temperature, max_tokens)
+                        if result:
+                            print(f"[Ollama] Thanh cong!")
+                            return result
+                    except Exception as e:
+                        last_error = e
+                        self.logger.error(f"Ollama error: {e}")
+                        if attempt < max_retries - 1:
+                            time.sleep(2)
+            else:
+                print("[Ollama] KHONG KHA DUNG! Chay 'ollama serve' truoc.")
+            if last_error:
+                raise last_error
+            return ""
+
+        # Provider: DeepSeek only
+        if self.ai_provider == "deepseek":
+            if self.deepseek_keys:
+                for attempt in range(max_retries):
+                    try:
+                        result = self._call_deepseek(prompt, temperature, max_tokens)
+                        if result:
+                            return result
+                    except Exception as e:
+                        last_error = e
+                        self.logger.error(f"DeepSeek error: {e}")
+                        if attempt < max_retries - 1:
+                            time.sleep(2)
+            else:
+                print("[DeepSeek] Khong co API key! Them key trong Cai dat → API Keys")
+            if last_error:
+                raise last_error
+            return ""
+
+        # Provider: Auto (default) - DeepSeek -> Ollama
         # 1. Try DeepSeek first (primary)
         if self.deepseek_keys:
             for attempt in range(max_retries):

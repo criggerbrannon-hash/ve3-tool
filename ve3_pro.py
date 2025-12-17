@@ -1090,6 +1090,113 @@ class UnixVoiceToVideo:
         api_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         api_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
+        # Tab 2.5: AI Provider Selection
+        ai_tab = ttk.Frame(notebook, padding=15)
+        notebook.add(ai_tab, text="  🤖 AI Provider  ")
+
+        ttk.Label(ai_tab, text="Chọn AI Provider:",
+                  font=('Segoe UI', 11, 'bold')).pack(anchor=tk.W, pady=(0, 5))
+        ttk.Label(ai_tab, text="Chọn AI nào sẽ được dùng để tạo prompts và phân tích kịch bản",
+                  foreground='gray', font=('Segoe UI', 9)).pack(anchor=tk.W, pady=(0, 10))
+
+        # Provider selection
+        provider_frame = ttk.LabelFrame(ai_tab, text="Primary AI Provider", padding=10)
+        provider_frame.pack(fill=tk.X, pady=(0, 10))
+
+        # Load current setting
+        current_provider = self._get_ai_provider_setting()
+        provider_var = tk.StringVar(value=current_provider)
+
+        ttk.Radiobutton(provider_frame, text="🔄 Auto (DeepSeek → Ollama fallback)",
+                        variable=provider_var, value="auto").pack(anchor=tk.W, pady=2)
+        ttk.Radiobutton(provider_frame, text="🌐 DeepSeek Only (Cloud API)",
+                        variable=provider_var, value="deepseek").pack(anchor=tk.W, pady=2)
+        ttk.Radiobutton(provider_frame, text="🏠 Ollama Only (Local, không giới hạn token)",
+                        variable=provider_var, value="ollama").pack(anchor=tk.W, pady=2)
+
+        # Ollama settings
+        ollama_frame = ttk.LabelFrame(ai_tab, text="Ollama Settings (Local AI)", padding=10)
+        ollama_frame.pack(fill=tk.X, pady=(0, 10))
+
+        # Model
+        model_row = ttk.Frame(ollama_frame)
+        model_row.pack(fill=tk.X, pady=(0, 5))
+        ttk.Label(model_row, text="Model:", width=12).pack(side=tk.LEFT)
+        ollama_model_var = tk.StringVar(value=self._get_ollama_model())
+        ollama_model_entry = ttk.Combobox(model_row, textvariable=ollama_model_var, width=25)
+        ollama_model_entry['values'] = ('qwen2.5:7b', 'qwen2.5:3b', 'llama3.2:3b', 'phi3:mini', 'gemma2:9b', 'mistral:7b')
+        ollama_model_entry.pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Label(model_row, text="(qwen2.5:7b khuyên dùng)", foreground='gray').pack(side=tk.LEFT)
+
+        # Endpoint
+        endpoint_row = ttk.Frame(ollama_frame)
+        endpoint_row.pack(fill=tk.X, pady=(0, 5))
+        ttk.Label(endpoint_row, text="Endpoint:", width=12).pack(side=tk.LEFT)
+        ollama_endpoint_var = tk.StringVar(value=self._get_ollama_endpoint())
+        ollama_endpoint_entry = ttk.Entry(endpoint_row, textvariable=ollama_endpoint_var, width=35)
+        ollama_endpoint_entry.pack(side=tk.LEFT)
+
+        # Test & Save buttons
+        ai_btn_frame = ttk.Frame(ai_tab)
+        ai_btn_frame.pack(fill=tk.X, pady=(10, 0))
+
+        def test_ollama():
+            """Test Ollama connection."""
+            win.config(cursor="wait")
+            win.update()
+            try:
+                import requests
+                endpoint = ollama_endpoint_var.get().strip()
+                model = ollama_model_var.get().strip()
+
+                # Test connection
+                resp = requests.post(
+                    f"{endpoint}/api/generate",
+                    json={"model": model, "prompt": "Say OK", "stream": False},
+                    timeout=30
+                )
+                if resp.status_code == 200:
+                    result = resp.json().get("response", "")
+                    messagebox.showinfo("Ollama OK", f"✅ Kết nối thành công!\n\nModel: {model}\nResponse: {result[:100]}")
+                else:
+                    messagebox.showerror("Lỗi", f"❌ Ollama error {resp.status_code}")
+            except requests.exceptions.ConnectionError:
+                messagebox.showerror("Lỗi", f"❌ Không thể kết nối Ollama!\n\nĐảm bảo:\n1. Đã cài Ollama\n2. Chạy 'ollama serve'\n3. Pull model: ollama pull {model}")
+            except Exception as e:
+                messagebox.showerror("Lỗi", f"❌ {e}")
+            finally:
+                win.config(cursor="")
+
+        def save_ai_settings():
+            """Save AI provider settings."""
+            try:
+                # Save to settings.yaml
+                settings_file = CONFIG_DIR / "settings.yaml"
+                import yaml
+                with open(settings_file, 'r', encoding='utf-8') as f:
+                    settings = yaml.safe_load(f) or {}
+
+                settings['ai_provider'] = provider_var.get()
+                settings['ollama_model'] = ollama_model_var.get().strip()
+                settings['ollama_endpoint'] = ollama_endpoint_var.get().strip()
+
+                with open(settings_file, 'w', encoding='utf-8') as f:
+                    yaml.dump(settings, f, default_flow_style=False, allow_unicode=True)
+
+                self.reload_config()
+                messagebox.showinfo("OK", "✅ Đã lưu cài đặt AI Provider!")
+            except Exception as e:
+                messagebox.showerror("Lỗi", f"Không thể lưu: {e}")
+
+        ttk.Button(ai_btn_frame, text="🧪 Test Ollama", command=test_ollama).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(ai_btn_frame, text="💾 Lưu cài đặt", command=save_ai_settings).pack(side=tk.LEFT)
+
+        # Info
+        ttk.Label(ai_tab, text="💡 Ollama chạy local, không giới hạn token, không mất tiền",
+                  foreground='#666', font=('Segoe UI', 9)).pack(anchor=tk.W, pady=(10, 0))
+        ttk.Label(ai_tab, text="📦 Cài đặt: ollama.ai → ollama pull qwen2.5:7b → ollama serve",
+                  foreground='#666', font=('Segoe UI', 9)).pack(anchor=tk.W)
+
         # Tab 3: Token
         token_tab = ttk.Frame(notebook, padding=15)
         notebook.add(token_tab, text="  🔑 Token  ")
@@ -1224,6 +1331,45 @@ class UnixVoiceToVideo:
             self.log(f"Headless mode: {'ON' if headless else 'OFF'}", "OK")
         except Exception as e:
             print(f"Save headless error: {e}")
+
+    def _get_ai_provider_setting(self) -> str:
+        """Get AI provider setting from config."""
+        try:
+            import yaml
+            config_path = CONFIG_DIR / "settings.yaml"
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+                return config.get('ai_provider', 'auto')
+        except:
+            pass
+        return 'auto'  # Default: auto (DeepSeek -> Ollama)
+
+    def _get_ollama_model(self) -> str:
+        """Get Ollama model from config."""
+        try:
+            import yaml
+            config_path = CONFIG_DIR / "settings.yaml"
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+                return config.get('ollama_model', 'qwen2.5:7b')
+        except:
+            pass
+        return 'qwen2.5:7b'
+
+    def _get_ollama_endpoint(self) -> str:
+        """Get Ollama endpoint from config."""
+        try:
+            import yaml
+            config_path = CONFIG_DIR / "settings.yaml"
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+                return config.get('ollama_endpoint', 'http://localhost:11434')
+        except:
+            pass
+        return 'http://localhost:11434'
 
     def _open_browser_for_login(self, profile_path: str, profile_name: str):
         """Open Chrome browser with profile for Google login."""
