@@ -2862,6 +2862,8 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
 
                 # Chiến lược repair mạnh mẽ hơn
                 repair_attempts = [
+                    # Attempt 0: Find last complete CHARACTER object (for analyze_story)
+                    lambda s: self._truncate_at_last_complete_character(s, brace_count, bracket_count),
                     # Attempt 1: Find last complete scene object and close there
                     lambda s: self._truncate_at_last_complete_scene(s, brace_count, bracket_count),
                     # Attempt 2: Find last complete string value and close
@@ -2896,6 +2898,48 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
 
         self.logger.warning(f"[_extract_json] Could not extract JSON. Response length: {len(text)}")
         self.logger.warning(f"[_extract_json] Response starts with: {text[:200] if text else 'EMPTY'}")
+        return None
+
+    def _truncate_at_last_complete_character(self, json_str: str, brace_count: int, bracket_count: int) -> Optional[str]:
+        """
+        Tìm character cuối cùng hoàn chỉnh (có đầy đủ character_lock hoặc portrait_prompt) và truncate tại đó.
+        Dùng cho analyze_story response chứa characters array.
+        """
+        import re
+
+        # Tìm tất cả các character objects hoàn chỉnh
+        # Character phải có id và ít nhất một trong: character_lock hoặc portrait_prompt
+        # Pattern: { ... "id": "xxx" ... "character_lock": "xxx" ... } hoặc { ... "portrait_prompt": "xxx" ... }
+
+        # Strategy 1: Tìm character có character_lock hoàn chỉnh
+        char_pattern1 = r'\{\s*"id"\s*:\s*"[^"]+"\s*,[\s\S]*?"character_lock"\s*:\s*"[^"]*"[\s\S]*?\}'
+
+        # Strategy 2: Tìm các object trong "characters" array với closing brace đúng cách
+        # Tìm vị trí cuối của mỗi character object (kết thúc bằng } hoặc },)
+        char_pattern2 = r'"id"\s*:\s*"[^"]+?"[^}]*"(?:character_lock|portrait_prompt)"\s*:\s*"[^"]*"[^}]*\}'
+
+        best_end_pos = 0
+
+        for pattern in [char_pattern1, char_pattern2]:
+            matches = list(re.finditer(pattern, json_str, re.DOTALL))
+            if matches:
+                last_match = matches[-1]
+                if last_match.end() > best_end_pos:
+                    best_end_pos = last_match.end()
+
+        if best_end_pos > 0:
+            truncated = json_str[:best_end_pos]
+
+            # Đếm lại braces/brackets
+            new_brace_count = truncated.count('{') - truncated.count('}')
+            new_bracket_count = truncated.count('[') - truncated.count(']')
+
+            # Đóng JSON properly
+            suffix = ']' * max(0, new_bracket_count) + '}' * max(0, new_brace_count)
+
+            self.logger.info(f"[_truncate_at_last_complete_character] Found complete character at pos {best_end_pos}")
+            return truncated + suffix
+
         return None
 
     def _truncate_at_last_complete_scene(self, json_str: str, brace_count: int, bracket_count: int) -> Optional[str]:
