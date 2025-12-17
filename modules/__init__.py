@@ -126,6 +126,11 @@ __all__ = [
     "GenerationTask",
     "GenerationResult",
     "generate_parallel",
+
+    # Browser Flow Generator (Excel + Browser integration)
+    "BrowserFlowGenerator",
+    "create_browser_flow_generator",
+    "generate_images_from_excel",
 ]
 
 # Chrome Token Extractor (optional - requires selenium)
@@ -169,3 +174,15 @@ except ImportError:
     GenerationTask = None
     GenerationResult = None
     generate_parallel = None
+
+# Browser Flow Generator (Excel + Browser integration)
+try:
+    from modules.browser_flow_generator import (
+        BrowserFlowGenerator,
+        create_browser_flow_generator,
+        generate_images_from_excel,
+    )
+except ImportError:
+    BrowserFlowGenerator = None
+    create_browser_flow_generator = None
+    generate_images_from_excel = None

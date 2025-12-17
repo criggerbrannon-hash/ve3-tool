@@ -54,3 +54,23 @@ whisper_language: "vi"
 
 # Logging
 log_level: "INFO"
+
+# ============================================================================
+# BROWSER AUTOMATION Settings
+# ============================================================================
+# Su dung browser automation thay cho API (khong can bearer token)
+
+# Thu muc chua Chrome profiles (luu session login)
+browser_profiles_dir: "./chrome_profiles"
+
+# Chay headless (an trinh duyet) - nen False lan dau de dang nhap
+browser_headless: false
+
+# Timeout cho dang nhap (giay)
+browser_login_timeout: 120
+
+# Delay giua cac prompt (ms)
+browser_delay_between_prompts: 2000
+
+# Timeout cho moi anh (giay)
+browser_generate_timeout: 120
