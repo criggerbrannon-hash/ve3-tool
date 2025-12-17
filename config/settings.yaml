@@ -25,17 +25,38 @@ flow_timeout: 120
 flow_delay: 3.0
 
 # ============================================================================
-# GEMINI API Configuration (Chỉ cần nếu tạo prompts từ SRT)
+# AI API Configuration (Cho tạo prompts từ SRT)
 # ============================================================================
-# Lấy API key tại: https://makersuite.google.com/app/apikey
-# Có thể dùng nhiều keys để tránh rate limit
+# Thứ tự ưu tiên: DeepSeek > Gemini > Groq > Ollama (local fallback)
 
+# DeepSeek API (ưu tiên - rẻ và ổn định)
+# Lấy key tại: https://platform.deepseek.com/
+deepseek_api_keys:
+  - ""  # Thêm API key của bạn vào đây
+
+# Gemini API
+# Lấy key tại: https://makersuite.google.com/app/apikey
 gemini_api_keys:
   - ""  # Thêm API key của bạn vào đây
 
 gemini_models:
   - "gemini-2.0-flash"
   - "gemini-2.5-flash"
+
+# Groq API (miễn phí)
+# Lấy key tại: https://console.groq.com/keys
+groq_api_keys:
+  - ""  # Thêm API key của bạn vào đây
+
+# ============================================================================
+# OLLAMA - LOCAL AI (FALLBACK khi API keys hết)
+# ============================================================================
+# Cài đặt Ollama: https://ollama.ai
+# Pull model: ollama pull gemma3:27b hoặc ollama pull llama3.2:latest
+# Chạy: ollama serve
+
+ollama_model: "gemma3:27b"  # Model local để fallback
+ollama_endpoint: "http://localhost:11434"  # Ollama server endpoint
 
 # ============================================================================
 # Automation Settings (Optional)
