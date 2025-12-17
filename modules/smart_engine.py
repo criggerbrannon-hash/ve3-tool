@@ -83,6 +83,7 @@ class SmartEngine:
         # Default: qwen2.5:7b (phù hợp GPU 12GB VRAM)
         self.ollama_model: str = "qwen2.5:7b"
         self.ollama_endpoint: str = "http://localhost:11434"
+        self.ai_provider: str = "auto"  # "auto", "deepseek", "ollama"
 
         # Settings - TOI UU TOC DO (PARALLEL OPTIMIZED)
         self.parallel = 20  # Tang len 20 - dung TAT CA tokens co san
@@ -175,6 +176,32 @@ class SmartEngine:
 
         except Exception as e:
             self.log(f"Load config error: {e}", "ERROR")
+
+        # Load AI Provider settings từ settings.yaml (override accounts.json)
+        self._load_ai_provider_from_settings_yaml()
+
+    def _load_ai_provider_from_settings_yaml(self):
+        """Load AI provider settings from settings.yaml (overrides accounts.json)."""
+        try:
+            import yaml
+            settings_path = self.config_path.parent / "settings.yaml"
+            if settings_path.exists():
+                with open(settings_path, 'r', encoding='utf-8') as f:
+                    yaml_config = yaml.safe_load(f) or {}
+
+                # AI Provider setting
+                if 'ai_provider' in yaml_config:
+                    self.ai_provider = yaml_config['ai_provider']
+                    self.log(f"AI Provider: {self.ai_provider}", "INFO")
+
+                # Ollama settings (override from settings.yaml)
+                if 'ollama_model' in yaml_config:
+                    self.ollama_model = yaml_config['ollama_model']
+                if 'ollama_endpoint' in yaml_config:
+                    self.ollama_endpoint = yaml_config['ollama_endpoint']
+
+        except Exception as e:
+            self.log(f"Load settings.yaml error: {e}", "ERROR")
 
     # ========== TOKEN CACHING ==========
 
@@ -605,6 +632,7 @@ class SmartEngine:
         # Ollama local model (fallback khi tat ca API fail)
         cfg['ollama_model'] = self.ollama_model
         cfg['ollama_endpoint'] = self.ollama_endpoint
+        cfg['ai_provider'] = self.ai_provider  # "auto", "deepseek", "ollama"
 
         # Retry with different keys
         for attempt in range(self.max_retries):
