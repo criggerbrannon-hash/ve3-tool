@@ -63,28 +63,9 @@ analyze_story: |
   ## OUTPUT FORMAT - PURE JSON (khong markdown):
   ## IMPORTANT: ALL names MUST be in ENGLISH (not Vietnamese)!
   ## IMPORTANT: Create MULTIPLE character ages and ALL locations for visual variety!
+  ## CRITICAL: Characters MUST come FIRST to avoid truncation issues!
 
   {{
-    "production_info": {{
-      "title": "Story Title",
-      "genre": "Drama/Comedy/etc",
-      "total_characters": 6,
-      "total_locations": 7
-    }},
-
-    "world_setting": {{
-      "era": "Present day 2020s (with 1990s flashbacks)",
-      "setting": "Small town Ohio, USA",
-      "social_class": "Working class",
-      "tone": "Dramatic, emotional, nostalgic",
-      "region": "American Midwest",
-      "visual_style": "Natural lighting, realistic tones, warm nostalgia for flashbacks"
-    }},
-
-    "global_style": "Cinematic, 4K photorealistic, shot on Arri Alexa, soft film grain, natural American suburban lighting",
-
-    "context_lock": "Small town Ohio, working class, courthouse present day, 1990s apartment flashbacks",
-
     "characters": [
       {{
         "id": "nvc",
@@ -233,7 +214,27 @@ analyze_story: |
         "filename": "obj_documents.png",
         "object_prompt": "Close-up of thick manila folder stuffed with legal documents and papers, official court stamps visible, worn edges. On gray stone surface. Soft studio lighting. 8K, product photography."
       }}
-    ]
+    ],
+
+    "production_info": {{
+      "title": "Story Title",
+      "genre": "Drama/Comedy/etc",
+      "total_characters": 6,
+      "total_locations": 7
+    }},
+
+    "world_setting": {{
+      "era": "Present day 2020s (with 1990s flashbacks)",
+      "setting": "Small town Ohio, USA",
+      "social_class": "Working class",
+      "tone": "Dramatic, emotional, nostalgic",
+      "region": "American Midwest",
+      "visual_style": "Natural lighting, realistic tones, warm nostalgia for flashbacks"
+    }},
+
+    "global_style": "Cinematic, 4K photorealistic, shot on Arri Alexa, soft film grain, natural American suburban lighting",
+
+    "context_lock": "Small town Ohio, working class, courthouse present day, 1990s apartment flashbacks"
   }}
 
   ## EXAMPLE 2 - Modern Urban Story:
