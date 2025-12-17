@@ -969,9 +969,10 @@ class SmartEngine:
                 self.log(msg, level.upper() if level else "INFO")
             generator._log = custom_log
 
-            result = generator.generate_scene_images(
-                excel_path=excel_files[0],
-                overwrite=False
+            # Truyen prompts da load san (tu _load_prompts) thay vi doc lai Excel
+            result = generator.generate_from_prompts(
+                prompts=prompts,
+                excel_path=excel_files[0]
             )
 
             if result.get("success"):

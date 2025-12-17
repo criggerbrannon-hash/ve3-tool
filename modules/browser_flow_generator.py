@@ -641,6 +641,127 @@ class BrowserFlowGenerator:
             "stats": self.stats.copy()
         }
 
+    def generate_from_prompts(
+        self,
+        prompts: List[Dict],
+        excel_path: Optional[Path] = None
+    ) -> Dict[str, Any]:
+        """
+        Tao anh tu danh sach prompts da load san (tu smart_engine._load_prompts).
+        Method nay nhan prompts truc tiep thay vi doc lai tu Excel.
+
+        Args:
+            prompts: List cac dict co dang {'id': '1', 'prompt': '...', 'output_path': '...'}
+            excel_path: Duong dan Excel (de cap nhat status)
+
+        Returns:
+            Dict voi ket qua
+        """
+        self._log("=" * 60)
+        self._log("BROWSER FLOW GENERATOR - TAO ANH TU PROMPTS")
+        self._log("=" * 60)
+
+        if not prompts:
+            return {"success": False, "error": "Khong co prompts"}
+
+        self._log(f"Tong: {len(prompts)} prompts")
+        self._log(f"Project: {self.project_code}")
+
+        # Reset stats
+        self.stats = {"total": len(prompts), "success": 0, "failed": 0, "skipped": 0}
+
+        # Khoi dong browser
+        if not self.driver:
+            if not self.start_browser():
+                return {"success": False, "error": "Khong khoi dong duoc browser"}
+
+            if not self.wait_for_login(timeout=120):
+                self.stop_browser()
+                return {"success": False, "error": "Chua dang nhap"}
+
+        # Inject JS
+        if not self._inject_js():
+            return {"success": False, "error": "Khong inject duoc JS"}
+
+        self._log(f"\nBat dau tao {len(prompts)} anh...")
+
+        # DEBUG: Hien thi prompt dau tien
+        if prompts:
+            p = prompts[0]
+            self._log(f"[DEBUG] Prompt dau tien: id={p.get('id')}")
+            self._log(f"[DEBUG] prompt = '{str(p.get('prompt', ''))[:100]}'")
+
+        # Xu ly tung prompt
+        for i, prompt_data in enumerate(prompts):
+            pid = str(prompt_data.get('id', i + 1))
+            prompt = prompt_data.get('prompt', '')
+            output_path = prompt_data.get('output_path', '')
+
+            self._log(f"\n[{i+1}/{len(prompts)}] ID: {pid}")
+            self._log(f"Prompt ({len(prompt)} chars): {prompt[:100]}...")
+
+            if not prompt:
+                self._log("Skip - prompt rong", "warn")
+                self.stats["skipped"] += 1
+                continue
+
+            try:
+                # Goi VE3.run() cho 1 prompt
+                result = self.driver.execute_async_script(f"""
+                    const callback = arguments[arguments.length - 1];
+                    const timeout = setTimeout(() => {{
+                        callback({{ success: false, error: 'Timeout 120s' }});
+                    }}, 120000);
+
+                    VE3.run([{{
+                        sceneId: "{pid}",
+                        prompt: `{self._escape_js_string(prompt)}`
+                    }}]).then(r => {{
+                        clearTimeout(timeout);
+                        callback({{ success: true, result: r }});
+                    }}).catch(e => {{
+                        clearTimeout(timeout);
+                        callback({{ success: false, error: e.message }});
+                    }});
+                """)
+
+                if result and result.get("success"):
+                    # Di chuyen file tu Downloads
+                    img_file = self._move_downloaded_images(pid)
+
+                    if img_file:
+                        self._log(f"OK - Da tao va luu anh", "success")
+                        self.stats["success"] += 1
+                    else:
+                        self._log(f"Khong tim thay file download", "warn")
+                        self.stats["failed"] += 1
+                else:
+                    error = result.get("error", "Unknown") if result else "No response"
+                    self._log(f"Loi: {error}", "error")
+                    self.stats["failed"] += 1
+
+                # Delay giua cac prompt
+                if i < len(prompts) - 1:
+                    time.sleep(2)
+
+            except Exception as e:
+                self._log(f"Exception: {e}", "error")
+                self.stats["failed"] += 1
+
+        # Summary
+        self._log("\n" + "=" * 60)
+        self._log("HOAN THANH")
+        self._log("=" * 60)
+        self._log(f"Tong: {self.stats['total']}")
+        self._log(f"Thanh cong: {self.stats['success']}")
+        self._log(f"That bai: {self.stats['failed']}")
+        self._log(f"Bo qua: {self.stats['skipped']}")
+
+        return {
+            "success": True,
+            "stats": self.stats.copy()
+        }
+
     def generate_character_images(
         self,
         excel_path: Optional[Path] = None,
