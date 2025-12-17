@@ -190,6 +190,20 @@ class BrowserFlowGenerator:
 
         try:
             options = Options()
+
+            # Tim Chrome binary
+            chrome_paths = [
+                r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+                "/usr/bin/google-chrome",
+                "/usr/bin/chromium-browser",
+            ]
+            for chrome_path in chrome_paths:
+                if os.path.exists(chrome_path):
+                    options.binary_location = chrome_path
+                    self._log(f"Chrome: {chrome_path}")
+                    break
+
             options.add_argument(f"--user-data-dir={self.profile_dir}")
 
             if self.headless:
@@ -202,9 +216,10 @@ class BrowserFlowGenerator:
             options.add_experimental_option("excludeSwitches", ["enable-automation"])
             options.add_experimental_option("useAutomationExtension", False)
             options.add_argument("--window-size=1920,1080")
+            options.add_argument("--start-maximized")
             options.add_experimental_option("prefs", prefs)
 
-            self._log("Dang tao Chrome driver...")
+            self._log("Dang khoi dong Chrome (10-30s)...")
             driver = webdriver.Chrome(options=options)
 
             # Hide webdriver flag
