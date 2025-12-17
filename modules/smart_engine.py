@@ -1123,11 +1123,8 @@ class SmartEngine:
         self.log(f"  Groq keys: {len(self.groq_keys)}")
         self.log(f"  Gemini keys: {len(self.gemini_keys)}")
 
-        # Refresh expired tokens at startup
-        self.refresh_expired_tokens()
-
-        # === 2. SONG SONG: Token + SRT + Prompts ===
-        self.log("[STEP 2] SONG SONG: Token + SRT + Prompts...")
+        # === 2. TAO SRT + PROMPTS (BROWSER MODE - khong can token) ===
+        self.log("[STEP 2] Tao SRT + Prompts...")
 
         voice_path = None
         if ext in ['.mp3', '.wav']:
@@ -1135,96 +1132,20 @@ class SmartEngine:
             if inp != voice_path:
                 shutil.copy2(inp, voice_path)
 
-        # Results containers
-        srt_done = [srt_path.exists()]
-        prompts_done = [excel_path.exists()]
-        tokens_done = [False]
-        tokens_count = [0]
+            # Tao SRT
+            if not srt_path.exists():
+                if not self.make_srt(voice_path, srt_path):
+                    return {"error": "srt_failed"}
 
-        # Thread 1: Lay TAT CA tokens (prefetch) - khong can cho SRT/Prompts
-        # Lam song song vi lay token can mouse, SRT/Prompts khong can
-        def prefetch_all_tokens():
-            """Prefetch tat ca tokens truoc khi bat dau tao anh."""
-            self.log("[PREFETCH] Bat dau lay tokens cho tat ca profiles...")
-            count = 0
+        # Tao Prompts
+        if ext == '.xlsx':
+            if inp != excel_path:
+                shutil.copy2(inp, excel_path)
+        elif not excel_path.exists():
+            if not self.make_prompts(proj_dir, name, excel_path):
+                return {"error": "prompts_failed"}
 
-            for i, profile in enumerate(self.profiles):
-                if self.stop_flag:
-                    break
-
-                # Skip neu token con valid
-                if self.is_token_valid(profile):
-                    self.log(f"[PREFETCH] Profile #{i+1}: Token valid, skip")
-                    count += 1
-                    continue
-
-                self.log(f"[PREFETCH] Profile #{i+1}/{len(self.profiles)}: Dang lay token...")
-                if self.get_token_for_profile(profile):
-                    count += 1
-                    self.log(f"[PREFETCH] Profile #{i+1}: OK!")
-                else:
-                    self.log(f"[PREFETCH] Profile #{i+1}: FAIL!", "WARN")
-
-                # Delay ngan giua cac profiles
-                if i < len(self.profiles) - 1:
-                    time.sleep(0.5)
-
-            tokens_count[0] = count
-            tokens_done[0] = True
-            self.log(f"[PREFETCH] XONG: {count}/{len(self.profiles)} tokens ready")
-
-        # Thread 2: Lam SRT (khong can mouse)
-        def do_srt():
-            if voice_path and not srt_path.exists():
-                srt_done[0] = self.make_srt(voice_path, srt_path)
-            else:
-                srt_done[0] = True
-
-        # Thread 3: Lam Prompts (sau khi SRT xong, khong can mouse)
-        def do_prompts():
-            # Doi SRT
-            while not srt_done[0] and not self.stop_flag:
-                time.sleep(0.5)
-
-            if ext == '.xlsx':
-                if inp != excel_path:
-                    shutil.copy2(inp, excel_path)
-                prompts_done[0] = True
-            elif srt_done[0] and not excel_path.exists():
-                prompts_done[0] = self.make_prompts(proj_dir, name, excel_path)
-            else:
-                prompts_done[0] = excel_path.exists()
-
-        # Start threads - TAT CA CHAY SONG SONG
-        self.log("[STEP 2] SONG SONG: SRT + Prompts + Prefetch Tokens...")
-        t1 = threading.Thread(target=prefetch_all_tokens, daemon=True)
-        t2 = threading.Thread(target=do_srt, daemon=True)
-        t3 = threading.Thread(target=do_prompts, daemon=True)
-
-        t1.start()
-        t2.start()
-        t3.start()
-
-        threads = [t1, t2, t3]
-
-        # Doi ca 3 xong
-        for t in threads:
-            t.join()
-
-        # Check results
-        if not srt_done[0] and ext in ['.mp3', '.wav']:
-            return {"error": "srt_failed"}
-
-        if not prompts_done[0]:
-            return {"error": "prompts_failed"}
-
-        # Check tokens (da prefetch xong)
-        has_token = any(p.token for p in self.profiles)
-        if not has_token:
-            self.log("Khong lay duoc token nao!", "ERROR")
-            return {"error": "no_tokens"}
-
-        self.log(f"[TOKENS] Da co {tokens_count[0]}/{len(self.profiles)} tokens san sang")
+        self.log("BROWSER MODE: Khong can token, su dung JS automation")
 
         # === 3. LOAD PROMPTS ===
         self.log("[STEP 3] Load prompts...")
@@ -1245,19 +1166,11 @@ class SmartEngine:
             # Vẫn ghép video nếu đủ nguyên liệu
             results = {"success": 0, "failed": 0, "skipped": "all_exist"}
         else:
-            # === 4. TAO ANH ===
-            self.log("[STEP 4] Tao anh...")
+            # === 4. TAO ANH (BROWSER - khong can token) ===
+            self.log("[STEP 4] Tao anh bang BROWSER...")
 
-            # Thu API truoc
-            results = self.generate_images_parallel(prompts)
-
-            # Neu API fail nhieu (>50%), dung browser backup
-            if results["failed"] > len(prompts) * 0.5:
-                self.log("API fail nhieu, chuyen sang BROWSER mode...", "WARN")
-                browser_results = self.generate_images_browser(prompts, proj_dir)
-                # Merge results
-                results["success"] += browser_results.get("success", 0)
-                results["failed"] = browser_results.get("failed", results["failed"])
+            # CHI DUNG BROWSER - khong dung API
+            results = self.generate_images_browser(prompts, proj_dir)
 
             # === 5. FINAL CHECK ===
             self.log("[STEP 5] Kiem tra ket qua...")
