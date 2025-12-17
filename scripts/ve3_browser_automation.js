@@ -411,7 +411,17 @@
 
             Utils.log(`\n━━━ [${index + 1}/${STATE.promptQueue.length}] ${sceneId} ━━━`, 'info');
 
+            // 0. Click "Du an moi" de reset UI (tru prompt dau tien)
+            if (index > 0) {
+                Utils.log('Reset UI - Click "Du an moi"...', 'info');
+                await UI.clickNewProject();
+                await Utils.sleep(300);
+                await UI.selectImageGeneration();
+                await Utils.sleep(300);
+            }
+
             // 1. Dien prompt
+            Utils.log('Dien prompt...', 'info');
             if (!UI.setPrompt(prompt)) {
                 return { success: false, error: 'Cannot set prompt' };
             }
@@ -419,18 +429,24 @@
             await Utils.sleep(CONFIG.delayAfterClick);
 
             // 2. Bat dau doi anh TRUOC khi click
+            Utils.log('Bat dau theo doi response...', 'info');
             const waitPromise = FetchHook.waitForImages();
 
             // 3. Click tao
+            Utils.log('Click nut Tao...', 'info');
             if (!await UI.clickGenerate()) {
                 return { success: false, error: 'Cannot click generate' };
             }
 
             // 4. Doi anh
+            Utils.log('Dang cho tao anh...', 'wait');
             const result = await waitPromise;
 
             // 5. Doi downloads hoan thanh
-            await Downloader.waitAllDownloads();
+            if (result.success) {
+                Utils.log('Dang tai anh...', 'wait');
+                await Downloader.waitAllDownloads();
+            }
 
             // 6. Callback
             if (STATE.onPromptComplete) {
