@@ -157,10 +157,13 @@ class Location:
 
 class Scene:
     """Đại diện cho một scene trong video."""
-    
+
     def __init__(
         self,
         scene_id: int,
+        start_time: str = "",
+        end_time: str = "",
+        duration: float = 0.0,
         srt_start: int = 0,
         srt_end: int = 0,
         srt_text: str = "",
@@ -172,6 +175,9 @@ class Scene:
         status_vid: str = "pending"
     ):
         self.scene_id = scene_id
+        self.start_time = start_time
+        self.end_time = end_time
+        self.duration = duration
         self.srt_start = srt_start
         self.srt_end = srt_end
         self.srt_text = srt_text
@@ -186,6 +192,9 @@ class Scene:
         """Chuyển đổi thành dictionary."""
         return {
             "scene_id": self.scene_id,
+            "start_time": self.start_time,
+            "end_time": self.end_time,
+            "duration": self.duration,
             "srt_start": self.srt_start,
             "srt_end": self.srt_end,
             "srt_text": self.srt_text,
@@ -220,6 +229,9 @@ class Scene:
 
         return cls(
             scene_id=safe_int(data.get("scene_id", 0)),
+            start_time=str(data.get("start_time", "") or ""),
+            end_time=str(data.get("end_time", "") or ""),
+            duration=float(data.get("duration", 0) or 0),
             srt_start=safe_int(data.get("srt_start", 0)),
             srt_end=safe_int(data.get("srt_end", 0)),
             srt_text=str(data.get("srt_text", "") or ""),

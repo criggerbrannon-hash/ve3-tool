@@ -52,10 +52,11 @@ groq_api_keys:
 # OLLAMA - LOCAL AI (FALLBACK khi API keys hết)
 # ============================================================================
 # Cài đặt Ollama: https://ollama.ai
-# Pull model: ollama pull gemma3:27b hoặc ollama pull llama3.2:latest
+# Pull model: ollama pull qwen2.5:7b (khuyên dùng cho RTX 3060 12GB)
+# Hoặc: ollama pull gemma2:9b
 # Chạy: ollama serve
 
-ollama_model: "gemma3:27b"  # Model local để fallback
+ollama_model: "qwen2.5:7b"  # Model nhẹ, phù hợp GPU 12GB VRAM
 ollama_endpoint: "http://localhost:11434"  # Ollama server endpoint
 
 # ============================================================================
