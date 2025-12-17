@@ -1202,6 +1202,9 @@ class PromptGenerator:
         Tạo Director's Shooting Plan - Kế hoạch quay phim chi tiết.
         ĐÂY LÀ BƯỚC QUAN TRỌNG NHẤT - Đạo diễn quyết định tạo bao nhiêu ảnh và ảnh gì!
 
+        QUAN TRỌNG: Với kịch bản dài (>15 phút), tự động chia thành các hồi và xử lý từng hồi.
+        Điều này giúp không bị giới hạn token và giữ chất lượng cao.
+
         Args:
             story_text: Toàn bộ nội dung câu chuyện
             srt_entries: List các SrtEntry với timestamps
@@ -1211,6 +1214,133 @@ class PromptGenerator:
 
         Returns:
             Dict với shooting_plan chứa tất cả shots đã lên kế hoạch
+        """
+        try:
+            # Tính tổng thời lượng
+            total_duration_seconds = 0
+            if srt_entries:
+                last_entry = srt_entries[-1]
+                if hasattr(last_entry.end_time, 'total_seconds'):
+                    total_duration_seconds = last_entry.end_time.total_seconds()
+
+            total_duration_minutes = total_duration_seconds / 60
+
+            self.logger.info("=" * 50)
+            self.logger.info(f"[Director's Shooting Plan] Tổng thời lượng: {total_duration_minutes:.1f} phút")
+            self.logger.info("=" * 50)
+
+            # Nếu kịch bản dài > 12 phút, chia thành các hồi
+            ACT_THRESHOLD_MINUTES = 12
+
+            if total_duration_minutes > ACT_THRESHOLD_MINUTES:
+                return self._create_shooting_plan_multi_acts(
+                    srt_entries, characters, locations, global_style, total_duration_minutes
+                )
+            else:
+                return self._create_shooting_plan_single(
+                    story_text, srt_entries, characters, locations, global_style
+                )
+
+        except Exception as e:
+            self.logger.error(f"[Director's Shooting Plan] Failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def _create_shooting_plan_multi_acts(
+        self,
+        srt_entries: List,
+        characters: List,
+        locations: List,
+        global_style: str,
+        total_duration_minutes: float
+    ) -> Optional[Dict]:
+        """
+        Tạo Shooting Plan cho kịch bản DÀI bằng cách chia thành nhiều hồi.
+        Mỗi hồi xử lý riêng với context từ hồi trước để giữ nhất quán.
+        """
+        # Chia thành các hồi (mỗi hồi ~10 phút để an toàn với token limit)
+        act_duration = 10  # phút
+        acts = self._split_into_acts(srt_entries, act_duration_minutes=act_duration)
+
+        if not acts:
+            self.logger.warning("[Multi-Acts] Không thể chia hồi")
+            return None
+
+        print(f"\n[Director] Kịch bản {total_duration_minutes:.0f} phút → Chia thành {len(acts)} hồi")
+        print(f"[Director] Mỗi hồi ~{act_duration} phút, xử lý tuần tự với context\n")
+
+        all_story_parts = []
+        previous_context = ""
+        all_shots_for_context = []
+
+        for act_idx, act_entries in enumerate(acts, 1):
+            print(f"{'='*50}")
+            print(f"[Director] HỒI {act_idx}/{len(acts)} - {len(act_entries)} SRT entries")
+            print(f"{'='*50}")
+
+            # Tạo shooting plan cho hồi này
+            act_result = self._create_directors_shooting_plan_for_act(
+                act_entries=act_entries,
+                act_number=act_idx,
+                total_acts=len(acts),
+                characters=characters,
+                locations=locations,
+                global_style=global_style,
+                previous_context=previous_context
+            )
+
+            if act_result and "shooting_plan" in act_result:
+                act_shooting_plan = act_result["shooting_plan"]
+                story_parts = act_shooting_plan.get("story_parts", [])
+
+                # Collect shots for context
+                act_shots = []
+                for part in story_parts:
+                    shots = part.get("shots", [])
+                    act_shots.extend(shots)
+                    all_story_parts.append(part)
+
+                all_shots_for_context.extend(act_shots)
+
+                # Tạo context cho hồi tiếp theo
+                previous_context += "\n" + self._summarize_act_for_context(act_shots, act_idx)
+
+                print(f"[Director] Hồi {act_idx} hoàn thành: {len(act_shots)} shots")
+            else:
+                print(f"[Director] Hồi {act_idx} thất bại, bỏ qua...")
+                self.logger.warning(f"[Multi-Acts] Act {act_idx} failed")
+
+        if not all_story_parts:
+            self.logger.warning("[Multi-Acts] Không có story_parts nào được tạo")
+            return None
+
+        # Gộp tất cả hồi thành một shooting_plan
+        combined_shooting_plan = {
+            "shooting_plan": {
+                "total_duration": f"{total_duration_minutes:.0f} minutes",
+                "total_images": sum(len(part.get("shots", [])) for part in all_story_parts),
+                "story_parts": all_story_parts
+            }
+        }
+
+        total_shots = combined_shooting_plan["shooting_plan"]["total_images"]
+        print(f"\n{'='*50}")
+        print(f"[Director] HOÀN THÀNH: {len(acts)} hồi, tổng {total_shots} shots")
+        print(f"{'='*50}\n")
+
+        return combined_shooting_plan
+
+    def _create_shooting_plan_single(
+        self,
+        story_text: str,
+        srt_entries: List,
+        characters: List,
+        locations: List,
+        global_style: str
+    ) -> Optional[Dict]:
+        """
+        Tạo Shooting Plan cho kịch bản NGẮN (< 12 phút) - gọi 1 lần API.
         """
         try:
             # Load prompt template
@@ -1246,15 +1376,12 @@ class PromptGenerator:
                 global_style=global_style or get_global_style()
             )
 
-            self.logger.info("=" * 50)
             self.logger.info("[Director's Shooting Plan] Đạo diễn đang lên kế hoạch quay...")
-            self.logger.info("=" * 50)
 
-            # Director's Shooting Plan cần response rất dài (nhiều scenes)
-            # DeepSeek bị giới hạn 8192 tokens nên ưu tiên Ollama nếu có
-            response = self._generate_content_large(prompt, temperature=0.4, max_tokens=16000)
+            # Gọi API
+            response = self._generate_content(prompt, temperature=0.4, max_tokens=8000)
 
-            # DEBUG: Log response để xem AI trả về gì
+            # DEBUG: Log response
             self.logger.info(f"[Director's Shooting Plan] Response length: {len(response) if response else 0}")
             if response:
                 self.logger.info(f"[Director's Shooting Plan] Response preview: {response[:500]}...")
@@ -1290,7 +1417,7 @@ class PromptGenerator:
             return json_data
 
         except Exception as e:
-            self.logger.error(f"[Director's Shooting Plan] Failed: {e}")
+            self.logger.error(f"[Director's Shooting Plan Single] Failed: {e}")
             import traceback
             traceback.print_exc()
             return None
@@ -1304,6 +1431,213 @@ class PromptGenerator:
             seconds = total_seconds % 60
             return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
         return str(td)
+
+    def _split_into_acts(self, srt_entries: List, act_duration_minutes: int = 15) -> List[List]:
+        """
+        Chia SRT entries thành các hồi (acts) theo thời lượng.
+
+        Args:
+            srt_entries: List các SrtEntry
+            act_duration_minutes: Thời lượng mỗi hồi (phút), mặc định 15 phút
+
+        Returns:
+            List các acts, mỗi act là list các SrtEntry
+        """
+        if not srt_entries:
+            return []
+
+        acts = []
+        current_act = []
+        act_start_time = srt_entries[0].start_time.total_seconds() if hasattr(srt_entries[0].start_time, 'total_seconds') else 0
+        act_duration_seconds = act_duration_minutes * 60
+
+        for entry in srt_entries:
+            entry_time = entry.start_time.total_seconds() if hasattr(entry.start_time, 'total_seconds') else 0
+
+            # Nếu vượt quá thời lượng hồi, tạo hồi mới
+            if entry_time - act_start_time >= act_duration_seconds and current_act:
+                acts.append(current_act)
+                current_act = []
+                act_start_time = entry_time
+
+            current_act.append(entry)
+
+        # Thêm hồi cuối cùng
+        if current_act:
+            acts.append(current_act)
+
+        self.logger.info(f"[Split Acts] Chia thành {len(acts)} hồi, mỗi hồi ~{act_duration_minutes} phút")
+        return acts
+
+    def _summarize_act_for_context(self, act_shots: List[Dict], act_number: int) -> str:
+        """
+        Tạo tóm tắt của một hồi để làm context cho hồi tiếp theo.
+
+        Args:
+            act_shots: List các shots từ hồi trước
+            act_number: Số thứ tự hồi
+
+        Returns:
+            String tóm tắt ngắn gọn
+        """
+        if not act_shots:
+            return ""
+
+        # Lấy các thông tin quan trọng
+        characters_used = set()
+        locations_used = set()
+        key_events = []
+
+        for shot in act_shots[:10]:  # Chỉ lấy 10 shots đầu để tóm tắt
+            chars = shot.get("characters_in_shot", [])
+            if isinstance(chars, list):
+                characters_used.update(chars)
+
+            # Lấy visual_description ngắn
+            visual = shot.get("visual_description", "")[:100]
+            if visual:
+                key_events.append(visual)
+
+        summary = f"""
+HỒI {act_number} - TÓM TẮT:
+- Nhân vật xuất hiện: {', '.join(list(characters_used)[:5]) if characters_used else 'N/A'}
+- Số shots: {len(act_shots)}
+- Các sự kiện chính: {'; '.join(key_events[:3]) if key_events else 'N/A'}
+"""
+        return summary.strip()
+
+    def _create_directors_shooting_plan_for_act(
+        self,
+        act_entries: List,
+        act_number: int,
+        total_acts: int,
+        characters: List,
+        locations: List,
+        global_style: str,
+        previous_context: str = ""
+    ) -> Optional[Dict]:
+        """
+        Tạo Director's Shooting Plan cho MỘT HỒI.
+
+        Args:
+            act_entries: SRT entries của hồi này
+            act_number: Số thứ tự hồi (1, 2, 3...)
+            total_acts: Tổng số hồi
+            characters: Danh sách nhân vật
+            locations: Danh sách bối cảnh
+            global_style: Style chung
+            previous_context: Tóm tắt các hồi trước (để giữ nhất quán)
+
+        Returns:
+            Dict với shooting_plan của hồi này
+        """
+        try:
+            # Format SRT segments cho hồi này
+            srt_segments = "\n".join([
+                f"[{self._format_timedelta(e.start_time)} - {self._format_timedelta(e.end_time)}] \"{e.text[:200]}\""
+                for e in act_entries
+            ])
+
+            # Format characters info
+            chars_info = "NHÂN VẬT:\n" + "\n".join([
+                f"- {c.id}: {c.name} - {c.character_lock or ''}"
+                for c in characters
+            ]) if characters else "Không có thông tin nhân vật"
+
+            # Format locations info
+            locs_info = "BỐI CẢNH:\n" + "\n".join([
+                f"- {loc.id}: {loc.name} - {loc.location_lock or ''}"
+                for loc in locations
+            ]) if locations else "Không có thông tin bối cảnh"
+
+            # Build prompt với context từ hồi trước
+            context_section = ""
+            if previous_context:
+                context_section = f"""
+=== CONTEXT TỪ CÁC HỒI TRƯỚC ===
+{previous_context}
+=== HẾT CONTEXT ===
+
+QUAN TRỌNG: Giữ nhất quán với các hồi trước về:
+- Trang phục nhân vật
+- Bối cảnh đã sử dụng
+- Phong cách hình ảnh
+"""
+
+            prompt = f"""Bạn là ĐẠO DIỄN PHIM chuyên nghiệp. Tạo SHOOTING PLAN cho HỒI {act_number}/{total_acts}.
+
+{context_section}
+
+=== THÔNG TIN HỒI {act_number} ===
+
+{chars_info}
+
+{locs_info}
+
+=== NỘI DUNG HỒI {act_number} (SRT với timestamps) ===
+{srt_segments}
+
+=== YÊU CẦU ===
+Tạo shooting plan cho HỒI NÀY với format JSON:
+- Mỗi 3-8 giây SRT = 1 shot (1 ảnh)
+- Mỗi shot cần: srt_range, srt_text, shot_type, visual_description, characters_in_shot, img_prompt
+- img_prompt phải chi tiết, cinematic, 4K quality
+
+Style: {global_style or 'Cinematic, 4K photorealistic'}
+
+Return JSON:
+{{
+  "act_number": {act_number},
+  "shooting_plan": {{
+    "story_parts": [
+      {{
+        "part_number": 1,
+        "part_name": "...",
+        "shots": [
+          {{
+            "shot_number": 1,
+            "srt_range": "00:00:00 - 00:00:05",
+            "srt_text": "...",
+            "shot_type": "WIDE/CLOSE-UP/MEDIUM/...",
+            "visual_description": "...",
+            "characters_in_shot": ["nvc1"],
+            "img_prompt": "Detailed cinematic prompt..."
+          }}
+        ]
+      }}
+    ]
+  }}
+}}"""
+
+            print(f"[Director] Đang xử lý Hồi {act_number}/{total_acts}...")
+
+            # Gọi API - dùng DeepSeek (có JSON repair)
+            response = self._generate_content(prompt, temperature=0.4, max_tokens=8000)
+
+            if not response:
+                self.logger.warning(f"[Director Act {act_number}] Không có response")
+                return None
+
+            json_data = self._extract_json(response)
+
+            if not json_data:
+                self.logger.warning(f"[Director Act {act_number}] Không parse được JSON")
+                return None
+
+            # Nếu có shooting_plan key
+            if "shooting_plan" in json_data:
+                return json_data
+
+            # Nếu trả về trực tiếp story_parts
+            if "story_parts" in json_data:
+                return {"shooting_plan": json_data, "act_number": act_number}
+
+            self.logger.warning(f"[Director Act {act_number}] JSON không có shooting_plan hoặc story_parts")
+            return None
+
+        except Exception as e:
+            self.logger.error(f"[Director Act {act_number}] Error: {e}")
+            return None
 
     def _convert_shooting_plan_to_scenes(self, shooting_plan: Dict) -> List[Dict[str, Any]]:
         """
