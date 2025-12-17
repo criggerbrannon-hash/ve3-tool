@@ -65,9 +65,11 @@ max_scenes_per_account: 50
 retry_count: 3
 wait_timeout: 30
 
-# Scene duration (giây) - dùng khi gom SRT thành scenes
-min_scene_duration: 15
-max_scene_duration: 25
+# Scene duration (giây) - thời lượng mỗi ảnh trong video
+# 3-8s: Video sinh động, nhiều ảnh
+# 15-25s: Ít ảnh hơn, mỗi ảnh hiển thị lâu hơn
+min_scene_duration: 3
+max_scene_duration: 8
 
 # Whisper Settings (Voice to SRT)
 whisper_model: "base"
