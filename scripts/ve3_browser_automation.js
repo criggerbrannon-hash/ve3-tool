@@ -314,18 +314,23 @@
             dropdown.click();
             await Utils.sleep(500);
 
+            // Tim "Tao hinh anh" - duyet TAT CA elements, check size de dam bao la element that
             Utils.log('>>> Tim option "Tao hinh anh"...', 'info');
-            const options = document.querySelectorAll('[role="option"], [role="menuitem"], li, div');
-            Utils.log(`Tim thay ${options.length} options`, 'info');
+            const allElements = document.querySelectorAll('*');
 
-            for (const opt of options) {
-                const text = opt.textContent || '';
-                if (text.includes('Tạo hình ảnh') || text.includes('Generate image')) {
-                    Utils.log(`Click option: "${text.trim().slice(0, 30)}"`, 'info');
-                    opt.click();
-                    Utils.log('OK - Da chon "Tao hinh anh"', 'success');
-                    await Utils.sleep(CONFIG.delayAfterClick);
-                    return true;
+            for (const el of allElements) {
+                const text = el.textContent || '';
+                if (text === 'Tạo hình ảnh' || text.includes('Tạo hình ảnh từ văn bản') ||
+                    text === 'Generate image' || text.includes('Generate image from text')) {
+                    // Check size - chi click element co kich thuoc hop ly
+                    const rect = el.getBoundingClientRect();
+                    if (rect.height > 10 && rect.height < 80 && rect.width > 50) {
+                        Utils.log(`Click: "${text.trim().slice(0, 40)}" (h=${rect.height})`, 'info');
+                        el.click();
+                        Utils.log('OK - Da chon "Tao hinh anh"', 'success');
+                        await Utils.sleep(CONFIG.delayAfterClick);
+                        return true;
+                    }
                 }
             }
 
