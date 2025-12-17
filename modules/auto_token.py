@@ -491,8 +491,12 @@ console.log('Capture ready v3');
             # === 9. AN Chrome ngay sau khi gui prompt ===
             self.hide_chrome_window()
 
-            # === 10. Doi token (30s max) ===
-            self.log("Doi capture token (30s max)...")
+            # === 10. Doi anh tao xong + capture token ===
+            self.log("Doi anh tao xong (60s max)...")
+
+            # Doi 15s dau de anh co the tao xong
+            time.sleep(15)
+            self.log("Anh co the da xong, bat dau capture token...")
 
             for i in range(10):  # 10 * 3s = 30s max
                 time.sleep(3)
