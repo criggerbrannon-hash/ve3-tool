@@ -97,6 +97,57 @@ class Character:
 
 
 # ============================================================================
+# LOCATION DATA CLASS
+# ============================================================================
+
+class Location:
+    """Dai dien cho mot dia diem trong truyen."""
+
+    def __init__(
+        self,
+        id: str,
+        name: str = "",
+        english_prompt: str = "",
+        location_lock: str = "",
+        lighting_default: str = "",
+        image_file: str = "",
+        status: str = "pending"
+    ):
+        self.id = id
+        self.name = name
+        self.english_prompt = english_prompt
+        self.location_lock = location_lock
+        self.lighting_default = lighting_default
+        self.image_file = image_file
+        self.status = status
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Chuyen doi thanh dictionary."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "english_prompt": self.english_prompt,
+            "location_lock": self.location_lock,
+            "lighting_default": self.lighting_default,
+            "image_file": self.image_file,
+            "status": self.status,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Location":
+        """Tao Location tu dictionary."""
+        return cls(
+            id=str(data.get("id", "")),
+            name=str(data.get("name", "")),
+            english_prompt=str(data.get("english_prompt", "")),
+            location_lock=str(data.get("location_lock", "")),
+            lighting_default=str(data.get("lighting_default", "")),
+            image_file=str(data.get("image_file", "")),
+            status=str(data.get("status", "pending")),
+        )
+
+
+# ============================================================================
 # SCENE DATA CLASS
 # ============================================================================
 
