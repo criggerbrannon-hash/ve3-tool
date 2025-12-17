@@ -555,14 +555,20 @@ class BrowserFlowGenerator:
 
         self._log(f"\nBat dau tao {len(prompts_data)} anh...")
 
+        # DEBUG: Hien thi scene dau tien de kiem tra data
+        if scenes_to_process:
+            s = scenes_to_process[0]
+            self._log(f"[DEBUG] Scene dau tien: id={s.scene_id}, srt_start={s.srt_start}")
+            self._log(f"[DEBUG] img_prompt = '{s.img_prompt[:100] if s.img_prompt else 'EMPTY'}'")
+
         # Goi VE3.run() - xu ly tung prompt mot de cap nhat Excel theo thoi gian thuc
         for i, item in enumerate(prompts_data):
             scene = scenes_to_process[i]
             scene_id = item["sceneId"]
             prompt = item["prompt"]
 
-            self._log(f"\n[{i+1}/{len(prompts_data)}] {scene_id}")
-            self._log(f"Prompt: {prompt[:80]}...")
+            self._log(f"\n[{i+1}/{len(prompts_data)}] Scene {scene_id}")
+            self._log(f"Prompt ({len(prompt)} chars): {prompt[:100]}...")
 
             try:
                 # Goi VE3.run() cho 1 prompt
