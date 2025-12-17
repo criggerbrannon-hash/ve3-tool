@@ -933,37 +933,28 @@ class SmartEngine:
             self.log(f"Dung profile (assigned): {profile_name}")
         else:
             # Find first available profile from chrome_profiles directory
-            # Try multiple possible locations
-            possible_dirs = [
-                self.config_dir.parent / "chrome_profiles",  # config/../chrome_profiles
-                Path(__file__).parent.parent / "chrome_profiles",  # modules/../chrome_profiles
-                Path.cwd() / "chrome_profiles",  # ./chrome_profiles
-            ]
+            # ROOT = thu muc chua ve3_pro.py (D:\AUTO\ve3-tool)
+            root_dir = Path(__file__).parent.parent.resolve()  # modules/../ = root
+            profiles_dir = root_dir / "chrome_profiles"
 
-            profiles_dir = None
-            available_profiles = []
+            self.log(f"Tim profile tai: {profiles_dir}")
 
-            for pd in possible_dirs:
-                if pd.exists():
-                    profiles_dir = pd
-                    available_profiles = [p.name for p in pd.iterdir() if p.is_dir() and not p.name.startswith('.')]
-                    self.log(f"Tim thay {len(available_profiles)} profiles tai: {pd}")
-                    if available_profiles:
-                        break
+            if profiles_dir.exists():
+                # Liet ke tat ca profiles
+                all_items = list(profiles_dir.iterdir())
+                available_profiles = [p.name for p in all_items if p.is_dir() and not p.name.startswith('.')]
+                self.log(f"Cac profiles: {available_profiles}")
 
-            if available_profiles:
-                # Uu tien profile KHONG phai "main" (user da tao)
-                non_main = [p for p in available_profiles if p != "main"]
-                profile_name = non_main[0] if non_main else available_profiles[0]
-                self.log(f"Dung profile: {profile_name}")
+                if available_profiles:
+                    # Uu tien profile KHONG phai "main" (user da tao)
+                    non_main = [p for p in available_profiles if p != "main"]
+                    profile_name = non_main[0] if non_main else available_profiles[0]
+                    self.log(f">>> Dung profile: {profile_name}")
             else:
-                self.log(f"Khong tim thay profile nao, tao 'main'")
-                if profiles_dir:
-                    (profiles_dir / "main").mkdir(exist_ok=True)
-                else:
-                    profiles_dir = Path.cwd() / "chrome_profiles"
-                    profiles_dir.mkdir(exist_ok=True)
-                    (profiles_dir / "main").mkdir(exist_ok=True)
+                self.log(f"Chua co thu muc chrome_profiles, tao moi...")
+                profiles_dir.mkdir(exist_ok=True)
+                (profiles_dir / "main").mkdir(exist_ok=True)
+                available_profiles = ["main"]
 
         try:
             generator = BrowserFlowGenerator(
