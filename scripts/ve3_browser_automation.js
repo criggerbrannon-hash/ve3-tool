@@ -1,16 +1,15 @@
 /**
  * VE3 Browser Automation - Google Flow Image Generator
  * =====================================================
- * Script chay tren Console cua trinh duyet de tu dong tao anh tren Google Flow.
+ * Optimized version - Hook 1 lan, tu dong tai va gui prompt tiep
  *
- * HUONG DAN SU DUNG:
- * 1. Mo trang: https://labs.google/fx/vi/tools/flow
- * 2. Nhan F12 -> Console
- * 3. Copy toan bo noi dung file nay vao Console va nhan Enter
- * 4. Goi cac ham: VE3.generateOne("prompt") hoac VE3.generateBatch(["p1", "p2"])
+ * HUONG DAN:
+ * 1. Mo: https://labs.google/fx/vi/tools/flow
+ * 2. F12 -> Console -> Paste code nay
+ * 3. VE3.init() - Khoi tao 1 lan
+ * 4. VE3.run(["prompt1", "prompt2"]) - Chay batch
  *
- * @version 2.0.0
- * @author VE3 Tool
+ * @version 3.0.0
  */
 
 (function() {
@@ -19,226 +18,258 @@
     // =========================================================================
     // CONFIGURATION
     // =========================================================================
-
     const CONFIG = {
-        // Retry settings
-        maxRetries: 3,
-        retryDelayBase: 3000,      // 3 giay, se tang dan (exponential backoff)
-        retryDelayMax: 15000,      // Toi da 15 giay
+        // Ten project/folder de dat ten file
+        projectName: 'default',
 
-        // Timeout settings
-        generateTimeout: 90000,    // 90 giay cho moi anh
-        uiActionDelay: 500,        // Delay giua cac thao tac UI
+        // Download folder (chi la prefix cho ten file, browser quyet dinh folder)
+        filePrefix: 've3',
 
-        // Batch settings
-        delayBetweenImages: 2000,  // 2 giay giua cac anh
+        // Delays
+        delayAfterClick: 500,
+        delayBetweenPrompts: 2000,
+        delayAfterDownload: 1000,
 
-        // Selectors - Cap nhat theo UI cua Google Flow
-        selectors: {
-            textarea: 'textarea',
-            generateButton: [
-                'button:has(.google-symbols):has-text("Tao")',
-                'button[aria-label*="Send"]',
-                'button[aria-label*="Gui"]',
-                'button[type="submit"]'
-            ],
-            newProjectButton: [
-                'button:contains("Du an moi")',
-                'button:contains("New project")'
-            ],
-            dropdown: 'button[role="combobox"]',
-            imageOption: [
-                '[role="option"]:contains("Tao hinh anh")',
-                '[role="option"]:contains("Generate image")',
-                '[role="menuitem"]:contains("Tao hinh anh")'
-            ]
-        },
+        // Timeout cho moi anh
+        generateTimeout: 120000,  // 2 phut
 
-        // Debug mode
-        debug: false
+        // So anh tao moi prompt (thuong la 2)
+        expectedImagesPerPrompt: 2,
+
+        // Auto download
+        autoDownload: true,
+    };
+
+    // =========================================================================
+    // STATE
+    // =========================================================================
+    const STATE = {
+        isInitialized: false,
+        isRunning: false,
+        shouldStop: false,
+
+        // Queue
+        promptQueue: [],
+        currentPromptIndex: 0,
+        currentPrompt: '',
+
+        // Tracking
+        totalImages: 0,
+        downloadedImages: 0,
+        errors: [],
+
+        // Callback khi 1 prompt hoan thanh
+        onPromptComplete: null,
+        onAllComplete: null,
     };
 
     // =========================================================================
     // UTILITIES
     // =========================================================================
-
     const Utils = {
-        /**
-         * Sleep/delay function
-         */
-        sleep: (ms) => new Promise(resolve => setTimeout(resolve, ms)),
+        sleep: (ms) => new Promise(r => setTimeout(r, ms)),
 
-        /**
-         * Log voi icon va timestamp
-         */
         log: (msg, type = 'info') => {
             const icons = {
-                info: '\u2139\ufe0f',
-                success: '\u2705',
-                error: '\u274c',
-                warn: '\u26a0\ufe0f',
-                wait: '\u23f3',
-                debug: '\ud83d\udd0d'
+                info: 'ℹ️', success: '✅', error: '❌',
+                warn: '⚠️', wait: '⏳', img: '🖼️'
             };
-            const icon = icons[type] || '\u2022';
-            const timestamp = new Date().toLocaleTimeString();
-            console.log(`${icon} [${timestamp}] [VE3] ${msg}`);
+            console.log(`${icons[type] || '•'} [VE3] ${msg}`);
         },
 
-        /**
-         * Log debug (chi hien khi CONFIG.debug = true)
-         */
-        debug: (msg) => {
-            if (CONFIG.debug) {
-                Utils.log(msg, 'debug');
-            }
+        // Tao ten file co y nghia
+        generateFilename: (index) => {
+            const timestamp = Date.now();
+            const promptSlug = STATE.currentPrompt
+                .slice(0, 30)
+                .replace(/[^a-zA-Z0-9]/g, '_')
+                .replace(/_+/g, '_');
+            return `${CONFIG.projectName}_${STATE.currentPromptIndex + 1}_${index}_${promptSlug}_${timestamp}.png`;
         },
 
-        /**
-         * Tim element theo nhieu selectors (tra ve element dau tien tim thay)
-         */
-        findElement: (selectors) => {
-            const selectorList = Array.isArray(selectors) ? selectors : [selectors];
-
-            for (const selector of selectorList) {
-                try {
-                    // Xu ly selector dac biet :contains() va :has-text()
-                    if (selector.includes(':contains(') || selector.includes(':has-text(')) {
-                        const match = selector.match(/:(?:contains|has-text)\("([^"]+)"\)/);
-                        if (match) {
-                            const text = match[1];
-                            const baseSelector = selector.replace(/:(?:contains|has-text)\("[^"]+"\)/, '');
-                            const elements = document.querySelectorAll(baseSelector || '*');
-
-                            for (const el of elements) {
-                                if (el.textContent && el.textContent.includes(text)) {
-                                    return el;
-                                }
-                            }
-                        }
-                        continue;
-                    }
-
-                    // Selector binh thuong
-                    const el = document.querySelector(selector);
-                    if (el) {
-                        Utils.debug(`Found element with selector: ${selector}`);
-                        return el;
-                    }
-                } catch (e) {
-                    Utils.debug(`Invalid selector: ${selector}`);
-                }
-            }
-            return null;
-        },
-
-        /**
-         * Set gia tri textarea theo cach tuong thich voi React
-         */
+        // Set textarea value (React compatible)
         setTextareaValue: (textarea, value) => {
-            if (!textarea) return false;
-
             textarea.focus();
-
-            // Cach 1: Su dung native value setter (tuong thich React)
-            const nativeSetter = Object.getOwnPropertyDescriptor(
+            const setter = Object.getOwnPropertyDescriptor(
                 HTMLTextAreaElement.prototype, 'value'
             )?.set;
-
-            if (nativeSetter) {
-                nativeSetter.call(textarea, value);
+            if (setter) {
+                setter.call(textarea, value);
             } else {
                 textarea.value = value;
             }
-
-            // Trigger cac event de React nhan biet thay doi
-            textarea.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
-            textarea.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
-
-            // Them: trigger keyup event
-            textarea.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
-
-            return textarea.value === value;
-        },
-
-        /**
-         * Tinh delay voi exponential backoff
-         */
-        getRetryDelay: (attempt) => {
-            const delay = CONFIG.retryDelayBase * Math.pow(1.5, attempt);
-            return Math.min(delay, CONFIG.retryDelayMax);
+            textarea.dispatchEvent(new Event('input', { bubbles: true }));
+            textarea.dispatchEvent(new Event('change', { bubbles: true }));
         }
     };
 
     // =========================================================================
-    // FETCH INTERCEPTOR
+    // DOWNLOAD MANAGER
     // =========================================================================
+    const Downloader = {
+        pendingDownloads: 0,
 
-    const FetchInterceptor = {
-        originalFetch: window.fetch,
-        listeners: new Set(),
-        isActive: false,
+        download: async (url, filename) => {
+            try {
+                Downloader.pendingDownloads++;
 
-        /**
-         * Bat dau intercept fetch requests
-         */
-        start: function() {
-            if (this.isActive) return;
+                const res = await fetch(url);
+                const blob = await res.blob();
+                const blobUrl = URL.createObjectURL(blob);
 
+                const a = document.createElement('a');
+                a.href = blobUrl;
+                a.download = filename;
+                a.style.display = 'none';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+
+                setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+
+                STATE.downloadedImages++;
+                Utils.log(`Đã tải: ${filename}`, 'success');
+
+                Downloader.pendingDownloads--;
+                return true;
+            } catch (e) {
+                Downloader.pendingDownloads--;
+                Utils.log(`Lỗi tải ${filename}: ${e.message}`, 'error');
+                return false;
+            }
+        },
+
+        // Doi tat ca downloads hoan thanh
+        waitAllDownloads: async () => {
+            while (Downloader.pendingDownloads > 0) {
+                await Utils.sleep(100);
+            }
+        }
+    };
+
+    // =========================================================================
+    // FETCH HOOK - Chi init 1 lan
+    // =========================================================================
+    const FetchHook = {
+        isHooked: false,
+        originalFetch: null,
+        imageBuffer: [],  // Buffer anh cho prompt hien tai
+        resolveWait: null,
+
+        init: function() {
+            if (this.isHooked) {
+                Utils.log('Hook đã được init rồi', 'warn');
+                return;
+            }
+
+            this.originalFetch = window.fetch;
             const self = this;
-            window.fetch = function(url, options) {
+
+            window.fetch = function(url, opts) {
                 const result = self.originalFetch.apply(this, arguments);
 
-                // Chi xu ly request batchGenerateImages
                 const urlStr = url?.toString() || '';
+
+                // Bat response tu batchGenerateImages
                 if (urlStr.includes('batchGenerateImages')) {
-                    result
-                        .then(response => response.clone().json())
-                        .then(data => {
-                            self.notifyListeners(data, null);
-                        })
-                        .catch(error => {
-                            self.notifyListeners(null, error);
-                        });
+                    Utils.log('Đang tạo ảnh...', 'wait');
+
+                    result.then(async res => {
+                        try {
+                            const data = await res.clone().json();
+
+                            // Check loi
+                            if (data.error) {
+                                Utils.log(`API Error: ${data.error.message || JSON.stringify(data.error)}`, 'error');
+                                STATE.errors.push(data.error);
+                                if (self.resolveWait) {
+                                    self.resolveWait({ success: false, error: data.error });
+                                }
+                                return;
+                            }
+
+                            // Extract va download anh
+                            if (data.media && data.media.length > 0) {
+                                Utils.log(`Nhận được ${data.media.length} ảnh!`, 'img');
+
+                                const downloadPromises = [];
+
+                                for (let i = 0; i < data.media.length; i++) {
+                                    const img = data.media[i]?.image?.generatedImage;
+                                    if (img && img.fifeUrl) {
+                                        const filename = Utils.generateFilename(i + 1);
+
+                                        self.imageBuffer.push({
+                                            url: img.fifeUrl,
+                                            seed: img.seed,
+                                            filename: filename
+                                        });
+
+                                        if (CONFIG.autoDownload) {
+                                            downloadPromises.push(
+                                                Downloader.download(img.fifeUrl, filename)
+                                            );
+                                        }
+                                    }
+                                }
+
+                                // Doi tat ca downloads
+                                if (downloadPromises.length > 0) {
+                                    await Promise.all(downloadPromises);
+                                }
+
+                                // Resolve promise dang cho
+                                if (self.resolveWait) {
+                                    self.resolveWait({
+                                        success: true,
+                                        images: [...self.imageBuffer]
+                                    });
+                                    self.imageBuffer = [];
+                                }
+                            }
+                        } catch (e) {
+                            Utils.log(`Parse error: ${e.message}`, 'error');
+                            if (self.resolveWait) {
+                                self.resolveWait({ success: false, error: e.message });
+                            }
+                        }
+                    }).catch(e => {
+                        Utils.log(`Fetch error: ${e.message}`, 'error');
+                        if (self.resolveWait) {
+                            self.resolveWait({ success: false, error: e.message });
+                        }
+                    });
                 }
 
                 return result;
             };
 
-            this.isActive = true;
-            Utils.debug('Fetch interceptor started');
+            this.isHooked = true;
+            Utils.log('Hook đã sẵn sàng! Ảnh sẽ tự động tải về.', 'success');
         },
 
-        /**
-         * Dung intercept va khoi phuc fetch goc
-         */
-        stop: function() {
-            if (!this.isActive) return;
+        // Doi cho den khi nhan duoc anh
+        waitForImages: function(timeout = CONFIG.generateTimeout) {
+            return new Promise((resolve) => {
+                this.imageBuffer = [];
+                this.resolveWait = resolve;
 
-            window.fetch = this.originalFetch;
-            this.listeners.clear();
-            this.isActive = false;
-            Utils.debug('Fetch interceptor stopped');
+                // Timeout
+                setTimeout(() => {
+                    if (this.resolveWait === resolve) {
+                        this.resolveWait = null;
+                        resolve({ success: false, error: 'Timeout' });
+                    }
+                }, timeout);
+            });
         },
 
-        /**
-         * Them listener cho response
-         */
-        addListener: function(callback) {
-            this.listeners.add(callback);
-            return () => this.listeners.delete(callback);
-        },
-
-        /**
-         * Thong bao tat ca listeners
-         */
-        notifyListeners: function(data, error) {
-            for (const callback of this.listeners) {
-                try {
-                    callback(data, error);
-                } catch (e) {
-                    Utils.debug(`Listener error: ${e.message}`);
-                }
+        // Cleanup
+        destroy: function() {
+            if (this.originalFetch) {
+                window.fetch = this.originalFetch;
+                this.isHooked = false;
+                Utils.log('Hook đã được gỡ', 'info');
             }
         }
     };
@@ -246,487 +277,308 @@
     // =========================================================================
     // UI ACTIONS
     // =========================================================================
-
-    const UIActions = {
-        /**
-         * Tim va tra ve textarea
-         */
-        findTextarea: () => {
-            const textarea = document.querySelector(CONFIG.selectors.textarea);
-            if (!textarea) {
-                Utils.log('Khong tim thay textarea', 'error');
-            }
-            return textarea;
-        },
-
-        /**
-         * Dien prompt vao textarea
-         */
-        setPrompt: (prompt) => {
-            const textarea = UIActions.findTextarea();
-            if (!textarea) return false;
-
-            const success = Utils.setTextareaValue(textarea, prompt);
-            if (success) {
-                Utils.log(`Da dien prompt: "${prompt.slice(0, 50)}..."`, 'success');
-            } else {
-                Utils.log('Khong dien duoc prompt', 'error');
-            }
-            return success;
-        },
-
-        /**
-         * Click nut Tao/Generate
-         */
-        clickGenerate: async () => {
-            // Tim nut co icon arrow_forward va text "Tao"
-            const buttons = document.querySelectorAll('button');
-
-            for (const btn of buttons) {
-                const text = btn.textContent || '';
-                const hasArrowIcon = text.includes('arrow_forward') ||
-                                    btn.querySelector('.google-symbols, .material-icons');
-                const hasCreateText = text.includes('Tao') ||
-                                     text.includes('T\u1ea1o') ||
-                                     text.includes('Create') ||
-                                     text.includes('Generate');
-
-                if (hasCreateText && (hasArrowIcon || btn.type === 'submit')) {
-                    btn.click();
-                    Utils.log('Da click nut Tao', 'success');
-                    return true;
-                }
-            }
-
-            // Fallback: Tim nut voi aria-label
-            const ariaBtn = Utils.findElement([
-                'button[aria-label*="Send"]',
-                'button[aria-label*="Gui"]',
-                'button[aria-label*="Create"]'
-            ]);
-
-            if (ariaBtn) {
-                ariaBtn.click();
-                Utils.log('Da click nut Tao (aria-label)', 'success');
-                return true;
-            }
-
-            // Fallback: Nhan Enter trong textarea
-            const textarea = UIActions.findTextarea();
-            if (textarea) {
-                textarea.dispatchEvent(new KeyboardEvent('keydown', {
-                    key: 'Enter',
-                    code: 'Enter',
-                    keyCode: 13,
-                    which: 13,
-                    bubbles: true,
-                    cancelable: true
-                }));
-                Utils.log('Da nhan Enter', 'success');
-                return true;
-            }
-
-            Utils.log('Khong tim thay cach gui prompt', 'error');
-            return false;
-        },
-
-        /**
-         * Click nut "Du an moi" / "New project"
-         */
+    const UI = {
+        // Click "Du an moi"
         clickNewProject: async () => {
-            const buttons = document.querySelectorAll('button');
-
-            for (const btn of buttons) {
-                const text = btn.textContent || '';
-                if (text.includes('Du an moi') ||
-                    text.includes('D\u1ef1 \u00e1n m\u1edbi') ||
-                    text.includes('New project')) {
-                    btn.click();
-                    Utils.log('Da click "Du an moi"', 'success');
+            const btns = document.querySelectorAll('button');
+            for (const b of btns) {
+                const text = b.textContent || '';
+                if (text.includes('Dự án mới') || text.includes('New project')) {
+                    b.click();
+                    Utils.log('Đã click "Dự án mới"', 'success');
+                    await Utils.sleep(CONFIG.delayAfterClick);
                     return true;
                 }
             }
-
-            Utils.log('Khong tim thay nut "Du an moi"', 'warn');
+            Utils.log('Không tìm thấy nút "Dự án mới"', 'warn');
             return false;
         },
 
-        /**
-         * Chon "Tao hinh anh" tu dropdown
-         */
+        // Chon "Tao hinh anh" tu dropdown
         selectImageGeneration: async () => {
-            // Click dropdown
             const dropdown = document.querySelector('button[role="combobox"]');
             if (!dropdown) {
-                Utils.log('Khong tim thay dropdown', 'warn');
+                Utils.log('Không tìm thấy dropdown', 'warn');
                 return false;
             }
 
             dropdown.click();
-            Utils.log('Da mo dropdown', 'success');
-
+            Utils.log('Đã mở dropdown', 'success');
             await Utils.sleep(500);
 
-            // Tim option "Tao hinh anh"
             const options = document.querySelectorAll('[role="option"], [role="menuitem"], li, div');
             for (const opt of options) {
                 const text = opt.textContent || '';
-                if (text.includes('Tao hinh anh') ||
-                    text.includes('T\u1ea1o h\u00ecnh \u1ea3nh') ||
-                    text.includes('Generate image')) {
+                if (text.includes('Tạo hình ảnh') || text.includes('Generate image')) {
                     opt.click();
-                    Utils.log('Da chon "Tao hinh anh"', 'success');
+                    Utils.log('Đã chọn "Tạo hình ảnh"', 'success');
+                    await Utils.sleep(CONFIG.delayAfterClick);
                     return true;
                 }
             }
 
-            Utils.log('Khong tim thay option "Tao hinh anh"', 'warn');
+            Utils.log('Không tìm thấy option "Tạo hình ảnh"', 'warn');
+            return false;
+        },
+
+        // Dien prompt
+        setPrompt: (prompt) => {
+            const textarea = document.querySelector('textarea');
+            if (!textarea) {
+                Utils.log('Không tìm thấy textarea', 'error');
+                return false;
+            }
+
+            Utils.setTextareaValue(textarea, prompt);
+            Utils.log(`Đã điền: "${prompt.slice(0, 50)}..."`, 'success');
+            return true;
+        },
+
+        // Click nut Tao
+        clickGenerate: async () => {
+            // Tim nut co text "Tao" va icon arrow
+            const buttons = document.querySelectorAll('button');
+
+            for (const btn of buttons) {
+                const text = btn.textContent || '';
+                // Nut co "Tao" hoac "Create" va co icon
+                if ((text.includes('Tạo') || text.includes('Create') || text.includes('arrow_forward'))
+                    && (btn.querySelector('.google-symbols, .material-icons, svg') || text.includes('arrow'))) {
+                    btn.click();
+                    Utils.log('Đã click nút Tạo', 'success');
+                    return true;
+                }
+            }
+
+            // Fallback: tim nut submit gan textarea
+            const textarea = document.querySelector('textarea');
+            if (textarea) {
+                const container = textarea.closest('form') || textarea.parentElement?.parentElement?.parentElement;
+                if (container) {
+                    const submitBtn = container.querySelector('button[type="submit"], button:has(svg)');
+                    if (submitBtn) {
+                        submitBtn.click();
+                        Utils.log('Đã click nút submit', 'success');
+                        return true;
+                    }
+                }
+
+                // Fallback: Enter
+                textarea.dispatchEvent(new KeyboardEvent('keydown', {
+                    key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true
+                }));
+                Utils.log('Đã nhấn Enter', 'success');
+                return true;
+            }
+
+            Utils.log('Không tìm thấy cách gửi', 'error');
             return false;
         }
     };
 
     // =========================================================================
-    // IMAGE GENERATOR
+    // MAIN RUNNER
     // =========================================================================
+    const Runner = {
+        // Xu ly 1 prompt
+        processOnePrompt: async (prompt, index) => {
+            STATE.currentPrompt = prompt;
+            STATE.currentPromptIndex = index;
 
-    const ImageGenerator = {
-        state: {
-            isRunning: false,
-            shouldStop: false,
-            generatedImages: [],
-            errors: []
-        },
+            Utils.log(`\n━━━ [${index + 1}/${STATE.promptQueue.length}] ━━━`, 'info');
 
-        /**
-         * Doi va bat anh tu API response
-         */
-        waitForImage: (timeout = CONFIG.generateTimeout) => {
-            return new Promise((resolve, reject) => {
-                let resolved = false;
-                let timeoutId = null;
-                let removeListener = null;
-
-                // Cleanup function
-                const cleanup = () => {
-                    resolved = true;
-                    if (timeoutId) clearTimeout(timeoutId);
-                    if (removeListener) removeListener();
-                };
-
-                // Start interceptor
-                FetchInterceptor.start();
-
-                // Add listener
-                removeListener = FetchInterceptor.addListener((data, error) => {
-                    if (resolved) return;
-
-                    if (error) {
-                        cleanup();
-                        reject(error);
-                        return;
-                    }
-
-                    // Check loi tu API
-                    if (data?.error) {
-                        const errorMsg = data.error.message || JSON.stringify(data.error);
-                        Utils.log(`API Error: ${errorMsg}`, 'error');
-                        cleanup();
-                        reject(new Error(errorMsg));
-                        return;
-                    }
-
-                    // Extract images
-                    const images = ImageGenerator.extractImages(data);
-                    if (images.length > 0) {
-                        Utils.log(`Nhan duoc ${images.length} anh!`, 'success');
-                        cleanup();
-                        resolve(images);
-                    }
-                });
-
-                // Timeout
-                timeoutId = setTimeout(() => {
-                    if (!resolved) {
-                        cleanup();
-                        reject(new Error(`Timeout sau ${timeout/1000}s`));
-                    }
-                }, timeout);
-            });
-        },
-
-        /**
-         * Extract images tu response data
-         */
-        extractImages: (data) => {
-            const images = [];
-
-            if (!data?.media) return images;
-
-            for (const mediaItem of data.media) {
-                const genImage = mediaItem?.image?.generatedImage;
-                if (genImage?.fifeUrl) {
-                    images.push({
-                        url: genImage.fifeUrl,
-                        seed: genImage.seed,
-                        prompt: genImage.prompt,
-                        base64: genImage.encodedImage
-                    });
-                }
+            // 1. Dien prompt
+            if (!UI.setPrompt(prompt)) {
+                return { success: false, error: 'Cannot set prompt' };
             }
 
-            return images;
-        },
+            await Utils.sleep(CONFIG.delayAfterClick);
 
-        /**
-         * Download anh
-         */
-        downloadImage: async (imageUrl, filename) => {
-            try {
-                const response = await fetch(imageUrl);
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}`);
-                }
+            // 2. Bat dau doi anh TRUOC khi click
+            const waitPromise = FetchHook.waitForImages();
 
-                const blob = await response.blob();
-                const blobUrl = URL.createObjectURL(blob);
-
-                const link = document.createElement('a');
-                link.href = blobUrl;
-                link.download = filename;
-                link.style.display = 'none';
-                document.body.appendChild(link);
-                link.click();
-                document.body.removeChild(link);
-
-                // Cleanup blob URL sau 1 giay
-                setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
-
-                Utils.log(`Da tai: ${filename}`, 'success');
-                return true;
-            } catch (e) {
-                Utils.log(`Loi tai anh: ${e.message}`, 'error');
-                return false;
-            }
-        },
-
-        /**
-         * Tao 1 anh voi retry logic
-         */
-        generateOne: async (prompt, options = {}) => {
-            const {
-                outputName = null,
-                download = true
-            } = options;
-
-            let retryCount = 0;
-
-            while (retryCount < CONFIG.maxRetries) {
-                try {
-                    Utils.log(`Dang tao anh (lan ${retryCount + 1})...`, 'wait');
-
-                    // 1. Dien prompt
-                    if (!UIActions.setPrompt(prompt)) {
-                        throw new Error('Khong dien duoc prompt');
-                    }
-
-                    await Utils.sleep(CONFIG.uiActionDelay);
-
-                    // 2. Bat dau doi anh TRUOC khi click
-                    const imagePromise = ImageGenerator.waitForImage();
-
-                    // 3. Click nut tao
-                    if (!await UIActions.clickGenerate()) {
-                        throw new Error('Khong click duoc nut tao');
-                    }
-
-                    // 4. Doi anh
-                    const images = await imagePromise;
-
-                    // 5. Download neu can
-                    if (download && images.length > 0) {
-                        for (let i = 0; i < images.length; i++) {
-                            const filename = outputName ||
-                                `ve3_${Date.now()}_${i + 1}.png`;
-                            await ImageGenerator.downloadImage(images[i].url, filename);
-
-                            ImageGenerator.state.generatedImages.push({
-                                prompt,
-                                url: images[i].url,
-                                filename
-                            });
-                        }
-                    }
-
-                    Utils.log(`THANH CONG: "${prompt.slice(0, 30)}..."`, 'success');
-                    return { success: true, images };
-
-                } catch (e) {
-                    retryCount++;
-                    Utils.log(`Loi: ${e.message}`, 'error');
-                    ImageGenerator.state.errors.push({ prompt, error: e.message });
-
-                    if (retryCount < CONFIG.maxRetries) {
-                        const delay = Utils.getRetryDelay(retryCount);
-                        Utils.log(`Retry sau ${delay/1000}s...`, 'warn');
-                        await Utils.sleep(delay);
-                    }
-                } finally {
-                    // Luon cleanup interceptor
-                    FetchInterceptor.stop();
-                }
+            // 3. Click tao
+            if (!await UI.clickGenerate()) {
+                return { success: false, error: 'Cannot click generate' };
             }
 
-            Utils.log(`THAT BAI sau ${CONFIG.maxRetries} lan thu`, 'error');
-            return { success: false, images: [] };
+            // 4. Doi anh
+            const result = await waitPromise;
+
+            // 5. Doi downloads hoan thanh
+            await Downloader.waitAllDownloads();
+
+            // 6. Callback
+            if (STATE.onPromptComplete) {
+                STATE.onPromptComplete(index, prompt, result);
+            }
+
+            return result;
         },
 
-        /**
-         * Tao nhieu anh tu danh sach prompts
-         */
-        generateBatch: async (prompts, options = {}) => {
-            const {
-                prefix = 've3',
-                download = true,
-                continueOnError = true
-            } = options;
+        // Chay tat ca prompts trong queue
+        runQueue: async () => {
+            if (STATE.isRunning) {
+                Utils.log('Đang chạy rồi!', 'warn');
+                return;
+            }
 
-            Utils.log(`=== BAT DAU TAO ${prompts.length} ANH ===`, 'info');
+            STATE.isRunning = true;
+            STATE.shouldStop = false;
+            STATE.downloadedImages = 0;
+            STATE.errors = [];
 
-            ImageGenerator.state.isRunning = true;
-            ImageGenerator.state.shouldStop = false;
-            ImageGenerator.state.generatedImages = [];
-            ImageGenerator.state.errors = [];
+            const total = STATE.promptQueue.length;
+            let success = 0;
+            let failed = 0;
 
-            let successCount = 0;
-            let failedCount = 0;
+            Utils.log(`\n${'═'.repeat(50)}`, 'info');
+            Utils.log(`BẮT ĐẦU TẠO ${total} ẢNH`, 'info');
+            Utils.log(`Project: ${CONFIG.projectName}`, 'info');
+            Utils.log(`${'═'.repeat(50)}`, 'info');
 
-            for (let i = 0; i < prompts.length; i++) {
-                // Kiem tra lenh dung
-                if (ImageGenerator.state.shouldStop) {
-                    Utils.log('Da dung boi nguoi dung', 'warn');
+            for (let i = 0; i < total; i++) {
+                if (STATE.shouldStop) {
+                    Utils.log('Đã dừng bởi user', 'warn');
                     break;
                 }
 
-                Utils.log(`--- [${i + 1}/${prompts.length}] ---`, 'info');
-
-                const filename = `${prefix}_${i + 1}_${Date.now()}.png`;
-                const result = await ImageGenerator.generateOne(prompts[i], {
-                    outputName: filename,
-                    download
-                });
+                const result = await Runner.processOnePrompt(STATE.promptQueue[i], i);
 
                 if (result.success) {
-                    successCount++;
+                    success++;
                 } else {
-                    failedCount++;
-                    if (!continueOnError) {
-                        Utils.log('Dung do loi (continueOnError = false)', 'error');
-                        break;
-                    }
+                    failed++;
+                    Utils.log(`Lỗi prompt ${i + 1}: ${result.error}`, 'error');
                 }
 
-                // Delay giua cac anh
-                if (i < prompts.length - 1 && !ImageGenerator.state.shouldStop) {
-                    Utils.log(`Doi ${CONFIG.delayBetweenImages/1000}s...`, 'wait');
-                    await Utils.sleep(CONFIG.delayBetweenImages);
+                // Delay giua cac prompt
+                if (i < total - 1 && !STATE.shouldStop) {
+                    Utils.log(`Đợi ${CONFIG.delayBetweenPrompts/1000}s...`, 'wait');
+                    await Utils.sleep(CONFIG.delayBetweenPrompts);
                 }
             }
 
-            ImageGenerator.state.isRunning = false;
+            STATE.isRunning = false;
 
-            Utils.log(`=== XONG: ${successCount} thanh cong, ${failedCount} that bai ===`, 'info');
+            Utils.log(`\n${'═'.repeat(50)}`, 'info');
+            Utils.log(`HOÀN THÀNH: ${success} thành công, ${failed} thất bại`, 'info');
+            Utils.log(`Tổng ảnh đã tải: ${STATE.downloadedImages}`, 'info');
+            Utils.log(`${'═'.repeat(50)}`, 'info');
 
-            return {
-                success: failedCount === 0,
-                successCount,
-                failedCount,
-                images: ImageGenerator.state.generatedImages,
-                errors: ImageGenerator.state.errors
-            };
-        },
+            // Callback
+            if (STATE.onAllComplete) {
+                STATE.onAllComplete({ success, failed, total: STATE.downloadedImages });
+            }
 
-        /**
-         * Dung qua trinh tao anh
-         */
-        stop: () => {
-            ImageGenerator.state.shouldStop = true;
-            FetchInterceptor.stop();
-            Utils.log('Da gui lenh dung', 'warn');
+            return { success, failed };
         }
     };
 
     // =========================================================================
     // PUBLIC API
     // =========================================================================
-
     window.VE3 = {
-        // Configuration
+        // Config
         config: CONFIG,
+        state: STATE,
 
-        // Main functions
-        generateOne: ImageGenerator.generateOne,
-        generateBatch: ImageGenerator.generateBatch,
-        stop: ImageGenerator.stop,
-
-        // UI helpers
-        ui: {
-            setPrompt: UIActions.setPrompt,
-            clickGenerate: UIActions.clickGenerate,
-            clickNewProject: UIActions.clickNewProject,
-            selectImageGeneration: UIActions.selectImageGeneration
+        // Khoi tao (chi can goi 1 lan)
+        init: (projectName = 'default') => {
+            CONFIG.projectName = projectName;
+            FetchHook.init();
+            STATE.isInitialized = true;
+            Utils.log(`Đã khởi tạo cho project: ${projectName}`, 'success');
+            Utils.log('Gọi VE3.run(["prompt1", "prompt2"]) để bắt đầu', 'info');
         },
 
-        // State
-        getState: () => ({ ...ImageGenerator.state }),
+        // Chay voi danh sach prompts
+        run: async (prompts, projectName = null) => {
+            if (!STATE.isInitialized) {
+                VE3.init(projectName || 'default');
+            }
 
-        // Utilities
-        utils: {
-            sleep: Utils.sleep,
-            log: Utils.log
+            if (projectName) {
+                CONFIG.projectName = projectName;
+            }
+
+            if (!Array.isArray(prompts)) {
+                prompts = [prompts];
+            }
+
+            STATE.promptQueue = prompts;
+            return await Runner.runQueue();
         },
 
-        // Debug mode
-        setDebug: (enabled) => {
-            CONFIG.debug = enabled;
-            Utils.log(`Debug mode: ${enabled ? 'ON' : 'OFF'}`, 'info');
+        // Tao 1 anh don le
+        one: async (prompt, projectName = null) => {
+            return await VE3.run([prompt], projectName);
+        },
+
+        // Dung
+        stop: () => {
+            STATE.shouldStop = true;
+            Utils.log('Đã gửi lệnh dừng', 'warn');
+        },
+
+        // Setup UI (click New Project + chon Generate Image)
+        setup: async () => {
+            await UI.clickNewProject();
+            await Utils.sleep(500);
+            await UI.selectImageGeneration();
+        },
+
+        // Callbacks
+        onPromptDone: (callback) => {
+            STATE.onPromptComplete = callback;
+        },
+
+        onAllDone: (callback) => {
+            STATE.onAllComplete = callback;
+        },
+
+        // Cleanup
+        destroy: () => {
+            FetchHook.destroy();
+            STATE.isInitialized = false;
         },
 
         // Help
         help: () => {
             console.log(`
-\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
-  VE3 BROWSER AUTOMATION - HUONG DAN SU DUNG
-\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+${'═'.repeat(60)}
+  VE3 BROWSER AUTOMATION v3.0 - HƯỚNG DẪN
+${'═'.repeat(60)}
 
-TAO 1 ANH:
-  VE3.generateOne("prompt cua ban")
-  VE3.generateOne("prompt", { download: false })
+KHỞI TẠO (chỉ 1 lần):
+  VE3.init("ten_project")     - Khởi tạo với tên project
 
-TAO NHIEU ANH:
-  VE3.generateBatch(["prompt 1", "prompt 2", "prompt 3"])
-  VE3.generateBatch(prompts, { prefix: "myproject", download: true })
+CHẠY:
+  VE3.run(["p1", "p2"])       - Chạy nhiều prompts
+  VE3.one("prompt")           - Chạy 1 prompt
 
-DUNG:
-  VE3.stop()
+SETUP UI (nếu cần):
+  VE3.setup()                 - Click "Dự án mới" + chọn "Tạo hình ảnh"
 
-UI HELPERS:
-  VE3.ui.setPrompt("prompt")      - Dien prompt vao textarea
-  VE3.ui.clickGenerate()          - Click nut Tao
-  VE3.ui.clickNewProject()        - Click "Du an moi"
-  VE3.ui.selectImageGeneration()  - Chon "Tao hinh anh"
+ĐIỀU KHIỂN:
+  VE3.stop()                  - Dừng
+  VE3.destroy()               - Gỡ hook
 
-DEBUG:
-  VE3.setDebug(true)              - Bat debug mode
-  VE3.getState()                  - Xem trang thai hien tai
-  VE3.help()                      - Hien thi huong dan nay
+CONFIG:
+  VE3.config.projectName      - Tên project (dùng cho tên file)
+  VE3.config.autoDownload     - Tự động tải (true/false)
+  VE3.config.delayBetweenPrompts - Delay giữa các prompt (ms)
 
-\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+CALLBACKS:
+  VE3.onPromptDone((i, prompt, result) => {...})
+  VE3.onAllDone((summary) => {...})
+
+${'═'.repeat(60)}
 `);
         }
     };
 
-    // Log thong bao san sang
-    Utils.log('VE3 Browser Automation da san sang!', 'success');
-    console.log('\ud83d\udcd6 Goi VE3.help() de xem huong dan');
+    // Auto log
+    Utils.log('VE3 v3.0 đã load! Gọi VE3.init("project_name") để bắt đầu.', 'success');
 
 })();
