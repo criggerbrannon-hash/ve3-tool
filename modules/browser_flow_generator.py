@@ -108,7 +108,7 @@ class BrowserFlowGenerator:
         self.config = {}
         config_file = Path(config_path)
         if config_file.exists():
-            self.config = load_settings(config_path)
+            self.config = load_settings(config_file)  # Pass Path object, not string
 
         # Paths
         self.img_path = self.project_path / "img"
