@@ -411,14 +411,9 @@
 
             Utils.log(`\n━━━ [${index + 1}/${STATE.promptQueue.length}] ${sceneId} ━━━`, 'info');
 
-            // 0. Click "Du an moi" de reset UI (tru prompt dau tien)
-            if (index > 0) {
-                Utils.log('Reset UI - Click "Du an moi"...', 'info');
-                await UI.clickNewProject();
-                await Utils.sleep(300);
-                await UI.selectImageGeneration();
-                await Utils.sleep(300);
-            }
+            // NOTE: 1 Du an = 1 Voice
+            // Chi can click "Du an moi" 1 lan o dau (trong VE3.setup())
+            // Cac prompt tiep theo chi can gui trong cung du an
 
             // 1. Dien prompt
             Utils.log('Dien prompt...', 'info');
