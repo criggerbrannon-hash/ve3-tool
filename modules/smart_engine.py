@@ -80,8 +80,8 @@ class SmartEngine:
         self.gemini_keys: List[Resource] = []
 
         # Ollama model (fallback when all APIs fail)
-        # Default: deepseek-v3.1:67b-cloud (cloud, mạnh), backup: gemma3:27b (local)
-        self.ollama_model: str = "deepseek-v3.1:67b-cloud"
+        # Default: gemma3:27b (local, stable)
+        self.ollama_model: str = "gemma3:27b"
         self.ollama_endpoint: str = "http://localhost:11434"
 
         # Settings - TOI UU TOC DO (PARALLEL OPTIMIZED)

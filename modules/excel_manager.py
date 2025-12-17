@@ -59,6 +59,7 @@ class Character:
         name: str = "",
         english_prompt: str = "",
         vietnamese_prompt: str = "",
+        character_lock: str = "",
         image_file: str = "",
         status: str = "pending"
     ):
@@ -67,6 +68,7 @@ class Character:
         self.name = name
         self.english_prompt = english_prompt
         self.vietnamese_prompt = vietnamese_prompt
+        self.character_lock = character_lock
         self.image_file = image_file
         self.status = status
     
@@ -78,6 +80,7 @@ class Character:
             "name": self.name,
             "english_prompt": self.english_prompt,
             "vietnamese_prompt": self.vietnamese_prompt,
+            "character_lock": self.character_lock,
             "image_file": self.image_file,
             "status": self.status,
         }
@@ -91,6 +94,7 @@ class Character:
             name=str(data.get("name", "")),
             english_prompt=str(data.get("english_prompt", "")),
             vietnamese_prompt=str(data.get("vietnamese_prompt", "")),
+            character_lock=str(data.get("character_lock", "")),
             image_file=str(data.get("image_file", "")),
             status=str(data.get("status", "pending")),
         )
