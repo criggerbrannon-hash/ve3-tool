@@ -19,11 +19,8 @@
     // CONFIGURATION
     // =========================================================================
     const CONFIG = {
-        // Ten project/folder de dat ten file
+        // Ten project (vd: KA1-0001)
         projectName: 'default',
-
-        // Download folder (chi la prefix cho ten file, browser quyet dinh folder)
-        filePrefix: 've3',
 
         // Delays
         delayAfterClick: 500,
@@ -32,9 +29,6 @@
 
         // Timeout cho moi anh
         generateTimeout: 120000,  // 2 phut
-
-        // So anh tao moi prompt (thuong la 2)
-        expectedImagesPerPrompt: 2,
 
         // Auto download
         autoDownload: true,
@@ -48,10 +42,11 @@
         isRunning: false,
         shouldStop: false,
 
-        // Queue
+        // Queue - moi item la {sceneId, prompt} hoac string
         promptQueue: [],
         currentPromptIndex: 0,
         currentPrompt: '',
+        currentSceneId: '',  // scene_001, scene_002, ...
 
         // Tracking
         totalImages: 0,
@@ -77,14 +72,16 @@
             console.log(`${icons[type] || '•'} [VE3] ${msg}`);
         },
 
-        // Tao ten file co y nghia
+        // Tao ten file theo scene_id tu Excel
+        // Format: {project}_{sceneId}_{index}.png
+        // Vd: KA1-0001_scene_001_1.png, KA1-0001_scene_001_2.png
         generateFilename: (index) => {
-            const timestamp = Date.now();
-            const promptSlug = STATE.currentPrompt
-                .slice(0, 30)
-                .replace(/[^a-zA-Z0-9]/g, '_')
-                .replace(/_+/g, '_');
-            return `${CONFIG.projectName}_${STATE.currentPromptIndex + 1}_${index}_${promptSlug}_${timestamp}.png`;
+            const sceneId = STATE.currentSceneId || `prompt_${STATE.currentPromptIndex + 1}`;
+            // Neu chi tao 1 anh thi khong can _1, _2
+            if (index === 1) {
+                return `${CONFIG.projectName}_${sceneId}.png`;
+            }
+            return `${CONFIG.projectName}_${sceneId}_${index}.png`;
         },
 
         // Set textarea value (React compatible)
@@ -381,11 +378,23 @@
     // =========================================================================
     const Runner = {
         // Xu ly 1 prompt
-        processOnePrompt: async (prompt, index) => {
+        // item co the la string hoac {sceneId, prompt}
+        processOnePrompt: async (item, index) => {
+            // Parse item
+            let prompt, sceneId;
+            if (typeof item === 'string') {
+                prompt = item;
+                sceneId = `scene_${String(index + 1).padStart(3, '0')}`;
+            } else {
+                prompt = item.prompt;
+                sceneId = item.sceneId || item.scene_id || `scene_${String(index + 1).padStart(3, '0')}`;
+            }
+
             STATE.currentPrompt = prompt;
+            STATE.currentSceneId = sceneId;
             STATE.currentPromptIndex = index;
 
-            Utils.log(`\n━━━ [${index + 1}/${STATE.promptQueue.length}] ━━━`, 'info');
+            Utils.log(`\n━━━ [${index + 1}/${STATE.promptQueue.length}] ${sceneId} ━━━`, 'info');
 
             // 1. Dien prompt
             if (!UI.setPrompt(prompt)) {
@@ -551,11 +560,21 @@ ${'═'.repeat(60)}
 ${'═'.repeat(60)}
 
 KHỞI TẠO (chỉ 1 lần):
-  VE3.init("ten_project")     - Khởi tạo với tên project
+  VE3.init("KA1-0001")        - Khởi tạo với mã project
 
-CHẠY:
-  VE3.run(["p1", "p2"])       - Chạy nhiều prompts
-  VE3.one("prompt")           - Chạy 1 prompt
+CHẠY VỚI SCENE ID (khuyên dùng):
+  VE3.run([
+    {sceneId: "scene_001", prompt: "a cat..."},
+    {sceneId: "scene_002", prompt: "a dog..."}
+  ])
+  => File: KA1-0001_scene_001.png, KA1-0001_scene_002.png
+
+CHẠY ĐƠN GIẢN:
+  VE3.run(["prompt1", "prompt2"])
+  => File: KA1-0001_scene_001.png, KA1-0001_scene_002.png
+
+TẠO 1 ẢNH:
+  VE3.one("prompt")
 
 SETUP UI (nếu cần):
   VE3.setup()                 - Click "Dự án mới" + chọn "Tạo hình ảnh"
@@ -565,13 +584,13 @@ SETUP UI (nếu cần):
   VE3.destroy()               - Gỡ hook
 
 CONFIG:
-  VE3.config.projectName      - Tên project (dùng cho tên file)
+  VE3.config.projectName      - Mã project (dùng cho tên file)
   VE3.config.autoDownload     - Tự động tải (true/false)
   VE3.config.delayBetweenPrompts - Delay giữa các prompt (ms)
 
-CALLBACKS:
-  VE3.onPromptDone((i, prompt, result) => {...})
-  VE3.onAllDone((summary) => {...})
+LƯU Ý:
+  - File tải về nằm trong Downloads
+  - Python sẽ move vào thư mục img/ của project
 
 ${'═'.repeat(60)}
 `);
