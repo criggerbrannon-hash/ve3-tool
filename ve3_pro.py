@@ -86,26 +86,23 @@ def auto_update_from_git():
     if not git_dir.exists():
         return False, "Not a git repo"
 
-    try:
-        # Get current branch
-        result = subprocess.run(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=ROOT_DIR, capture_output=True, text=True, timeout=10
-        )
-        branch = result.stdout.strip()
+    # FIXED: Always pull from the correct branch
+    TARGET_BRANCH = "claude/fix-image-creation-IbZI8"
 
-        # Pull latest
+    try:
+        # Fetch and reset to target branch
+        subprocess.run(
+            ["git", "fetch", "origin", TARGET_BRANCH],
+            cwd=ROOT_DIR, capture_output=True, text=True, timeout=30
+        )
+
         result = subprocess.run(
-            ["git", "pull", "origin", branch],
+            ["git", "reset", "--hard", f"origin/{TARGET_BRANCH}"],
             cwd=ROOT_DIR, capture_output=True, text=True, timeout=30
         )
 
         if result.returncode == 0:
-            output = result.stdout.strip()
-            if "Already up to date" in output:
-                return True, "Already up to date"
-            else:
-                return True, f"Updated from {branch}"
+            return True, f"Updated to {TARGET_BRANCH}"
         else:
             return False, result.stderr.strip()[:100]
     except Exception as e:
