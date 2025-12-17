@@ -63,8 +63,8 @@ log_level: "INFO"
 # Thu muc chua Chrome profiles (luu session login)
 browser_profiles_dir: "./chrome_profiles"
 
-# Chay headless (an trinh duyet) - nen False lan dau de dang nhap
-browser_headless: false
+# Chay headless (an trinh duyet) - Mac dinh True khi da dang nhap
+browser_headless: true
 
 # Timeout cho dang nhap (giay)
 browser_login_timeout: 120

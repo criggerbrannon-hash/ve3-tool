@@ -883,9 +883,9 @@ class SmartEngine:
     def generate_images_browser(self, prompts: List[Dict], proj_dir: Path) -> Dict:
         """
         Tao anh bang BROWSER AUTOMATION (khong can API token).
-        Day la phuong phap BACKUP khi API khong hoat dong.
+        Day la phuong phap CHINH - chay headless, song song.
         """
-        self.log("=== TAO ANH BANG BROWSER (BACKUP) ===")
+        self.log("=== TAO ANH BANG BROWSER ===")
 
         try:
             from modules.browser_flow_generator import BrowserFlowGenerator
@@ -899,12 +899,36 @@ class SmartEngine:
             self.log("Khong tim thay file Excel!", "ERROR")
             return {"success": 0, "failed": len(prompts)}
 
+        # Load headless setting from config
+        headless = True  # Default: chay an
         try:
-            # HEADLESS MODE - chay an, toi uu cho parallel
+            import yaml
+            config_path = self.config_dir / "settings.yaml"
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    settings = yaml.safe_load(f) or {}
+                headless = settings.get('browser_headless', True)
+        except:
+            pass
+
+        # Find available profile from chrome_profiles directory
+        profile_name = "main"  # Default
+        profiles_dir = self.config_dir.parent / "chrome_profiles"
+        if profiles_dir.exists():
+            available_profiles = [p.name for p in profiles_dir.iterdir() if p.is_dir()]
+            if available_profiles:
+                profile_name = available_profiles[0]
+                self.log(f"Dung profile: {profile_name}")
+        else:
+            # Create default profile directory
+            profiles_dir.mkdir(exist_ok=True)
+            (profiles_dir / "main").mkdir(exist_ok=True)
+
+        try:
             generator = BrowserFlowGenerator(
                 project_path=str(proj_dir),
-                profile_name="main",
-                headless=True,  # Mac dinh an, khong xung dot
+                profile_name=profile_name,
+                headless=headless,
                 verbose=True
             )
 

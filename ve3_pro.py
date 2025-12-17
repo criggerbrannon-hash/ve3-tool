@@ -836,24 +836,116 @@ class UnixVoiceToVideo:
         notebook = ttk.Notebook(win)
         notebook.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        # Tab 1: Profiles
+        # Tab 1: Browser Profiles (Enhanced)
         prof_tab = ttk.Frame(notebook, padding=15)
-        notebook.add(prof_tab, text="  👤 Profiles  ")
+        notebook.add(prof_tab, text="  🌐 Trình duyệt  ")
 
-        ttk.Label(prof_tab, text="Chrome Profiles:",
+        ttk.Label(prof_tab, text="Quản lý Chrome Profiles:",
                   font=('Segoe UI', 11, 'bold')).pack(anchor=tk.W, pady=(0, 5))
+        ttk.Label(prof_tab, text="Mỗi profile = 1 tài khoản Google riêng, chạy song song",
+                  foreground='gray', font=('Segoe UI', 9)).pack(anchor=tk.W, pady=(0, 10))
 
-        prof_list = tk.Listbox(prof_tab, height=6, font=('Consolas', 9))
-        prof_list.pack(fill=tk.BOTH, expand=True)
+        # Profile list
+        prof_list_frame = ttk.Frame(prof_tab)
+        prof_list_frame.pack(fill=tk.BOTH, expand=True)
 
-        for p in self.profiles:
-            prof_list.insert(tk.END, p)
-        if not self.profiles:
-            prof_list.insert(tk.END, "(Chưa có profile)")
+        prof_list = tk.Listbox(prof_list_frame, height=6, font=('Consolas', 9))
+        prof_scroll = ttk.Scrollbar(prof_list_frame, orient="vertical", command=prof_list.yview)
+        prof_list.configure(yscrollcommand=prof_scroll.set)
+        prof_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        prof_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
-        prof_btn_row = ttk.Frame(prof_tab)
-        prof_btn_row.pack(fill=tk.X, pady=(10, 0))
-        ttk.Button(prof_btn_row, text="📂 Mở accounts.json", command=self.open_config_file).pack(side=tk.LEFT)
+        def refresh_profile_list():
+            prof_list.delete(0, tk.END)
+            profiles_dir = Path(BASE_DIR) / "chrome_profiles"
+            if profiles_dir.exists():
+                for p in profiles_dir.iterdir():
+                    if p.is_dir():
+                        prof_list.insert(tk.END, p.name)
+            if prof_list.size() == 0:
+                prof_list.insert(tk.END, "(Chưa có profile - Ấn 'Thêm mới')")
+
+        refresh_profile_list()
+
+        # Headless toggle
+        headless_var = tk.BooleanVar(value=self._get_headless_setting())
+        headless_frame = ttk.Frame(prof_tab)
+        headless_frame.pack(fill=tk.X, pady=(10, 5))
+        ttk.Checkbutton(headless_frame, text="Chạy ẩn (Headless) - Khuyến nghị khi đã đăng nhập",
+                        variable=headless_var, command=lambda: self._save_headless_setting(headless_var.get())
+                        ).pack(side=tk.LEFT)
+
+        # Buttons row 1
+        prof_btn_row1 = ttk.Frame(prof_tab)
+        prof_btn_row1.pack(fill=tk.X, pady=(5, 5))
+
+        def add_new_profile():
+            """Add new browser profile."""
+            name = simpledialog.askstring("Thêm Profile",
+                "Nhập tên profile (VD: account1, work, test...):",
+                parent=win)
+            if name:
+                name = name.strip().replace(" ", "_")
+                profiles_dir = Path(BASE_DIR) / "chrome_profiles"
+                profiles_dir.mkdir(exist_ok=True)
+                profile_path = profiles_dir / name
+                if profile_path.exists():
+                    messagebox.showwarning("Cảnh báo", f"Profile '{name}' đã tồn tại!")
+                    return
+                profile_path.mkdir(exist_ok=True)
+                refresh_profile_list()
+                messagebox.showinfo("OK", f"Đã tạo profile '{name}'.\nẤn 'Mở đăng nhập' để login Google.")
+
+        def open_profile_login():
+            """Open browser for login."""
+            sel = prof_list.curselection()
+            if not sel:
+                messagebox.showwarning("Chọn profile", "Vui lòng chọn 1 profile từ danh sách!")
+                return
+            profile_name = prof_list.get(sel[0])
+            if profile_name.startswith("("):
+                return
+
+            profiles_dir = Path(BASE_DIR) / "chrome_profiles"
+            profile_path = profiles_dir / profile_name
+
+            win.config(cursor="wait")
+            win.update()
+
+            try:
+                self._open_browser_for_login(str(profile_path), profile_name)
+            finally:
+                win.config(cursor="")
+
+        def delete_profile():
+            """Delete selected profile."""
+            sel = prof_list.curselection()
+            if not sel:
+                messagebox.showwarning("Chọn profile", "Vui lòng chọn 1 profile!")
+                return
+            profile_name = prof_list.get(sel[0])
+            if profile_name.startswith("("):
+                return
+
+            if messagebox.askyesno("Xác nhận", f"Xóa profile '{profile_name}'?\nDữ liệu đăng nhập sẽ bị mất!"):
+                import shutil
+                profiles_dir = Path(BASE_DIR) / "chrome_profiles"
+                profile_path = profiles_dir / profile_name
+                try:
+                    shutil.rmtree(profile_path)
+                    refresh_profile_list()
+                    messagebox.showinfo("OK", f"Đã xóa profile '{profile_name}'")
+                except Exception as e:
+                    messagebox.showerror("Lỗi", f"Không thể xóa: {e}")
+
+        ttk.Button(prof_btn_row1, text="➕ Thêm mới", command=add_new_profile).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(prof_btn_row1, text="🔓 Mở đăng nhập", command=open_profile_login).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(prof_btn_row1, text="🗑️ Xóa", command=delete_profile).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(prof_btn_row1, text="🔄", command=refresh_profile_list, width=3).pack(side=tk.LEFT)
+
+        # Info
+        ttk.Label(prof_tab, text="💡 Mỗi voice sẽ dùng 1 profile khác nhau khi chạy song song",
+                  foreground='#666', font=('Segoe UI', 9)).pack(anchor=tk.W, pady=(10, 0))
 
         # Tab 2: API Keys
         api_tab = ttk.Frame(notebook, padding=15)
@@ -1095,13 +1187,92 @@ class UnixVoiceToVideo:
     def open_output_folder(self):
         """Open output folder."""
         PROJECTS_DIR.mkdir(exist_ok=True)
-        
+
         if sys.platform == "win32":
             os.startfile(str(PROJECTS_DIR))
         else:
             import subprocess
             subprocess.Popen(["xdg-open", str(PROJECTS_DIR)])
-    
+
+    # ========== BROWSER PROFILE MANAGEMENT ==========
+
+    def _get_headless_setting(self) -> bool:
+        """Get headless setting from config."""
+        try:
+            import yaml
+            config_path = CONFIG_DIR / "settings.yaml"
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+                return config.get('browser_headless', True)
+        except:
+            pass
+        return True  # Default: headless
+
+    def _save_headless_setting(self, headless: bool):
+        """Save headless setting to config."""
+        try:
+            import yaml
+            config_path = CONFIG_DIR / "settings.yaml"
+            config = {}
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+            config['browser_headless'] = headless
+            with open(config_path, 'w', encoding='utf-8') as f:
+                yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+            self.log(f"Headless mode: {'ON' if headless else 'OFF'}", "OK")
+        except Exception as e:
+            print(f"Save headless error: {e}")
+
+    def _open_browser_for_login(self, profile_path: str, profile_name: str):
+        """Open Chrome browser with profile for Google login."""
+        FLOW_URL = "https://labs.google/fx/vi/tools/flow"
+
+        try:
+            from selenium import webdriver
+            from selenium.webdriver.chrome.options import Options
+            from selenium.webdriver.common.by import By
+
+            self.log(f"Mở trình duyệt cho profile: {profile_name}...")
+
+            options = Options()
+            options.add_argument(f"--user-data-dir={profile_path}")
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--disable-blink-features=AutomationControlled")
+            options.add_experimental_option("excludeSwitches", ["enable-automation"])
+            options.add_experimental_option("useAutomationExtension", False)
+            options.add_argument("--window-size=1280,900")
+
+            # Random port to avoid conflicts
+            import random
+            debug_port = random.randint(9300, 9500)
+            options.add_argument(f"--remote-debugging-port={debug_port}")
+
+            driver = webdriver.Chrome(options=options)
+            driver.execute_script(
+                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+            )
+
+            driver.get(FLOW_URL)
+            self.log("Trình duyệt đã mở - Hãy đăng nhập Google!", "OK")
+            self.log("Đóng trình duyệt khi hoàn tất đăng nhập.")
+
+            # Show message
+            messagebox.showinfo(
+                "Đăng nhập Google",
+                f"Trình duyệt đã mở cho profile '{profile_name}'.\n\n"
+                "1. Đăng nhập tài khoản Google\n"
+                "2. Đợi trang Google Flow hiện lên\n"
+                "3. Đóng trình duyệt khi xong\n\n"
+                "Session sẽ được lưu tự động."
+            )
+
+        except Exception as e:
+            self.log(f"Lỗi mở trình duyệt: {e}", "ERROR")
+            messagebox.showerror("Lỗi", f"Không thể mở trình duyệt:\n{e}\n\nCần cài selenium:\npip install selenium")
+
     # ========== MAIN PROCESSING ==========
     
     def start_processing(self):
