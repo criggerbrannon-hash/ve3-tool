@@ -160,12 +160,19 @@ class GoogleFlowAPI:
             "Authorization": f"Bearer {self.bearer_token}",
             "Content-Type": "text/plain;charset=UTF-8",
             "Accept": "*/*",
-            "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Language": "en-US,en;q=0.9,vi;q=0.8",
             "Origin": "https://labs.google",
             "Referer": "https://labs.google/",
             "Sec-Fetch-Dest": "empty",
             "Sec-Fetch-Mode": "cors",
             "Sec-Fetch-Site": "cross-site",
+            "Sec-Ch-Ua": '"Google Chrome";v="143", "Chromium";v="143", "Not A(Brand";v="24"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"Windows"',
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
+            "x-browser-channel": "stable",
+            "x-browser-copyright": "Copyright 2025 Google LLC. All Rights reserved.",
+            "x-browser-year": "2025",
         })
         
         return session
