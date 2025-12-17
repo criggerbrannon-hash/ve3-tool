@@ -211,13 +211,13 @@ class BrowserFlowGenerator:
                     self._log(f"Chrome: {chrome_path}")
                     break
 
-            # PARALLEL SAFE: Dung profile tam thoi de khong xung dot
-            # Moi instance co profile rieng
-            temp_profile = tempfile.mkdtemp(prefix=f"chrome_{self.profile_name}_")
-            self._log(f"Temp profile: {temp_profile}")
-            options.add_argument(f"--user-data-dir={temp_profile}")
+            # SU DUNG PROFILE DA LUU (co session dang nhap)
+            # self.profile_dir = chrome_profiles/<profile_name>
+            self.profile_dir.mkdir(parents=True, exist_ok=True)
+            self._log(f"Profile: {self.profile_dir}")
+            options.add_argument(f"--user-data-dir={self.profile_dir}")
 
-            # PARALLEL SAFE: Moi instance dung port rieng
+            # PARALLEL SAFE: Moi instance dung port rieng (tranh xung dot)
             debug_port = random.randint(9222, 9999)
             options.add_argument(f"--remote-debugging-port={debug_port}")
 
@@ -246,9 +246,6 @@ class BrowserFlowGenerator:
             )
 
             self._log("Chrome da san sang!", "success")
-
-            # Luu temp_profile de cleanup sau
-            self._temp_profile = temp_profile
 
             return driver
 
@@ -285,7 +282,7 @@ class BrowserFlowGenerator:
             return False
 
     def stop_browser(self) -> None:
-        """Dong trinh duyet va cleanup temp profile."""
+        """Dong trinh duyet (giu nguyen profile da luu)."""
         if self.driver:
             self._log("Dong trinh duyet...")
             try:
@@ -294,16 +291,7 @@ class BrowserFlowGenerator:
                 pass
             self.driver = None
             self._js_injected = False
-
-        # Cleanup temp profile
-        if hasattr(self, '_temp_profile') and self._temp_profile:
-            try:
-                import shutil
-                shutil.rmtree(self._temp_profile, ignore_errors=True)
-                self._log(f"Da xoa temp profile")
-            except:
-                pass
-            self._temp_profile = None
+        # KHONG xoa profile - giu lai session dang nhap
 
     def wait_for_login(self, timeout: int = 300) -> bool:
         """
