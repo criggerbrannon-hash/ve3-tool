@@ -1,39 +1,38 @@
 @echo off
-:: Uni-x Voice to Video - Auto Update & Run
+:: VE3 Tool - Auto Update & Run
+:: Khong can git - tu dong tai tu GitHub
 
 cd /d "%~dp0"
 
 echo ========================================
-echo   Uni-x Voice to Video
+echo   VE3 Tool - Browser JS Mode
 echo ========================================
 echo.
 
-:: Auto update qua git (KHONG xoa data cua user)
+:: Thu update bang git truoc (neu co)
 where git >nul 2>&1
 if %errorlevel% equ 0 (
-    echo [*] Checking for updates...
-
-    :: Huy merge dang do (neu co)
-    git merge --abort 2>nul
-
-    :: Reset chi cac file TRACKED (khong xoa PROJECTS, config, v.v.)
-    git reset --hard HEAD 2>nul
-
-    :: Fetch va reset ve code moi nhat
-    git fetch origin claude/vtv-tool-image-support-01MrKhJPx1cecuLNUkJLpyNr 2>nul
-    git reset --hard origin/claude/vtv-tool-image-support-01MrKhJPx1cecuLNUkJLpyNr 2>nul
-
-    if %errorlevel% equ 0 (
-        echo [OK] Updated to latest version
-    ) else (
-        echo [!] Update failed, using local version
+    if exist ".git" (
+        echo [*] Git found, updating...
+        git fetch origin claude/fix-image-creation-IbZI8 2>nul
+        git reset --hard origin/claude/fix-image-creation-IbZI8 2>nul
+        if %errorlevel% equ 0 (
+            echo [OK] Updated via git
+            goto :run
+        )
     )
-) else (
-    echo [!] Git not found, skipping update
 )
 
+:: Neu khong co git, dung Python updater
+echo [*] Checking for updates...
+python UPDATE.py 2>nul
+if %errorlevel% neq 0 (
+    echo [!] Update skipped, using local version
+)
+
+:run
 echo.
-echo [*] Starting...
+echo [*] Starting VE3 Tool...
 echo.
 
 python ve3_pro.py
