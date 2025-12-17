@@ -32,12 +32,14 @@ from datetime import datetime
 from modules.excel_manager import PromptWorkbook, Scene
 from modules.utils import get_logger, load_settings
 
-# Browser driver imports
+# Browser driver imports - PREFER SELENIUM (more stable)
 DRIVER_TYPE = None
 
 try:
-    import undetected_chromedriver as uc
+    from selenium import webdriver
     from selenium.webdriver.common.by import By
+    from selenium.webdriver.chrome.options import Options
+    from selenium.webdriver.chrome.service import Service
     from selenium.webdriver.support.ui import WebDriverWait
     from selenium.webdriver.support import expected_conditions as EC
     from selenium.common.exceptions import (
@@ -45,22 +47,9 @@ try:
         WebDriverException,
         JavascriptException
     )
-    DRIVER_TYPE = "undetected"
+    DRIVER_TYPE = "selenium"
 except ImportError:
-    try:
-        from selenium import webdriver
-        from selenium.webdriver.common.by import By
-        from selenium.webdriver.chrome.options import Options
-        from selenium.webdriver.support.ui import WebDriverWait
-        from selenium.webdriver.support import expected_conditions as EC
-        from selenium.common.exceptions import (
-            TimeoutException,
-            WebDriverException,
-            JavascriptException
-        )
-        DRIVER_TYPE = "selenium"
-    except ImportError:
-        DRIVER_TYPE = None
+    DRIVER_TYPE = None
 
 SELENIUM_AVAILABLE = DRIVER_TYPE is not None
 
@@ -197,46 +186,15 @@ class BrowserFlowGenerator:
 
         self._log(f"Profile dir: {self.profile_dir}")
         self._log(f"Headless: {self.headless}")
+        self._log("Su dung Selenium WebDriver")
 
-        if DRIVER_TYPE == "undetected":
-            self._log("Su dung undetected-chromedriver")
-
-            try:
-                options = uc.ChromeOptions()
-                options.add_argument(f"--user-data-dir={self.profile_dir}")
-
-                if self.headless:
-                    options.add_argument("--headless=new")
-                    options.add_argument("--disable-gpu")
-
-                options.add_argument("--no-sandbox")
-                options.add_argument("--disable-dev-shm-usage")
-                options.add_argument("--window-size=1920,1080")
-                options.add_experimental_option("prefs", prefs)
-
-                self._log("Dang tao Chrome driver...")
-                driver = uc.Chrome(
-                    options=options,
-                    use_subprocess=True,
-                    version_main=None
-                )
-                self._log("Chrome driver da tao thanh cong!", "success")
-
-                return driver
-            except Exception as e:
-                self._log(f"Loi tao Chrome driver: {e}", "error")
-                import traceback
-                traceback.print_exc()
-                raise
-
-        else:
-            self._log("Su dung selenium thuong")
-
+        try:
             options = Options()
             options.add_argument(f"--user-data-dir={self.profile_dir}")
 
             if self.headless:
                 options.add_argument("--headless=new")
+                options.add_argument("--disable-gpu")
 
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-dev-shm-usage")
@@ -246,13 +204,22 @@ class BrowserFlowGenerator:
             options.add_argument("--window-size=1920,1080")
             options.add_experimental_option("prefs", prefs)
 
+            self._log("Dang tao Chrome driver...")
             driver = webdriver.Chrome(options=options)
 
+            # Hide webdriver flag
             driver.execute_script(
                 "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
             )
 
+            self._log("Chrome driver da tao thanh cong!", "success")
             return driver
+
+        except Exception as e:
+            self._log(f"Loi tao Chrome driver: {e}", "error")
+            import traceback
+            traceback.print_exc()
+            raise
 
     def start_browser(self) -> bool:
         """
