@@ -321,30 +321,88 @@ class SmartEngine:
         return False
     
     # ========== IMAGE GENERATION ==========
-    
+
+    def generate_images_browser(self, prompts: List[Dict], proj_dir: Path) -> Dict:
+        """
+        Tao anh bang BROWSER AUTOMATION (khong can API token).
+        Day la phuong phap chinh, on dinh hon API.
+        """
+        self.log("=== TAO ANH BANG BROWSER ===")
+
+        try:
+            from modules.browser_flow_generator import BrowserFlowGenerator
+        except ImportError:
+            self.log("Khong import duoc BrowserFlowGenerator!", "ERROR")
+            return {"success": 0, "failed": len(prompts)}
+
+        # Tim profile dir
+        profile_dir = None
+        if self.profiles:
+            profile_dir = self.profiles[0].value
+
+        # Tim Excel file
+        excel_files = list((proj_dir / "prompts").glob("*_prompts.xlsx"))
+        if not excel_files:
+            self.log("Khong tim thay file Excel!", "ERROR")
+            return {"success": 0, "failed": len(prompts)}
+
+        try:
+            generator = BrowserFlowGenerator(
+                project_path=str(proj_dir),
+                profile_name="main",
+                headless=False,  # Hien browser de xem
+                verbose=True
+            )
+
+            # Override callback
+            original_log = generator._log
+            def custom_log(msg, level="info"):
+                self.log(msg, level.upper())
+            generator._log = custom_log
+
+            result = generator.generate_scene_images(
+                excel_path=excel_files[0],
+                overwrite=False
+            )
+
+            if result.get("success"):
+                stats = result.get("stats", {})
+                return {
+                    "success": stats.get("success", 0),
+                    "failed": stats.get("failed", 0)
+                }
+            else:
+                return {"success": 0, "failed": len(prompts), "error": result.get("error")}
+
+        except Exception as e:
+            self.log(f"Browser error: {e}", "ERROR")
+            import traceback
+            traceback.print_exc()
+            return {"success": 0, "failed": len(prompts)}
+
     def generate_single_image(self, prompt_data: Dict, profile: Resource) -> bool:
-        """Tao 1 anh voi 1 profile."""
+        """Tao 1 anh voi 1 profile (API method - backup)."""
         from modules.google_flow_api import GoogleFlowAPI, AspectRatio
-        
+
         pid = prompt_data.get('id', '')
         prompt = prompt_data.get('prompt', '')
         output = prompt_data.get('output_path', '')
-        
+
         if not prompt or not output:
             return False
-        
+
         # Skip if exists
         if Path(output).exists():
             return True
-        
+
         try:
             api = GoogleFlowAPI(
                 bearer_token=profile.token,
                 project_id=profile.project_id
             )
-            
+
             Path(output).parent.mkdir(parents=True, exist_ok=True)
-            
+
             # generate_and_download returns (success, paths, error)
             success, paths, error = api.generate_and_download(
                 prompt=prompt,
@@ -353,7 +411,7 @@ class SmartEngine:
                 aspect_ratio=AspectRatio.LANDSCAPE,
                 prefix=pid
             )
-            
+
             if success and paths:
                 # Rename first image to correct filename
                 src = paths[0]
@@ -365,7 +423,7 @@ class SmartEngine:
             else:
                 self.log(f"Generate failed {pid}: {error}", "ERROR")
                 return False
-            
+
         except Exception as e:
             self.log(f"Image error {pid}: {e}", "ERROR")
             if 'unauthorized' in str(e).lower() or '401' in str(e):
@@ -534,41 +592,25 @@ class SmartEngine:
         self.log(f"  Groq keys: {len(self.groq_keys)}")
         self.log(f"  Gemini keys: {len(self.gemini_keys)}")
         
-        # === 2. PARALLEL: GET TOKENS + MAKE SRT ===
-        self.log("[STEP 2] Lay tokens + Tao SRT (song song)...")
-        
+        # === 2. TAO SRT (neu la voice) ===
+        self.log("[STEP 2] Tao SRT...")
+
         srt_path = proj_dir / "srt" / f"{name}.srt"
         voice_path = None
-        
+
         if ext in ['.mp3', '.wav']:
             voice_path = proj_dir / f"{name}{ext}"
             if inp != voice_path:
                 shutil.copy2(inp, voice_path)
-        
-        # Start SRT in background if voice
-        srt_thread = None
-        srt_result = [False]
-        
-        if voice_path and not srt_path.exists():
-            def srt_worker():
-                srt_result[0] = self.make_srt(voice_path, srt_path)
-            srt_thread = threading.Thread(target=srt_worker, daemon=True)
-            srt_thread.start()
-        else:
-            srt_result[0] = True
-        
-        # Get tokens (main thread - needs Chrome GUI)
-        n_tokens = self.get_all_tokens()
-        
-        # Wait for SRT
-        if srt_thread:
-            srt_thread.join()
-        
-        if not srt_result[0] and ext in ['.mp3', '.wav']:
-            return {"error": "srt_failed"}
-        
-        if n_tokens == 0:
-            return {"error": "no_tokens"}
+
+            # Tao SRT
+            if not srt_path.exists():
+                if not self.make_srt(voice_path, srt_path):
+                    return {"error": "srt_failed"}
+
+        # Browser automation KHONG CAN TOKEN
+        # Token chi dung cho API (backup method)
+        self.log("Browser mode: Khong can lay token")
         
         # === 3. MAKE PROMPTS ===
         self.log("[STEP 3] Tao prompts...")
@@ -600,10 +642,11 @@ class SmartEngine:
             self.log("Tat ca anh da ton tai!", "OK")
             return {"success": 0, "failed": 0, "skipped": "all_exist"}
         
-        # === 5. GENERATE IMAGES ===
-        self.log("[STEP 5] Tao anh song song...")
-        
-        results = self.generate_images_parallel(prompts)
+        # === 5. GENERATE IMAGES (BROWSER - khong can token) ===
+        self.log("[STEP 5] Tao anh bang BROWSER...")
+
+        # Su dung browser automation (on dinh, khong can token)
+        results = self.generate_images_browser(prompts, proj_dir)
         
         # === 6. FINAL CHECK ===
         self.log("[STEP 6] Kiem tra ket qua...")
