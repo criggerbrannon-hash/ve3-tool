@@ -195,28 +195,39 @@ class BrowserFlowGenerator:
             "download.directory_upgrade": True,
         }
 
+        self._log(f"Profile dir: {self.profile_dir}")
+        self._log(f"Headless: {self.headless}")
+
         if DRIVER_TYPE == "undetected":
             self._log("Su dung undetected-chromedriver")
 
-            options = uc.ChromeOptions()
-            options.add_argument(f"--user-data-dir={self.profile_dir}")
+            try:
+                options = uc.ChromeOptions()
+                options.add_argument(f"--user-data-dir={self.profile_dir}")
 
-            if self.headless:
-                options.add_argument("--headless=new")
-                options.add_argument("--disable-gpu")
+                if self.headless:
+                    options.add_argument("--headless=new")
+                    options.add_argument("--disable-gpu")
 
-            options.add_argument("--no-sandbox")
-            options.add_argument("--disable-dev-shm-usage")
-            options.add_argument("--window-size=1920,1080")
-            options.add_experimental_option("prefs", prefs)
+                options.add_argument("--no-sandbox")
+                options.add_argument("--disable-dev-shm-usage")
+                options.add_argument("--window-size=1920,1080")
+                options.add_experimental_option("prefs", prefs)
 
-            driver = uc.Chrome(
-                options=options,
-                use_subprocess=True,
-                version_main=None
-            )
+                self._log("Dang tao Chrome driver...")
+                driver = uc.Chrome(
+                    options=options,
+                    use_subprocess=True,
+                    version_main=None
+                )
+                self._log("Chrome driver da tao thanh cong!", "success")
 
-            return driver
+                return driver
+            except Exception as e:
+                self._log(f"Loi tao Chrome driver: {e}", "error")
+                import traceback
+                traceback.print_exc()
+                raise
 
         else:
             self._log("Su dung selenium thuong")
