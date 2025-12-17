@@ -16,6 +16,9 @@ webdriver-manager>=4.0.0
 pyautogui>=0.9.54
 pyperclip>=1.8.2
 
+# Undetected Chrome (recommended - bypass bot detection)
+undetected-chromedriver>=3.5.0
+
 # Voice to SRT (optional - chi can neu dung voice)
 # pip install openai-whisper
 # hoac: pip install whisper-timestamped

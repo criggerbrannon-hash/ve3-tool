@@ -115,6 +115,17 @@ __all__ = [
     # Chrome Token Extractor
     "ChromeTokenExtractor",
     "ChromeAutoToken",
+
+    # Browser Image Generator (Selenium + JS)
+    "BrowserImageGenerator",
+    "create_browser_generator",
+
+    # Parallel Browser Generator
+    "ParallelBrowserGenerator",
+    "BrowserSession",
+    "GenerationTask",
+    "GenerationResult",
+    "generate_parallel",
 ]
 
 # Chrome Token Extractor (optional - requires selenium)
@@ -132,3 +143,29 @@ try:
     from modules.auto_token import ChromeAutoToken as AutoToken
 except ImportError:
     AutoToken = None
+
+# Browser Image Generator (Selenium + JS injection)
+try:
+    from modules.browser_image_generator import (
+        BrowserImageGenerator,
+        create_browser_generator,
+    )
+except ImportError:
+    BrowserImageGenerator = None
+    create_browser_generator = None
+
+# Parallel Browser Generator (Multiple browsers)
+try:
+    from modules.parallel_browser_generator import (
+        ParallelBrowserGenerator,
+        BrowserSession,
+        GenerationTask,
+        GenerationResult,
+        generate_parallel,
+    )
+except ImportError:
+    ParallelBrowserGenerator = None
+    BrowserSession = None
+    GenerationTask = None
+    GenerationResult = None
+    generate_parallel = None
