@@ -37,7 +37,7 @@
 
         "ollama": {
             "_comment": "Ollama - LOCAL AI (FALLBACK khi API keys het)",
-            "model": "gemma3:27b",
+            "model": "qwen2.5:7b",
             "endpoint": "http://localhost:11434"
         }
     },

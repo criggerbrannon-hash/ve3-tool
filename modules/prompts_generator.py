@@ -55,7 +55,7 @@ class MultiAIClient:
         Config format:
         {
             "deepseek_api_keys": ["key1"],
-            "ollama_model": "gemma3:27b",  # Optional: local model fallback
+            "ollama_model": "qwen2.5:7b",  # Optional: local model fallback
         }
 
         auto_filter: Tự động test và loại bỏ API keys không hoạt động
@@ -64,7 +64,7 @@ class MultiAIClient:
         self.deepseek_keys = [k for k in config.get("deepseek_api_keys", []) if k and k.strip()]
 
         # Ollama model (fallback)
-        self.ollama_model = config.get("ollama_model", "gemma3:27b")
+        self.ollama_model = config.get("ollama_model", "qwen2.5:7b")
         self.ollama_endpoint = config.get("ollama_endpoint", "http://localhost:11434")
         self.OLLAMA_URL = f"{self.ollama_endpoint}/api/generate"
         self.ollama_available = False

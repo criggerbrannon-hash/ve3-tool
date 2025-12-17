@@ -780,7 +780,7 @@ class UnixVoiceToVideo:
 
             # Ollama local config
             ollama_config = api.get('ollama', {})
-            self.ollama_model = ollama_config.get('model', 'gemma3:27b')
+            self.ollama_model = ollama_config.get('model', 'qwen2.5:7b')
             self.ollama_endpoint = ollama_config.get('endpoint', 'http://localhost:11434')
             self.ollama_priority = ollama_config.get('priority', False)
             

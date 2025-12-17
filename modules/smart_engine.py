@@ -80,8 +80,8 @@ class SmartEngine:
         self.gemini_keys: List[Resource] = []
 
         # Ollama model (fallback when all APIs fail)
-        # Default: gemma3:27b (local, stable)
-        self.ollama_model: str = "gemma3:27b"
+        # Default: qwen2.5:7b (phù hợp GPU 12GB VRAM)
+        self.ollama_model: str = "qwen2.5:7b"
         self.ollama_endpoint: str = "http://localhost:11434"
 
         # Settings - TOI UU TOC DO (PARALLEL OPTIMIZED)
@@ -164,7 +164,7 @@ class SmartEngine:
             # Ollama local (fallback)
             ollama_cfg = api.get('ollama', {})
             if ollama_cfg:
-                self.ollama_model = ollama_cfg.get('model', 'gemma3:27b')
+                self.ollama_model = ollama_cfg.get('model', 'qwen2.5:7b')
                 self.ollama_endpoint = ollama_cfg.get('endpoint', 'http://localhost:11434')
 
             # Settings

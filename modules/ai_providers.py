@@ -427,7 +427,7 @@ class MultiAIClient:
         Config format:
         {
             "deepseek_api_keys": ["key1"],  # Primary - DeepSeek
-            "ollama_model": "gemma3:27b",  # Fallback - Ollama local
+            "ollama_model": "qwen2.5:7b",  # Fallback - Ollama local (fits 12GB VRAM)
             "ollama_endpoint": "http://localhost:11434",  # Optional
         }
 
