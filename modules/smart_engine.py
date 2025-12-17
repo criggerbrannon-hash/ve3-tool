@@ -900,11 +900,11 @@ class SmartEngine:
             return {"success": 0, "failed": len(prompts)}
 
         try:
-            # HEADLESS MODE - browser chay an, toi uu toc do
+            # HIEN THI BROWSER - de xem qua trinh tao anh
             generator = BrowserFlowGenerator(
                 project_path=str(proj_dir),
                 profile_name="main",
-                headless=True,  # Chay an, khong hien UI
+                headless=False,  # Hien thi browser de debug
                 verbose=True
             )
 
