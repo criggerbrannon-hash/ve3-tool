@@ -338,16 +338,33 @@
             return false;
         },
 
+        // Focus textarea (giong token code)
+        focusTextarea: async () => {
+            const textarea = document.querySelector('textarea');
+            if (!textarea) {
+                Utils.log('Khong tim thay textarea', 'error');
+                return false;
+            }
+            textarea.focus();
+            textarea.click();
+            Utils.log('Da focus textarea', 'success');
+            return true;
+        },
+
         // Dien prompt
         setPrompt: (prompt) => {
             const textarea = document.querySelector('textarea');
             if (!textarea) {
-                Utils.log('Không tìm thấy textarea', 'error');
+                Utils.log('Khong tim thay textarea', 'error');
                 return false;
             }
 
+            // Focus truoc khi set value
+            textarea.focus();
+            textarea.click();
+
             Utils.setTextareaValue(textarea, prompt);
-            Utils.log(`Đã điền: "${prompt.slice(0, 50)}..."`, 'success');
+            Utils.log(`Da dien: "${prompt.slice(0, 50)}..."`, 'success');
             return true;
         },
 
@@ -577,10 +594,12 @@
         },
 
         // Setup UI (click New Project + chon Generate Image)
+        // Flow giong token code: New Project -> 5s -> Select Image Mode -> 3s -> Focus textarea -> 1s
         setup: async () => {
             Utils.log('=== SETUP UI ===', 'info');
 
             // 1. Click "Du an moi"
+            Utils.log('Buoc 1: Click Du an moi...', 'info');
             await UI.clickNewProject();
 
             // 2. Doi 5 giay cho page load (giong token code)
@@ -588,13 +607,22 @@
             await Utils.sleep(5000);
 
             // 3. Click dropdown + chon "Tao hinh anh"
+            Utils.log('Buoc 2: Chon Tao hinh anh...', 'info');
             await UI.selectImageGeneration();
 
-            // 4. Doi 2 giay cho UI san sang
-            Utils.log('Doi 2s cho UI san sang...', 'wait');
-            await Utils.sleep(2000);
+            // 4. Doi 3 giay (giong token code)
+            Utils.log('Doi 3s...', 'wait');
+            await Utils.sleep(3000);
 
-            Utils.log('=== SETUP XONG ===', 'success');
+            // 5. Focus textarea
+            Utils.log('Buoc 3: Focus textarea...', 'info');
+            await UI.focusTextarea();
+
+            // 6. Doi 1 giay
+            Utils.log('Doi 1s...', 'wait');
+            await Utils.sleep(1000);
+
+            Utils.log('=== SETUP XONG - San sang gui prompt ===', 'success');
         },
 
         // Callbacks
