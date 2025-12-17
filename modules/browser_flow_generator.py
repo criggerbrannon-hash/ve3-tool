@@ -421,21 +421,51 @@ class BrowserFlowGenerator:
 
         return []
 
-    def _select_best_image(self, files: List[Path]) -> Path:
+    def _select_best_image(self, files: List[Path], is_character: bool = False) -> Tuple[Path, float]:
         """
         Chon anh tot nhat tu nhieu files.
-        Su dung file size lam proxy cho chat luong (lon hon = nhieu chi tiet hon).
+        Su dung ImageEvaluator de danh gia chat luong anh (sharpness, brightness, contrast, faces).
+        Fallback: dung file size neu khong co opencv.
 
         Args:
             files: List cac file anh
+            is_character: Co phai anh nhan vat (nvc/nv*/loc*) - uu tien face detection
 
         Returns:
-            Path den file tot nhat
+            Tuple[Path den file tot nhat, score]
         """
         if len(files) == 1:
-            return files[0]
+            # Van danh gia de biet score
+            try:
+                from modules.image_evaluator import ImageEvaluator
+                evaluator = ImageEvaluator(verbose=False)
+                _, score = evaluator.evaluate(files[0], is_character)
+                return files[0], score.total_score
+            except ImportError:
+                return files[0], 100.0  # Assume good if can't evaluate
 
-        # Lay file size cua moi file
+        # Thu dung ImageEvaluator (tot hon)
+        try:
+            from modules.image_evaluator import ImageEvaluator
+            evaluator = ImageEvaluator(verbose=False)
+            best_path, best_score = evaluator.select_best(files, is_character)
+
+            self._log(f"Chon anh tot nhat: {best_path.name} (score={best_score.total_score}, grade={best_score.grade})")
+
+            # Log comparison
+            if len(files) > 1:
+                scores_str = []
+                for f in files:
+                    _, score = evaluator.evaluate(f, is_character)
+                    scores_str.append(f"{f.name}={score.total_score}")
+                self._log(f"  So sanh: {', '.join(scores_str)}")
+
+            return best_path, best_score.total_score
+
+        except ImportError:
+            self._log("ImageEvaluator khong co, dung file size", "warn")
+
+        # Fallback: Lay file size cua moi file
         file_sizes = []
         for f in files:
             try:
@@ -457,18 +487,24 @@ class BrowserFlowGenerator:
             sizes_str = ", ".join([f"{f.name}={s/1024:.1f}KB" for f, s in file_sizes])
             self._log(f"  So sanh: {sizes_str}")
 
-        return best_file
+        return best_file, 70.0  # Assume decent score for fallback
 
-    def _move_downloaded_images(self, scene_id: str) -> Optional[Path]:
+    def _move_downloaded_images(
+        self,
+        scene_id: str,
+        min_score: float = 50.0
+    ) -> Tuple[Optional[Path], float, bool]:
         """
         Di chuyen anh vua download tu Downloads vao project/img/ hoac nv/.
-        Neu co 2 anh, chon anh tot nhat (file size lon nhat).
+        Neu co 2 anh, chon anh tot nhat bang ImageEvaluator.
+        Tra ve score de biet co can tao lai khong.
 
         Args:
             scene_id: ID cua scene (1, 2, ... hoac nvc, nv1, loc1...)
+            min_score: Diem toi thieu de pass (0-100)
 
         Returns:
-            Path den file da di chuyen, hoac None
+            Tuple[Path da di chuyen, score, needs_regeneration]
         """
         # Pattern: {project_code}_{scene_id}*.png
         pattern = f"{self.project_code}_{scene_id}*.png"
@@ -477,14 +513,22 @@ class BrowserFlowGenerator:
 
         if not files:
             self._log(f"Khong tim thay file: {pattern}", "warn")
-            return None
+            return None, 0.0, True
 
-        # QUAN TRONG: Chon anh tot nhat neu co nhieu file (2 anh/prompt)
-        best_file = self._select_best_image(files)
+        # Xac dinh co phai nhan vat/dia diem khong (uu tien face detection)
+        scene_id_str = str(scene_id)
+        is_character = scene_id_str.startswith('nv') or scene_id_str.startswith('loc')
+
+        # QUAN TRONG: Chon anh tot nhat va danh gia chat luong
+        best_file, score = self._select_best_image(files, is_character)
+
+        # Check neu can tao lai
+        needs_regeneration = score < min_score
+        if needs_regeneration:
+            self._log(f"Anh {scene_id} chua dat chuan: {score:.1f} < {min_score}", "warn")
 
         # Xac dinh thu muc dich: nv/ cho nvc/nv*/loc*, img/ cho scenes
-        scene_id_str = str(scene_id)
-        if scene_id_str.startswith('nv') or scene_id_str.startswith('loc'):
+        if is_character:
             dst_dir = self.nv_path
         else:
             dst_dir = self.img_path
@@ -494,7 +538,7 @@ class BrowserFlowGenerator:
 
         try:
             shutil.move(str(best_file), str(dst_file))
-            self._log(f"Da di chuyen: {best_file.name} -> {dst_file}", "success")
+            self._log(f"Da di chuyen: {best_file.name} -> {dst_file} (score={score:.1f})", "success")
 
             # Xoa cac file con lai (khong can nua)
             for f in files:
@@ -505,11 +549,11 @@ class BrowserFlowGenerator:
                     except:
                         pass
 
-            return dst_file
+            return dst_file, score, needs_regeneration
 
         except Exception as e:
             self._log(f"Loi di chuyen file: {e}", "error")
-            return None
+            return None, 0.0, True
 
     def generate_scene_images(
         self,
@@ -640,7 +684,7 @@ class BrowserFlowGenerator:
 
                 if result and result.get("success"):
                     # Di chuyen file - scene_id la numeric ("1", "2", ...)
-                    img_file = self._move_downloaded_images(scene_id)
+                    img_file, score, needs_regen = self._move_downloaded_images(scene_id)
 
                     if img_file:
                         # Cap nhat Excel - dung numeric ID
@@ -648,11 +692,15 @@ class BrowserFlowGenerator:
                         workbook.update_scene(
                             scene.scene_id,  # scene.scene_id la int
                             img_path=relative_path,
-                            status_img="done"
+                            status_img="done" if not needs_regen else "low_quality"
                         )
                         workbook.save()
 
-                        self._log(f"Da cap nhat Excel: {scene_id} = done", "success")
+                        if needs_regen:
+                            self._log(f"Anh {scene_id} chua dat chuan (score={score:.1f}), can tao lai", "warn")
+                            self.stats["low_quality"] = self.stats.get("low_quality", 0) + 1
+                        else:
+                            self._log(f"Da cap nhat Excel: {scene_id} = done (score={score:.1f})", "success")
                         self.stats["success"] += 1
                     else:
                         workbook.update_scene(scene.scene_id, status_img="error")
@@ -775,10 +823,14 @@ class BrowserFlowGenerator:
 
                 if result and result.get("success"):
                     # Di chuyen file tu Downloads
-                    img_file = self._move_downloaded_images(pid)
+                    img_file, score, needs_regen = self._move_downloaded_images(pid)
 
                     if img_file:
-                        self._log(f"OK - Da tao va luu anh", "success")
+                        if needs_regen:
+                            self._log(f"OK - Da tao anh nhung chua dat chuan (score={score:.1f})", "warn")
+                            self.stats["low_quality"] = self.stats.get("low_quality", 0) + 1
+                        else:
+                            self._log(f"OK - Da tao va luu anh (score={score:.1f})", "success")
                         self.stats["success"] += 1
                     else:
                         self._log(f"Khong tim thay file download", "warn")
