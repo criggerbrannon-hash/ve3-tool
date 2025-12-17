@@ -750,23 +750,14 @@ class SmartEngine:
         is_reference_image = pid.startswith('nv') or pid.startswith('loc')
 
         try:
-            # Lay fresh reCAPTCHA token truoc moi request
-            fresh_recaptcha = self.get_fresh_recaptcha()
-            if fresh_recaptcha:
-                profile.recaptcha_token = fresh_recaptcha
-                self.log(f"[{pid}] Fresh reCAPTCHA OK: {len(fresh_recaptcha)} chars")
-            else:
-                self.log(f"[{pid}] Dung recaptcha cu (co the da het han)", "WARN")
+            # NOTE: reCAPTCHA khong can nua (API da thay doi)
+            # Chi can Bearer token la du
 
-            # DEBUG: Log token info before API call
-            self.log(f"[{pid}] API call with recaptcha: {len(profile.recaptcha_token) if profile.recaptcha_token else 0} chars")
-
-            # Bat verbose cho nv/loc de debug media_name
+            # Tao API client - chi can Bearer token va project_id
             api = GoogleFlowAPI(
                 bearer_token=profile.token,
                 project_id=profile.project_id,
-                recaptcha_token=profile.recaptcha_token,  # Required for API calls
-                verbose=True  # ALWAYS verbose to debug
+                verbose=True
             )
 
             Path(output).parent.mkdir(parents=True, exist_ok=True)
