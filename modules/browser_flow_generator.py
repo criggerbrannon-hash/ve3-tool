@@ -357,19 +357,42 @@ class BrowserFlowGenerator:
             return True
 
         try:
-            self._log("Inject JavaScript script...")
+            self._log("Buoc 1: Inject JavaScript script...")
             js_code = self._get_js_script()
             self.driver.execute_script(js_code)
 
             # Init VE3 voi project name
+            self._log("Buoc 2: Init VE3...")
             self.driver.execute_script(f'VE3.init("{self.project_code}")')
 
+            # Setup UI: Click "Du an moi" + Chon "Tao hinh anh"
+            self._log("Buoc 3: Setup UI (Du an moi + Tao hinh anh)...")
+            setup_result = self.driver.execute_async_script("""
+                const callback = arguments[arguments.length - 1];
+                (async () => {
+                    try {
+                        await VE3.setup();
+                        callback({success: true});
+                    } catch(e) {
+                        callback({success: false, error: e.message});
+                    }
+                })();
+            """)
+
+            if setup_result and setup_result.get('success'):
+                self._log("Setup UI thanh cong!", "success")
+            else:
+                error = setup_result.get('error', 'Unknown') if setup_result else 'No response'
+                self._log(f"Setup UI that bai: {error}", "warn")
+
             self._js_injected = True
-            self._log("Da inject JS va init VE3", "success")
+            self._log("Da san sang tao anh!", "success")
             return True
 
         except Exception as e:
             self._log(f"Loi inject JS: {e}", "error")
+            import traceback
+            traceback.print_exc()
             return False
 
     def _find_downloaded_files(self, pattern: str, wait_timeout: int = 30) -> List[Path]:

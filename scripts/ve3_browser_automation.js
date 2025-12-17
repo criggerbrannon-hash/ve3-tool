@@ -277,44 +277,59 @@
     const UI = {
         // Click "Du an moi"
         clickNewProject: async () => {
+            Utils.log('>>> Tim nut "Du an moi"...', 'info');
             const btns = document.querySelectorAll('button');
+            Utils.log(`Tim thay ${btns.length} buttons`, 'info');
+
             for (const b of btns) {
                 const text = b.textContent || '';
                 if (text.includes('Dự án mới') || text.includes('New project')) {
+                    Utils.log(`Click button: "${text.trim().slice(0, 30)}"`, 'info');
                     b.click();
-                    Utils.log('Đã click "Dự án mới"', 'success');
+                    Utils.log('OK - Da click "Du an moi"', 'success');
                     await Utils.sleep(CONFIG.delayAfterClick);
                     return true;
                 }
             }
-            Utils.log('Không tìm thấy nút "Dự án mới"', 'warn');
+
+            // Log cac button de debug
+            Utils.log('Cac button tim thay:', 'warn');
+            btns.forEach((b, i) => {
+                if (i < 10) Utils.log(`  [${i}] "${(b.textContent || '').trim().slice(0, 50)}"`, 'info');
+            });
+            Utils.log('FAIL - Khong tim thay nut "Du an moi"', 'error');
             return false;
         },
 
         // Chon "Tao hinh anh" tu dropdown
         selectImageGeneration: async () => {
+            Utils.log('>>> Tim dropdown chon loai...', 'info');
             const dropdown = document.querySelector('button[role="combobox"]');
             if (!dropdown) {
-                Utils.log('Không tìm thấy dropdown', 'warn');
+                Utils.log('FAIL - Khong tim thay dropdown (button[role=combobox])', 'error');
                 return false;
             }
 
+            Utils.log('Click mo dropdown...', 'info');
             dropdown.click();
-            Utils.log('Đã mở dropdown', 'success');
             await Utils.sleep(500);
 
+            Utils.log('>>> Tim option "Tao hinh anh"...', 'info');
             const options = document.querySelectorAll('[role="option"], [role="menuitem"], li, div');
+            Utils.log(`Tim thay ${options.length} options`, 'info');
+
             for (const opt of options) {
                 const text = opt.textContent || '';
                 if (text.includes('Tạo hình ảnh') || text.includes('Generate image')) {
+                    Utils.log(`Click option: "${text.trim().slice(0, 30)}"`, 'info');
                     opt.click();
-                    Utils.log('Đã chọn "Tạo hình ảnh"', 'success');
+                    Utils.log('OK - Da chon "Tao hinh anh"', 'success');
                     await Utils.sleep(CONFIG.delayAfterClick);
                     return true;
                 }
             }
 
-            Utils.log('Không tìm thấy option "Tạo hình ảnh"', 'warn');
+            Utils.log('FAIL - Khong tim thay option "Tao hinh anh"', 'error');
             return false;
         },
 
