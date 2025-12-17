@@ -479,9 +479,10 @@ class BrowserFlowGenerator:
             return {"success": False, "error": "Khong inject duoc JS"}
 
         # Chuan bi prompts cho VE3.run()
+        # QUAN TRONG: Dung numeric ID (1, 2, 3) de khop voi SmartEngine video composer
         prompts_data = []
         for scene in scenes_to_process:
-            scene_id = f"scene_{scene.scene_id:03d}"
+            scene_id = str(scene.scene_id)  # Dung numeric ID, khong phai scene_001
             prompts_data.append({
                 "sceneId": scene_id,
                 "prompt": scene.img_prompt
@@ -519,14 +520,14 @@ class BrowserFlowGenerator:
                 """)
 
                 if result and result.get("success"):
-                    # Di chuyen file
+                    # Di chuyen file - scene_id la numeric ("1", "2", ...)
                     img_file = self._move_downloaded_images(scene_id)
 
                     if img_file:
-                        # Cap nhat Excel
+                        # Cap nhat Excel - dung numeric ID
                         relative_path = f"img/{scene_id}.png"
                         workbook.update_scene(
-                            scene.scene_id,
+                            scene.scene_id,  # scene.scene_id la int
                             img_path=relative_path,
                             status_img="done"
                         )
