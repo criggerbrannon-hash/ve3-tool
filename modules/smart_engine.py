@@ -1,17 +1,17 @@
 """
-VE3 Tool - Smart Auto Engine
-============================
-1 NUT LAM TAT CA:
-- Input: Voice file
-- Output: Tat ca anh (KHONG THIEU)
+VE3 Tool - Smart Auto Engine (BROWSER JS MODE)
+===============================================
+Version: 2.0.0-browser
+Date: 2024-12-17
 
-Flow thong minh:
-1. Kiem tra thieu gi -> bao
-2. [Song song] Lay token + Lam SRT
-3. Lam prompts (AI API)
-4. [Song song] Tao anh voi nhieu accounts
-5. Retry neu fail -> dam bao 100% output
+Flow:
+1. Voice -> SRT (Whisper)
+2. SRT -> Prompts (AI)
+3. Prompts -> Images (BROWSER JS - khong can API token)
+4. Images -> Video (FFmpeg)
 """
+
+__version__ = "2.0.0-browser"
 
 import os
 import json
@@ -1105,7 +1105,7 @@ class SmartEngine:
         srt_path = proj_dir / "srt" / f"{name}.srt"
 
         self.log("="*50)
-        self.log(f"VE3 TOOL - FAST PIPELINE")
+        self.log(f"VE3 TOOL v{__version__} - BROWSER JS MODE")
         self.log(f"INPUT: {inp}")
         self.log(f"OUTPUT: {proj_dir}")
         self.log("="*50)
