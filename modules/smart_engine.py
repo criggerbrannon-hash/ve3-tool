@@ -46,7 +46,14 @@ class SmartEngine:
     # Token het han sau 50 phut (thuc te la ~1h nhung de an toan)
     TOKEN_EXPIRY_SECONDS = 50 * 60
 
-    def __init__(self, config_path: str = None):
+    def __init__(self, config_path: str = None, assigned_profile: str = None):
+        """
+        Initialize SmartEngine.
+
+        Args:
+            config_path: Path to accounts.json config file
+            assigned_profile: Specific Chrome profile name to use (for parallel processing)
+        """
         # Support VE3_CONFIG_DIR environment variable
         if config_path:
             self.config_path = Path(config_path)
@@ -54,10 +61,16 @@ class SmartEngine:
             config_dir = os.environ.get('VE3_CONFIG_DIR', 'config')
             self.config_path = Path(config_dir) / "accounts.json"
 
+        # Config directory
+        self.config_dir = self.config_path.parent
+
         # Token cache file
         self.tokens_path = self.config_path.parent / "tokens.json"
 
         self.chrome_path = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+
+        # Assigned profile for parallel processing
+        self.assigned_profile = assigned_profile
 
         # Resources
         self.profiles: List[Resource] = []
@@ -911,18 +924,25 @@ class SmartEngine:
         except:
             pass
 
-        # Find available profile from chrome_profiles directory
+        # Find profile to use
         profile_name = "main"  # Default
-        profiles_dir = self.config_dir.parent / "chrome_profiles"
-        if profiles_dir.exists():
-            available_profiles = [p.name for p in profiles_dir.iterdir() if p.is_dir()]
-            if available_profiles:
-                profile_name = available_profiles[0]
-                self.log(f"Dung profile: {profile_name}")
+
+        # Use assigned profile if set (for parallel processing)
+        if self.assigned_profile:
+            profile_name = self.assigned_profile
+            self.log(f"Dung profile (assigned): {profile_name}")
         else:
-            # Create default profile directory
-            profiles_dir.mkdir(exist_ok=True)
-            (profiles_dir / "main").mkdir(exist_ok=True)
+            # Find first available profile from chrome_profiles directory
+            profiles_dir = self.config_dir.parent / "chrome_profiles"
+            if profiles_dir.exists():
+                available_profiles = [p.name for p in profiles_dir.iterdir() if p.is_dir()]
+                if available_profiles:
+                    profile_name = available_profiles[0]
+                    self.log(f"Dung profile: {profile_name}")
+            else:
+                # Create default profile directory
+                profiles_dir.mkdir(exist_ok=True)
+                (profiles_dir / "main").mkdir(exist_ok=True)
 
         try:
             generator = BrowserFlowGenerator(

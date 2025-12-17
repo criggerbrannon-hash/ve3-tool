@@ -1378,59 +1378,103 @@ class UnixVoiceToVideo:
             self.root.after(0, self._reset_ui)
     
     def _process_folder(self):
-        """Process folder with multiple voice files."""
+        """Process folder with multiple voice files - PARALLEL with profiles."""
         try:
             from modules.smart_engine import SmartEngine
-            
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
             folder = Path(self.input_path.get())
             voices = list(folder.glob("*.mp3")) + list(folder.glob("*.wav"))
-            
+
             if not voices:
                 self.root.after(0, lambda: messagebox.showerror("Lỗi", "Không tìm thấy file voice nào!"))
                 return
-            
+
             self.log(f"📁 Tìm thấy {len(voices)} file voice")
-            
-            total_success = 0
-            total_failed = 0
-            
-            for i, voice in enumerate(voices):
-                if self._stop:
-                    break
-                
-                self.root.after(0, lambda v=voice.name, i=i, t=len(voices): 
-                    self.log(f"\n[{i+1}/{t}] 📄 {v}"))
-                
-                self.root.after(0, lambda p=(i/len(voices))*100, t=f"Xử lý {i+1}/{len(voices)}": 
-                    self.update_progress(p, t, voice.name))
-                
-                engine = SmartEngine()
-                self._engine = engine
-                
-                def log_cb(msg):
-                    self.root.after(0, lambda: self.log(f"    {msg}"))
-                
-                results = engine.run(str(voice), callback=log_cb)
-                
-                if 'error' not in results:
-                    total_success += results.get('success', 0)
-                    total_failed += results.get('failed', 0)
-            
+
+            # Get available profiles from chrome_profiles directory
+            profiles_dir = Path(BASE_DIR) / "chrome_profiles"
+            available_profiles = []
+            if profiles_dir.exists():
+                available_profiles = [p.name for p in profiles_dir.iterdir() if p.is_dir()]
+
+            if not available_profiles:
+                # Create default profile
+                profiles_dir.mkdir(exist_ok=True)
+                (profiles_dir / "main").mkdir(exist_ok=True)
+                available_profiles = ["main"]
+
+            num_profiles = len(available_profiles)
+            num_parallel = min(num_profiles, len(voices), 3)  # Max 3 parallel
+
+            self.log(f"🌐 {num_profiles} profile(s) | Chạy song song: {num_parallel}")
+            for p in available_profiles[:num_parallel]:
+                self.log(f"   • {p}")
+
+            # Result tracking
+            results_lock = threading.Lock()
+            total_results = {"success": 0, "failed": 0}
+            completed_count = [0]  # Use list for mutable in closure
+
+            def process_voice(voice_path, profile_name, voice_idx):
+                """Process single voice with assigned profile."""
+                try:
+                    self.root.after(0, lambda: self.log(f"\n[{voice_idx+1}/{len(voices)}] 📄 {voice_path.name} → {profile_name}"))
+
+                    engine = SmartEngine(assigned_profile=profile_name)
+
+                    def log_cb(msg):
+                        self.root.after(0, lambda m=msg, p=profile_name: self.log(f"  [{p}] {m}"))
+
+                    result = engine.run(str(voice_path), callback=log_cb)
+
+                    with results_lock:
+                        if 'error' not in result:
+                            total_results["success"] += result.get('success', 0)
+                            total_results["failed"] += result.get('failed', 0)
+                        completed_count[0] += 1
+                        progress = (completed_count[0] / len(voices)) * 100
+                        self.root.after(0, lambda p=progress: self.update_progress(p, f"Xong {completed_count[0]}/{len(voices)}"))
+
+                    return result
+                except Exception as e:
+                    import traceback
+                    traceback.print_exc()
+                    self.root.after(0, lambda err=e: self.log(f"Lỗi: {err}", "ERROR"))
+                    return {"error": str(e)}
+
+            # Process voices in parallel
+            with ThreadPoolExecutor(max_workers=num_parallel) as executor:
+                futures = {}
+                for i, voice in enumerate(voices):
+                    if self._stop:
+                        break
+                    profile = available_profiles[i % num_profiles]  # Round-robin profiles
+                    future = executor.submit(process_voice, voice, profile, i)
+                    futures[future] = (voice, profile)
+
+                # Wait for completion
+                for future in as_completed(futures):
+                    if self._stop:
+                        break
+                    voice, profile = futures[future]
+                    try:
+                        future.result()
+                    except Exception as e:
+                        self.root.after(0, lambda err=e, v=voice.name: self.log(f"❌ {v}: {err}", "ERROR"))
+
             # Summary
             self.root.after(0, lambda: self.update_progress(100, "Hoàn tất!"))
-            self.root.after(0, lambda: self.log(f"\n📊 TỔNG KẾT: {total_success} ✅ | {total_failed} ❌", "OK"))
-            
-            if total_failed > 0:
-                self.root.after(0, lambda: messagebox.showwarning(
-                    "Chưa hoàn thành",
-                    f"✅ Thành công: {total_success}\n❌ Thất bại: {total_failed}"
-                ))
+            self.root.after(0, lambda s=total_results["success"], f=total_results["failed"]:
+                self.log(f"\n📊 TỔNG KẾT: {s} ✅ | {f} ❌", "OK"))
+
+            if total_results["failed"] > 0:
+                self.root.after(0, lambda s=total_results["success"], f=total_results["failed"]:
+                    messagebox.showwarning("Chưa hoàn thành", f"✅ Thành công: {s}\n❌ Thất bại: {f}"))
             else:
-                self.root.after(0, lambda: messagebox.showinfo(
-                    "Hoàn tất!",
-                    f"✅ Đã tạo {total_success} ảnh!"
-                ))
-            
+                self.root.after(0, lambda s=total_results["success"]:
+                    messagebox.showinfo("Hoàn tất!", f"✅ Đã tạo {s} ảnh!"))
+
         except Exception as e:
             import traceback
             traceback.print_exc()
