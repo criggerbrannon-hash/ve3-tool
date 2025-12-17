@@ -857,7 +857,7 @@ class UnixVoiceToVideo:
 
         def refresh_profile_list():
             prof_list.delete(0, tk.END)
-            profiles_dir = Path(BASE_DIR) / "chrome_profiles"
+            profiles_dir = ROOT_DIR / "chrome_profiles"
             if profiles_dir.exists():
                 for p in profiles_dir.iterdir():
                     if p.is_dir():
@@ -886,7 +886,7 @@ class UnixVoiceToVideo:
                 parent=win)
             if name:
                 name = name.strip().replace(" ", "_")
-                profiles_dir = Path(BASE_DIR) / "chrome_profiles"
+                profiles_dir = ROOT_DIR / "chrome_profiles"
                 profiles_dir.mkdir(exist_ok=True)
                 profile_path = profiles_dir / name
                 if profile_path.exists():
@@ -906,7 +906,7 @@ class UnixVoiceToVideo:
             if profile_name.startswith("("):
                 return
 
-            profiles_dir = Path(BASE_DIR) / "chrome_profiles"
+            profiles_dir = ROOT_DIR / "chrome_profiles"
             profile_path = profiles_dir / profile_name
 
             win.config(cursor="wait")
@@ -929,7 +929,7 @@ class UnixVoiceToVideo:
 
             if messagebox.askyesno("Xác nhận", f"Xóa profile '{profile_name}'?\nDữ liệu đăng nhập sẽ bị mất!"):
                 import shutil
-                profiles_dir = Path(BASE_DIR) / "chrome_profiles"
+                profiles_dir = ROOT_DIR / "chrome_profiles"
                 profile_path = profiles_dir / profile_name
                 try:
                     shutil.rmtree(profile_path)
@@ -1393,7 +1393,7 @@ class UnixVoiceToVideo:
             self.log(f"📁 Tìm thấy {len(voices)} file voice")
 
             # Get available profiles from chrome_profiles directory
-            profiles_dir = Path(BASE_DIR) / "chrome_profiles"
+            profiles_dir = ROOT_DIR / "chrome_profiles"
             available_profiles = []
             if profiles_dir.exists():
                 available_profiles = [p.name for p in profiles_dir.iterdir() if p.is_dir()]
