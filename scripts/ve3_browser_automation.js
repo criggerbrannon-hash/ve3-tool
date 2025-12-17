@@ -368,55 +368,25 @@
             return true;
         },
 
-        // Click nut Tao / Send
+        // Gui prompt - Don gian chi can nhan Enter (giong token code)
         clickGenerate: async () => {
-            Utils.log('>>> Tim nut gui...', 'info');
+            Utils.log('Nhan Enter de gui...', 'info');
 
-            // Cach 1: Tim nut co aria-label "Send" hoac "Gửi"
-            let btn = document.querySelector('button[aria-label*="Send"], button[aria-label*="Gửi"]');
-
-            // Cach 2: Tim nut co icon send gan textarea
-            if (!btn) {
-                const buttons = document.querySelectorAll('button');
-                const textarea = document.querySelector('textarea');
-
-                for (const b of buttons) {
-                    // Nut co SVG icon va gan textarea
-                    if (b.querySelector('svg') && textarea) {
-                        const container = textarea.closest('form, div');
-                        if (container && container.contains(b)) {
-                            btn = b;
-                            break;
-                        }
-                    }
-                }
-            }
-
-            // Cach 3: Tim nut co text "Tao" hoac icon arrow
-            if (!btn) {
-                const buttons = document.querySelectorAll('button');
-                for (const b of buttons) {
-                    const text = b.textContent || '';
-                    if (text.includes('Tạo') || text.includes('Create') || text.includes('arrow_forward')) {
-                        btn = b;
-                        break;
-                    }
-                }
-            }
-
-            if (btn) {
-                btn.click();
-                Utils.log('OK - Da click nut gui', 'success');
-                return true;
-            }
-
-            // Fallback: Nhan Enter trong textarea
             const textarea = document.querySelector('textarea');
             if (textarea) {
+                // Focus lai textarea
+                textarea.focus();
+
+                // Nhan Enter de gui (giong token code dung pag.press("enter"))
                 textarea.dispatchEvent(new KeyboardEvent('keydown', {
-                    key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true
+                    key: 'Enter',
+                    code: 'Enter',
+                    keyCode: 13,
+                    which: 13,
+                    bubbles: true
                 }));
-                Utils.log('Da nhan Enter (fallback)', 'success');
+
+                Utils.log('Da nhan Enter', 'success');
                 return true;
             }
 
