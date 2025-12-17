@@ -933,16 +933,37 @@ class SmartEngine:
             self.log(f"Dung profile (assigned): {profile_name}")
         else:
             # Find first available profile from chrome_profiles directory
-            profiles_dir = self.config_dir.parent / "chrome_profiles"
-            if profiles_dir.exists():
-                available_profiles = [p.name for p in profiles_dir.iterdir() if p.is_dir()]
-                if available_profiles:
-                    profile_name = available_profiles[0]
-                    self.log(f"Dung profile: {profile_name}")
+            # Try multiple possible locations
+            possible_dirs = [
+                self.config_dir.parent / "chrome_profiles",  # config/../chrome_profiles
+                Path(__file__).parent.parent / "chrome_profiles",  # modules/../chrome_profiles
+                Path.cwd() / "chrome_profiles",  # ./chrome_profiles
+            ]
+
+            profiles_dir = None
+            available_profiles = []
+
+            for pd in possible_dirs:
+                if pd.exists():
+                    profiles_dir = pd
+                    available_profiles = [p.name for p in pd.iterdir() if p.is_dir() and not p.name.startswith('.')]
+                    self.log(f"Tim thay {len(available_profiles)} profiles tai: {pd}")
+                    if available_profiles:
+                        break
+
+            if available_profiles:
+                # Uu tien profile KHONG phai "main" (user da tao)
+                non_main = [p for p in available_profiles if p != "main"]
+                profile_name = non_main[0] if non_main else available_profiles[0]
+                self.log(f"Dung profile: {profile_name}")
             else:
-                # Create default profile directory
-                profiles_dir.mkdir(exist_ok=True)
-                (profiles_dir / "main").mkdir(exist_ok=True)
+                self.log(f"Khong tim thay profile nao, tao 'main'")
+                if profiles_dir:
+                    (profiles_dir / "main").mkdir(exist_ok=True)
+                else:
+                    profiles_dir = Path.cwd() / "chrome_profiles"
+                    profiles_dir.mkdir(exist_ok=True)
+                    (profiles_dir / "main").mkdir(exist_ok=True)
 
         try:
             generator = BrowserFlowGenerator(
