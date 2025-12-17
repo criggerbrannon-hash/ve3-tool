@@ -289,12 +289,14 @@ class SmartEngine:
     def check_requirements(self, has_voice: bool = True) -> Tuple[bool, List[str]]:
         """
         Kiem tra thieu gi.
+        BROWSER MODE: Khong can profiles trong accounts.json
         Return: (ok, list of missing items)
         """
         missing = []
 
-        if not self.profiles:
-            missing.append("Chrome profiles (sua config/accounts.json)")
+        # BROWSER MODE: Khong can profiles - chi can Chrome duoc cai dat
+        # if not self.profiles:
+        #     missing.append("Chrome profiles (sua config/accounts.json)")
 
         if has_voice and not self.deepseek_keys and not self.groq_keys and not self.gemini_keys:
             missing.append("AI API keys cho voice (DeepSeek RE: platform.deepseek.com/api_keys)")
@@ -1064,14 +1066,14 @@ class SmartEngine:
         callback: Callable = None
     ) -> Dict:
         """
-        PIPELINE LINH HOAT - bat dau ngay khi co 1 token.
+        BROWSER MODE PIPELINE - Tao anh bang JS automation.
 
-        Flow moi:
-        1. Check requirements
-        2. SONG SONG: Lay 1 token + Lam SRT + Lam prompts
-        3. Khi co 1 token + prompts -> BAT DAU TAO ANH NGAY
-        4. SONG SONG: Tiep tuc lay them token + Tao anh
-        5. Ket thuc khi het prompts
+        Flow:
+        1. Check requirements (Chrome, AI keys)
+        2. Tao SRT tu voice (Whisper)
+        3. Tao prompts tu SRT (AI)
+        4. Tao anh bang BROWSER JS (khong can API token)
+        5. Ghep video (FFmpeg)
 
         Args:
             input_path: Voice file (.mp3, .wav) hoac Excel (.xlsx)
@@ -1117,11 +1119,9 @@ class SmartEngine:
                 self.log(f"  - {m}", "ERROR")
             return {"error": "missing_requirements", "missing": missing}
 
-        valid_tokens = self.get_valid_token_count()
-        self.log(f"  Profiles: {len(self.profiles)} ({valid_tokens} tokens da co)")
-        self.log(f"  DeepSeek keys: {len(self.deepseek_keys)}")
-        self.log(f"  Groq keys: {len(self.groq_keys)}")
-        self.log(f"  Gemini keys: {len(self.gemini_keys)}")
+        # BROWSER MODE - khong can tokens
+        self.log("  MODE: Browser JS automation (khong can API token)")
+        self.log(f"  AI keys: DeepSeek={len(self.deepseek_keys)}, Groq={len(self.groq_keys)}, Gemini={len(self.gemini_keys)}")
 
         # === 2. TAO SRT + PROMPTS (BROWSER MODE - khong can token) ===
         self.log("[STEP 2] Tao SRT + Prompts...")
