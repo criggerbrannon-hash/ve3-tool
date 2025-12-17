@@ -509,7 +509,7 @@ class BrowserFlowGenerator:
         # Pattern: {project_code}_{scene_id}*.png
         pattern = f"{self.project_code}_{scene_id}*.png"
 
-        files = self._find_downloaded_files(pattern, wait_timeout=10)
+        files = self._find_downloaded_files(pattern, wait_timeout=120)
 
         if not files:
             self._log(f"Khong tim thay file: {pattern}", "warn")
@@ -737,18 +737,114 @@ class BrowserFlowGenerator:
             "stats": self.stats.copy()
         }
 
+    def _process_single_prompt(self, prompt_data: Dict, index: int, total: int) -> Tuple[bool, Optional[Path], float]:
+        """
+        Xu ly mot prompt don le.
+
+        Returns:
+            Tuple[success, image_path, score]
+        """
+        pid = str(prompt_data.get('id', index + 1))
+        prompt = prompt_data.get('prompt', '')
+
+        self._log(f"\n[{index+1}/{total}] ID: {pid}")
+        self._log(f"Prompt ({len(prompt)} chars): {prompt[:100]}...")
+
+        if not prompt:
+            self._log("Skip - prompt rong", "warn")
+            return False, None, 0.0
+
+        try:
+            # Goi VE3.run() cho 1 prompt
+            result = self.driver.execute_async_script(f"""
+                const callback = arguments[arguments.length - 1];
+                const timeout = setTimeout(() => {{
+                    callback({{ success: false, error: 'Timeout 120s' }});
+                }}, 120000);
+
+                VE3.run([{{
+                    sceneId: "{pid}",
+                    prompt: `{self._escape_js_string(prompt)}`
+                }}]).then(r => {{
+                    clearTimeout(timeout);
+                    callback({{ success: true, result: r }});
+                }}).catch(e => {{
+                    clearTimeout(timeout);
+                    callback({{ success: false, error: e.message }});
+                }});
+            """)
+
+            if result and result.get("success"):
+                # Di chuyen file tu Downloads (timeout 2 phut)
+                img_file, score, needs_regen = self._move_downloaded_images(pid)
+
+                if img_file:
+                    if needs_regen:
+                        self._log(f"OK - Da tao anh nhung chua dat chuan (score={score:.1f})", "warn")
+                    else:
+                        self._log(f"OK - Da tao va luu anh (score={score:.1f})", "success")
+                    return True, img_file, score
+                else:
+                    self._log(f"Khong tim thay file download sau 2 phut", "warn")
+                    return False, None, 0.0
+            else:
+                error = result.get("error", "Unknown") if result else "No response"
+                self._log(f"Loi: {error}", "error")
+                return False, None, 0.0
+
+        except Exception as e:
+            self._log(f"Exception: {e}", "error")
+            return False, None, 0.0
+
+    def _restart_browser_and_setup(self) -> bool:
+        """
+        Khoi dong lai browser va setup (dung khi setup that bai).
+
+        Returns:
+            True neu thanh cong
+        """
+        self._log("Khoi dong lai browser...", "warn")
+
+        # Dong browser cu
+        self.stop_browser()
+        self._js_injected = False
+
+        # Doi 3 giay
+        time.sleep(3)
+
+        # Khoi dong lai
+        if not self.start_browser():
+            return False
+
+        if not self.wait_for_login(timeout=120):
+            self.stop_browser()
+            return False
+
+        # Inject JS
+        if not self._inject_js():
+            return False
+
+        return True
+
     def generate_from_prompts(
         self,
         prompts: List[Dict],
-        excel_path: Optional[Path] = None
+        excel_path: Optional[Path] = None,
+        max_setup_retries: int = 3
     ) -> Dict[str, Any]:
         """
         Tao anh tu danh sach prompts da load san (tu smart_engine._load_prompts).
         Method nay nhan prompts truc tiep thay vi doc lai tu Excel.
 
+        Features:
+        - Neu prompt dau tien that bai (co the do setup loi), tu dong restart browser va thu lai (toi da 3 lan)
+        - Theo doi cac prompt that bai va retry o cuoi
+        - Timeout 2 phut cho moi anh
+
         Args:
             prompts: List cac dict co dang {'id': '1', 'prompt': '...', 'output_path': '...'}
             excel_path: Duong dan Excel (de cap nhat status)
+            max_setup_retries: So lan retry toi da neu setup that bai (default: 3)
 
         Returns:
             Dict voi ket qua
@@ -764,7 +860,7 @@ class BrowserFlowGenerator:
         self._log(f"Project: {self.project_code}")
 
         # Reset stats
-        self.stats = {"total": len(prompts), "success": 0, "failed": 0, "skipped": 0}
+        self.stats = {"total": len(prompts), "success": 0, "failed": 0, "skipped": 0, "low_quality": 0}
 
         # Khoi dong browser
         if not self.driver:
@@ -787,66 +883,89 @@ class BrowserFlowGenerator:
             self._log(f"[DEBUG] Prompt dau tien: id={p.get('id')}")
             self._log(f"[DEBUG] prompt = '{str(p.get('prompt', ''))[:100]}'")
 
-        # Xu ly tung prompt
-        for i, prompt_data in enumerate(prompts):
+        # Track failed prompts de retry sau
+        failed_prompts = []  # List of (prompt_data, original_index)
+
+        # === XU LY PROMPT DAU TIEN VOI SETUP RETRY ===
+        first_prompt_success = False
+        setup_attempts = 0
+
+        while not first_prompt_success and setup_attempts < max_setup_retries:
+            setup_attempts += 1
+
+            if setup_attempts > 1:
+                self._log(f"\n=== SETUP RETRY {setup_attempts}/{max_setup_retries} ===", "warn")
+                if not self._restart_browser_and_setup():
+                    self._log(f"Khong the khoi dong lai browser", "error")
+                    continue
+
+            # Thu prompt dau tien
+            success, img_file, score = self._process_single_prompt(prompts[0], 0, len(prompts))
+
+            if success:
+                first_prompt_success = True
+                self.stats["success"] += 1
+                if score < 50.0:
+                    self.stats["low_quality"] += 1
+            else:
+                self._log(f"Prompt dau tien that bai (lan {setup_attempts})", "error")
+
+        if not first_prompt_success:
+            # Da thu het so lan retry, ghi nhan that bai
+            self._log(f"Prompt dau tien that bai sau {max_setup_retries} lan thu", "error")
+            failed_prompts.append((prompts[0], 0))
+            self.stats["failed"] += 1
+
+        # === XU LY CAC PROMPT CON LAI ===
+        for i, prompt_data in enumerate(prompts[1:], start=1):
             pid = str(prompt_data.get('id', i + 1))
             prompt = prompt_data.get('prompt', '')
-            output_path = prompt_data.get('output_path', '')
-
-            self._log(f"\n[{i+1}/{len(prompts)}] ID: {pid}")
-            self._log(f"Prompt ({len(prompt)} chars): {prompt[:100]}...")
 
             if not prompt:
-                self._log("Skip - prompt rong", "warn")
+                self._log(f"\n[{i+1}/{len(prompts)}] ID: {pid} - Skip (prompt rong)", "warn")
                 self.stats["skipped"] += 1
                 continue
 
-            try:
-                # Goi VE3.run() cho 1 prompt
-                result = self.driver.execute_async_script(f"""
-                    const callback = arguments[arguments.length - 1];
-                    const timeout = setTimeout(() => {{
-                        callback({{ success: false, error: 'Timeout 120s' }});
-                    }}, 120000);
+            success, img_file, score = self._process_single_prompt(prompt_data, i, len(prompts))
 
-                    VE3.run([{{
-                        sceneId: "{pid}",
-                        prompt: `{self._escape_js_string(prompt)}`
-                    }}]).then(r => {{
-                        clearTimeout(timeout);
-                        callback({{ success: true, result: r }});
-                    }}).catch(e => {{
-                        clearTimeout(timeout);
-                        callback({{ success: false, error: e.message }});
-                    }});
-                """)
-
-                if result and result.get("success"):
-                    # Di chuyen file tu Downloads
-                    img_file, score, needs_regen = self._move_downloaded_images(pid)
-
-                    if img_file:
-                        if needs_regen:
-                            self._log(f"OK - Da tao anh nhung chua dat chuan (score={score:.1f})", "warn")
-                            self.stats["low_quality"] = self.stats.get("low_quality", 0) + 1
-                        else:
-                            self._log(f"OK - Da tao va luu anh (score={score:.1f})", "success")
-                        self.stats["success"] += 1
-                    else:
-                        self._log(f"Khong tim thay file download", "warn")
-                        self.stats["failed"] += 1
-                else:
-                    error = result.get("error", "Unknown") if result else "No response"
-                    self._log(f"Loi: {error}", "error")
-                    self.stats["failed"] += 1
-
-                # Delay giua cac prompt
-                if i < len(prompts) - 1:
-                    time.sleep(2)
-
-            except Exception as e:
-                self._log(f"Exception: {e}", "error")
+            if success:
+                self.stats["success"] += 1
+                if score < 50.0:
+                    self.stats["low_quality"] += 1
+            else:
+                failed_prompts.append((prompt_data, i))
                 self.stats["failed"] += 1
+
+            # Delay giua cac prompt
+            if i < len(prompts) - 1:
+                time.sleep(2)
+
+        # === RETRY FAILED PROMPTS ===
+        if failed_prompts:
+            self._log("\n" + "=" * 60)
+            self._log(f"RETRY {len(failed_prompts)} ANH THAT BAI")
+            self._log("=" * 60)
+
+            retry_success = 0
+            for prompt_data, original_index in failed_prompts:
+                pid = str(prompt_data.get('id', original_index + 1))
+                self._log(f"\nRetry ID: {pid}")
+
+                success, img_file, score = self._process_single_prompt(
+                    prompt_data, original_index, len(prompts)
+                )
+
+                if success:
+                    retry_success += 1
+                    self.stats["success"] += 1
+                    self.stats["failed"] -= 1  # Giam failed vi da thanh cong
+                    if score < 50.0:
+                        self.stats["low_quality"] += 1
+
+                # Delay
+                time.sleep(2)
+
+            self._log(f"\nRetry: {retry_success}/{len(failed_prompts)} thanh cong")
 
         # Summary
         self._log("\n" + "=" * 60)
@@ -856,6 +975,8 @@ class BrowserFlowGenerator:
         self._log(f"Thanh cong: {self.stats['success']}")
         self._log(f"That bai: {self.stats['failed']}")
         self._log(f"Bo qua: {self.stats['skipped']}")
+        if self.stats.get('low_quality', 0) > 0:
+            self._log(f"Chat luong thap: {self.stats['low_quality']}")
 
         return {
             "success": True,
@@ -948,7 +1069,7 @@ class BrowserFlowGenerator:
                 if result and result.get("success"):
                     # Di chuyen file vao nv/
                     pattern = f"{self.project_code}_{char_id}*.png"
-                    files = self._find_downloaded_files(pattern, wait_timeout=10)
+                    files = self._find_downloaded_files(pattern, wait_timeout=120)
 
                     if files:
                         dst_file = self.nv_path / f"{char_id}.png"
