@@ -267,15 +267,12 @@ class GoogleFlowAPI:
             }
             requests_data.append(request_item)
         
-        # Build payload - CAN recaptchaToken va sessionId (theo format moi cua Google)
+        # Build payload - recaptchaToken/sessionId o trong clientContext (theo format cua Google)
         payload = {
             "clientContext": {
-                "sessionId": self.session_id,
-                "projectId": self.project_id,
-                "tool": self.TOOL_NAME
+                "recaptchaToken": self.recaptcha_token,
+                "sessionId": self.session_id
             },
-            "recaptchaToken": self.recaptcha_token,
-            "sessionId": self.session_id,
             "requests": requests_data
         }
 
