@@ -1156,7 +1156,8 @@ class PromptGenerator:
         prompt = prompt_template.format(story_text=story_text[:8000])
 
         try:
-            response = self._generate_content(prompt, temperature=0.5)
+            # Character analysis needs more tokens (many characters with long prompts)
+            response = self._generate_content(prompt, temperature=0.5, max_tokens=16000)
 
             # Parse JSON từ response
             json_data = self._extract_json(response)
