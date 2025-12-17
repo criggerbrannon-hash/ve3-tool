@@ -249,11 +249,12 @@ class GoogleFlowAPI:
                 has_b64 = "rawImageBytes" in inp
                 self._log(f"  [{i}] name={name_preview} type={inp_type} has_base64={has_b64}")
 
-        # Build requests array
+        # Build requests array (theo format moi cua Google Flow)
         requests_data = []
         for _ in range(count):
             request_item = {
                 "clientContext": {
+                    "recaptchaToken": self.recaptcha_token,
                     "sessionId": self.session_id,
                     "projectId": self.project_id,
                     "tool": self.TOOL_NAME
@@ -266,8 +267,15 @@ class GoogleFlowAPI:
             }
             requests_data.append(request_item)
         
-        # Build payload - CHI CAN requests, KHONG can recaptchaToken/sessionId (API da thay doi)
+        # Build payload - CAN recaptchaToken va sessionId (theo format moi cua Google)
         payload = {
+            "clientContext": {
+                "sessionId": self.session_id,
+                "projectId": self.project_id,
+                "tool": self.TOOL_NAME
+            },
+            "recaptchaToken": self.recaptcha_token,
+            "sessionId": self.session_id,
             "requests": requests_data
         }
 

@@ -750,13 +750,11 @@ class SmartEngine:
         is_reference_image = pid.startswith('nv') or pid.startswith('loc')
 
         try:
-            # NOTE: reCAPTCHA khong can nua (API da thay doi)
-            # Chi can Bearer token la du
-
-            # Tao API client - chi can Bearer token va project_id
+            # Tao API client - can Bearer token, project_id va recaptcha_token
             api = GoogleFlowAPI(
                 bearer_token=profile.token,
                 project_id=profile.project_id,
+                recaptcha_token=profile.recaptcha_token,
                 verbose=True
             )
 
