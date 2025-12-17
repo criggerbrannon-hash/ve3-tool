@@ -346,44 +346,59 @@
             return true;
         },
 
-        // Click nut Tao
+        // Click nut Tao / Send
         clickGenerate: async () => {
-            // Tim nut co text "Tao" va icon arrow
-            const buttons = document.querySelectorAll('button');
+            Utils.log('>>> Tim nut gui...', 'info');
 
-            for (const btn of buttons) {
-                const text = btn.textContent || '';
-                // Nut co "Tao" hoac "Create" va co icon
-                if ((text.includes('Tạo') || text.includes('Create') || text.includes('arrow_forward'))
-                    && (btn.querySelector('.google-symbols, .material-icons, svg') || text.includes('arrow'))) {
-                    btn.click();
-                    Utils.log('Đã click nút Tạo', 'success');
-                    return true;
+            // Cach 1: Tim nut co aria-label "Send" hoac "Gửi"
+            let btn = document.querySelector('button[aria-label*="Send"], button[aria-label*="Gửi"]');
+
+            // Cach 2: Tim nut co icon send gan textarea
+            if (!btn) {
+                const buttons = document.querySelectorAll('button');
+                const textarea = document.querySelector('textarea');
+
+                for (const b of buttons) {
+                    // Nut co SVG icon va gan textarea
+                    if (b.querySelector('svg') && textarea) {
+                        const container = textarea.closest('form, div');
+                        if (container && container.contains(b)) {
+                            btn = b;
+                            break;
+                        }
+                    }
                 }
             }
 
-            // Fallback: tim nut submit gan textarea
-            const textarea = document.querySelector('textarea');
-            if (textarea) {
-                const container = textarea.closest('form') || textarea.parentElement?.parentElement?.parentElement;
-                if (container) {
-                    const submitBtn = container.querySelector('button[type="submit"], button:has(svg)');
-                    if (submitBtn) {
-                        submitBtn.click();
-                        Utils.log('Đã click nút submit', 'success');
-                        return true;
+            // Cach 3: Tim nut co text "Tao" hoac icon arrow
+            if (!btn) {
+                const buttons = document.querySelectorAll('button');
+                for (const b of buttons) {
+                    const text = b.textContent || '';
+                    if (text.includes('Tạo') || text.includes('Create') || text.includes('arrow_forward')) {
+                        btn = b;
+                        break;
                     }
                 }
+            }
 
-                // Fallback: Enter
-                textarea.dispatchEvent(new KeyboardEvent('keydown', {
-                    key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true
-                }));
-                Utils.log('Đã nhấn Enter', 'success');
+            if (btn) {
+                btn.click();
+                Utils.log('OK - Da click nut gui', 'success');
                 return true;
             }
 
-            Utils.log('Không tìm thấy cách gửi', 'error');
+            // Fallback: Nhan Enter trong textarea
+            const textarea = document.querySelector('textarea');
+            if (textarea) {
+                textarea.dispatchEvent(new KeyboardEvent('keydown', {
+                    key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true
+                }));
+                Utils.log('Da nhan Enter (fallback)', 'success');
+                return true;
+            }
+
+            Utils.log('FAIL - Khong tim thay nut gui', 'error');
             return false;
         }
     };
