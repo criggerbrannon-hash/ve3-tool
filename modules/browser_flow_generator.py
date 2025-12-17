@@ -176,7 +176,15 @@ class BrowserFlowGenerator:
         raise FileNotFoundError(f"JS script khong tim thay: {script_path}")
 
     def _create_driver(self):
-        """Tao Chrome WebDriver."""
+        """
+        Tao Chrome WebDriver - PARALLEL SAFE.
+        - Moi instance dung port rieng (khong xung dot)
+        - Profile rieng biet
+        - Mac dinh headless (chay an)
+        """
+        import random
+        import tempfile
+
         # Download prefs
         prefs = {
             "download.default_directory": str(self.downloads_dir),
@@ -184,9 +192,8 @@ class BrowserFlowGenerator:
             "download.directory_upgrade": True,
         }
 
-        self._log(f"Profile dir: {self.profile_dir}")
         self._log(f"Headless: {self.headless}")
-        self._log("Su dung Selenium WebDriver")
+        self._log("Su dung Selenium WebDriver (Parallel Safe)")
 
         try:
             options = Options()
@@ -204,34 +211,49 @@ class BrowserFlowGenerator:
                     self._log(f"Chrome: {chrome_path}")
                     break
 
-            options.add_argument(f"--user-data-dir={self.profile_dir}")
+            # PARALLEL SAFE: Dung profile tam thoi de khong xung dot
+            # Moi instance co profile rieng
+            temp_profile = tempfile.mkdtemp(prefix=f"chrome_{self.profile_name}_")
+            self._log(f"Temp profile: {temp_profile}")
+            options.add_argument(f"--user-data-dir={temp_profile}")
 
+            # PARALLEL SAFE: Moi instance dung port rieng
+            debug_port = random.randint(9222, 9999)
+            options.add_argument(f"--remote-debugging-port={debug_port}")
+
+            # Headless mac dinh (chay an, toi uu cho auto)
             if self.headless:
                 options.add_argument("--headless=new")
                 options.add_argument("--disable-gpu")
 
+            # Cac options cho automation
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-dev-shm-usage")
             options.add_argument("--disable-blink-features=AutomationControlled")
-            options.add_experimental_option("excludeSwitches", ["enable-automation"])
-            options.add_experimental_option("useAutomationExtension", False)
+            options.add_argument("--disable-extensions")
+            options.add_argument("--disable-infobars")
             options.add_argument("--window-size=1920,1080")
-            options.add_argument("--start-maximized")
+            options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
+            options.add_experimental_option("useAutomationExtension", False)
             options.add_experimental_option("prefs", prefs)
 
-            self._log("Dang khoi dong Chrome (10-30s)...")
+            self._log(f"Dang khoi dong Chrome (port {debug_port})...")
             driver = webdriver.Chrome(options=options)
 
-            # Hide webdriver flag
+            # An webdriver flag
             driver.execute_script(
                 "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
             )
 
-            self._log("Chrome driver da tao thanh cong!", "success")
+            self._log("Chrome da san sang!", "success")
+
+            # Luu temp_profile de cleanup sau
+            self._temp_profile = temp_profile
+
             return driver
 
         except Exception as e:
-            self._log(f"Loi tao Chrome driver: {e}", "error")
+            self._log(f"Loi khoi dong Chrome: {e}", "error")
             import traceback
             traceback.print_exc()
             raise
@@ -263,7 +285,7 @@ class BrowserFlowGenerator:
             return False
 
     def stop_browser(self) -> None:
-        """Dong trinh duyet."""
+        """Dong trinh duyet va cleanup temp profile."""
         if self.driver:
             self._log("Dong trinh duyet...")
             try:
@@ -272,6 +294,16 @@ class BrowserFlowGenerator:
                 pass
             self.driver = None
             self._js_injected = False
+
+        # Cleanup temp profile
+        if hasattr(self, '_temp_profile') and self._temp_profile:
+            try:
+                import shutil
+                shutil.rmtree(self._temp_profile, ignore_errors=True)
+                self._log(f"Da xoa temp profile")
+            except:
+                pass
+            self._temp_profile = None
 
     def wait_for_login(self, timeout: int = 300) -> bool:
         """

@@ -900,11 +900,11 @@ class SmartEngine:
             return {"success": 0, "failed": len(prompts)}
 
         try:
-            # HIEN THI BROWSER - de xem qua trinh tao anh
+            # HEADLESS MODE - chay an, toi uu cho parallel
             generator = BrowserFlowGenerator(
                 project_path=str(proj_dir),
                 profile_name="main",
-                headless=False,  # Hien thi browser de debug
+                headless=True,  # Mac dinh an, khong xung dot
                 verbose=True
             )
 
