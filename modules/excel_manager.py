@@ -195,18 +195,36 @@ class Scene:
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Scene":
-        """Tạo Scene từ dictionary."""
+        """Tao Scene tu dictionary."""
+        def safe_int(val, default=0):
+            """Convert to int safely, handling time strings like '00:00'."""
+            if val is None or val == "":
+                return default
+            if isinstance(val, int):
+                return val
+            if isinstance(val, float):
+                return int(val)
+            if isinstance(val, str):
+                # Handle time format "HH:MM" or "MM:SS"
+                if ":" in val:
+                    return default  # Skip time strings
+                try:
+                    return int(val)
+                except ValueError:
+                    return default
+            return default
+
         return cls(
-            scene_id=int(data.get("scene_id", 0)),
-            srt_start=int(data.get("srt_start", 0) or 0),
-            srt_end=int(data.get("srt_end", 0) or 0),
-            srt_text=str(data.get("srt_text", "")),
-            img_prompt=str(data.get("img_prompt", "")),
-            video_prompt=str(data.get("video_prompt", "")),
-            img_path=str(data.get("img_path", "")),
-            video_path=str(data.get("video_path", "")),
-            status_img=str(data.get("status_img", "pending")),
-            status_vid=str(data.get("status_vid", "pending")),
+            scene_id=safe_int(data.get("scene_id", 0)),
+            srt_start=safe_int(data.get("srt_start", 0)),
+            srt_end=safe_int(data.get("srt_end", 0)),
+            srt_text=str(data.get("srt_text", "") or ""),
+            img_prompt=str(data.get("img_prompt", "") or ""),
+            video_prompt=str(data.get("video_prompt", "") or ""),
+            img_path=str(data.get("img_path", "") or ""),
+            video_path=str(data.get("video_path", "") or ""),
+            status_img=str(data.get("status_img", "pending") or "pending"),
+            status_vid=str(data.get("status_vid", "pending") or "pending"),
         )
 
 
