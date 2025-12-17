@@ -259,10 +259,8 @@ class GoogleFlowAPI:
             }
             requests_data.append(request_item)
         
-        # Build payload with recaptchaToken (required by Google)
+        # Build payload - CHI CAN requests, KHONG can recaptchaToken/sessionId (API da thay doi)
         payload = {
-            "recaptchaToken": self.recaptcha_token,
-            "sessionId": self.session_id,
             "requests": requests_data
         }
 
@@ -270,11 +268,7 @@ class GoogleFlowAPI:
         url = f"{self.BASE_URL}/v1/projects/{self.project_id}/flowMedia:batchGenerateImages"
 
         self._log(f"POST {url}")
-        if self.recaptcha_token:
-            self._log(f"reCAPTCHA token: {len(self.recaptcha_token)} chars, starts with {self.recaptcha_token[:20]}...")
-        else:
-            self._log("WARNING: No reCAPTCHA token - request may fail with 403")
-        
+
         try:
             response = self.session.post(
                 url,
