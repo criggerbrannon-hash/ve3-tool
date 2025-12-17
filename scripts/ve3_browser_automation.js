@@ -578,9 +578,23 @@
 
         // Setup UI (click New Project + chon Generate Image)
         setup: async () => {
+            Utils.log('=== SETUP UI ===', 'info');
+
+            // 1. Click "Du an moi"
             await UI.clickNewProject();
-            await Utils.sleep(500);
+
+            // 2. Doi 5 giay cho page load (giong token code)
+            Utils.log('Doi 5s cho page load...', 'wait');
+            await Utils.sleep(5000);
+
+            // 3. Click dropdown + chon "Tao hinh anh"
             await UI.selectImageGeneration();
+
+            // 4. Doi 2 giay cho UI san sang
+            Utils.log('Doi 2s cho UI san sang...', 'wait');
+            await Utils.sleep(2000);
+
+            Utils.log('=== SETUP XONG ===', 'success');
         },
 
         // Callbacks
