@@ -303,14 +303,19 @@ class MultiAIClient:
             temperature: Temperature for generation
             max_tokens: Max output tokens (default 16000 for large responses like Director's Shooting Plan)
         """
+        # Thêm instruction để force JSON output
+        json_instruction = "\n\nIMPORTANT: Output ONLY valid JSON. No explanation, no markdown, no text before or after the JSON object. Start with { and end with }."
+        enhanced_prompt = prompt + json_instruction
+
         data = {
             "model": self.ollama_model,
-            "prompt": prompt,
+            "prompt": enhanced_prompt,
             "stream": False,
+            "format": "json",  # Force JSON output format
             "options": {
                 "temperature": temperature,
                 "num_predict": max_tokens,  # Higher for Director's Shooting Plan
-                "num_ctx": 32768,  # Context window - gemma3:27b supports up to 128k
+                "num_ctx": 32768,  # Context window
             }
         }
 
@@ -322,7 +327,25 @@ class MultiAIClient:
 
         if resp.status_code == 200:
             result = resp.json()
-            return result.get("response", "")
+            response_text = result.get("response", "")
+
+            # Clean up response - đảm bảo chỉ có JSON
+            if response_text:
+                # Tìm vị trí bắt đầu { và kết thúc } của JSON
+                start_idx = response_text.find('{')
+                if start_idx > 0:
+                    # Có text trước JSON, loại bỏ
+                    self.logger.debug(f"[Ollama] Removing {start_idx} chars before JSON")
+                    response_text = response_text[start_idx:]
+
+                # Log để debug
+                print(f"[Ollama] Response: {len(response_text)} ky tu")
+                if len(response_text) < 500:
+                    print(f"[Ollama] Full response: {response_text}")
+                else:
+                    print(f"[Ollama] Preview: {response_text[:200]}...")
+
+            return response_text
         else:
             raise requests.RequestException(f"Ollama API error {resp.status_code}: {resp.text[:200]}")
 
