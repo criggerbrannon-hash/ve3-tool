@@ -64,7 +64,6 @@ analyze_story: |
   ## IMPORTANT: ALL names MUST be in ENGLISH (not Vietnamese)!
   ## IMPORTANT: Create MULTIPLE character ages and ALL locations for visual variety!
   ## CRITICAL: Characters MUST come FIRST to avoid truncation issues!
-  ## CRITICAL: Keep portrait_prompt SHORT (under 150 chars) - just key visual features!
 
   {{
     "characters": [
@@ -77,8 +76,8 @@ analyze_story: |
         "is_child": false,
         "timeline": "PRESENT",
         "filename": "nvc.png",
-        "portrait_prompt": "30yo Caucasian man, short brown hair, tired blue eyes, stubble, gray t-shirt. White background, 85mm portrait, 8K.",
-        "character_lock": "30yo Caucasian man, short brown hair, tired blue eyes, stubble, gray t-shirt"
+        "portrait_prompt": "A cinematic portrait, straight-on medium close-up shot on 85mm lens. Subject is a 30-year-old Caucasian man with short brown hair, tired blue eyes, light stubble, fair skin showing stress and worry. Looking directly at camera with neutral expression. Bright studio lighting, fully illuminated face. Pure white studio background. Wearing simple gray t-shirt. 8K, sharp focus, photorealistic.",
+        "character_lock": "30-year-old Caucasian man, short brown hair, tired blue eyes, light stubble, stressed expression, wearing simple gray t-shirt"
       }},
       {{
         "id": "nvc_young",
@@ -89,8 +88,8 @@ analyze_story: |
         "is_child": false,
         "timeline": "ADULT_FLASHBACK",
         "filename": "nvc_young.png",
-        "portrait_prompt": "25yo Caucasian man, short brown hair, bright blue eyes, clean shaven, tan skin, dusty work shirt. White background, 85mm, 8K.",
-        "character_lock": "25yo Caucasian man, short brown hair, bright blue eyes, clean shaven, dusty work shirt"
+        "portrait_prompt": "A cinematic portrait, straight-on medium close-up shot on 85mm lens. Subject is a 25-year-old Caucasian man with short brown hair, bright blue eyes, clean shaven, healthy tan skin from outdoor work. Looking directly at camera with neutral expression. Bright studio lighting, fully illuminated face. Pure white studio background. Wearing dusty work shirt, construction worker appearance. 8K, sharp focus, photorealistic.",
+        "character_lock": "25-year-old Caucasian man, short brown hair, bright blue eyes, clean shaven, healthy tan, wearing dusty work shirt"
       }},
       {{
         "id": "nvc1",
@@ -102,7 +101,7 @@ analyze_story: |
         "timeline": "CHILDHOOD_FLASHBACK",
         "filename": "NONE",
         "portrait_prompt": "DO_NOT_GENERATE",
-        "character_lock": "8yo boy, messy brown hair, blue eyes, freckles, faded t-shirt"
+        "character_lock": "8-year-old Caucasian boy, messy brown hair, innocent blue eyes, freckles, wearing old faded t-shirt and worn jeans"
       }},
       {{
         "id": "nv1",
@@ -113,8 +112,8 @@ analyze_story: |
         "is_child": false,
         "timeline": "PRESENT",
         "filename": "nv1.png",
-        "portrait_prompt": "55yo Caucasian woman, graying blonde hair ponytail, tired hazel eyes, wrinkles, old cardigan. White background, 85mm, 8K.",
-        "character_lock": "55yo Caucasian woman, graying blonde hair ponytail, tired hazel eyes, wrinkles, old cardigan"
+        "portrait_prompt": "A cinematic portrait, straight-on medium close-up shot on 85mm lens. Subject is a 55-year-old Caucasian woman with graying blonde hair in messy ponytail, tired hazel eyes, deep wrinkles, worn weathered face. Looking directly at camera with neutral expression. Bright studio lighting. Pure white studio background. Wearing old cardigan. 8K, sharp focus, photorealistic.",
+        "character_lock": "55-year-old Caucasian woman, graying blonde hair in messy ponytail, tired hazel eyes, deep wrinkles, weathered face, wearing old cardigan"
       }},
       {{
         "id": "nv1_young",
@@ -125,8 +124,8 @@ analyze_story: |
         "is_child": false,
         "timeline": "CHILDHOOD_FLASHBACK",
         "filename": "nv1_young.png",
-        "portrait_prompt": "32yo Caucasian woman, blonde ponytail, warm hazel eyes, tired but caring face, blue work uniform. White background, 85mm, 8K.",
-        "character_lock": "32yo Caucasian woman, blonde ponytail, warm hazel eyes, tired face, blue work uniform"
+        "portrait_prompt": "A cinematic portrait, straight-on medium close-up shot on 85mm lens. Subject is a 32-year-old Caucasian woman with blonde hair in tired ponytail, warm hazel eyes with dark circles, young but exhausted face, slight smile. Looking directly at camera with neutral expression. Bright studio lighting. Pure white studio background. Wearing faded blue work uniform. 8K, sharp focus, photorealistic.",
+        "character_lock": "32-year-old Caucasian woman, blonde hair in ponytail, warm hazel eyes with dark circles, tired but caring face, wearing faded blue work uniform"
       }},
       {{
         "id": "nv2",
@@ -137,8 +136,8 @@ analyze_story: |
         "is_child": false,
         "timeline": "CHILDHOOD_FLASHBACK",
         "filename": "nv2.png",
-        "portrait_prompt": "30yo Caucasian man, dark brown hair, distant blue eyes, beard, cold expression, plain jacket. White background, 85mm, 8K.",
-        "character_lock": "30yo Caucasian man, dark brown hair, distant blue eyes, beard, cold expression, plain jacket"
+        "portrait_prompt": "A cinematic portrait, straight-on medium close-up shot on 85mm lens. Subject is a 30-year-old Caucasian man with dark brown hair, distant blue eyes, slight beard, cold detached expression. Looking directly at camera with neutral expression. Bright studio lighting. Pure white studio background. Wearing plain jacket. 8K, sharp focus, photorealistic.",
+        "character_lock": "30-year-old Caucasian man, dark brown hair, distant blue eyes, slight beard, cold expression, wearing plain jacket"
       }}
     ],
 
