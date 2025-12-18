@@ -528,29 +528,49 @@ class BrowserFlowGenerator:
         if not reference_files or not self.driver:
             return True
 
+        self._log(f"[UPLOAD] Input reference_files: {reference_files}", "info")
+        self._log(f"[UPLOAD] nv_path: {self.nv_path}", "info")
+
         # Filter out children under 15
-        reference_files = self._filter_children_from_refs(reference_files)
-        if not reference_files:
+        filtered_refs = self._filter_children_from_refs(reference_files)
+        if not filtered_refs:
             self._log("[UPLOAD] Khong con anh nao sau khi filter tre em", "info")
             return True
 
+        self._log(f"[UPLOAD] After filter children: {filtered_refs}", "info")
+
         images_to_upload = []
 
-        for ref_file in reference_files:
-            # Xac dinh duong dan file
-            filename = ref_file if ref_file.endswith('.png') else f"{ref_file}.png"
-            ref_id = filename.replace('.png', '').replace('.jpg', '')
+        for ref_file in filtered_refs:
+            # Xac dinh duong dan file - ref_file co the la "nvc.png" hoac "nvc"
+            ref_id = ref_file.replace('.png', '').replace('.jpg', '').replace('.jpeg', '').replace('.webp', '')
 
-            # Tim file trong project/nv/
-            file_path = self.nv_path / filename
-            if not file_path.exists():
-                # Thu tim khong co extension
-                file_path = self.nv_path / ref_id
-                if file_path.exists():
-                    filename = ref_id
-                else:
-                    self._log(f"[UPLOAD] Khong tim thay file: {filename}", "warn")
-                    continue
+            # Tim file voi nhieu extension
+            file_path = None
+            filename = None
+
+            # Thu cac extension khac nhau
+            extensions = ['.png', '.jpg', '.jpeg', '.webp', '']
+            search_dirs = [self.nv_path, self.project_path / "img"]
+
+            for search_dir in search_dirs:
+                if file_path:
+                    break
+                for ext in extensions:
+                    test_path = search_dir / f"{ref_id}{ext}"
+                    if test_path.exists():
+                        file_path = test_path
+                        filename = f"{ref_id}{ext}" if ext else ref_id
+                        self._log(f"[UPLOAD] Found: {test_path}", "info")
+                        break
+
+            if not file_path:
+                self._log(f"[UPLOAD] Khong tim thay file: {ref_id} (searched in nv/ and img/)", "warn")
+                # List available files in nv/ for debugging
+                if self.nv_path.exists():
+                    available = list(self.nv_path.glob("*.*"))
+                    self._log(f"[UPLOAD] Files in nv/: {[f.name for f in available[:10]]}", "info")
+                continue
 
             # Doc file va convert sang base64
             try:
@@ -1568,6 +1588,23 @@ class BrowserFlowGenerator:
         }
 
         try:
+            # AUTO-UPDATE: Them filename annotations vao prompts (neu chua co)
+            # Giup Flow match uploaded reference images voi prompt
+            if scenes and self.excel_path.exists():
+                self._log("[AUTO] Kiem tra va cap nhat filename annotations trong prompts...", "info")
+                try:
+                    from modules.prompts_generator import PromptsGenerator
+                    pg = PromptsGenerator()
+                    updated = pg.update_excel_prompts_with_annotations(str(self.excel_path))
+                    if updated:
+                        self._log("[AUTO] Da cap nhat prompts voi filename annotations", "success")
+                    else:
+                        self._log("[AUTO] Khong can cap nhat annotations (da co san hoac khong co ref_files)", "info")
+                except ImportError:
+                    self._log("[AUTO] Khong the import PromptsGenerator, bo qua auto-update", "warn")
+                except Exception as e:
+                    self._log(f"[AUTO] Loi khi cap nhat annotations: {e}", "warn")
+
             if characters:
                 results["characters"] = self.generate_character_images(overwrite=overwrite)
 

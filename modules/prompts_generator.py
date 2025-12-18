@@ -692,6 +692,7 @@ class PromptGenerator:
             return img_prompt
 
         result = img_prompt
+        annotations_added = []
 
         # Build lookup maps
         char_map = {}  # id -> character_lock
@@ -707,11 +708,16 @@ class PromptGenerator:
 
         # Add annotations for each reference file
         for ref_file in reference_files:
-            ref_id = ref_file.replace('.png', '').replace('.jpg', '')
+            # Ensure filename has extension
+            if not any(ref_file.endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.webp']):
+                ref_file = f"{ref_file}.png"
+
+            ref_id = ref_file.replace('.png', '').replace('.jpg', '').replace('.jpeg', '').replace('.webp', '')
             annotation = f"({ref_file})"
 
             # Check if annotation already exists
             if annotation in result:
+                annotations_added.append(ref_file)
                 continue
 
             # Try to find where to insert annotation
@@ -721,12 +727,13 @@ class PromptGenerator:
             if ref_id in char_map and char_map[ref_id]:
                 desc = char_map[ref_id]
                 # Try to find description in prompt and add annotation after
-                if desc[:30] in result:  # Match first 30 chars
+                match_len = min(30, len(desc))
+                if match_len > 5 and desc[:match_len] in result:
                     # Find end of description (next comma, period, or clause)
-                    idx = result.find(desc[:30])
+                    idx = result.find(desc[:match_len])
                     if idx >= 0:
                         # Find the end of this character description
-                        end_idx = idx + len(desc[:30])
+                        end_idx = idx + match_len
                         for end_char in [',', '.', ' in ', ' at ', ' with ', ' and ']:
                             pos = result.find(end_char, end_idx)
                             if pos > 0 and pos < end_idx + 100:
@@ -735,13 +742,15 @@ class PromptGenerator:
                         # Insert annotation
                         result = result[:end_idx] + f" {annotation}" + result[end_idx:]
                         inserted = True
+                        annotations_added.append(ref_file)
 
             if not inserted and ref_id in loc_map and loc_map[ref_id]:
                 desc = loc_map[ref_id]
-                if desc[:20] in result:
-                    idx = result.find(desc[:20])
+                match_len = min(20, len(desc))
+                if match_len > 5 and desc[:match_len] in result:
+                    idx = result.find(desc[:match_len])
                     if idx >= 0:
-                        end_idx = idx + len(desc[:20])
+                        end_idx = idx + match_len
                         for end_char in [',', '.', ' with ', ' and ']:
                             pos = result.find(end_char, end_idx)
                             if pos > 0 and pos < end_idx + 80:
@@ -749,12 +758,32 @@ class PromptGenerator:
                                 break
                         result = result[:end_idx] + f" {annotation}" + result[end_idx:]
                         inserted = True
+                        annotations_added.append(ref_file)
 
-            # Method 2: If not inserted, append at end
+            # Method 2: If not inserted, will be added at the end as consolidated annotation
             if not inserted:
-                # Add to end if not found
-                if not result.endswith(annotation):
-                    result = result.rstrip('.') + f" {annotation}."
+                annotations_added.append(ref_file)
+
+        # Method 3: Add consolidated reference annotation at the end
+        # This ensures ALL reference files are mentioned even if not inserted inline
+        missing_annotations = [f for f in reference_files if f"({f}" not in result and f not in [a for a in annotations_added if f"({a})" in result]]
+
+        # Ensure all refs have .png extension for checking
+        all_refs_normalized = []
+        for ref in reference_files:
+            if not any(ref.endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.webp']):
+                ref = f"{ref}.png"
+            all_refs_normalized.append(ref)
+
+        # Check which refs are NOT yet in the result
+        refs_not_in_result = [ref for ref in all_refs_normalized if f"({ref})" not in result]
+
+        if refs_not_in_result:
+            # Add as consolidated annotation at end
+            refs_str = ", ".join(refs_not_in_result)
+            # Clean up ending
+            result = result.rstrip('. ')
+            result = f"{result} (reference: {refs_str})."
 
         return result
 
