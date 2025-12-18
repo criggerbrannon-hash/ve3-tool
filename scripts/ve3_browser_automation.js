@@ -302,9 +302,15 @@
                                     const mediaItem = data.media[i];
                                     const img = mediaItem?.image?.generatedImage;
 
+                                    // DEBUG: Log mediaItem structure
+                                    Utils.log(`[DEBUG] mediaItem keys: ${Object.keys(mediaItem || {}).join(', ')}`, 'info');
+
                                     // QUAN TRONG: Lay media_name de reference sau!
                                     const mediaName = mediaItem?.name || '';
                                     const workflowId = mediaItem?.workflowId || '';
+
+                                    // DEBUG: Log mediaName
+                                    Utils.log(`[DEBUG] mediaName = "${mediaName}", workflowId = "${workflowId}"`, 'info');
 
                                     if (img && img.fifeUrl) {
                                         const filename = Utils.generateFilename(i + 1);
@@ -543,11 +549,17 @@
 
             // Lookup media_names cho references
             const referenceNames = [];
+
+            // DEBUG: Log STATE.mediaNames
+            Utils.log(`[DEBUG] STATE.mediaNames keys: ${Object.keys(STATE.mediaNames).join(', ') || '(empty)'}`, 'info');
+
             if (referenceFiles && referenceFiles.length > 0) {
+                Utils.log(`[DEBUG] referenceFiles: ${JSON.stringify(referenceFiles)}`, 'info');
                 for (const refFile of referenceFiles) {
                     // refFile co the la "nvc.png" hoac "nvc"
                     const refId = refFile.replace('.png', '').replace('.jpg', '');
                     const mediaName = STATE.mediaNames[refId];
+                    Utils.log(`[DEBUG] Lookup: refId="${refId}" -> mediaName="${mediaName || 'NOT FOUND'}"`, 'info');
                     if (mediaName) {
                         referenceNames.push(mediaName);
                         Utils.log(`  Reference: ${refId} → ${mediaName.slice(0, 40)}...`, 'info');
@@ -555,6 +567,8 @@
                         Utils.log(`  Reference: ${refId} → (chua co media_name, skip)`, 'warn');
                     }
                 }
+            } else {
+                Utils.log(`[DEBUG] No referenceFiles provided`, 'info');
             }
 
             // =====================================================================
