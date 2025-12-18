@@ -600,47 +600,42 @@
             }
 
             // =====================================================================
-            // Build JSON prompt cho TEXTAREA (Flow UI tu dong xu ly phan con lai)
-            // LUON dung JSON format voi seed de ket qua nhat quan
-            // Chi can: prompt, seed, imageInputs (neu co)
-            // Flow UI se tu lay: projectId, sessionId, imageModel, aspectRatio tu context
+            // Build JSON prompt - QUAN TRONG: Dung seed tu reference de nhat quan!
+            // Format: {prompt, seed, imageInputs}
             // =====================================================================
             let textToSend;
-            const seed = API.generateSeed();
 
             if (referenceNames.length > 0) {
-                // CO REFERENCES: JSON voi imageInputs va refMapping
-                // Tao ghi chu reference de them vao prompt (de doc va debug)
-                // Format: [REF: nvc=seed:12345,name:AF1QipN... | nv1=seed:67890,name:AF1QipO...]
-                const refNotes = Object.entries(refMapping).map(([id, info]) => {
-                    const seedStr = info.seed ? `seed:${info.seed}` : 'seed:N/A';
-                    const nameStr = info.mediaName ? `name:${info.mediaName.slice(0,20)}` : 'name:N/A';
-                    return `${id}=${seedStr},${nameStr}`;
-                }).join(' | ');
-
-                // Them ghi chu vao cuoi prompt
-                const promptWithRefs = `${prompt}\n[REF: ${refNotes}]`;
+                // CO REFERENCES: Dung seed tu reference dau tien de nhat quan nhan vat
+                // Lay seed tu reference dau tien (thuong la nhan vat chinh)
+                const firstRefId = Object.keys(refMapping)[0];
+                const firstRefInfo = refMapping[firstRefId];
+                const seed = firstRefInfo?.seed || API.generateSeed();
 
                 const jsonPayload = {
-                    prompt: promptWithRefs,
-                    seed: seed,
+                    prompt: prompt,  // Prompt sach, khong them annotation
+                    seed: seed,      // DUNG SEED TU REFERENCE!
                     imageInputs: referenceNames.map(name => ({
                         name: name,
                         imageInputType: "IMAGE_INPUT_TYPE_REFERENCE"
-                    })),
-                    refMapping: refMapping  // {nvc: {mediaName, seed}, nv1: {mediaName, seed}}
+                    }))
                 };
                 textToSend = JSON.stringify(jsonPayload);
-                Utils.log(`[JSON MODE] Gui JSON voi ${referenceNames.length} references, seed=${seed}`, 'info');
-                Utils.log(`[JSON MODE] refNotes: ${refNotes}`, 'info');
+
+                // Log chi tiet
+                Utils.log(`[JSON MODE] ${referenceNames.length} references, seed=${seed} (from ${firstRefId})`, 'info');
+                Object.entries(refMapping).forEach(([id, info]) => {
+                    Utils.log(`  - ${id}: seed=${info.seed}, name=${info.mediaName?.slice(0,30)}...`, 'info');
+                });
             } else {
-                // KHONG CO REFERENCES: Van dung JSON de co seed
+                // KHONG CO REFERENCES: Tao seed moi
+                const seed = API.generateSeed();
                 const jsonPayload = {
                     prompt: prompt,
                     seed: seed
                 };
                 textToSend = JSON.stringify(jsonPayload);
-                Utils.log(`[JSON MODE] Gui JSON khong co references, seed=${seed}`, 'info');
+                Utils.log(`[JSON MODE] No references, new seed=${seed}`, 'info');
             }
             Utils.log(`JSON: ${textToSend.slice(0, 200)}...`, 'info');
 
