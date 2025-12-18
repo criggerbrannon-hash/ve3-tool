@@ -170,8 +170,8 @@ class Scene:
     def __init__(
         self,
         scene_id: int,
-        srt_start: int = 0,
-        srt_end: int = 0,
+        srt_start: str = "",            # Timestamp bắt đầu từ SRT (HH:MM:SS,mmm)
+        srt_end: str = "",              # Timestamp kết thúc từ SRT (HH:MM:SS,mmm)
         srt_text: str = "",
         img_prompt: str = "",
         prompt_json: str = "",          # JSON prompt đầy đủ (seed, imageInputs)
@@ -180,7 +180,7 @@ class Scene:
         video_path: str = "",
         status_img: str = "pending",
         status_vid: str = "pending",
-        # Time tracking
+        # Time tracking (alias of srt_start/srt_end for compatibility)
         start_time: str = "",           # Thời gian bắt đầu (HH:MM:SS,mmm)
         end_time: str = "",             # Thời gian kết thúc (HH:MM:SS,mmm)
         duration: float = 0.0,          # Độ dài (giây)
@@ -190,8 +190,8 @@ class Scene:
         reference_files: str = ""       # JSON list of reference files
     ):
         self.scene_id = scene_id
-        self.srt_start = srt_start
-        self.srt_end = srt_end
+        self.srt_start = str(srt_start) if srt_start else ""
+        self.srt_end = str(srt_end) if srt_end else ""
         self.srt_text = srt_text
         self.img_prompt = img_prompt
         self.prompt_json = prompt_json
@@ -263,8 +263,8 @@ class Scene:
 
         return cls(
             scene_id=safe_int(data.get("scene_id", 0)),
-            srt_start=safe_int(data.get("srt_start", 0)),
-            srt_end=safe_int(data.get("srt_end", 0)),
+            srt_start=str(data.get("srt_start", "") or ""),  # Timestamp string
+            srt_end=str(data.get("srt_end", "") or ""),      # Timestamp string
             srt_text=str(data.get("srt_text", "") or ""),
             img_prompt=str(data.get("img_prompt", "") or ""),
             prompt_json=str(data.get("prompt_json", "") or ""),
