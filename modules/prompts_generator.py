@@ -2131,15 +2131,19 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
         characters = characters or []
         locations = locations or []
 
-        # Build character description map
+        # Build character description map - THEM FILENAME ANNOTATION de Flow match anh reference
         char_desc = {}
         for c in characters:
-            char_desc[c.id] = c.character_lock or c.vietnamese_prompt or f"{c.name}"
+            desc = c.character_lock or c.vietnamese_prompt or f"{c.name}"
+            # Them annotation filename: "A 30-year-old man (nvc.png)"
+            char_desc[c.id] = f"{desc} ({c.id}.png)"
 
-        # Build location description map
+        # Build location description map - THEM FILENAME ANNOTATION
         loc_desc = {}
         for loc in locations:
-            loc_desc[loc.id] = loc.location_lock or loc.name
+            desc = loc.location_lock or loc.name
+            # Them annotation filename: "Modern apartment living room (loc_apartment.png)"
+            loc_desc[loc.id] = f"{desc} ({loc.id}.png)"
 
         style_suffix = global_style or "Cinematic, 4K photorealistic, natural lighting"
 

@@ -786,20 +786,12 @@
             // =====================================================================
             // Build JSON prompt - Them reference annotation vao prompt
             // Reference images da duoc upload truoc qua VE3.uploadReferences()
+            // Prompt tu Excel da co filename annotation: "James (nv1.png) walking..."
             // =====================================================================
             let textToSend;
-            let finalPrompt = prompt;
-
-            // Them annotation reference vao cuoi prompt neu co
-            if (referenceFiles && referenceFiles.length > 0) {
-                // Format: (reference: nvc.png, nv1.png, loc_apartment.png)
-                const refAnnotation = ` (reference: ${referenceFiles.join(', ')})`;
-                finalPrompt = prompt + refAnnotation;
-                Utils.log(`[REF] Added annotation: ${refAnnotation}`, 'info');
-            }
 
             const jsonPayload = {
-                prompt: finalPrompt
+                prompt: prompt  // Prompt da co annotation tu Python
             };
             textToSend = JSON.stringify(jsonPayload);
 
