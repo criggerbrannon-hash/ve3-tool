@@ -558,43 +558,30 @@
             }
 
             // =====================================================================
-            // Build JSON prompt - GIONG HET API FORMAT
+            // Build JSON prompt cho TEXTAREA (Flow UI tu dong xu ly phan con lai)
+            // Chi can: prompt, seed, imageInputs
+            // Flow UI se tu lay: projectId, sessionId, imageModel, aspectRatio tu context
             // =====================================================================
             let textToSend;
 
-            // LUON GUI JSON FORMAT (giong API) de dam bao chat luong
-            const projectId = API.getProjectId();
-            const sessionId = API.generateSessionId();
-
-            // Build imageInputs voi day du fields (giong API)
-            const imageInputs = referenceNames.map(name => ({
-                name: name,
-                imageInputType: "IMAGE_INPUT_TYPE_REFERENCE"  // QUAN TRONG!
-            }));
-
-            const jsonPayload = {
-                requests: [{
-                    clientContext: {
-                        sessionId: sessionId,
-                        projectId: projectId || "default",
-                        tool: CONFIG.tool
-                    },
-                    seed: API.generateSeed(),
-                    imageModelName: CONFIG.imageModel,
-                    imageAspectRatio: CONFIG.aspectRatio,
-                    prompt: prompt,
-                    imageInputs: imageInputs
-                }]
-            };
-
-            textToSend = JSON.stringify(jsonPayload);
-
             if (referenceNames.length > 0) {
+                // CO REFERENCES: Gui JSON format voi imageInputs
+                const jsonPayload = {
+                    prompt: prompt,
+                    seed: API.generateSeed(),
+                    imageInputs: referenceNames.map(name => ({
+                        name: name,
+                        imageInputType: "IMAGE_INPUT_TYPE_REFERENCE"
+                    }))
+                };
+                textToSend = JSON.stringify(jsonPayload);
                 Utils.log(`[JSON MODE] Gui JSON voi ${referenceNames.length} references`, 'info');
+                Utils.log(`JSON: ${textToSend.slice(0, 150)}...`, 'info');
             } else {
-                Utils.log('[JSON MODE] Gui JSON (khong co references)', 'info');
+                // KHONG CO REFERENCES: Gui plain text prompt (don gian hon)
+                textToSend = prompt;
+                Utils.log('[TEXT MODE] Gui plain text prompt', 'info');
             }
-            Utils.log(`JSON: ${textToSend.slice(0, 150)}...`, 'info');
 
             // 1. Dien prompt (JSON hoac text)
             if (!UI.setPrompt(textToSend)) {
