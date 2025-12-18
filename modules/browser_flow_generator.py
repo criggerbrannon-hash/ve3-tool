@@ -125,6 +125,7 @@ class BrowserFlowGenerator:
         # Driver
         self.driver = None
         self._js_injected = False
+        self._project_url = ""  # Luu project URL de giu nguyen phien lam viec
 
         # Logger
         self.logger = get_logger("browser_flow")
@@ -381,6 +382,10 @@ class BrowserFlowGenerator:
 
             if setup_result and setup_result.get('success'):
                 self._log("Setup UI thanh cong!", "success")
+                # Luu project URL de giu nguyen phien
+                self._project_url = self._get_project_url_from_js()
+                if self._project_url:
+                    self._log(f"Project URL: {self._project_url}", "info")
             else:
                 error = setup_result.get('error', 'Unknown') if setup_result else 'No response'
                 self._log(f"Setup UI that bai: {error}", "warn")
@@ -694,6 +699,14 @@ class BrowserFlowGenerator:
         if not self._inject_js():
             return {"success": False, "error": "Khong inject duoc JS"}
 
+        # IMPORTANT: Load media_names tu cache de reference characters
+        cached_media_names = self._load_media_cache()
+        if cached_media_names:
+            self._load_media_names_to_js(cached_media_names)
+            self._log(f"Loaded {len(cached_media_names)} media references (nv/loc)")
+        else:
+            self._log("Khong co media cache - scenes se khong co reference", "warn")
+
         # Chuan bi prompts cho VE3.run()
         # QUAN TRONG: Dung numeric ID (1, 2, 3) de khop voi SmartEngine video composer
         prompts_data = []
@@ -872,11 +885,15 @@ class BrowserFlowGenerator:
     def _restart_browser_and_setup(self) -> bool:
         """
         Khoi dong lai browser va setup (dung khi setup that bai).
+        Neu da co project URL, navigate ve do thay vi tao project moi.
 
         Returns:
             True neu thanh cong
         """
         self._log("Khoi dong lai browser...", "warn")
+
+        # Luu project URL truoc khi dong browser
+        saved_project_url = self._project_url
 
         # Dong browser cu
         self.stop_browser()
@@ -893,11 +910,53 @@ class BrowserFlowGenerator:
             self.stop_browser()
             return False
 
-        # Inject JS
-        if not self._inject_js():
-            return False
+        # Neu co project URL cu, navigate ve do thay vi setup moi
+        if saved_project_url and '/project/' in saved_project_url:
+            self._log(f"Navigate ve project cu: {saved_project_url}", "info")
+            self.driver.get(saved_project_url)
+            time.sleep(5)  # Cho page load
+
+            # Inject JS nhung KHONG goi VE3.setup()
+            if not self._inject_js_without_setup():
+                return False
+
+            # Restore project URL
+            self._project_url = saved_project_url
+        else:
+            # Inject JS va setup moi
+            if not self._inject_js():
+                return False
 
         return True
+
+    def _inject_js_without_setup(self) -> bool:
+        """Inject JS ma khong goi VE3.setup() - dung khi navigate ve project cu."""
+        if self._js_injected:
+            return True
+
+        try:
+            self._log("Inject JavaScript (khong setup)...")
+            js_code = self._get_js_script()
+            self.driver.execute_script(js_code)
+
+            # Init VE3 voi project name
+            self.driver.execute_script(f'VE3.init("{self.project_code}")')
+
+            # Danh dau da setup (vi da co project)
+            self.driver.execute_script("VE3.markSetupDone();")
+
+            # Load media_names tu cache
+            cached_media_names = self._load_media_cache()
+            if cached_media_names:
+                self._load_media_names_to_js(cached_media_names)
+
+            self._js_injected = True
+            self._log("Da san sang tao anh (project cu)!", "success")
+            return True
+
+        except Exception as e:
+            self._log(f"Loi inject JS: {e}", "error")
+            return False
 
     def generate_from_prompts(
         self,
@@ -1131,6 +1190,11 @@ class BrowserFlowGenerator:
         if not self._inject_js():
             return {"success": False, "error": "Khong inject duoc JS"}
 
+        # Load media cache de co the reference characters da tao truoc do
+        cached_media_names = self._load_media_cache()
+        if cached_media_names:
+            self._load_media_names_to_js(cached_media_names)
+
         success_count = 0
         failed_count = 0
 
@@ -1182,6 +1246,16 @@ class BrowserFlowGenerator:
                 failed_count += 1
 
         self._log(f"\nNhan vat: {success_count} thanh cong, {failed_count} that bai")
+
+        # IMPORTANT: Luu mediaNames vao cache sau khi tao xong characters
+        # De khi tao scenes co the reference den characters
+        try:
+            media_names = self._get_media_names_from_js()
+            if media_names:
+                self._save_media_cache(media_names)
+                self._log(f"Da luu {len(media_names)} media_names cho reference", "success")
+        except Exception as e:
+            self._log(f"Loi luu media cache: {e}", "warn")
 
         return {
             "success": True,

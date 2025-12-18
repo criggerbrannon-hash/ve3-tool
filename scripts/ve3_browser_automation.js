@@ -810,6 +810,13 @@
             Utils.log(`Loaded ${Object.keys(mediaNames).length} media_names from cache`, 'success');
         },
 
+        // NEW: Danh dau da setup xong (dung khi navigate ve project cu)
+        markSetupDone: () => {
+            STATE.isSetupDone = true;
+            STATE.projectUrl = window.location.href;
+            Utils.log('Marked setup as done (existing project)', 'success');
+        },
+
         // Help
         help: () => {
             console.log(`
