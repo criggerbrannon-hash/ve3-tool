@@ -483,18 +483,36 @@ class BrowserFlowGenerator:
         """
         Check if a character ID represents a child (under 15 years old).
         Children cannot use reference images due to API policy.
+
+        Child patterns:
+        - nvc1 (exactly) = narrator as child
+        - nv1c (exactly) = character 1 as child
+        - *_child, *-child = any character with child suffix
+        - *child* (but not just containing 'child' in middle of word)
         """
         if not char_id:
             return False
 
-        char_id_clean = char_id.replace('.png', '').replace('.jpg', '').lower()
+        char_id_clean = char_id.replace('.png', '').replace('.jpg', '').replace('.jpeg', '').replace('.webp', '').lower().strip()
 
-        # Child character patterns
-        child_patterns = ['nvc1', 'nv1c', 'child', '_child', '-child']
+        # Exact child character IDs (narrator/character as child)
+        exact_child_ids = ['nvc1', 'nv1c', 'nvc_child', 'nv1_child', 'child']
 
-        for pattern in child_patterns:
-            if pattern in char_id_clean:
-                return True
+        if char_id_clean in exact_child_ids:
+            self._log(f"[CHILD] {char_id} matched exact child ID: {char_id_clean}", "info")
+            return True
+
+        # Suffix patterns for child characters
+        if char_id_clean.endswith('_child') or char_id_clean.endswith('-child'):
+            self._log(f"[CHILD] {char_id} matched child suffix pattern", "info")
+            return True
+
+        # Pattern: nvc followed by single digit 1 (nvc1 but not nvc10, nvc11, etc.)
+        # This is for narrator-child-version-1
+        import re
+        if re.match(r'^nvc1$', char_id_clean):  # Exactly nvc1
+            self._log(f"[CHILD] {char_id} matched nvc1 pattern", "info")
+            return True
 
         return False
 
@@ -902,6 +920,15 @@ class BrowserFlowGenerator:
                 self._log(f"References: {reference_files}")
 
             try:
+                # QUAN TRONG: Upload reference images TRUOC KHI tao anh
+                if reference_files:
+                    self._log(f"[UPLOAD] Dang upload {len(reference_files)} anh reference...")
+                    upload_success = self._upload_reference_images(reference_files)
+                    if upload_success:
+                        self._log(f"[UPLOAD] Upload thanh cong!", "success")
+                    else:
+                        self._log("[UPLOAD] Upload that bai, tiep tuc khong co reference", "warn")
+
                 # Goi VE3.run() cho 1 prompt (voi reference_files)
                 ref_files_json = json.dumps(reference_files)
                 result = self.driver.execute_async_script(f"""
