@@ -892,11 +892,27 @@ class BrowserFlowGenerator:
 
         self._log(f"\nBat dau tao {len(prompts_data)} anh...")
 
-        # DEBUG: Hien thi scene dau tien de kiem tra data
-        if scenes_to_process:
-            s = scenes_to_process[0]
-            self._log(f"[DEBUG] Scene dau tien: id={s.scene_id}, srt_start={s.srt_start}")
-            self._log(f"[DEBUG] img_prompt = '{s.img_prompt[:100] if s.img_prompt else 'EMPTY'}'")
+        # DEBUG: List files trong thu muc nv/
+        self._log("\n" + "=" * 60)
+        self._log("[DEBUG] FILES TRONG THU MUC NV/:")
+        self._log(f"  nv_path: {self.nv_path}")
+        if self.nv_path.exists():
+            nv_files = list(self.nv_path.glob("*.*"))
+            self._log(f"  Found {len(nv_files)} files:")
+            for f in nv_files:
+                self._log(f"    - {f.name} ({f.stat().st_size / 1024:.1f} KB)")
+        else:
+            self._log(f"  [ERROR] Thu muc nv/ KHONG TON TAI!")
+        self._log("=" * 60)
+
+        # DEBUG: Hien thi cac scene de kiem tra reference_files
+        self._log("\n" + "=" * 60)
+        self._log("[DEBUG] KIEM TRA REFERENCE_FILES TU EXCEL:")
+        self._log("=" * 60)
+        for idx, s in enumerate(scenes_to_process[:5]):  # Hien thi 5 scene dau
+            ref_raw = getattr(s, 'reference_files', None)
+            self._log(f"  Scene {s.scene_id}: reference_files = '{ref_raw}'")
+        self._log("=" * 60 + "\n")
 
         # Goi VE3.run() - xu ly tung prompt mot de cap nhat Excel theo thoi gian thuc
         for i, item in enumerate(prompts_data):
@@ -906,18 +922,28 @@ class BrowserFlowGenerator:
 
             # Lay reference_files tu scene (JSON string hoac list)
             reference_files = []
-            if hasattr(scene, 'reference_files') and scene.reference_files:
-                ref_str = scene.reference_files
+            ref_str = getattr(scene, 'reference_files', '') or ''
+
+            self._log(f"\n[DEBUG] Scene {scene_id} raw reference_files: '{ref_str}' (type={type(ref_str).__name__})")
+
+            if ref_str:
                 try:
-                    parsed = json.loads(ref_str) if isinstance(ref_str, str) else ref_str
-                    reference_files = parsed if isinstance(parsed, list) else [parsed]
-                except:
+                    # Thu parse JSON truoc
+                    if ref_str.startswith('['):
+                        parsed = json.loads(ref_str)
+                        reference_files = parsed if isinstance(parsed, list) else [parsed]
+                        self._log(f"[DEBUG] Parsed JSON: {reference_files}")
+                    else:
+                        # Khong phai JSON, split by comma
+                        reference_files = [f.strip() for f in str(ref_str).split(',') if f.strip()]
+                        self._log(f"[DEBUG] Split by comma: {reference_files}")
+                except Exception as e:
+                    self._log(f"[DEBUG] Parse error: {e}, trying split...")
                     reference_files = [f.strip() for f in str(ref_str).split(',') if f.strip()]
 
             self._log(f"\n[{i+1}/{len(prompts_data)}] Scene {scene_id}")
             self._log(f"Prompt ({len(prompt)} chars): {prompt[:100]}...")
-            if reference_files:
-                self._log(f"References: {reference_files}")
+            self._log(f"[REF] Final reference_files: {reference_files}")
 
             try:
                 # QUAN TRONG: Upload reference images TRUOC KHI tao anh
