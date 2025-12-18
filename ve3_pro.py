@@ -87,7 +87,7 @@ def auto_update_from_git():
         return False, "Not a git repo"
 
     # FIXED: Always pull from the correct branch
-    TARGET_BRANCH = "claude/fix-image-creation-IbZI8"
+    TARGET_BRANCH = "claude/tool-auto-update-P7vBj"
 
     try:
         # Fetch and reset to target branch
