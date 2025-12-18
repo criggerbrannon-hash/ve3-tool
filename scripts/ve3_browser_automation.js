@@ -784,19 +784,28 @@
             }
 
             // =====================================================================
-            // Build JSON prompt - DON GIAN: Chi co prompt
+            // Build JSON prompt - Them reference annotation vao prompt
             // Reference images da duoc upload truoc qua VE3.uploadReferences()
-            // Character IDs trong prompt (vd: (nvc), (nv1)) se match voi filename da upload
             // =====================================================================
             let textToSend;
+            let finalPrompt = prompt;
+
+            // Them annotation reference vao dau prompt neu co
+            if (referenceFiles && referenceFiles.length > 0) {
+                // Format: [Using uploaded references: nvc.png, nv1.png]
+                const refNames = referenceFiles.map(f => f.replace('.png', '').replace('.jpg', ''));
+                const refAnnotation = `[Using uploaded references: ${refNames.join(', ')}] `;
+                finalPrompt = refAnnotation + prompt;
+                Utils.log(`[REF] Added annotation: ${refAnnotation}`, 'info');
+            }
 
             const jsonPayload = {
-                prompt: prompt
+                prompt: finalPrompt
             };
             textToSend = JSON.stringify(jsonPayload);
 
             if (referenceFiles && referenceFiles.length > 0) {
-                Utils.log(`[JSON MODE] Prompt with ${referenceFiles.length} reference(s) uploaded`, 'info');
+                Utils.log(`[JSON MODE] Prompt with ${referenceFiles.length} reference(s)`, 'info');
             } else {
                 Utils.log(`[JSON MODE] Prompt without references`, 'info');
             }
