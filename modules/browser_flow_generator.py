@@ -841,8 +841,11 @@ class BrowserFlowGenerator:
 
         self._log(f"\n[{index+1}/{total}] ID: {pid}")
         self._log(f"Prompt ({len(prompt)} chars): {prompt[:100]}...")
+        self._log(f"[DEBUG] ref_str from prompt_data: '{ref_str}'")
         if reference_files:
             self._log(f"References: {reference_files}")
+        else:
+            self._log(f"[DEBUG] No reference_files for this prompt")
 
         if not prompt:
             self._log("Skip - prompt rong", "warn")
@@ -1020,7 +1023,10 @@ class BrowserFlowGenerator:
         # Load media_names tu cache va set vao JS
         cached_media_names = self._load_media_cache()
         if cached_media_names:
+            self._log(f"[CACHE] Loaded {len(cached_media_names)} media_names: {list(cached_media_names.keys())}")
             self._load_media_names_to_js(cached_media_names)
+        else:
+            self._log("[CACHE] No media_names in cache!", "warn")
 
         self._log(f"\nBat dau tao {len(prompts)} anh...")
 
