@@ -1119,11 +1119,41 @@ class PromptGenerator:
                                 ref_files.append(char_id)
                         self.logger.debug(f"Scene {scene_data['scene_id']}: Using characters_in_scene: {chars_in_scene}")
 
-                # Thêm location đã dùng
+                # Thêm location đã dùng - MAP sang actual location ID
                 if location_used:
-                    loc_file = f"{location_used}.png" if not location_used.endswith('.png') else location_used
-                    if loc_file not in ref_files:
-                        ref_files.append(loc_file)
+                    # Tìm actual location ID từ locations list
+                    actual_loc_id = None
+
+                    # Nếu location_used đã là ID thực (có file tương ứng trong locations)
+                    for loc in locations:
+                        if loc.id == location_used:
+                            actual_loc_id = location_used
+                            break
+
+                    # Nếu không tìm thấy, location_used có thể là generic (loc1, loc2...)
+                    # Thử match theo index hoặc dùng location đầu tiên
+                    if not actual_loc_id and locations:
+                        # Nếu là loc1, loc2... thử parse index
+                        import re
+                        match = re.match(r'loc(\d+)', location_used)
+                        if match:
+                            idx = int(match.group(1)) - 1  # loc1 -> index 0
+                            if 0 <= idx < len(locations):
+                                actual_loc_id = locations[idx].id
+                                self.logger.debug(f"Scene: Mapped '{location_used}' to '{actual_loc_id}'")
+
+                        # Fallback: dùng location đầu tiên
+                        if not actual_loc_id:
+                            actual_loc_id = locations[0].id
+                            self.logger.debug(f"Scene: Fallback '{location_used}' to '{actual_loc_id}'")
+
+                    # Thêm vào ref_files nếu tìm được
+                    if actual_loc_id:
+                        loc_file = f"{actual_loc_id}.png" if not actual_loc_id.endswith('.png') else actual_loc_id
+                        if loc_file not in ref_files:
+                            ref_files.append(loc_file)
+                        # Cập nhật location_used thành actual ID
+                        location_used = actual_loc_id
 
                 if ref_files:
                     self.logger.debug(f"Scene {scene_data['scene_id']}: Auto-generated reference_files: {ref_files}")
@@ -2360,14 +2390,25 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
                             parts.append(loc_part)
                         parts.append(style_suffix)
                         img_prompt = ". ".join([p for p in parts if p])
-                        # Build reference_files, filtering out children (API policy)
-                        all_refs = [f"{c}.png" for c in chars_in_scene] + ([f"{location_id}.png"] if location_id else [])
+
+                        # Build reference_files với actual location ID
+                        hook_actual_loc = None
+                        if location_id:
+                            if location_id in loc_desc:
+                                hook_actual_loc = location_id
+                            elif locations:
+                                hook_actual_loc = locations[0].id
+
+                        all_refs = [f"{c}.png" for c in chars_in_scene]
+                        if hook_actual_loc:
+                            all_refs.append(f"{hook_actual_loc}.png")
+
                         filtered_refs = self._filter_children_from_refs(all_refs)
                         result.append({
                             "img_prompt": img_prompt,
                             "video_prompt": img_prompt,
                             "characters_used": chars_in_scene,
-                            "location_used": location_id,
+                            "location_used": hook_actual_loc or location_id,
                             "reference_files": filtered_refs
                         })
                         continue  # Skip to next scene
@@ -2422,14 +2463,30 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
             img_prompt = ". ".join([p for p in parts if p])
 
             # Build reference_files, filtering out children (API policy)
-            all_refs = [f"{c}.png" for c in chars_in_scene] + ([f"{location_id}.png"] if location_id else [])
+            # QUAN TRONG: Dùng location ID thực tế từ locations list, không dùng generic loc1/loc2
+            actual_location_id = None
+            if location_id:
+                # Kiểm tra nếu location_id đã là ID thực (có trong loc_desc)
+                if location_id in loc_desc:
+                    actual_location_id = location_id
+                else:
+                    # location_id là generic (loc1, loc2...), tìm location phù hợp từ list
+                    # Ưu tiên: dùng location đầu tiên trong list nếu có
+                    if locations:
+                        actual_location_id = locations[0].id
+                        self.logger.debug(f"Scene {idx+1}: Mapped '{location_id}' to '{actual_location_id}'")
+
+            all_refs = [f"{c}.png" for c in chars_in_scene]
+            if actual_location_id:
+                all_refs.append(f"{actual_location_id}.png")
+
             filtered_refs = self._filter_children_from_refs(all_refs)
 
             result.append({
                 "img_prompt": img_prompt,
                 "video_prompt": img_prompt,
                 "characters_used": chars_in_scene,
-                "location_used": location_id,
+                "location_used": actual_location_id or location_id,
                 "reference_files": filtered_refs
             })
 
