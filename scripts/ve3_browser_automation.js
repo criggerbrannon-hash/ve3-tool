@@ -1018,6 +1018,11 @@
             Utils.log('Marked setup as done (existing project)', 'success');
         },
 
+        // NEW: Trigger consent dialog (goi truoc khi upload lan dau)
+        triggerConsent: async () => {
+            return await UI.triggerConsent();
+        },
+
         // NEW: Upload anh reference tu base64
         // Python se doc file local, convert sang base64, roi goi ham nay
         // base64Data: string base64 (khong co prefix data:image/...)
