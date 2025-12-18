@@ -292,6 +292,10 @@
                                 return;
                             }
 
+                            // DEBUG: Log raw response structure
+                            Utils.log(`[DEBUG] Response keys: ${Object.keys(data).join(', ')}`, 'info');
+                            Utils.log(`[DEBUG] data.media exists: ${!!data.media}, length: ${data.media?.length || 0}`, 'info');
+
                             // Extract va download anh
                             if (data.media && data.media.length > 0) {
                                 Utils.log(`Nhận được ${data.media.length} ảnh!`, 'img');
@@ -349,6 +353,16 @@
                                         images: [...self.imageBuffer]
                                     });
                                     self.imageBuffer = [];
+                                }
+                            } else {
+                                // Khong co media trong response
+                                Utils.log(`[DEBUG] No media in response. Full data: ${JSON.stringify(data).slice(0, 500)}`, 'warn');
+                                // Van resolve voi empty images de khong bi hang
+                                if (self.resolveWait) {
+                                    self.resolveWait({
+                                        success: true,
+                                        images: []
+                                    });
                                 }
                             }
                         } catch (e) {
