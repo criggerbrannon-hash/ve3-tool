@@ -610,26 +610,48 @@ class BrowserFlowGenerator:
 
         # Upload qua JS
         try:
+            self._log(f"[UPLOAD] Goi JS VE3.uploadReferences() voi {len(images_to_upload)} files...", "info")
             images_json = json.dumps(images_to_upload)
+
+            # Timeout dai hon cho upload nhieu file
+            timeout_ms = 60000 + (len(images_to_upload) * 30000)  # 60s + 30s per file
+            self._log(f"[UPLOAD] Timeout: {timeout_ms/1000:.0f}s", "info")
+
             result = self.driver.execute_async_script(f"""
                 const callback = arguments[arguments.length - 1];
-                VE3.uploadReferences({images_json}).then(success => {{
-                    callback({{ success: success }});
-                }}).catch(e => {{
-                    callback({{ success: false, error: e.message }});
-                }});
+                const timeout = setTimeout(() => {{
+                    callback({{ success: false, error: 'JS timeout' }});
+                }}, {timeout_ms});
+
+                try {{
+                    VE3.uploadReferences({images_json}).then(success => {{
+                        clearTimeout(timeout);
+                        callback({{ success: success, message: 'Upload completed' }});
+                    }}).catch(e => {{
+                        clearTimeout(timeout);
+                        callback({{ success: false, error: e.message || 'Upload exception' }});
+                    }});
+                }} catch (e) {{
+                    clearTimeout(timeout);
+                    callback({{ success: false, error: 'JS error: ' + e.message }});
+                }}
             """)
+
+            self._log(f"[UPLOAD] JS result: {result}", "info")
 
             if result and result.get('success'):
                 self._log(f"[UPLOAD] Da upload {len(images_to_upload)} anh reference", "success")
                 return True
             else:
-                error = result.get('error', 'Unknown') if result else 'No response'
+                error = result.get('error', 'Unknown') if result else 'No response from JS'
                 self._log(f"[UPLOAD] Loi upload: {error}", "error")
+                # Tiep tuc du co loi - khong block generation
                 return False
 
         except Exception as e:
-            self._log(f"[UPLOAD] Exception: {e}", "error")
+            self._log(f"[UPLOAD] Python Exception: {e}", "error")
+            import traceback
+            self._log(f"[UPLOAD] Traceback: {traceback.format_exc()}", "error")
             return False
 
     def _find_downloaded_files(self, pattern: str, wait_timeout: int = 30) -> List[Path]:

@@ -1135,15 +1135,39 @@
             await UI.triggerConsent();
 
             let success = 0;
-            for (const img of images) {
-                const result = await UI.uploadReferenceImage(img.base64, img.filename);
-                if (result) success++;
-                // Delay nho giua cac upload (loading da xu ly trong uploadReferenceImage)
-                await Utils.sleep(500);
+            let errors = [];
+
+            for (let i = 0; i < images.length; i++) {
+                const img = images[i];
+                Utils.log(`[UPLOAD] Uploading ${i+1}/${images.length}: ${img.filename}`, 'info');
+
+                try {
+                    const result = await UI.uploadReferenceImage(img.base64, img.filename);
+                    if (result) {
+                        success++;
+                        Utils.log(`[UPLOAD] ✓ ${img.filename} thanh cong`, 'success');
+                    } else {
+                        errors.push(`${img.filename}: upload returned false`);
+                        Utils.log(`[UPLOAD] ✗ ${img.filename} that bai`, 'error');
+                    }
+                } catch (e) {
+                    errors.push(`${img.filename}: ${e.message}`);
+                    Utils.log(`[UPLOAD] ✗ ${img.filename} exception: ${e.message}`, 'error');
+                }
+
+                // Delay nho giua cac upload
+                if (i < images.length - 1) {
+                    await Utils.sleep(1000);
+                }
             }
 
-            Utils.log(`[UPLOAD] Hoan thanh: ${success}/${images.length} thanh cong`, 'success');
-            return success === images.length;
+            Utils.log(`[UPLOAD] Hoan thanh: ${success}/${images.length} thanh cong`, success === images.length ? 'success' : 'warn');
+
+            if (errors.length > 0) {
+                Utils.log(`[UPLOAD] Errors: ${errors.join(', ')}`, 'error');
+            }
+
+            return success > 0;  // Return true if at least 1 upload succeeded
         },
 
         // Help
