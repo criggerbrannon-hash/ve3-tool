@@ -404,8 +404,13 @@ class BrowserFlowGenerator:
         """Duong dan file cache media_names."""
         return self.project_path / "prompts" / ".media_cache.json"
 
-    def _load_media_cache(self) -> Dict[str, str]:
-        """Load media_names tu cache file."""
+    def _load_media_cache(self) -> Dict[str, Any]:
+        """
+        Load media_names tu cache file.
+
+        Format moi: {id: {mediaName: str, seed: int|null}}
+        Backward compatible voi format cu: {id: str}
+        """
         cache_path = self._get_media_cache_path()
         if cache_path.exists():
             try:
@@ -417,8 +422,12 @@ class BrowserFlowGenerator:
                 pass
         return {}
 
-    def _save_media_cache(self, media_names: Dict[str, str]) -> None:
-        """Luu media_names vao cache file."""
+    def _save_media_cache(self, media_names: Dict[str, Any]) -> None:
+        """
+        Luu media_names vao cache file.
+
+        Format: {id: {mediaName: str, seed: int|null}}
+        """
         cache_path = self._get_media_cache_path()
         try:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -428,8 +437,13 @@ class BrowserFlowGenerator:
         except Exception as e:
             self._log(f"Loi save cache: {e}", "warn")
 
-    def _get_media_names_from_js(self) -> Dict[str, str]:
-        """Lay tat ca media_names tu JS."""
+    def _get_media_names_from_js(self) -> Dict[str, Any]:
+        """
+        Lay tat ca media_names tu JS.
+
+        Returns:
+            Dict voi format: {id: {mediaName: str, seed: int|null}}
+        """
         if not self.driver:
             return {}
         try:
@@ -446,8 +460,13 @@ class BrowserFlowGenerator:
         except:
             return ""
 
-    def _load_media_names_to_js(self, media_names: Dict[str, str]) -> None:
-        """Load media_names vao JS tu cache."""
+    def _load_media_names_to_js(self, media_names: Dict[str, Any]) -> None:
+        """
+        Load media_names vao JS tu cache.
+
+        Supports ca format cu (string) va moi ({mediaName, seed}).
+        JS se xu ly chinh xac dua vao format.
+        """
         if not self.driver or not media_names:
             return
         try:
@@ -886,29 +905,31 @@ class BrowserFlowGenerator:
                 img_file, score, needs_regen = self._move_downloaded_images(pid)
 
                 if img_file:
-                    # TIM MEDIA_NAME DUNG CHO ANH DA CHON
-                    # img_file.name = "{pid}.png", original filename = "{project}_{pid}_001.png" hoac "_002.png"
+                    # TIM MEDIA_NAME VA SEED DUNG CHO ANH DA CHON
                     selected_media_name = ""
+                    selected_seed = None
                     if js_images:
-                        # Neu chi co 1 anh, lay mediaName cua no
+                        # Neu chi co 1 anh, lay mediaName va seed cua no
                         if len(js_images) == 1:
                             selected_media_name = js_images[0].get("mediaName", "")
-                            self._log(f"[MEDIA] 1 image -> mediaName: {selected_media_name[:50] if selected_media_name else 'NONE'}...")
+                            selected_seed = js_images[0].get("seed")
+                            self._log(f"[MEDIA] 1 image -> mediaName: {selected_media_name[:50] if selected_media_name else 'NONE'}, seed={selected_seed}")
                         else:
-                            # Neu co nhieu anh, can xac dinh anh nao duoc chon
-                            # Python chon anh tot nhat, JS images co index/filename
-                            # Mac dinh: lay anh dau tien (index 0) vi thuong la best
-                            # TODO: Cai thien bang cach match filename neu can
+                            # Neu co nhieu anh, lay anh dau tien (thuong la best)
+                            # TODO: Match filename de lay dung anh duoc chon
                             selected_media_name = js_images[0].get("mediaName", "")
-                            self._log(f"[MEDIA] {len(js_images)} images, selected first -> mediaName: {selected_media_name[:50] if selected_media_name else 'NONE'}...")
+                            selected_seed = js_images[0].get("seed")
+                            self._log(f"[MEDIA] {len(js_images)} images, selected first -> mediaName: {selected_media_name[:50] if selected_media_name else 'NONE'}, seed={selected_seed}")
 
-                    # Set mediaName vao JS STATE de reference sau
+                    # Set mediaName + seed vao JS STATE de reference sau
                     if selected_media_name and self.driver:
                         try:
+                            # Pass ca mediaName va seed
+                            seed_arg = f", {selected_seed}" if selected_seed else ", null"
                             self.driver.execute_script(
-                                f"VE3.setMediaName('{pid}', '{selected_media_name}');"
+                                f"VE3.setMediaName('{pid}', '{selected_media_name}'{seed_arg});"
                             )
-                            self._log(f"[MEDIA] Saved mediaName for {pid}")
+                            self._log(f"[MEDIA] Saved mediaInfo for {pid}: mediaName + seed={selected_seed}")
                         except Exception as e:
                             self._log(f"[MEDIA] Warning: Could not set mediaName: {e}", "warn")
 
@@ -1069,7 +1090,13 @@ class BrowserFlowGenerator:
         if cached_media_names:
             self._log(f"[CACHE] Loaded {len(cached_media_names)} media_names:")
             for key, val in cached_media_names.items():
-                self._log(f"  {key} -> {val[:50] if val else 'None'}...")
+                # Support ca format cu (string) va moi ({mediaName, seed})
+                if isinstance(val, dict):
+                    mn = val.get('mediaName', '')
+                    seed = val.get('seed')
+                    self._log(f"  {key} -> mediaName:{mn[:40] if mn else 'None'}..., seed:{seed}")
+                else:
+                    self._log(f"  {key} -> {val[:50] if val else 'None'}...")
             self._load_media_names_to_js(cached_media_names)
         else:
             self._log("[CACHE] ⚠️ EMPTY - Characters (nv/loc) chua duoc tao!", "warn")

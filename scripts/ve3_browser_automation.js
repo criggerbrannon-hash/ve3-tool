@@ -559,12 +559,24 @@
                 for (const refFile of referenceFiles) {
                     // refFile co the la "nvc.png" hoac "nvc"
                     const refId = refFile.replace('.png', '').replace('.jpg', '');
-                    const mediaName = STATE.mediaNames[refId];
-                    Utils.log(`[DEBUG] Lookup: refId="${refId}" -> mediaName="${mediaName || 'NOT FOUND'}"`, 'info');
+                    const mediaInfo = STATE.mediaNames[refId];
+
+                    // Ho tro ca format cu (string) va moi (object)
+                    let mediaName, refSeed;
+                    if (typeof mediaInfo === 'string') {
+                        mediaName = mediaInfo;
+                        refSeed = null;
+                    } else if (mediaInfo) {
+                        mediaName = mediaInfo.mediaName;
+                        refSeed = mediaInfo.seed;
+                    }
+
+                    Utils.log(`[DEBUG] Lookup: refId="${refId}" -> mediaName="${mediaName || 'NOT FOUND'}", seed=${refSeed || 'N/A'}`, 'info');
                     if (mediaName) {
                         referenceNames.push(mediaName);
-                        refMapping[refId] = mediaName;  // Luu mapping id -> mediaName
-                        Utils.log(`  Reference: ${refId} → ${mediaName.slice(0, 40)}...`, 'info');
+                        // Luu mapping id -> {mediaName, seed}
+                        refMapping[refId] = { mediaName, seed: refSeed };
+                        Utils.log(`  Reference: ${refId} → ${mediaName.slice(0, 40)}... (seed=${refSeed || 'N/A'})`, 'info');
                     } else {
                         Utils.log(`  Reference: ${refId} → (chua co media_name, skip)`, 'warn');
                     }
@@ -584,19 +596,29 @@
 
             if (referenceNames.length > 0) {
                 // CO REFERENCES: JSON voi imageInputs va refMapping
-                // refMapping giup Flow hieu characterId nao ung voi mediaName nao
+                // Tao ghi chu reference de them vao prompt (de doc va debug)
+                // Format: [REF: nvc=seed:12345,name:AF1QipN... | nv1=seed:67890,name:AF1QipO...]
+                const refNotes = Object.entries(refMapping).map(([id, info]) => {
+                    const seedStr = info.seed ? `seed:${info.seed}` : 'seed:N/A';
+                    const nameStr = info.mediaName ? `name:${info.mediaName.slice(0,20)}` : 'name:N/A';
+                    return `${id}=${seedStr},${nameStr}`;
+                }).join(' | ');
+
+                // Them ghi chu vao cuoi prompt
+                const promptWithRefs = `${prompt}\n[REF: ${refNotes}]`;
+
                 const jsonPayload = {
-                    prompt: prompt,
+                    prompt: promptWithRefs,
                     seed: seed,
                     imageInputs: referenceNames.map(name => ({
                         name: name,
                         imageInputType: "IMAGE_INPUT_TYPE_REFERENCE"
                     })),
-                    refMapping: refMapping  // {nvc: "AF1QipN...", nv1: "AF1QipO..."}
+                    refMapping: refMapping  // {nvc: {mediaName, seed}, nv1: {mediaName, seed}}
                 };
                 textToSend = JSON.stringify(jsonPayload);
                 Utils.log(`[JSON MODE] Gui JSON voi ${referenceNames.length} references, seed=${seed}`, 'info');
-                Utils.log(`[JSON MODE] refMapping: ${JSON.stringify(refMapping)}`, 'info');
+                Utils.log(`[JSON MODE] refNotes: ${refNotes}`, 'info');
             } else {
                 // KHONG CO REFERENCES: Van dung JSON de co seed
                 const jsonPayload = {
@@ -833,18 +855,31 @@
             return { ...STATE.mediaNames };
         },
 
-        // NEW: Lay media_name cho 1 scene_id
-        getMediaName: (sceneId) => {
-            return STATE.mediaNames[sceneId] || null;
+        // NEW: Lay media info (mediaName + seed) cho 1 scene_id
+        getMediaInfo: (sceneId) => {
+            const info = STATE.mediaNames[sceneId];
+            // Ho tro ca format cu (string) va moi (object)
+            if (typeof info === 'string') {
+                return { mediaName: info, seed: null };
+            }
+            return info || null;
         },
 
-        // NEW: Set 1 media_name cho 1 scene_id (sau khi Python chon anh tot nhat)
-        setMediaName: (sceneId, mediaName) => {
-            STATE.mediaNames[sceneId] = mediaName;
-            Utils.log(`Set mediaName for ${sceneId}: ${mediaName ? mediaName.slice(0,50)+'...' : 'NONE'}`, 'success');
+        // Legacy: Lay chi mediaName (tuong thich nguoc)
+        getMediaName: (sceneId) => {
+            const info = STATE.mediaNames[sceneId];
+            if (typeof info === 'string') return info;
+            return info?.mediaName || null;
+        },
+
+        // NEW: Set media info (mediaName + seed) cho 1 scene_id
+        setMediaName: (sceneId, mediaName, seed = null) => {
+            STATE.mediaNames[sceneId] = { mediaName, seed };
+            Utils.log(`Set mediaInfo for ${sceneId}: mediaName=${mediaName ? mediaName.slice(0,40)+'...' : 'NONE'}, seed=${seed}`, 'success');
         },
 
         // NEW: Set media_names tu Python (load tu cache)
+        // Ho tro ca format cu (string) va moi (object with mediaName + seed)
         setMediaNames: (mediaNames) => {
             STATE.mediaNames = { ...STATE.mediaNames, ...mediaNames };
             Utils.log(`Loaded ${Object.keys(mediaNames).length} media_names from cache`, 'success');
