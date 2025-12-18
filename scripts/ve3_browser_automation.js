@@ -549,6 +549,7 @@
 
             // Lookup media_names cho references
             const referenceNames = [];
+            const refMapping = {};  // Map: characterId -> mediaName
 
             // DEBUG: Log STATE.mediaNames
             Utils.log(`[DEBUG] STATE.mediaNames keys: ${Object.keys(STATE.mediaNames).join(', ') || '(empty)'}`, 'info');
@@ -562,6 +563,7 @@
                     Utils.log(`[DEBUG] Lookup: refId="${refId}" -> mediaName="${mediaName || 'NOT FOUND'}"`, 'info');
                     if (mediaName) {
                         referenceNames.push(mediaName);
+                        refMapping[refId] = mediaName;  // Luu mapping id -> mediaName
                         Utils.log(`  Reference: ${refId} → ${mediaName.slice(0, 40)}...`, 'info');
                     } else {
                         Utils.log(`  Reference: ${refId} → (chua co media_name, skip)`, 'warn');
@@ -581,17 +583,20 @@
             const seed = API.generateSeed();
 
             if (referenceNames.length > 0) {
-                // CO REFERENCES: JSON voi imageInputs
+                // CO REFERENCES: JSON voi imageInputs va refMapping
+                // refMapping giup Flow hieu characterId nao ung voi mediaName nao
                 const jsonPayload = {
                     prompt: prompt,
                     seed: seed,
                     imageInputs: referenceNames.map(name => ({
                         name: name,
                         imageInputType: "IMAGE_INPUT_TYPE_REFERENCE"
-                    }))
+                    })),
+                    refMapping: refMapping  // {nvc: "AF1QipN...", nv1: "AF1QipO..."}
                 };
                 textToSend = JSON.stringify(jsonPayload);
                 Utils.log(`[JSON MODE] Gui JSON voi ${referenceNames.length} references, seed=${seed}`, 'info');
+                Utils.log(`[JSON MODE] refMapping: ${JSON.stringify(refMapping)}`, 'info');
             } else {
                 // KHONG CO REFERENCES: Van dung JSON de co seed
                 const jsonPayload = {
