@@ -180,17 +180,17 @@ class BrowserFlowGenerator:
         """
         Tao Chrome WebDriver - PARALLEL SAFE.
         - Moi instance dung port rieng (khong xung dot)
-        - Profile rieng biet
+        - Dung working profile rieng (giu nguyen settings nhu download permission)
         - Mac dinh headless (chay an)
         """
         import random
-        import tempfile
 
         # Download prefs
         prefs = {
             "download.default_directory": str(self.downloads_dir),
             "download.prompt_for_download": False,
             "download.directory_upgrade": True,
+            "safebrowsing.enabled": True,
         }
 
         self._log(f"Headless: {self.headless}")
@@ -212,31 +212,36 @@ class BrowserFlowGenerator:
                     self._log(f"Chrome: {chrome_path}")
                     break
 
-            # PARALLEL SAFE: Copy profile sang temp directory
-            # Giu nguyen profile goc (khong bi lock), dung ban copy
+            # Tao working profile rieng (khong phai temp, giu nguyen settings)
+            # Vi tri: ~/.ve3_chrome_profiles/{profile_name}
             self.profile_dir.mkdir(parents=True, exist_ok=True)
+            working_profile_base = Path.home() / ".ve3_chrome_profiles"
+            working_profile_base.mkdir(parents=True, exist_ok=True)
+            working_profile = working_profile_base / self.profile_name
 
-            # Tao temp profile
-            temp_profile = tempfile.mkdtemp(prefix=f"ve3_chrome_{self.profile_name}_")
             self._log(f"Profile goc: {self.profile_dir}")
-            self._log(f"Profile temp: {temp_profile}")
+            self._log(f"Working profile: {working_profile}")
 
-            # Copy data tu profile goc sang temp (de co session dang nhap)
+            # Copy data tu profile goc sang working profile (chi lan dau)
             import shutil
-            if any(self.profile_dir.iterdir()):  # Neu profile goc co data
-                for item in self.profile_dir.iterdir():
-                    try:
-                        dest = Path(temp_profile) / item.name
-                        if item.is_dir():
-                            shutil.copytree(item, dest, dirs_exist_ok=True)
-                        else:
-                            shutil.copy2(item, dest)
-                    except Exception:
-                        pass  # Skip locked files
-                self._log(f"Da copy profile data")
+            if not working_profile.exists():
+                working_profile.mkdir(parents=True, exist_ok=True)
+                if any(self.profile_dir.iterdir()):  # Neu profile goc co data
+                    for item in self.profile_dir.iterdir():
+                        try:
+                            dest = working_profile / item.name
+                            if item.is_dir():
+                                shutil.copytree(item, dest, dirs_exist_ok=True)
+                            else:
+                                shutil.copy2(item, dest)
+                        except Exception:
+                            pass  # Skip locked files
+                    self._log(f"Da copy profile data lan dau")
+            else:
+                self._log(f"Su dung working profile da co (giu settings)")
 
-            self._temp_profile = temp_profile  # Luu de cleanup sau
-            options.add_argument(f"--user-data-dir={temp_profile}")
+            self._working_profile = str(working_profile)  # Luu de reference
+            options.add_argument(f"--user-data-dir={working_profile}")
 
             # PARALLEL SAFE: Moi instance dung port rieng
             debug_port = random.randint(9222, 9999)
@@ -303,7 +308,7 @@ class BrowserFlowGenerator:
             return False
 
     def stop_browser(self) -> None:
-        """Dong trinh duyet va cleanup temp profile."""
+        """Dong trinh duyet (giu nguyen working profile de luu settings)."""
         if self.driver:
             self._log("Dong trinh duyet...")
             try:
@@ -312,16 +317,7 @@ class BrowserFlowGenerator:
                 pass
             self.driver = None
             self._js_injected = False
-
-        # Cleanup temp profile (giu nguyen profile goc)
-        if hasattr(self, '_temp_profile') and self._temp_profile:
-            try:
-                import shutil
-                shutil.rmtree(self._temp_profile, ignore_errors=True)
-                self._log(f"Da xoa temp profile")
-            except:
-                pass
-            self._temp_profile = None
+            # Khong xoa working profile - giu nguyen de luu settings (download permission, etc.)
 
     def wait_for_login(self, timeout: int = 300) -> bool:
         """
