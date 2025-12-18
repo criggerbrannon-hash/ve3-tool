@@ -573,29 +573,35 @@
 
             // =====================================================================
             // Build JSON prompt cho TEXTAREA (Flow UI tu dong xu ly phan con lai)
-            // Chi can: prompt, seed, imageInputs
+            // LUON dung JSON format voi seed de ket qua nhat quan
+            // Chi can: prompt, seed, imageInputs (neu co)
             // Flow UI se tu lay: projectId, sessionId, imageModel, aspectRatio tu context
             // =====================================================================
             let textToSend;
+            const seed = API.generateSeed();
 
             if (referenceNames.length > 0) {
-                // CO REFERENCES: Gui JSON format voi imageInputs
+                // CO REFERENCES: JSON voi imageInputs
                 const jsonPayload = {
                     prompt: prompt,
-                    seed: API.generateSeed(),
+                    seed: seed,
                     imageInputs: referenceNames.map(name => ({
                         name: name,
                         imageInputType: "IMAGE_INPUT_TYPE_REFERENCE"
                     }))
                 };
                 textToSend = JSON.stringify(jsonPayload);
-                Utils.log(`[JSON MODE] Gui JSON voi ${referenceNames.length} references`, 'info');
-                Utils.log(`JSON: ${textToSend.slice(0, 150)}...`, 'info');
+                Utils.log(`[JSON MODE] Gui JSON voi ${referenceNames.length} references, seed=${seed}`, 'info');
             } else {
-                // KHONG CO REFERENCES: Gui plain text prompt (don gian hon)
-                textToSend = prompt;
-                Utils.log('[TEXT MODE] Gui plain text prompt', 'info');
+                // KHONG CO REFERENCES: Van dung JSON de co seed
+                const jsonPayload = {
+                    prompt: prompt,
+                    seed: seed
+                };
+                textToSend = JSON.stringify(jsonPayload);
+                Utils.log(`[JSON MODE] Gui JSON khong co references, seed=${seed}`, 'info');
             }
+            Utils.log(`JSON: ${textToSend.slice(0, 200)}...`, 'info');
 
             // 1. Dien prompt (JSON hoac text)
             if (!UI.setPrompt(textToSend)) {
