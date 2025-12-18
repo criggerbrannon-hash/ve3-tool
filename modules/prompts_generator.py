@@ -665,6 +665,99 @@ class PromptGenerator:
 
         return filtered
 
+    def _add_filename_annotations_to_prompt(
+        self,
+        img_prompt: str,
+        reference_files: list,
+        characters: list = None,
+        locations: list = None
+    ) -> str:
+        """
+        Add filename annotations to img_prompt for Flow to match uploaded reference images.
+
+        Args:
+            img_prompt: Original prompt
+            reference_files: List of reference files (e.g., ["nvc.png", "nv1.png", "loc_apartment.png"])
+            characters: List of Character objects (optional, for better matching)
+            locations: List of Location objects (optional, for better matching)
+
+        Returns:
+            Updated prompt with filename annotations
+
+        Example:
+            Input:  "A 30-year-old man walking in the living room"
+            Output: "A 30-year-old man (nvc.png) walking in the living room (loc_apartment.png)"
+        """
+        if not img_prompt or not reference_files:
+            return img_prompt
+
+        result = img_prompt
+
+        # Build lookup maps
+        char_map = {}  # id -> character_lock
+        loc_map = {}   # id -> location_lock
+
+        if characters:
+            for c in characters:
+                char_map[c.id] = c.character_lock or c.vietnamese_prompt or c.name
+
+        if locations:
+            for loc in locations:
+                loc_map[loc.id] = loc.location_lock or loc.name
+
+        # Add annotations for each reference file
+        for ref_file in reference_files:
+            ref_id = ref_file.replace('.png', '').replace('.jpg', '')
+            annotation = f"({ref_file})"
+
+            # Check if annotation already exists
+            if annotation in result:
+                continue
+
+            # Try to find where to insert annotation
+            inserted = False
+
+            # Method 1: Match character_lock/location_lock in prompt
+            if ref_id in char_map and char_map[ref_id]:
+                desc = char_map[ref_id]
+                # Try to find description in prompt and add annotation after
+                if desc[:30] in result:  # Match first 30 chars
+                    # Find end of description (next comma, period, or clause)
+                    idx = result.find(desc[:30])
+                    if idx >= 0:
+                        # Find the end of this character description
+                        end_idx = idx + len(desc[:30])
+                        for end_char in [',', '.', ' in ', ' at ', ' with ', ' and ']:
+                            pos = result.find(end_char, end_idx)
+                            if pos > 0 and pos < end_idx + 100:
+                                end_idx = pos
+                                break
+                        # Insert annotation
+                        result = result[:end_idx] + f" {annotation}" + result[end_idx:]
+                        inserted = True
+
+            if not inserted and ref_id in loc_map and loc_map[ref_id]:
+                desc = loc_map[ref_id]
+                if desc[:20] in result:
+                    idx = result.find(desc[:20])
+                    if idx >= 0:
+                        end_idx = idx + len(desc[:20])
+                        for end_char in [',', '.', ' with ', ' and ']:
+                            pos = result.find(end_char, end_idx)
+                            if pos > 0 and pos < end_idx + 80:
+                                end_idx = pos
+                                break
+                        result = result[:end_idx] + f" {annotation}" + result[end_idx:]
+                        inserted = True
+
+            # Method 2: If not inserted, append at end
+            if not inserted:
+                # Add to end if not found
+                if not result.endswith(annotation):
+                    result = result.rstrip('.') + f" {annotation}."
+
+        return result
+
     def _generate_content(self, prompt: str, temperature: float = 0.7, max_tokens: int = 8192) -> str:
         """Generate content using available AI providers (DeepSeek + Ollama)."""
         return self.ai_client.generate_content(prompt, temperature, max_tokens)
@@ -1060,6 +1153,19 @@ class PromptGenerator:
             end_time = scene_data.get("end_time", "")
             duration = scene_data.get("duration_seconds", 0)
 
+            # === QUAN TRỌNG: Thêm filename annotations vào prompt ===
+            # Format: "A 30-year-old man (nvc.png) walking in the park (loc_park.png)"
+            # Giúp Flow match uploaded images với prompt
+            img_prompt = prompts.get("img_prompt", "")
+            video_prompt = prompts.get("video_prompt", "")
+            if ref_files:
+                img_prompt = self._add_filename_annotations_to_prompt(
+                    img_prompt, ref_files, characters, locations
+                )
+                video_prompt = self._add_filename_annotations_to_prompt(
+                    video_prompt, ref_files, characters, locations
+                )
+
             scene = Scene(
                 scene_id=scene_data["scene_id"],
                 start_time=start_time,          # Thời gian bắt đầu (HH:MM:SS,mmm)
@@ -1068,8 +1174,8 @@ class PromptGenerator:
                 srt_start=scene_data["srt_start"],
                 srt_end=scene_data["srt_end"],
                 srt_text=scene_data["text"][:500],  # Truncate nếu quá dài
-                img_prompt=prompts.get("img_prompt", ""),
-                video_prompt=prompts.get("video_prompt", ""),
+                img_prompt=img_prompt,
+                video_prompt=video_prompt,
                 status_img="pending",
                 status_vid="pending",
                 characters_used=chars_str,
@@ -2713,3 +2819,71 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
 
         suffix = ']' * max(0, new_bracket_count) + '}' * max(0, new_brace_count)
         return truncated + suffix
+
+    def update_excel_prompts_with_annotations(self, excel_path: str) -> bool:
+        """
+        Update existing Excel prompts with filename annotations.
+        Use this to add annotations to prompts that were generated before this feature.
+
+        Args:
+            excel_path: Path to Excel file
+
+        Returns:
+            True if successful
+        """
+        from modules.excel_manager import PromptWorkbook
+
+        try:
+            excel_path = Path(excel_path)
+            if not excel_path.exists():
+                self.logger.error(f"Excel file not found: {excel_path}")
+                return False
+
+            workbook = PromptWorkbook(excel_path).load_or_create()
+
+            # Load characters and locations
+            characters = workbook.get_characters()
+            locations = [c for c in characters if c.role == "location"]
+            characters = [c for c in characters if c.role != "location"]
+
+            # Update scenes
+            scenes = workbook.get_scenes()
+            updated_count = 0
+
+            for scene in scenes:
+                # Get reference_files
+                ref_files = []
+                if scene.reference_files:
+                    try:
+                        ref_files = json.loads(scene.reference_files) if scene.reference_files.startswith('[') else [scene.reference_files]
+                    except:
+                        ref_files = [f.strip() for f in scene.reference_files.split(',') if f.strip()]
+
+                if not ref_files:
+                    continue
+
+                # Update img_prompt
+                new_img_prompt = self._add_filename_annotations_to_prompt(
+                    scene.img_prompt or "", ref_files, characters, locations
+                )
+                new_video_prompt = self._add_filename_annotations_to_prompt(
+                    scene.video_prompt or "", ref_files, characters, locations
+                )
+
+                # Check if changed
+                if new_img_prompt != scene.img_prompt or new_video_prompt != scene.video_prompt:
+                    workbook.update_scene(
+                        scene.scene_id,
+                        img_prompt=new_img_prompt,
+                        video_prompt=new_video_prompt
+                    )
+                    updated_count += 1
+                    self.logger.info(f"Updated scene {scene.scene_id} with filename annotations")
+
+            workbook.save()
+            self.logger.info(f"Updated {updated_count} scenes with filename annotations")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Error updating Excel prompts: {e}")
+            return False
