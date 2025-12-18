@@ -475,6 +475,42 @@ class BrowserFlowGenerator:
         except Exception as e:
             self._log(f"Loi load media_names to JS: {e}", "warn")
 
+    def _is_child_character(self, char_id: str) -> bool:
+        """
+        Check if a character ID represents a child (under 15 years old).
+        Children cannot use reference images due to API policy.
+        """
+        if not char_id:
+            return False
+
+        char_id_clean = char_id.replace('.png', '').replace('.jpg', '').lower()
+
+        # Child character patterns
+        child_patterns = ['nvc1', 'nv1c', 'child', '_child', '-child']
+
+        for pattern in child_patterns:
+            if pattern in char_id_clean:
+                return True
+
+        return False
+
+    def _filter_children_from_refs(self, ref_files: List[str]) -> List[str]:
+        """
+        Filter out child characters from reference_files list.
+        Children under 15 should not be uploaded as reference.
+        """
+        if not ref_files:
+            return []
+
+        filtered = []
+        for ref in ref_files:
+            if self._is_child_character(ref):
+                self._log(f"[FILTER] Bo qua tre em: {ref}", "info")
+                continue
+            filtered.append(ref)
+
+        return filtered
+
     def _upload_reference_images(self, reference_files: List[str]) -> bool:
         """
         Upload cac anh reference truoc khi tao scene.
@@ -486,6 +522,12 @@ class BrowserFlowGenerator:
             True neu upload thanh cong
         """
         if not reference_files or not self.driver:
+            return True
+
+        # Filter out children under 15
+        reference_files = self._filter_children_from_refs(reference_files)
+        if not reference_files:
+            self._log("[UPLOAD] Khong con anh nao sau khi filter tre em", "info")
             return True
 
         images_to_upload = []

@@ -717,12 +717,23 @@
                     Utils.log('[UPLOAD] Khong tim thay nut "Cắt và lưu" (co the khong can)', 'warn');
                 }
 
-                // Step 6: Doi loading xong (disabled button bien mat)
-                Utils.log('[UPLOAD] Doi loading...', 'info');
-                for (let i = 0; i < 30; i++) {  // Max 15 giay
-                    const disabledBtn = document.querySelector('button[disabled] .sc-abe263da-0');
-                    if (!disabledBtn) {
-                        Utils.log('[UPLOAD] Loading xong!', 'success');
+                // Step 6: Doi loading xong - dem so div co opacity: 1 trong .sc-51248dda-0
+                Utils.log('[UPLOAD] Doi anh load...', 'info');
+                const countLoadedImages = () => {
+                    const container = document.querySelector('.sc-51248dda-0');
+                    if (!container) return 0;
+                    const divs = container.querySelectorAll('div[style*="opacity: 1"]');
+                    return divs.length;
+                };
+
+                const initialCount = countLoadedImages();
+                Utils.log(`[UPLOAD] Initial loaded count: ${initialCount}`, 'info');
+
+                // Doi so luong tang len (max 20 giay)
+                for (let i = 0; i < 40; i++) {
+                    const currentCount = countLoadedImages();
+                    if (currentCount > initialCount) {
+                        Utils.log(`[UPLOAD] Anh da load! Count: ${initialCount} -> ${currentCount}`, 'success');
                         break;
                     }
                     await Utils.sleep(500);
