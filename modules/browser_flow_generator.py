@@ -829,15 +829,28 @@ class BrowserFlowGenerator:
         pid = str(prompt_data.get('id', index + 1))
         prompt = prompt_data.get('prompt', '')
 
+        # Lay reference_files tu prompt_data (JSON string hoac list)
+        reference_files = []
+        ref_str = prompt_data.get('reference_files', '')
+        if ref_str:
+            try:
+                parsed = json.loads(ref_str) if isinstance(ref_str, str) else ref_str
+                reference_files = parsed if isinstance(parsed, list) else [parsed]
+            except:
+                reference_files = [f.strip() for f in str(ref_str).split(',') if f.strip()]
+
         self._log(f"\n[{index+1}/{total}] ID: {pid}")
         self._log(f"Prompt ({len(prompt)} chars): {prompt[:100]}...")
+        if reference_files:
+            self._log(f"References: {reference_files}")
 
         if not prompt:
             self._log("Skip - prompt rong", "warn")
             return False, None, 0.0
 
         try:
-            # Goi VE3.run() cho 1 prompt
+            # Goi VE3.run() cho 1 prompt (voi reference_files)
+            ref_files_json = json.dumps(reference_files)
             result = self.driver.execute_async_script(f"""
                 const callback = arguments[arguments.length - 1];
                 const timeout = setTimeout(() => {{
@@ -846,7 +859,8 @@ class BrowserFlowGenerator:
 
                 VE3.run([{{
                     sceneId: "{pid}",
-                    prompt: `{self._escape_js_string(prompt)}`
+                    prompt: `{self._escape_js_string(prompt)}`,
+                    referenceFiles: {ref_files_json}
                 }}]).then(r => {{
                     clearTimeout(timeout);
                     callback({{ success: true, result: r }});
