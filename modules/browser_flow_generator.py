@@ -295,6 +295,10 @@ class BrowserFlowGenerator:
             self.driver = self._create_driver()
             self._log("Da khoi dong Chrome", "success")
 
+            # Tang timeout cho async script (mac dinh 30s, can nhieu hon cho upload/generate)
+            self.driver.set_script_timeout(300)  # 5 phut
+            self._log("Set script timeout: 300s")
+
             # Navigate den Google Flow
             self._log(f"Navigate den: {self.FLOW_URL}")
             self.driver.get(self.FLOW_URL)
