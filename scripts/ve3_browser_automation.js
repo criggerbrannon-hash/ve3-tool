@@ -692,11 +692,46 @@
                 fileInput.dispatchEvent(new Event('change', { bubbles: true }));
                 fileInput.dispatchEvent(new Event('input', { bubbles: true }));
 
-                Utils.log(`[UPLOAD] Da upload: ${filename} (${(byteArray.length / 1024).toFixed(1)} KB)`, 'success');
+                Utils.log(`[UPLOAD] Da inject file: ${filename} (${(byteArray.length / 1024).toFixed(1)} KB)`, 'success');
 
-                // Doi de Flow xu ly va anh load
-                await Utils.sleep(2000);
+                // Step 5: Doi va click nut "Cắt và lưu"
+                await Utils.sleep(1000);
 
+                let cropBtn = null;
+                for (let attempt = 0; attempt < 10; attempt++) {
+                    const buttons = document.querySelectorAll('button');
+                    for (const btn of buttons) {
+                        if (btn.textContent.includes('Cắt và lưu')) {
+                            cropBtn = btn;
+                            break;
+                        }
+                    }
+                    if (cropBtn) break;
+                    await Utils.sleep(500);
+                }
+
+                if (cropBtn) {
+                    cropBtn.click();
+                    Utils.log('[UPLOAD] Clicked "Cắt và lưu"', 'success');
+                } else {
+                    Utils.log('[UPLOAD] Khong tim thay nut "Cắt và lưu" (co the khong can)', 'warn');
+                }
+
+                // Step 6: Doi loading xong (disabled button bien mat)
+                Utils.log('[UPLOAD] Doi loading...', 'info');
+                for (let i = 0; i < 30; i++) {  // Max 15 giay
+                    const disabledBtn = document.querySelector('button[disabled] .sc-abe263da-0');
+                    if (!disabledBtn) {
+                        Utils.log('[UPLOAD] Loading xong!', 'success');
+                        break;
+                    }
+                    await Utils.sleep(500);
+                }
+
+                // Doi them 1 chut de dam bao
+                await Utils.sleep(1000);
+
+                Utils.log(`[UPLOAD] Hoan thanh: ${filename}`, 'success');
                 return true;
             } catch (e) {
                 Utils.log(`[UPLOAD] Loi khi upload: ${e.message}`, 'error');
@@ -1043,13 +1078,9 @@
             for (const img of images) {
                 const result = await UI.uploadReferenceImage(img.base64, img.filename);
                 if (result) success++;
-                // Doi lau hon de anh load xong
-                await Utils.sleep(2000);
+                // Delay nho giua cac upload (loading da xu ly trong uploadReferenceImage)
+                await Utils.sleep(500);
             }
-
-            // Doi them 1 chut sau khi upload het
-            Utils.log(`[UPLOAD] Doi anh load...`, 'info');
-            await Utils.sleep(2000);
 
             Utils.log(`[UPLOAD] Hoan thanh: ${success}/${images.length} thanh cong`, 'success');
             return success === images.length;
