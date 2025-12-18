@@ -24,6 +24,7 @@ import time
 import json
 import shutil
 import glob
+import base64
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime
@@ -474,6 +475,79 @@ class BrowserFlowGenerator:
         except Exception as e:
             self._log(f"Loi load media_names to JS: {e}", "warn")
 
+    def _upload_reference_images(self, reference_files: List[str]) -> bool:
+        """
+        Upload cac anh reference truoc khi tao scene.
+
+        Args:
+            reference_files: List ten file (vd: ["nvc.png", "nv1.png"])
+
+        Returns:
+            True neu upload thanh cong
+        """
+        if not reference_files or not self.driver:
+            return True
+
+        images_to_upload = []
+
+        for ref_file in reference_files:
+            # Xac dinh duong dan file
+            filename = ref_file if ref_file.endswith('.png') else f"{ref_file}.png"
+            ref_id = filename.replace('.png', '').replace('.jpg', '')
+
+            # Tim file trong project/nv/
+            file_path = self.nv_path / filename
+            if not file_path.exists():
+                # Thu tim khong co extension
+                file_path = self.nv_path / ref_id
+                if file_path.exists():
+                    filename = ref_id
+                else:
+                    self._log(f"[UPLOAD] Khong tim thay file: {filename}", "warn")
+                    continue
+
+            # Doc file va convert sang base64
+            try:
+                with open(file_path, 'rb') as f:
+                    image_data = f.read()
+                    base64_data = base64.b64encode(image_data).decode('utf-8')
+                    images_to_upload.append({
+                        'base64': base64_data,
+                        'filename': filename
+                    })
+                    self._log(f"[UPLOAD] Doc file: {filename} ({len(image_data)/1024:.1f} KB)")
+            except Exception as e:
+                self._log(f"[UPLOAD] Loi doc file {filename}: {e}", "error")
+                continue
+
+        if not images_to_upload:
+            self._log("[UPLOAD] Khong co anh nao de upload", "warn")
+            return True
+
+        # Upload qua JS
+        try:
+            images_json = json.dumps(images_to_upload)
+            result = self.driver.execute_async_script(f"""
+                const callback = arguments[arguments.length - 1];
+                VE3.uploadReferences({images_json}).then(success => {{
+                    callback({{ success: success }});
+                }}).catch(e => {{
+                    callback({{ success: false, error: e.message }});
+                }});
+            """)
+
+            if result and result.get('success'):
+                self._log(f"[UPLOAD] Da upload {len(images_to_upload)} anh reference", "success")
+                return True
+            else:
+                error = result.get('error', 'Unknown') if result else 'No response'
+                self._log(f"[UPLOAD] Loi upload: {error}", "error")
+                return False
+
+        except Exception as e:
+            self._log(f"[UPLOAD] Exception: {e}", "error")
+            return False
+
     def _find_downloaded_files(self, pattern: str, wait_timeout: int = 30) -> List[Path]:
         """
         Tim file vua download trong Downloads folder.
@@ -871,6 +945,13 @@ class BrowserFlowGenerator:
             return False, None, 0.0
 
         try:
+            # UPLOAD REFERENCE IMAGES TRUOC KHI TAO ANH
+            if reference_files:
+                self._log(f"[UPLOAD] Dang upload {len(reference_files)} anh reference...")
+                upload_success = self._upload_reference_images(reference_files)
+                if not upload_success:
+                    self._log("[UPLOAD] Upload that bai, tiep tuc khong co reference", "warn")
+
             # Goi VE3.run() cho 1 prompt (voi reference_files)
             ref_files_json = json.dumps(reference_files)
             result = self.driver.execute_async_script(f"""

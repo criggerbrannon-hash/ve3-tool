@@ -533,6 +533,100 @@
 
             Utils.log('FAIL - Khong tim thay nut gui', 'error');
             return false;
+        },
+
+        // Upload anh reference tu base64
+        // base64Data: string base64 cua anh (khong co prefix data:image/...)
+        // filename: ten file (vd: nvc.png)
+        uploadReferenceImage: async (base64Data, filename) => {
+            Utils.log(`[UPLOAD] Bat dau upload reference: ${filename}`, 'info');
+
+            // Step 1: Click nut "add" (icon add)
+            const addButtons = document.querySelectorAll('i.google-symbols');
+            let addBtn = null;
+            for (const btn of addButtons) {
+                if (btn.textContent.trim() === 'add') {
+                    addBtn = btn;
+                    break;
+                }
+            }
+
+            if (addBtn) {
+                addBtn.click();
+                Utils.log('[UPLOAD] Clicked ADD button', 'success');
+                await Utils.sleep(500);
+            } else {
+                Utils.log('[UPLOAD] Khong tim thay nut ADD', 'error');
+                return false;
+            }
+
+            // Step 2: Click nut "upload"
+            const uploadBtns = document.querySelectorAll('button');
+            let uploadBtn = null;
+            for (const btn of uploadBtns) {
+                const text = btn.textContent || '';
+                if (text.includes('Tải lên') || text.includes('upload') || text.includes('Upload')) {
+                    uploadBtn = btn;
+                    break;
+                }
+            }
+
+            if (uploadBtn) {
+                uploadBtn.click();
+                Utils.log('[UPLOAD] Clicked UPLOAD button', 'success');
+                await Utils.sleep(500);
+            } else {
+                Utils.log('[UPLOAD] Khong tim thay nut UPLOAD', 'error');
+                return false;
+            }
+
+            // Step 3: Tim input file
+            const fileInput = document.querySelector('input[type="file"]');
+            if (!fileInput) {
+                Utils.log('[UPLOAD] Khong tim thay file input', 'error');
+                return false;
+            }
+
+            // Step 4: Tao File tu base64 va set vao input
+            try {
+                // Decode base64 to binary
+                const byteCharacters = atob(base64Data);
+                const byteNumbers = new Array(byteCharacters.length);
+                for (let i = 0; i < byteCharacters.length; i++) {
+                    byteNumbers[i] = byteCharacters.charCodeAt(i);
+                }
+                const byteArray = new Uint8Array(byteNumbers);
+
+                // Xac dinh MIME type tu filename
+                let mimeType = 'image/png';
+                if (filename.endsWith('.jpg') || filename.endsWith('.jpeg')) {
+                    mimeType = 'image/jpeg';
+                } else if (filename.endsWith('.webp')) {
+                    mimeType = 'image/webp';
+                }
+
+                // Tao File object
+                const file = new File([byteArray], filename, { type: mimeType });
+
+                // Set file vao input bang DataTransfer
+                const dataTransfer = new DataTransfer();
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+
+                // Trigger change event
+                fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+                fileInput.dispatchEvent(new Event('input', { bubbles: true }));
+
+                Utils.log(`[UPLOAD] Da upload: ${filename} (${(byteArray.length / 1024).toFixed(1)} KB)`, 'success');
+
+                // Doi 1 chut de Flow xu ly
+                await Utils.sleep(1000);
+
+                return true;
+            } catch (e) {
+                Utils.log(`[UPLOAD] Loi khi upload: ${e.message}`, 'error');
+                return false;
+            }
         }
     };
 
@@ -899,6 +993,28 @@
             STATE.isSetupDone = true;
             STATE.projectUrl = window.location.href;
             Utils.log('Marked setup as done (existing project)', 'success');
+        },
+
+        // NEW: Upload anh reference tu base64
+        // Python se doc file local, convert sang base64, roi goi ham nay
+        // base64Data: string base64 (khong co prefix data:image/...)
+        // filename: ten file (vd: nvc.png)
+        uploadReference: async (base64Data, filename) => {
+            return await UI.uploadReferenceImage(base64Data, filename);
+        },
+
+        // NEW: Upload nhieu anh reference
+        // images: [{base64: '...', filename: 'nvc.png'}, ...]
+        uploadReferences: async (images) => {
+            Utils.log(`[UPLOAD] Bat dau upload ${images.length} reference images...`, 'info');
+            let success = 0;
+            for (const img of images) {
+                const result = await UI.uploadReferenceImage(img.base64, img.filename);
+                if (result) success++;
+                await Utils.sleep(500);  // Delay giua cac upload
+            }
+            Utils.log(`[UPLOAD] Hoan thanh: ${success}/${images.length} thanh cong`, 'success');
+            return success === images.length;
         },
 
         // Help
