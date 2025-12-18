@@ -874,15 +874,44 @@ class BrowserFlowGenerator:
             """)
 
             if result and result.get("success"):
-                # Lay prompt_json tu result (JS tra ve trong result.result.prompt_json)
+                # Lay prompt_json va images tu result
                 js_result = result.get("result", {})
                 prompt_json = js_result.get("prompt_json", "") if isinstance(js_result, dict) else ""
-                self._log(f"[DEBUG] prompt_json from JS: {prompt_json[:100] if prompt_json else '(empty)'}...")
+                js_images = js_result.get("images", []) if isinstance(js_result, dict) else []
+
+                self._log(f"[DEBUG] prompt_json: {prompt_json[:100] if prompt_json else '(empty)'}...")
+                self._log(f"[DEBUG] JS returned {len(js_images)} images with mediaNames")
 
                 # Di chuyen file tu Downloads (timeout 2 phut)
                 img_file, score, needs_regen = self._move_downloaded_images(pid)
 
                 if img_file:
+                    # TIM MEDIA_NAME DUNG CHO ANH DA CHON
+                    # img_file.name = "{pid}.png", original filename = "{project}_{pid}_001.png" hoac "_002.png"
+                    selected_media_name = ""
+                    if js_images:
+                        # Neu chi co 1 anh, lay mediaName cua no
+                        if len(js_images) == 1:
+                            selected_media_name = js_images[0].get("mediaName", "")
+                            self._log(f"[MEDIA] 1 image -> mediaName: {selected_media_name[:50] if selected_media_name else 'NONE'}...")
+                        else:
+                            # Neu co nhieu anh, can xac dinh anh nao duoc chon
+                            # Python chon anh tot nhat, JS images co index/filename
+                            # Mac dinh: lay anh dau tien (index 0) vi thuong la best
+                            # TODO: Cai thien bang cach match filename neu can
+                            selected_media_name = js_images[0].get("mediaName", "")
+                            self._log(f"[MEDIA] {len(js_images)} images, selected first -> mediaName: {selected_media_name[:50] if selected_media_name else 'NONE'}...")
+
+                    # Set mediaName vao JS STATE de reference sau
+                    if selected_media_name and self.driver:
+                        try:
+                            self.driver.execute_script(
+                                f"VE3.setMediaName('{pid}', '{selected_media_name}');"
+                            )
+                            self._log(f"[MEDIA] Saved mediaName for {pid}")
+                        except Exception as e:
+                            self._log(f"[MEDIA] Warning: Could not set mediaName: {e}", "warn")
+
                     if needs_regen:
                         self._log(f"OK - Da tao anh nhung chua dat chuan (score={score:.1f})", "warn")
                     else:

@@ -319,15 +319,15 @@
                                             url: img.fifeUrl,
                                             seed: img.seed,
                                             filename: filename,
-                                            mediaName: mediaName,      // NEW: Luu media_name
-                                            workflowId: workflowId,    // NEW: Luu workflow_id
+                                            mediaName: mediaName,      // media_name de reference sau
+                                            workflowId: workflowId,
+                                            index: i,                  // Vi tri trong response
                                         });
 
-                                        // Luu media_name vao STATE de reference sau
-                                        if (mediaName && STATE.currentSceneId) {
-                                            STATE.mediaNames[STATE.currentSceneId] = mediaName;
-                                            Utils.log(`Saved media_name for ${STATE.currentSceneId}: ${mediaName.slice(0, 50)}...`, 'success');
-                                        }
+                                        Utils.log(`Image ${i+1}: filename=${filename}, mediaName=${mediaName ? mediaName.slice(0,40)+'...' : 'NONE'}`, 'info');
+
+                                        // KHONG tu dong luu mediaName vao STATE o day!
+                                        // Python se chon anh tot nhat roi goi setMediaName() voi mediaName dung
 
                                         if (CONFIG.autoDownload) {
                                             downloadPromises.push(
@@ -831,6 +831,12 @@
         // NEW: Lay media_name cho 1 scene_id
         getMediaName: (sceneId) => {
             return STATE.mediaNames[sceneId] || null;
+        },
+
+        // NEW: Set 1 media_name cho 1 scene_id (sau khi Python chon anh tot nhat)
+        setMediaName: (sceneId, mediaName) => {
+            STATE.mediaNames[sceneId] = mediaName;
+            Utils.log(`Set mediaName for ${sceneId}: ${mediaName ? mediaName.slice(0,50)+'...' : 'NONE'}`, 'success');
         },
 
         // NEW: Set media_names tu Python (load tu cache)
