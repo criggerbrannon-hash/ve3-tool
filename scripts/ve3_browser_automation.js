@@ -538,8 +538,34 @@
         // Upload anh reference tu base64
         // base64Data: string base64 cua anh (khong co prefix data:image/...)
         // filename: ten file (vd: nvc.png)
+        // Xu ly dialog consent khi bat dau du an moi
+        handleConsentDialog: async () => {
+            // Tim nut "Tôi đồng ý"
+            const buttons = document.querySelectorAll('button');
+            for (const btn of buttons) {
+                if (btn.textContent.trim() === 'Tôi đồng ý') {
+                    Utils.log('[CONSENT] Tim thay dialog consent, dang click...', 'info');
+                    btn.click();
+                    await Utils.sleep(500);
+
+                    // An ESC 2 lan de dong file dialog neu no mo ra
+                    for (let i = 0; i < 2; i++) {
+                        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+                        await Utils.sleep(200);
+                    }
+
+                    Utils.log('[CONSENT] Da xu ly consent dialog', 'success');
+                    return true;
+                }
+            }
+            return false;
+        },
+
         uploadReferenceImage: async (base64Data, filename) => {
             Utils.log(`[UPLOAD] Bat dau upload reference: ${filename}`, 'info');
+
+            // Step 0: Xu ly consent dialog neu co (chi xuat hien lan dau)
+            await UI.handleConsentDialog();
 
             // Step 1: Click nut "add" (icon add)
             const addButtons = document.querySelectorAll('i.google-symbols');
