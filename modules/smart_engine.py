@@ -102,6 +102,9 @@ class SmartEngine:
         self._character_gen_result = None
         self._character_gen_error = None
 
+        # Browser generator - reuse cho ca characters va scenes
+        self._browser_generator = None
+
         # Cache media_name per profile: {profile_name: {image_id: media_name}}
         # QUAN TRONG: media_name chi valid cho token da tao ra no
         self.media_name_cache = {}
@@ -1109,12 +1112,23 @@ class SmartEngine:
                 available_profiles = ["main"]
 
         try:
-            generator = BrowserFlowGenerator(
-                project_path=str(proj_dir),
-                profile_name=profile_name,
-                headless=headless,
-                verbose=True
-            )
+            # REUSE browser generator neu da co (giu nguyen session)
+            if self._browser_generator is None or self._browser_generator.driver is None:
+                self.log("Tao browser generator moi...")
+                generator = BrowserFlowGenerator(
+                    project_path=str(proj_dir),
+                    profile_name=profile_name,
+                    headless=headless,
+                    verbose=True
+                )
+                self._browser_generator = generator
+            else:
+                self.log("Reuse browser generator (giu nguyen session)...")
+                generator = self._browser_generator
+                # Update project path neu khac
+                if str(generator.project_path) != str(proj_dir):
+                    generator.project_path = Path(proj_dir)
+                    generator.project_code = proj_dir.name
 
             # Override callback
             def custom_log(msg, level="info"):
@@ -1429,7 +1443,20 @@ class SmartEngine:
         else:
             self.log("  Video composer khong kha dung hoac thieu file", "WARN")
 
+        # === 9. DONG BROWSER ===
+        self._close_browser()
+
         return results
+
+    def _close_browser(self):
+        """Dong browser generator (giu nguyen working profile)."""
+        if self._browser_generator is not None:
+            try:
+                self.log("[CLEANUP] Dong browser...")
+                self._browser_generator.stop_browser()
+            except:
+                pass
+            self._browser_generator = None
 
     def _export_scenes(self, excel_path: Path, proj_dir: Path, name: str) -> None:
         """Export scenes ra TXT va SRT de ho tro video editing."""
