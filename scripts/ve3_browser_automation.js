@@ -32,6 +32,15 @@
 
         // Auto download
         autoDownload: true,
+
+        // API settings
+        apiBaseUrl: 'https://labs.google/api',
+        imageModel: 'GEM_PIX_2',
+        aspectRatio: 'IMAGE_ASPECT_RATIO_LANDSCAPE',
+        tool: 'flow',
+
+        // NEW: Mode - 'textarea' (cu) hoac 'api' (moi - goi truc tiep API)
+        mode: 'api',  // Mac dinh dung API mode de co reference images
     };
 
     // =========================================================================
@@ -41,6 +50,7 @@
         isInitialized: false,
         isRunning: false,
         shouldStop: false,
+        isSetupDone: false,  // NEW: Chi setup 1 lan
 
         // Queue - moi item la {sceneId, prompt} hoac string
         promptQueue: [],
@@ -52,6 +62,10 @@
         totalImages: 0,
         downloadedImages: 0,
         errors: [],
+
+        // NEW: Luu project URL va media_names cho reference
+        projectUrl: '',      // URL cua project hien tai
+        mediaNames: {},      // {sceneId: media_name} - de reference sau
 
         // Callback khi 1 prompt hoan thanh
         onPromptComplete: null,
@@ -97,6 +111,96 @@
             }
             textarea.dispatchEvent(new Event('input', { bubbles: true }));
             textarea.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+    };
+
+    // =========================================================================
+    // API CALLER - Goi truc tiep batchGenerateImages API
+    // =========================================================================
+    const API = {
+        // Lay projectId tu URL hien tai
+        // URL format: https://labs.google/fx/vi/tools/flow/project/{projectId}
+        getProjectId: () => {
+            const url = window.location.href;
+            const match = url.match(/\/project\/([a-f0-9-]+)/i);
+            return match ? match[1] : null;
+        },
+
+        // Tao sessionId random
+        generateSessionId: () => {
+            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+                const r = Math.random() * 16 | 0;
+                const v = c === 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+        },
+
+        // Tao seed random
+        generateSeed: () => {
+            return Math.floor(Math.random() * 999999) + 1;
+        },
+
+        // Build request payload
+        buildPayload: (prompt, referenceNames = [], count = 2) => {
+            const projectId = API.getProjectId();
+            const sessionId = API.generateSessionId();
+
+            // Build imageInputs tu reference names
+            const imageInputs = referenceNames
+                .filter(name => name && name.trim())
+                .map(name => ({ name: name.trim() }));
+
+            // Build requests array
+            const requests = [];
+            for (let i = 0; i < count; i++) {
+                requests.push({
+                    clientContext: {
+                        sessionId: sessionId,
+                        projectId: projectId,
+                        tool: CONFIG.tool
+                    },
+                    seed: API.generateSeed(),
+                    imageModelName: CONFIG.imageModel,
+                    imageAspectRatio: CONFIG.aspectRatio,
+                    prompt: prompt,
+                    imageInputs: imageInputs
+                });
+            }
+
+            return { requests };
+        },
+
+        // Goi API tao anh
+        generateImages: async (prompt, referenceNames = [], count = 2) => {
+            const projectId = API.getProjectId();
+            if (!projectId) {
+                throw new Error('Khong tim thay projectId trong URL. Hay mo project truoc!');
+            }
+
+            const url = `${CONFIG.apiBaseUrl}/v1/projects/${projectId}/flowMedia:batchGenerateImages`;
+            const payload = API.buildPayload(prompt, referenceNames, count);
+
+            Utils.log(`API Call: ${url}`, 'info');
+            Utils.log(`Prompt: ${prompt.slice(0, 50)}...`, 'info');
+            if (referenceNames.length > 0) {
+                Utils.log(`References: ${referenceNames.join(', ')}`, 'info');
+            }
+
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                credentials: 'include',  // Quan trong: gui cookies de xac thuc
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`API error ${response.status}: ${errorText.slice(0, 200)}`);
+            }
+
+            return await response.json();
         }
     };
 
@@ -192,15 +296,29 @@
                                 const downloadPromises = [];
 
                                 for (let i = 0; i < data.media.length; i++) {
-                                    const img = data.media[i]?.image?.generatedImage;
+                                    const mediaItem = data.media[i];
+                                    const img = mediaItem?.image?.generatedImage;
+
+                                    // QUAN TRONG: Lay media_name de reference sau!
+                                    const mediaName = mediaItem?.name || '';
+                                    const workflowId = mediaItem?.workflowId || '';
+
                                     if (img && img.fifeUrl) {
                                         const filename = Utils.generateFilename(i + 1);
 
                                         self.imageBuffer.push({
                                             url: img.fifeUrl,
                                             seed: img.seed,
-                                            filename: filename
+                                            filename: filename,
+                                            mediaName: mediaName,      // NEW: Luu media_name
+                                            workflowId: workflowId,    // NEW: Luu workflow_id
                                         });
+
+                                        // Luu media_name vao STATE de reference sau
+                                        if (mediaName && STATE.currentSceneId) {
+                                            STATE.mediaNames[STATE.currentSceneId] = mediaName;
+                                            Utils.log(`Saved media_name for ${STATE.currentSceneId}: ${mediaName.slice(0, 50)}...`, 'success');
+                                        }
 
                                         if (CONFIG.autoDownload) {
                                             downloadPromises.push(
@@ -400,16 +518,18 @@
     // =========================================================================
     const Runner = {
         // Xu ly 1 prompt
-        // item co the la string hoac {sceneId, prompt}
+        // item co the la string hoac {sceneId, prompt, referenceFiles}
         processOnePrompt: async (item, index) => {
             // Parse item
-            let prompt, sceneId;
+            let prompt, sceneId, referenceFiles;
             if (typeof item === 'string') {
                 prompt = item;
                 sceneId = `scene_${String(index + 1).padStart(3, '0')}`;
+                referenceFiles = [];
             } else {
                 prompt = item.prompt;
                 sceneId = item.sceneId || item.scene_id || `scene_${String(index + 1).padStart(3, '0')}`;
+                referenceFiles = item.referenceFiles || item.reference_files || [];
             }
 
             STATE.currentPrompt = prompt;
@@ -418,13 +538,45 @@
 
             Utils.log(`\n━━━ [${index + 1}/${STATE.promptQueue.length}] ${sceneId} ━━━`, 'info');
 
-            // NOTE: 1 Du an = 1 Voice
-            // Chi can click "Du an moi" 1 lan o dau (trong VE3.setup())
-            // Cac prompt tiep theo chi can gui trong cung du an
+            // Lookup media_names cho references
+            const referenceNames = [];
+            if (referenceFiles && referenceFiles.length > 0) {
+                for (const refFile of referenceFiles) {
+                    // refFile co the la "nvc.png" hoac "nvc"
+                    const refId = refFile.replace('.png', '').replace('.jpg', '');
+                    const mediaName = STATE.mediaNames[refId];
+                    if (mediaName) {
+                        referenceNames.push(mediaName);
+                        Utils.log(`  Reference: ${refId} → ${mediaName.slice(0, 40)}...`, 'info');
+                    } else {
+                        Utils.log(`  Reference: ${refId} → (chua co media_name, skip)`, 'warn');
+                    }
+                }
+            }
 
-            // 1. Dien prompt
-            Utils.log('Dien prompt...', 'info');
-            if (!UI.setPrompt(prompt)) {
+            // =====================================================================
+            // Build JSON prompt (co references) hoac plain text
+            // =====================================================================
+            let textToSend;
+
+            if (referenceNames.length > 0) {
+                // CO REFERENCES: Gui JSON format
+                const jsonPayload = {
+                    prompt: prompt,
+                    seed: API.generateSeed(),
+                    imageInputs: referenceNames.map(name => ({ name: name }))
+                };
+                textToSend = JSON.stringify(jsonPayload);
+                Utils.log(`[JSON MODE] Gui JSON voi ${referenceNames.length} references`, 'info');
+                Utils.log(`JSON: ${textToSend.slice(0, 100)}...`, 'info');
+            } else {
+                // KHONG CO REFERENCES: Gui plain text
+                textToSend = prompt;
+                Utils.log('[TEXT MODE] Gui plain text prompt', 'info');
+            }
+
+            // 1. Dien prompt (JSON hoac text)
+            if (!UI.setPrompt(textToSend)) {
                 return { success: false, error: 'Cannot set prompt' };
             }
 
@@ -564,9 +716,18 @@
         },
 
         // Setup UI (click New Project + chon Generate Image)
-        // Flow giong token code: New Project -> 5s -> Select Image Mode -> 3s -> Focus textarea -> 1s
+        // CHI CHAY 1 LAN - giu nguyen project de reference images hoat dong!
         setup: async () => {
-            Utils.log('=== SETUP UI ===', 'info');
+            // QUAN TRONG: Chi setup 1 lan! Khong mo project moi nua!
+            if (STATE.isSetupDone) {
+                Utils.log('Setup da chay roi, skip (giu nguyen project)', 'info');
+                // Chi can focus textarea
+                await UI.focusTextarea();
+                await Utils.sleep(500);
+                return;
+            }
+
+            Utils.log('=== SETUP UI (LAN DAU) ===', 'info');
 
             // 1. Click "Du an moi"
             Utils.log('Buoc 1: Click Du an moi...', 'info');
@@ -592,7 +753,14 @@
             Utils.log('Doi 1s...', 'wait');
             await Utils.sleep(1000);
 
-            Utils.log('=== SETUP XONG - San sang gui prompt ===', 'success');
+            // 7. LUU PROJECT URL
+            STATE.projectUrl = window.location.href;
+            Utils.log(`Project URL: ${STATE.projectUrl}`, 'success');
+
+            // 8. Danh dau da setup xong
+            STATE.isSetupDone = true;
+
+            Utils.log('=== SETUP XONG - TAT CA ANH SE DUNG CUNG PROJECT ===', 'success');
         },
 
         // Callbacks
@@ -608,6 +776,30 @@
         destroy: () => {
             FetchHook.destroy();
             STATE.isInitialized = false;
+            STATE.isSetupDone = false;
+            STATE.projectUrl = '';
+            STATE.mediaNames = {};
+        },
+
+        // NEW: Lay project URL hien tai
+        getProjectUrl: () => {
+            return STATE.projectUrl || window.location.href;
+        },
+
+        // NEW: Lay tat ca media_names da luu
+        getMediaNames: () => {
+            return { ...STATE.mediaNames };
+        },
+
+        // NEW: Lay media_name cho 1 scene_id
+        getMediaName: (sceneId) => {
+            return STATE.mediaNames[sceneId] || null;
+        },
+
+        // NEW: Set media_names tu Python (load tu cache)
+        setMediaNames: (mediaNames) => {
+            STATE.mediaNames = { ...STATE.mediaNames, ...mediaNames };
+            Utils.log(`Loaded ${Object.keys(mediaNames).length} media_names from cache`, 'success');
         },
 
         // Help

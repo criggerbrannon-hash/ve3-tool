@@ -395,6 +395,65 @@ class BrowserFlowGenerator:
             traceback.print_exc()
             return False
 
+    # =========================================================================
+    # MEDIA NAMES CACHE - Luu media_name de reference
+    # =========================================================================
+
+    def _get_media_cache_path(self) -> Path:
+        """Duong dan file cache media_names."""
+        return self.project_path / "prompts" / ".media_cache.json"
+
+    def _load_media_cache(self) -> Dict[str, str]:
+        """Load media_names tu cache file."""
+        cache_path = self._get_media_cache_path()
+        if cache_path.exists():
+            try:
+                with open(cache_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    self._log(f"Loaded {len(data)} media_names from cache")
+                    return data
+            except:
+                pass
+        return {}
+
+    def _save_media_cache(self, media_names: Dict[str, str]) -> None:
+        """Luu media_names vao cache file."""
+        cache_path = self._get_media_cache_path()
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(cache_path, 'w', encoding='utf-8') as f:
+                json.dump(media_names, f, indent=2)
+            self._log(f"Saved {len(media_names)} media_names to cache")
+        except Exception as e:
+            self._log(f"Loi save cache: {e}", "warn")
+
+    def _get_media_names_from_js(self) -> Dict[str, str]:
+        """Lay tat ca media_names tu JS."""
+        if not self.driver:
+            return {}
+        try:
+            return self.driver.execute_script("return VE3.getMediaNames();") or {}
+        except:
+            return {}
+
+    def _get_project_url_from_js(self) -> str:
+        """Lay project URL tu JS."""
+        if not self.driver:
+            return ""
+        try:
+            return self.driver.execute_script("return VE3.getProjectUrl();") or ""
+        except:
+            return ""
+
+    def _load_media_names_to_js(self, media_names: Dict[str, str]) -> None:
+        """Load media_names vao JS tu cache."""
+        if not self.driver or not media_names:
+            return
+        try:
+            self.driver.execute_script(f"VE3.setMediaNames({json.dumps(media_names)});")
+        except Exception as e:
+            self._log(f"Loi load media_names to JS: {e}", "warn")
+
     def _find_downloaded_files(self, pattern: str, wait_timeout: int = 30) -> List[Path]:
         """
         Tim file vua download trong Downloads folder.
@@ -659,11 +718,24 @@ class BrowserFlowGenerator:
             scene_id = item["sceneId"]
             prompt = item["prompt"]
 
+            # Lay reference_files tu scene (JSON string hoac list)
+            reference_files = []
+            if hasattr(scene, 'reference_files') and scene.reference_files:
+                ref_str = scene.reference_files
+                try:
+                    parsed = json.loads(ref_str) if isinstance(ref_str, str) else ref_str
+                    reference_files = parsed if isinstance(parsed, list) else [parsed]
+                except:
+                    reference_files = [f.strip() for f in str(ref_str).split(',') if f.strip()]
+
             self._log(f"\n[{i+1}/{len(prompts_data)}] Scene {scene_id}")
             self._log(f"Prompt ({len(prompt)} chars): {prompt[:100]}...")
+            if reference_files:
+                self._log(f"References: {reference_files}")
 
             try:
-                # Goi VE3.run() cho 1 prompt
+                # Goi VE3.run() cho 1 prompt (voi reference_files)
+                ref_files_json = json.dumps(reference_files)
                 result = self.driver.execute_async_script(f"""
                     const callback = arguments[arguments.length - 1];
                     const timeout = setTimeout(() => {{
@@ -672,7 +744,8 @@ class BrowserFlowGenerator:
 
                     VE3.run([{{
                         sceneId: "{scene_id}",
-                        prompt: `{self._escape_js_string(prompt)}`
+                        prompt: `{self._escape_js_string(prompt)}`,
+                        referenceFiles: {ref_files_json}
                     }}]).then(r => {{
                         clearTimeout(timeout);
                         callback({{ success: true, result: r }});
@@ -875,6 +948,11 @@ class BrowserFlowGenerator:
         if not self._inject_js():
             return {"success": False, "error": "Khong inject duoc JS"}
 
+        # Load media_names tu cache va set vao JS
+        cached_media_names = self._load_media_cache()
+        if cached_media_names:
+            self._load_media_names_to_js(cached_media_names)
+
         self._log(f"\nBat dau tao {len(prompts)} anh...")
 
         # DEBUG: Hien thi prompt dau tien
@@ -967,6 +1045,13 @@ class BrowserFlowGenerator:
 
             self._log(f"\nRetry: {retry_success}/{len(failed_prompts)} thanh cong")
 
+        # Luu media_names tu JS vao cache (cho cac lan chay sau)
+        js_media_names = self._get_media_names_from_js()
+        if js_media_names:
+            # Merge voi cached (uu tien moi)
+            all_media_names = {**cached_media_names, **js_media_names}
+            self._save_media_cache(all_media_names)
+
         # Summary
         self._log("\n" + "=" * 60)
         self._log("HOAN THANH")
@@ -977,6 +1062,8 @@ class BrowserFlowGenerator:
         self._log(f"Bo qua: {self.stats['skipped']}")
         if self.stats.get('low_quality', 0) > 0:
             self._log(f"Chat luong thap: {self.stats['low_quality']}")
+        if js_media_names:
+            self._log(f"Media names saved: {len(js_media_names)}")
 
         return {
             "success": True,
