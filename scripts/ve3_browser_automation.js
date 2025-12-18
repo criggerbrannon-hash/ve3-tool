@@ -790,12 +790,11 @@
             let textToSend;
             let finalPrompt = prompt;
 
-            // Them annotation reference vao dau prompt neu co
+            // Them annotation reference vao cuoi prompt neu co
             if (referenceFiles && referenceFiles.length > 0) {
-                // Format: [Using uploaded references: nvc.png, nv1.png]
-                const refNames = referenceFiles.map(f => f.replace('.png', '').replace('.jpg', ''));
-                const refAnnotation = `[Using uploaded references: ${refNames.join(', ')}] `;
-                finalPrompt = refAnnotation + prompt;
+                // Format: (reference: nvc.png, nv1.png, loc_apartment.png)
+                const refAnnotation = ` (reference: ${referenceFiles.join(', ')})`;
+                finalPrompt = prompt + refAnnotation;
                 Utils.log(`[REF] Added annotation: ${refAnnotation}`, 'info');
             }
 
