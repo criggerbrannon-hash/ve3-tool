@@ -10,7 +10,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 from datetime import timedelta
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Callable
 import threading
 
 import requests
@@ -697,16 +697,20 @@ class PromptGenerator:
         self,
         project_dir: Path,
         code: str,
-        overwrite: bool = False
+        overwrite: bool = False,
+        on_characters_ready: Callable = None
     ) -> bool:
         """
         Tạo prompts cho một project.
-        
+
         Args:
             project_dir: Path đến thư mục project
             code: Mã project
             overwrite: Nếu True, ghi đè prompts đã có
-            
+            on_characters_ready: Callback được gọi ngay khi characters được save
+                                 Signature: on_characters_ready(excel_path, proj_dir)
+                                 Cho phép caller bắt đầu tạo ảnh nhân vật song song
+
         Returns:
             True nếu thành công
         """
@@ -781,6 +785,16 @@ class PromptGenerator:
 
         workbook.save()
         self.logger.info(f"Đã lưu {len(characters)} nhân vật + {len(locations)} bối cảnh")
+
+        # === PARALLEL OPTIMIZATION ===
+        # Gọi callback để caller có thể bắt đầu tạo ảnh nhân vật SONG SONG
+        # trong khi vẫn tiếp tục tạo scene prompts
+        if on_characters_ready:
+            self.logger.info("[PARALLEL] Characters ready! Triggering character image generation...")
+            try:
+                on_characters_ready(excel_path, project_dir)
+            except Exception as e:
+                self.logger.warning(f"[PARALLEL] Callback error (non-fatal): {e}")
 
         # Step 1.5: Director's Treatment - Phân tích cấu trúc câu chuyện
         self.logger.info("=" * 50)
@@ -2467,12 +2481,21 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
             self.logger.warning(f"[_extract_json] Direct parse failed at position {e.pos}: {e.msg}")
 
         # Bước 3: Thử tìm JSON trong code block ```json ... ```
-        json_block = re.search(r'```(?:json)?\s*\n?([\s\S]*?)\n?```', clean_text)
+        # Improved: tìm từ ```json đến ``` cuối cùng (greedy)
+        json_block = re.search(r'```(?:json)?\s*\n?([\s\S]*)\n?```', clean_text)
         if json_block:
+            block_content = json_block.group(1).strip()
+            # Nếu có ``` thừa ở cuối, cắt bỏ
+            if block_content.endswith('```'):
+                block_content = block_content[:-3].strip()
             try:
-                return json.loads(json_block.group(1))
+                return json.loads(block_content)
             except json.JSONDecodeError as e:
                 self.logger.debug(f"[_extract_json] Code block parse failed: {e}")
+                # Thử repair JSON trong code block nếu bị truncated
+                if block_content.startswith('{'):
+                    self.logger.info("[_extract_json] Attempting to repair JSON from code block...")
+                    clean_text = block_content  # Dùng nội dung code block cho bước 4
 
         # Bước 4: Tìm JSON object bắt đầu bằng { và kết thúc bằng }
         start_idx = clean_text.find('{')
