@@ -51,6 +51,7 @@
         isRunning: false,
         shouldStop: false,
         isSetupDone: false,  // NEW: Chi setup 1 lan
+        consentTriggered: false,  // Da trigger consent dialog chua
 
         // Queue - moi item la {sceneId, prompt} hoac string
         promptQueue: [],
@@ -538,34 +539,82 @@
         // Upload anh reference tu base64
         // base64Data: string base64 cua anh (khong co prefix data:image/...)
         // filename: ten file (vd: nvc.png)
-        // Xu ly dialog consent khi bat dau du an moi
-        handleConsentDialog: async () => {
-            // Tim nut "Tôi đồng ý"
-            const buttons = document.querySelectorAll('button');
-            for (const btn of buttons) {
-                if (btn.textContent.trim() === 'Tôi đồng ý') {
-                    Utils.log('[CONSENT] Tim thay dialog consent, dang click...', 'info');
-                    btn.click();
-                    await Utils.sleep(500);
 
-                    // An ESC 2 lan de dong file dialog neu no mo ra
-                    for (let i = 0; i < 2; i++) {
-                        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
-                        await Utils.sleep(200);
-                    }
+        // Trigger consent dialog khi bat dau du an moi
+        // Flow: Click ADD -> Click Upload -> Click "Tôi đồng ý" -> ESC 2 lan
+        triggerConsent: async () => {
+            if (STATE.consentTriggered) {
+                Utils.log('[CONSENT] Da trigger truoc do, skip', 'info');
+                return true;
+            }
 
-                    Utils.log('[CONSENT] Da xu ly consent dialog', 'success');
-                    return true;
+            Utils.log('[CONSENT] Bat dau trigger consent...', 'info');
+
+            // Step 1: Click ADD
+            const addButtons = document.querySelectorAll('i.google-symbols');
+            let addBtn = null;
+            for (const btn of addButtons) {
+                if (btn.textContent.trim() === 'add') {
+                    addBtn = btn;
+                    break;
                 }
             }
-            return false;
+
+            if (addBtn) {
+                addBtn.click();
+                Utils.log('[CONSENT] Clicked ADD', 'info');
+                await Utils.sleep(500);
+            } else {
+                Utils.log('[CONSENT] Khong thay nut ADD', 'warn');
+                return false;
+            }
+
+            // Step 2: Click Upload (se trigger consent dialog)
+            const uploadBtns = document.querySelectorAll('button');
+            let uploadBtn = null;
+            for (const btn of uploadBtns) {
+                if (btn.textContent.includes('Tải lên')) {
+                    uploadBtn = btn;
+                    break;
+                }
+            }
+
+            if (uploadBtn) {
+                uploadBtn.click();
+                Utils.log('[CONSENT] Clicked Upload - Cho dialog...', 'info');
+                await Utils.sleep(800);
+            }
+
+            // Step 3: Click "Tôi đồng ý" neu co
+            const buttons = document.querySelectorAll('button');
+            let foundConsent = false;
+            for (const btn of buttons) {
+                if (btn.textContent.trim() === 'Tôi đồng ý') {
+                    btn.click();
+                    Utils.log('[CONSENT] Clicked "Tôi đồng ý"', 'success');
+                    foundConsent = true;
+                    await Utils.sleep(500);
+                    break;
+                }
+            }
+
+            if (!foundConsent) {
+                Utils.log('[CONSENT] Khong thay dialog (co the da dong y truoc do)', 'info');
+            }
+
+            // Step 4: ESC 2 lan de dong file dialog
+            for (let i = 0; i < 2; i++) {
+                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+                await Utils.sleep(300);
+            }
+            Utils.log('[CONSENT] ESC 2 lan - Done', 'success');
+
+            STATE.consentTriggered = true;
+            return true;
         },
 
         uploadReferenceImage: async (base64Data, filename) => {
             Utils.log(`[UPLOAD] Bat dau upload reference: ${filename}`, 'info');
-
-            // Step 0: Xu ly consent dialog neu co (chi xuat hien lan dau)
-            await UI.handleConsentDialog();
 
             // Step 1: Click nut "add" (icon add)
             const addButtons = document.querySelectorAll('i.google-symbols');
@@ -645,8 +694,8 @@
 
                 Utils.log(`[UPLOAD] Da upload: ${filename} (${(byteArray.length / 1024).toFixed(1)} KB)`, 'success');
 
-                // Doi 1 chut de Flow xu ly
-                await Utils.sleep(1000);
+                // Doi de Flow xu ly va anh load
+                await Utils.sleep(2000);
 
                 return true;
             } catch (e) {
@@ -981,12 +1030,22 @@
         // images: [{base64: '...', filename: 'nvc.png'}, ...]
         uploadReferences: async (images) => {
             Utils.log(`[UPLOAD] Bat dau upload ${images.length} reference images...`, 'info');
+
+            // Trigger consent truoc khi upload (chi lan dau)
+            await UI.triggerConsent();
+
             let success = 0;
             for (const img of images) {
                 const result = await UI.uploadReferenceImage(img.base64, img.filename);
                 if (result) success++;
-                await Utils.sleep(500);  // Delay giua cac upload
+                // Doi lau hon de anh load xong
+                await Utils.sleep(2000);
             }
+
+            // Doi them 1 chut sau khi upload het
+            Utils.log(`[UPLOAD] Doi anh load...`, 'info');
+            await Utils.sleep(2000);
+
             Utils.log(`[UPLOAD] Hoan thanh: ${success}/${images.length} thanh cong`, 'success');
             return success === images.length;
         },
