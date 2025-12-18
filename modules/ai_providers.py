@@ -31,13 +31,13 @@ class OllamaClient:
     Ollama API Client - FREE, chay LOCAL tren may tinh cua ban!
 
     Cai dat: https://ollama.ai
-    Pull model: ollama pull gemma3:27b
+    Pull model: ollama pull qwen2.5:7b (nhanh) hoặc qwen2.5:14b (tốt hơn)
 
     Models khuyen dung:
-    - gemma3:27b (Google, manh, 27B params)
-    - qwen2.5:7b (Alibaba, nhanh)
-    - llama3.1:8b (Meta)
-    - mistral:7b (Mistral AI)
+    - qwen2.5:7b (Alibaba, nhanh, 32k context) ⭐ RECOMMENDED
+    - qwen2.5:14b (Alibaba, cân bằng)
+    - llama3.1:8b (Meta, 128k context)
+    - mistral:7b (Mistral AI, cực nhanh)
 
     Endpoint mac dinh: http://localhost:11434
     """
@@ -45,11 +45,11 @@ class OllamaClient:
     DEFAULT_ENDPOINT = "http://localhost:11434"
 
     MODELS = [
-        "gemma3:27b",       # Google Gemma 3 27B - Best quality
-        "qwen2.5:14b",      # Alibaba Qwen 2.5 14B
-        "qwen2.5:7b",       # Alibaba Qwen 2.5 7B - Fast
-        "llama3.1:8b",      # Meta Llama 3.1 8B
-        "mistral:7b",       # Mistral 7B
+        "qwen2.5:7b",       # Alibaba Qwen 2.5 7B - Fast ⭐ DEFAULT
+        "qwen2.5:14b",      # Alibaba Qwen 2.5 14B - Balanced
+        "llama3.1:8b",      # Meta Llama 3.1 8B - 128k context
+        "mistral:7b",       # Mistral 7B - Very fast
+        "gemma3:27b",       # Google Gemma 3 27B - Slow but quality
     ]
 
     def __init__(self, model: str = None, endpoint: str = None):
@@ -427,7 +427,7 @@ class MultiAIClient:
         Config format:
         {
             "deepseek_api_keys": ["key1"],  # Primary - DeepSeek
-            "ollama_model": "gemma3:27b",  # Fallback - Ollama local
+            "ollama_model": "qwen2.5:7b",  # Fallback - Ollama local (fast, 32k context)
             "ollama_endpoint": "http://localhost:11434",  # Optional
         }
 

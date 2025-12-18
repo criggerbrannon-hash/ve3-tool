@@ -36,8 +36,8 @@
         "gemini": [],
 
         "ollama": {
-            "_comment": "Ollama - LOCAL AI (FALLBACK khi API keys het)",
-            "model": "gemma3:27b",
+            "_comment": "Ollama - LOCAL AI (nhanh, 32k context)",
+            "model": "qwen2.5:7b",
             "endpoint": "http://localhost:11434"
         }
     },

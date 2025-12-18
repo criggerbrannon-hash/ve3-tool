@@ -55,7 +55,7 @@ class MultiAIClient:
         Config format:
         {
             "deepseek_api_keys": ["key1"],
-            "ollama_model": "gemma3:27b",  # Optional: local model fallback
+            "ollama_model": "qwen2.5:7b",  # Optional: local model fallback
         }
 
         auto_filter: Tự động test và loại bỏ API keys không hoạt động
@@ -64,7 +64,7 @@ class MultiAIClient:
         self.deepseek_keys = [k for k in config.get("deepseek_api_keys", []) if k and k.strip()]
 
         # Ollama model (fallback)
-        self.ollama_model = config.get("ollama_model", "gemma3:27b")
+        self.ollama_model = config.get("ollama_model", "qwen2.5:7b")
         self.ollama_endpoint = config.get("ollama_endpoint", "http://localhost:11434")
         self.OLLAMA_URL = f"{self.ollama_endpoint}/api/generate"
         self.ollama_available = False
@@ -310,7 +310,7 @@ class MultiAIClient:
             "options": {
                 "temperature": temperature,
                 "num_predict": max_tokens,  # Higher for Director's Shooting Plan
-                "num_ctx": 32768,  # Context window - gemma3:27b supports up to 128k
+                "num_ctx": 32768,  # Context window - qwen2.5:7b supports up to 128k
             }
         }
 
@@ -670,10 +670,10 @@ class PromptGenerator:
         Generate content với ưu tiên Ollama cho response dài (Director's Shooting Plan).
 
         DeepSeek có giới hạn max_tokens=8192, không đủ cho Director's Shooting Plan.
-        Ollama không có giới hạn tokens và gemma3:27b là model mạnh.
+        Ollama không có giới hạn tokens và qwen2.5:7b là model mạnh.
 
         Priority cho QUALITY:
-        1. Ollama (gemma3:27b) - Model mạnh, không giới hạn tokens, chất lượng cao
+        1. Ollama (qwen2.5:7b) - Model mạnh, không giới hạn tokens, chất lượng cao
         2. DeepSeek - Nếu không có Ollama, dùng với JSON repair
         """
         # Ưu tiên Ollama cho chất lượng tốt nhất
