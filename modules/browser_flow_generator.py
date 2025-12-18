@@ -967,6 +967,26 @@ class BrowserFlowGenerator:
             self._log(f"Prompt ({len(prompt)} chars): {prompt[:100]}...")
             self._log(f"[REF] Final reference_files: {reference_files}")
 
+            # VERIFY: Check if prompt has filename annotations
+            has_annotations = False
+            for ref in reference_files:
+                ref_name = ref.replace('.png', '').replace('.jpg', '')
+                if f"({ref})" in prompt or f"({ref_name}.png)" in prompt:
+                    has_annotations = True
+                    break
+            if "(reference:" in prompt:
+                has_annotations = True
+
+            if reference_files:
+                if has_annotations:
+                    self._log(f"[ANNOTATION] ✓ Prompt DA CO annotations", "success")
+                else:
+                    self._log(f"[ANNOTATION] ⚠️ Prompt CHUA CO annotations - them vao cuoi...", "warn")
+                    # Them annotation neu chua co
+                    refs_str = ", ".join(reference_files)
+                    prompt = prompt.rstrip('. ') + f" (reference: {refs_str})."
+                    self._log(f"[ANNOTATION] Prompt sau khi them: ...{prompt[-80:]}", "info")
+
             try:
                 # QUAN TRONG: Upload reference images TRUOC KHI tao anh
                 if reference_files:
