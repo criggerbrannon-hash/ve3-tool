@@ -655,81 +655,29 @@
 
             Utils.log(`\n━━━ [${index + 1}/${STATE.promptQueue.length}] ${sceneId} ━━━`, 'info');
 
-            // Lookup media_names cho references
-            const referenceNames = [];
-            const refMapping = {};  // Map: characterId -> mediaName
-
-            // DEBUG: Log STATE.mediaNames
-            Utils.log(`[DEBUG] STATE.mediaNames keys: ${Object.keys(STATE.mediaNames).join(', ') || '(empty)'}`, 'info');
-
+            // Log reference files info (reference images da duoc upload truoc qua Python)
             if (referenceFiles && referenceFiles.length > 0) {
-                Utils.log(`[DEBUG] referenceFiles: ${JSON.stringify(referenceFiles)}`, 'info');
-                for (const refFile of referenceFiles) {
-                    // refFile co the la "nvc.png" hoac "nvc"
-                    const refId = refFile.replace('.png', '').replace('.jpg', '');
-                    const mediaInfo = STATE.mediaNames[refId];
-
-                    // Ho tro ca format cu (string) va moi (object)
-                    let mediaName, refSeed;
-                    if (typeof mediaInfo === 'string') {
-                        mediaName = mediaInfo;
-                        refSeed = null;
-                    } else if (mediaInfo) {
-                        mediaName = mediaInfo.mediaName;
-                        refSeed = mediaInfo.seed;
-                    }
-
-                    Utils.log(`[DEBUG] Lookup: refId="${refId}" -> mediaName="${mediaName || 'NOT FOUND'}", seed=${refSeed || 'N/A'}`, 'info');
-                    if (mediaName) {
-                        referenceNames.push(mediaName);
-                        // Luu mapping id -> {mediaName, seed}
-                        refMapping[refId] = { mediaName, seed: refSeed };
-                        Utils.log(`  Reference: ${refId} → ${mediaName.slice(0, 40)}... (seed=${refSeed || 'N/A'})`, 'info');
-                    } else {
-                        Utils.log(`  Reference: ${refId} → (chua co media_name, skip)`, 'warn');
-                    }
-                }
+                Utils.log(`[REF] Using ${referenceFiles.length} reference(s): ${referenceFiles.join(', ')}`, 'info');
             } else {
-                Utils.log(`[DEBUG] No referenceFiles provided`, 'info');
+                Utils.log(`[REF] No reference files`, 'info');
             }
 
             // =====================================================================
-            // Build JSON prompt - QUAN TRONG: Dung seed tu reference de nhat quan!
-            // Format: {prompt, seed, imageInputs}
+            // Build JSON prompt - DON GIAN: Chi co prompt
+            // Reference images da duoc upload truoc qua VE3.uploadReferences()
+            // Character IDs trong prompt (vd: (nvc), (nv1)) se match voi filename da upload
             // =====================================================================
             let textToSend;
 
-            if (referenceNames.length > 0) {
-                // CO REFERENCES: Dung seed tu reference dau tien de nhat quan nhan vat
-                // Lay seed tu reference dau tien (thuong la nhan vat chinh)
-                const firstRefId = Object.keys(refMapping)[0];
-                const firstRefInfo = refMapping[firstRefId];
-                const seed = firstRefInfo?.seed || API.generateSeed();
+            const jsonPayload = {
+                prompt: prompt
+            };
+            textToSend = JSON.stringify(jsonPayload);
 
-                const jsonPayload = {
-                    prompt: prompt,  // Prompt sach, khong them annotation
-                    seed: seed,      // DUNG SEED TU REFERENCE!
-                    imageInputs: referenceNames.map(name => ({
-                        name: name,
-                        imageInputType: "IMAGE_INPUT_TYPE_REFERENCE"
-                    }))
-                };
-                textToSend = JSON.stringify(jsonPayload);
-
-                // Log chi tiet
-                Utils.log(`[JSON MODE] ${referenceNames.length} references, seed=${seed} (from ${firstRefId})`, 'info');
-                Object.entries(refMapping).forEach(([id, info]) => {
-                    Utils.log(`  - ${id}: seed=${info.seed}, name=${info.mediaName?.slice(0,30)}...`, 'info');
-                });
+            if (referenceFiles && referenceFiles.length > 0) {
+                Utils.log(`[JSON MODE] Prompt with ${referenceFiles.length} reference(s) uploaded`, 'info');
             } else {
-                // KHONG CO REFERENCES: Tao seed moi
-                const seed = API.generateSeed();
-                const jsonPayload = {
-                    prompt: prompt,
-                    seed: seed
-                };
-                textToSend = JSON.stringify(jsonPayload);
-                Utils.log(`[JSON MODE] No references, new seed=${seed}`, 'info');
+                Utils.log(`[JSON MODE] Prompt without references`, 'info');
             }
             Utils.log(`JSON: ${textToSend.slice(0, 200)}...`, 'info');
 
