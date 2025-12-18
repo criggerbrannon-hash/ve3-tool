@@ -1739,9 +1739,13 @@ class UnixVoiceToVideo:
         # Populate tree
         for pid, item_type, prompt, status in all_items:
             try:
-                self.main_tree.insert('', tk.END, iid=pid, values=(pid, item_type, prompt, status))
+                # Check if item exists before inserting to avoid TclError
+                if not self.main_tree.exists(pid):
+                    self.main_tree.insert('', tk.END, iid=pid, values=(pid, item_type, prompt, status))
+            except tk.TclError:
+                pass  # Skip if item already exists (race condition with auto-refresh)
             except Exception:
-                pass  # Skip if item already exists
+                pass  # Skip other errors silently
 
         # Update progress
         total = len(all_items)
@@ -1878,14 +1882,17 @@ class UnixVoiceToVideo:
 
                     # Check status - reference images (nv*, loc*) in nv/, scenes in img/
                     is_reference = pid.startswith('nv') or pid.startswith('loc')
-                    if is_reference:
-                        img_path = nv_dir / f"{pid}.png"
-                        status = "✅" if img_path.exists() else "⏳"
-                        self.char_tree.insert('', tk.END, values=(pid, prompt, status))
-                    else:
-                        img_path = img_dir / f"{pid}.png"
-                        status = "✅" if img_path.exists() else "⏳"
-                        self.scene_tree.insert('', tk.END, values=(pid, time_str, prompt, status))
+                    try:
+                        if is_reference:
+                            img_path = nv_dir / f"{pid}.png"
+                            status = "✅" if img_path.exists() else "⏳"
+                            self.char_tree.insert('', tk.END, values=(pid, prompt, status))
+                        else:
+                            img_path = img_dir / f"{pid}.png"
+                            status = "✅" if img_path.exists() else "⏳"
+                            self.scene_tree.insert('', tk.END, values=(pid, time_str, prompt, status))
+                    except tk.TclError:
+                        pass  # Skip duplicates
             
             wb.close()
         except Exception as e:

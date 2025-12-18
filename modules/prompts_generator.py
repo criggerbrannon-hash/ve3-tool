@@ -322,7 +322,11 @@ class MultiAIClient:
 
         if resp.status_code == 200:
             result = resp.json()
-            return result.get("response", "")
+            response_text = result.get("response", "")
+            if not response_text or not response_text.strip():
+                self.logger.warning(f"[Ollama] Returned empty response. Full result: {result}")
+                raise ValueError("Ollama returned empty response")
+            return response_text
         else:
             raise requests.RequestException(f"Ollama API error {resp.status_code}: {resp.text[:200]}")
 
@@ -2469,10 +2473,20 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
             self.logger.warning("[_extract_json] Empty text received")
             return None
 
+        if not text.strip():
+            self.logger.warning("[_extract_json] Text is only whitespace")
+            return None
+
         import re
 
         # Bước 1: Loại bỏ DeepSeek <think>...</think> tags
         clean_text = re.sub(r'<think>[\s\S]*?</think>', '', text).strip()
+
+        # Kiểm tra sau khi loại bỏ <think> tags
+        if not clean_text:
+            self.logger.warning("[_extract_json] Text empty after removing <think> tags")
+            self.logger.debug(f"[_extract_json] Original text (first 300 chars): {text[:300]}")
+            return None
 
         # Bước 2: Thử parse trực tiếp
         try:
