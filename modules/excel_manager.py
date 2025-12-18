@@ -157,7 +157,7 @@ class Location:
 
 class Scene:
     """Đại diện cho một scene trong video."""
-    
+
     def __init__(
         self,
         scene_id: int,
@@ -169,7 +169,14 @@ class Scene:
         img_path: str = "",
         video_path: str = "",
         status_img: str = "pending",
-        status_vid: str = "pending"
+        status_vid: str = "pending",
+        # New fields for better time tracking
+        start_time: str = "",           # Thời gian bắt đầu (HH:MM:SS,mmm)
+        end_time: str = "",             # Thời gian kết thúc (HH:MM:SS,mmm)
+        duration: float = 0.0,          # Độ dài (giây)
+        characters_used: str = "",      # JSON list of character IDs used
+        location_used: str = "",        # Location ID used
+        reference_files: str = ""       # JSON list of reference files
     ):
         self.scene_id = scene_id
         self.srt_start = srt_start
@@ -181,6 +188,13 @@ class Scene:
         self.video_path = video_path
         self.status_img = status_img
         self.status_vid = status_vid
+        # New fields
+        self.start_time = start_time
+        self.end_time = end_time
+        self.duration = duration
+        self.characters_used = characters_used
+        self.location_used = location_used
+        self.reference_files = reference_files
     
     def to_dict(self) -> Dict[str, Any]:
         """Chuyển đổi thành dictionary."""
@@ -195,6 +209,13 @@ class Scene:
             "video_path": self.video_path,
             "status_img": self.status_img,
             "status_vid": self.status_vid,
+            # New fields
+            "start_time": self.start_time,
+            "end_time": self.end_time,
+            "duration": self.duration,
+            "characters_used": self.characters_used,
+            "location_used": self.location_used,
+            "reference_files": self.reference_files,
         }
     
     @classmethod
@@ -218,6 +239,15 @@ class Scene:
                     return default
             return default
 
+        def safe_float(val, default=0.0):
+            """Convert to float safely."""
+            if val is None or val == "":
+                return default
+            try:
+                return float(val)
+            except (ValueError, TypeError):
+                return default
+
         return cls(
             scene_id=safe_int(data.get("scene_id", 0)),
             srt_start=safe_int(data.get("srt_start", 0)),
@@ -229,6 +259,13 @@ class Scene:
             video_path=str(data.get("video_path", "") or ""),
             status_img=str(data.get("status_img", "pending") or "pending"),
             status_vid=str(data.get("status_vid", "pending") or "pending"),
+            # New fields
+            start_time=str(data.get("start_time", "") or ""),
+            end_time=str(data.get("end_time", "") or ""),
+            duration=safe_float(data.get("duration", 0.0)),
+            characters_used=str(data.get("characters_used", "") or ""),
+            location_used=str(data.get("location_used", "") or ""),
+            reference_files=str(data.get("reference_files", "") or ""),
         )
 
 

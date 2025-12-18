@@ -1727,9 +1727,21 @@ class UnixVoiceToVideo:
 
         all_items.sort(key=sort_key)
 
+        # Deduplicate by ID (keep first occurrence)
+        seen_ids = set()
+        unique_items = []
+        for item in all_items:
+            if item[0] not in seen_ids:
+                seen_ids.add(item[0])
+                unique_items.append(item)
+        all_items = unique_items
+
         # Populate tree
         for pid, item_type, prompt, status in all_items:
-            self.main_tree.insert('', tk.END, iid=pid, values=(pid, item_type, prompt, status))
+            try:
+                self.main_tree.insert('', tk.END, iid=pid, values=(pid, item_type, prompt, status))
+            except Exception:
+                pass  # Skip if item already exists
 
         # Update progress
         total = len(all_items)
