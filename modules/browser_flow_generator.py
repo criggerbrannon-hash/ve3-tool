@@ -819,12 +819,12 @@ class BrowserFlowGenerator:
             "stats": self.stats.copy()
         }
 
-    def _process_single_prompt(self, prompt_data: Dict, index: int, total: int) -> Tuple[bool, Optional[Path], float]:
+    def _process_single_prompt(self, prompt_data: Dict, index: int, total: int) -> Tuple[bool, Optional[Path], float, str]:
         """
         Xu ly mot prompt don le.
 
         Returns:
-            Tuple[success, image_path, score]
+            Tuple[success, image_path, score, prompt_json]
         """
         pid = str(prompt_data.get('id', index + 1))
         prompt = prompt_data.get('prompt', '')
@@ -874,6 +874,11 @@ class BrowserFlowGenerator:
             """)
 
             if result and result.get("success"):
+                # Lay prompt_json tu result (JS tra ve trong result.result.prompt_json)
+                js_result = result.get("result", {})
+                prompt_json = js_result.get("prompt_json", "") if isinstance(js_result, dict) else ""
+                self._log(f"[DEBUG] prompt_json from JS: {prompt_json[:100] if prompt_json else '(empty)'}...")
+
                 # Di chuyen file tu Downloads (timeout 2 phut)
                 img_file, score, needs_regen = self._move_downloaded_images(pid)
 
@@ -882,18 +887,18 @@ class BrowserFlowGenerator:
                         self._log(f"OK - Da tao anh nhung chua dat chuan (score={score:.1f})", "warn")
                     else:
                         self._log(f"OK - Da tao va luu anh (score={score:.1f})", "success")
-                    return True, img_file, score
+                    return True, img_file, score, prompt_json
                 else:
                     self._log(f"Khong tim thay file download sau 2 phut", "warn")
-                    return False, None, 0.0
+                    return False, None, 0.0, prompt_json
             else:
                 error = result.get("error", "Unknown") if result else "No response"
                 self._log(f"Loi: {error}", "error")
-                return False, None, 0.0
+                return False, None, 0.0, ""
 
         except Exception as e:
             self._log(f"Exception: {e}", "error")
-            return False, None, 0.0
+            return False, None, 0.0, ""
 
     def _restart_browser_and_setup(self) -> bool:
         """
@@ -1007,6 +1012,16 @@ class BrowserFlowGenerator:
         # Reset stats
         self.stats = {"total": len(prompts), "success": 0, "failed": 0, "skipped": 0, "low_quality": 0}
 
+        # Load Excel workbook de cap nhat prompt_json
+        workbook = None
+        if excel_path and Path(excel_path).exists():
+            try:
+                workbook = PromptWorkbook(excel_path)
+                workbook.load_or_create()
+                self._log(f"[Excel] Loaded: {excel_path}")
+            except Exception as e:
+                self._log(f"[Excel] Warning: Khong load duoc Excel: {e}", "warn")
+
         # Khoi dong browser
         if not self.driver:
             if not self.start_browser():
@@ -1053,13 +1068,34 @@ class BrowserFlowGenerator:
                     continue
 
             # Thu prompt dau tien
-            success, img_file, score = self._process_single_prompt(prompts[0], 0, len(prompts))
+            success, img_file, score, prompt_json = self._process_single_prompt(prompts[0], 0, len(prompts))
 
             if success:
                 first_prompt_success = True
                 self.stats["success"] += 1
                 if score < 50.0:
                     self.stats["low_quality"] += 1
+                # Luu prompt_json vao prompt_data
+                if prompt_json:
+                    prompts[0]['prompt_json'] = prompt_json
+                # Cap nhat Excel (prompt_json, img_path)
+                if workbook:
+                    try:
+                        pid = prompts[0].get('id', '1')
+                        # Chi cap nhat cho scenes (so), khong phai nv/loc
+                        if pid.isdigit():
+                            scene_id = int(pid)
+                            relative_path = f"img/{pid}.png" if img_file else ""
+                            workbook.update_scene(
+                                scene_id,
+                                img_path=relative_path,
+                                status_img="done" if score >= 50.0 else "low_quality",
+                                prompt_json=prompt_json
+                            )
+                            workbook.save()
+                            self._log(f"[Excel] Updated scene {scene_id}: prompt_json saved")
+                    except Exception as e:
+                        self._log(f"[Excel] Warning: {e}", "warn")
             else:
                 self._log(f"Prompt dau tien that bai (lan {setup_attempts})", "error")
 
@@ -1079,12 +1115,32 @@ class BrowserFlowGenerator:
                 self.stats["skipped"] += 1
                 continue
 
-            success, img_file, score = self._process_single_prompt(prompt_data, i, len(prompts))
+            success, img_file, score, prompt_json = self._process_single_prompt(prompt_data, i, len(prompts))
 
             if success:
                 self.stats["success"] += 1
                 if score < 50.0:
                     self.stats["low_quality"] += 1
+                # Luu prompt_json vao prompt_data
+                if prompt_json:
+                    prompt_data['prompt_json'] = prompt_json
+                # Cap nhat Excel (prompt_json, img_path)
+                if workbook:
+                    try:
+                        # Chi cap nhat cho scenes (so), khong phai nv/loc
+                        if pid.isdigit():
+                            scene_id = int(pid)
+                            relative_path = f"img/{pid}.png" if img_file else ""
+                            workbook.update_scene(
+                                scene_id,
+                                img_path=relative_path,
+                                status_img="done" if score >= 50.0 else "low_quality",
+                                prompt_json=prompt_json
+                            )
+                            workbook.save()
+                            self._log(f"[Excel] Updated scene {scene_id}: prompt_json saved")
+                    except Exception as e:
+                        self._log(f"[Excel] Warning: {e}", "warn")
             else:
                 failed_prompts.append((prompt_data, i))
                 self.stats["failed"] += 1
@@ -1104,7 +1160,7 @@ class BrowserFlowGenerator:
                 pid = str(prompt_data.get('id', original_index + 1))
                 self._log(f"\nRetry ID: {pid}")
 
-                success, img_file, score = self._process_single_prompt(
+                success, img_file, score, prompt_json = self._process_single_prompt(
                     prompt_data, original_index, len(prompts)
                 )
 
@@ -1114,6 +1170,26 @@ class BrowserFlowGenerator:
                     self.stats["failed"] -= 1  # Giam failed vi da thanh cong
                     if score < 50.0:
                         self.stats["low_quality"] += 1
+                    # Luu prompt_json vao prompt_data
+                    if prompt_json:
+                        prompt_data['prompt_json'] = prompt_json
+                    # Cap nhat Excel (prompt_json, img_path)
+                    if workbook:
+                        try:
+                            # Chi cap nhat cho scenes (so), khong phai nv/loc
+                            if pid.isdigit():
+                                scene_id = int(pid)
+                                relative_path = f"img/{pid}.png" if img_file else ""
+                                workbook.update_scene(
+                                    scene_id,
+                                    img_path=relative_path,
+                                    status_img="done" if score >= 50.0 else "low_quality",
+                                    prompt_json=prompt_json
+                                )
+                                workbook.save()
+                                self._log(f"[Excel] Updated scene {scene_id}: prompt_json saved (retry)")
+                        except Exception as e:
+                            self._log(f"[Excel] Warning: {e}", "warn")
 
                 # Delay
                 time.sleep(2)

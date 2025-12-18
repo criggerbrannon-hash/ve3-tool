@@ -635,7 +635,8 @@
                 STATE.onPromptComplete(index, prompt, result);
             }
 
-            return result;
+            // Them prompt_json vao result de Python co the luu vao Excel
+            return { ...result, prompt_json: textToSend };
         },
 
         // Chay tat ca prompts trong queue
@@ -653,6 +654,7 @@
             const total = STATE.promptQueue.length;
             let success = 0;
             let failed = 0;
+            const results = []; // Luu chi tiet result de tra ve cho Python
 
             Utils.log(`\n${'═'.repeat(50)}`, 'info');
             Utils.log(`BẮT ĐẦU TẠO ${total} ẢNH`, 'info');
@@ -666,6 +668,7 @@
                 }
 
                 const result = await Runner.processOnePrompt(STATE.promptQueue[i], i);
+                results.push(result); // Luu lai result (bao gom prompt_json)
 
                 if (result.success) {
                     success++;
@@ -693,7 +696,13 @@
                 STATE.onAllComplete({ success, failed, total: STATE.downloadedImages });
             }
 
-            return { success, failed };
+            // Tra ve ket qua chi tiet neu chi co 1 prompt (cho Python)
+            // Bao gom prompt_json de luu vao Excel
+            if (total === 1 && results.length === 1) {
+                return results[0];
+            }
+
+            return { success, failed, results };
         }
     };
 
