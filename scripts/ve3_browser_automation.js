@@ -600,95 +600,84 @@
             }
 
             // =====================================================================
-            // GOI API TRUC TIEP (khong qua UI) de imageInputs hoat dong
+            // Build JSON prompt cho TEXTAREA (Flow UI tu dong xu ly phan con lai)
+            // LUON dung JSON format voi seed de ket qua nhat quan
+            // Chi can: prompt, seed, imageInputs (neu co)
+            // Flow UI se tu lay: projectId, sessionId, imageModel, aspectRatio tu context
             // =====================================================================
+            let textToSend;
             const seed = API.generateSeed();
 
-            // Build prompt_json de luu vao Excel (cho debug)
-            let prompt_json;
             if (referenceNames.length > 0) {
+                // CO REFERENCES: JSON voi imageInputs va refMapping
                 // Tao ghi chu reference de them vao prompt (de doc va debug)
+                // Format: [REF: nvc=seed:12345,name:AF1QipN... | nv1=seed:67890,name:AF1QipO...]
                 const refNotes = Object.entries(refMapping).map(([id, info]) => {
                     const seedStr = info.seed ? `seed:${info.seed}` : 'seed:N/A';
                     const nameStr = info.mediaName ? `name:${info.mediaName.slice(0,20)}` : 'name:N/A';
                     return `${id}=${seedStr},${nameStr}`;
                 }).join(' | ');
 
-                prompt_json = JSON.stringify({
-                    prompt: prompt,
+                // Them ghi chu vao cuoi prompt
+                const promptWithRefs = `${prompt}\n[REF: ${refNotes}]`;
+
+                const jsonPayload = {
+                    prompt: promptWithRefs,
                     seed: seed,
                     imageInputs: referenceNames.map(name => ({
                         name: name,
                         imageInputType: "IMAGE_INPUT_TYPE_REFERENCE"
                     })),
-                    refMapping: refMapping,
-                    refNotes: refNotes
-                });
-                Utils.log(`[API DIRECT] Goi API voi ${referenceNames.length} references, seed=${seed}`, 'info');
-                Utils.log(`[API DIRECT] refNotes: ${refNotes}`, 'info');
+                    refMapping: refMapping  // {nvc: {mediaName, seed}, nv1: {mediaName, seed}}
+                };
+                textToSend = JSON.stringify(jsonPayload);
+                Utils.log(`[JSON MODE] Gui JSON voi ${referenceNames.length} references, seed=${seed}`, 'info');
+                Utils.log(`[JSON MODE] refNotes: ${refNotes}`, 'info');
             } else {
-                prompt_json = JSON.stringify({ prompt: prompt, seed: seed });
-                Utils.log(`[API DIRECT] Goi API khong co references, seed=${seed}`, 'info');
+                // KHONG CO REFERENCES: Van dung JSON de co seed
+                const jsonPayload = {
+                    prompt: prompt,
+                    seed: seed
+                };
+                textToSend = JSON.stringify(jsonPayload);
+                Utils.log(`[JSON MODE] Gui JSON khong co references, seed=${seed}`, 'info');
+            }
+            Utils.log(`JSON: ${textToSend.slice(0, 200)}...`, 'info');
+
+            // 1. Dien prompt (JSON hoac text)
+            if (!UI.setPrompt(textToSend)) {
+                return { success: false, error: 'Cannot set prompt' };
             }
 
-            try {
-                // Goi API truc tiep - imageInputs se duoc gui dung format!
-                Utils.log('Dang goi API...', 'wait');
-                const response = await API.generateImages(prompt, referenceNames, 2);
+            await Utils.sleep(CONFIG.delayAfterClick);
 
-                // Xu ly response
-                if (response.error) {
-                    Utils.log(`API Error: ${response.error.message || JSON.stringify(response.error)}`, 'error');
-                    return { success: false, error: response.error.message, prompt_json };
-                }
+            // 2. Bat dau doi anh TRUOC khi click
+            Utils.log('Bat dau theo doi response...', 'info');
+            const waitPromise = FetchHook.waitForImages();
 
-                // Extract images tu response
-                const images = [];
-                if (response.media && response.media.length > 0) {
-                    Utils.log(`Nhan duoc ${response.media.length} anh!`, 'img');
-
-                    for (let i = 0; i < response.media.length; i++) {
-                        const mediaItem = response.media[i];
-                        const img = mediaItem?.image?.generatedImage;
-                        const mediaName = mediaItem?.name || '';
-                        const imgSeed = img?.seed;
-
-                        Utils.log(`[DEBUG] Image ${i+1}: mediaName=${mediaName ? mediaName.slice(0,40)+'...' : 'NONE'}, seed=${imgSeed}`, 'info');
-
-                        if (img && img.fifeUrl) {
-                            const filename = Utils.generateFilename(i + 1);
-
-                            images.push({
-                                url: img.fifeUrl,
-                                seed: imgSeed,
-                                filename: filename,
-                                mediaName: mediaName,
-                                index: i
-                            });
-
-                            // Download anh
-                            if (CONFIG.autoDownload) {
-                                await Downloader.download(img.fifeUrl, filename);
-                            }
-                        }
-                    }
-
-                    Utils.log(`Da tai ${images.length} anh`, 'success');
-                } else {
-                    Utils.log(`[WARN] Response khong co media: ${JSON.stringify(response).slice(0, 300)}`, 'warn');
-                }
-
-                // Callback
-                if (STATE.onPromptComplete) {
-                    STATE.onPromptComplete(index, prompt, { success: true, images });
-                }
-
-                return { success: images.length > 0, images, prompt_json };
-
-            } catch (e) {
-                Utils.log(`API Exception: ${e.message}`, 'error');
-                return { success: false, error: e.message, prompt_json };
+            // 3. Click tao
+            Utils.log('Click nut Tao...', 'info');
+            if (!await UI.clickGenerate()) {
+                return { success: false, error: 'Cannot click generate' };
             }
+
+            // 4. Doi anh
+            Utils.log('Dang cho tao anh...', 'wait');
+            const result = await waitPromise;
+
+            // 5. Doi downloads hoan thanh
+            if (result.success) {
+                Utils.log('Dang tai anh...', 'wait');
+                await Downloader.waitAllDownloads();
+            }
+
+            // 6. Callback
+            if (STATE.onPromptComplete) {
+                STATE.onPromptComplete(index, prompt, result);
+            }
+
+            // Them prompt_json vao result de Python co the luu vao Excel
+            return { ...result, prompt_json: textToSend };
         },
 
         // Chay tat ca prompts trong queue
