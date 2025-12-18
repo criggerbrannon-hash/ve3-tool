@@ -613,6 +613,21 @@
             return true;
         },
 
+        // Helper: Check va click "Tôi đồng ý" neu xuat hien
+        checkAndClickConsent: async () => {
+            const buttons = document.querySelectorAll('button');
+            for (const btn of buttons) {
+                const text = btn.textContent.trim();
+                if (text === 'Tôi đồng ý' || text === 'Đồng ý' || text === 'I agree' || text === 'Agree') {
+                    btn.click();
+                    Utils.log('[CONSENT] Clicked consent button: ' + text, 'success');
+                    await Utils.sleep(500);
+                    return true;
+                }
+            }
+            return false;
+        },
+
         uploadReferenceImage: async (base64Data, filename) => {
             Utils.log(`[UPLOAD] Bat dau upload reference: ${filename}`, 'info');
 
@@ -630,6 +645,8 @@
                 addBtn.click();
                 Utils.log('[UPLOAD] Clicked ADD button', 'success');
                 await Utils.sleep(500);
+                // Check consent sau khi click ADD
+                await UI.checkAndClickConsent();
             } else {
                 Utils.log('[UPLOAD] Khong tim thay nut ADD', 'error');
                 return false;
@@ -649,16 +666,35 @@
             if (uploadBtn) {
                 uploadBtn.click();
                 Utils.log('[UPLOAD] Clicked UPLOAD button', 'success');
-                await Utils.sleep(500);
+                await Utils.sleep(800);
+                // Check consent sau khi click Upload - day la cho hay xuat hien nhat!
+                await UI.checkAndClickConsent();
             } else {
                 Utils.log('[UPLOAD] Khong tim thay nut UPLOAD', 'error');
                 return false;
             }
 
-            // Step 3: Tim input file
-            const fileInput = document.querySelector('input[type="file"]');
+            // Step 3: Tim input file - doi them va check consent
+            await Utils.sleep(500);
+            await UI.checkAndClickConsent();
+
+            let fileInput = document.querySelector('input[type="file"]');
+
+            // Neu khong tim thay, thu doi them va check consent
+            if (!fileInput) {
+                Utils.log('[UPLOAD] Chua thay file input, doi them...', 'info');
+                for (let i = 0; i < 5; i++) {
+                    await Utils.sleep(500);
+                    await UI.checkAndClickConsent();
+                    fileInput = document.querySelector('input[type="file"]');
+                    if (fileInput) break;
+                }
+            }
+
             if (!fileInput) {
                 Utils.log('[UPLOAD] Khong tim thay file input', 'error');
+                // ESC de dong dialog neu co
+                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
                 return false;
             }
 
@@ -694,11 +730,15 @@
 
                 Utils.log(`[UPLOAD] Da inject file: ${filename} (${(byteArray.length / 1024).toFixed(1)} KB)`, 'success');
 
-                // Step 5: Doi va click nut "Cắt và lưu"
+                // Step 5: Doi va click nut "Cắt và lưu" - check consent trong khi doi
                 await Utils.sleep(1000);
+                await UI.checkAndClickConsent();
 
                 let cropBtn = null;
                 for (let attempt = 0; attempt < 10; attempt++) {
+                    // Check consent moi lan loop
+                    await UI.checkAndClickConsent();
+
                     const buttons = document.querySelectorAll('button');
                     for (const btn of buttons) {
                         if (btn.textContent.includes('Cắt và lưu')) {
@@ -713,6 +753,9 @@
                 if (cropBtn) {
                     cropBtn.click();
                     Utils.log('[UPLOAD] Clicked "Cắt và lưu"', 'success');
+                    await Utils.sleep(500);
+                    // Check consent sau khi cat va luu
+                    await UI.checkAndClickConsent();
                 } else {
                     Utils.log('[UPLOAD] Khong tim thay nut "Cắt và lưu" (co the khong can)', 'warn');
                 }
@@ -729,8 +772,13 @@
                 const initialCount = countLoadedImages();
                 Utils.log(`[UPLOAD] Initial loaded count: ${initialCount}`, 'info');
 
-                // Doi so luong tang len (max 20 giay)
+                // Doi so luong tang len (max 20 giay) - check consent trong khi doi
                 for (let i = 0; i < 40; i++) {
+                    // Check consent moi 2 giay
+                    if (i % 4 === 0) {
+                        await UI.checkAndClickConsent();
+                    }
+
                     const currentCount = countLoadedImages();
                     if (currentCount > initialCount) {
                         Utils.log(`[UPLOAD] Anh da load! Count: ${initialCount} -> ${currentCount}`, 'success');
@@ -741,6 +789,7 @@
 
                 // Doi them 1 chut de dam bao
                 await Utils.sleep(1000);
+                await UI.checkAndClickConsent();
 
                 Utils.log(`[UPLOAD] Hoan thanh: ${filename}`, 'success');
                 return true;
