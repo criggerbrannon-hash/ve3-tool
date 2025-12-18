@@ -140,15 +140,18 @@
             return Math.floor(Math.random() * 999999) + 1;
         },
 
-        // Build request payload
+        // Build request payload - GIONG HET google_flow_api.py
         buildPayload: (prompt, referenceNames = [], count = 2) => {
             const projectId = API.getProjectId();
             const sessionId = API.generateSessionId();
 
-            // Build imageInputs tu reference names
+            // Build imageInputs voi day du fields (giong API)
             const imageInputs = referenceNames
                 .filter(name => name && name.trim())
-                .map(name => ({ name: name.trim() }));
+                .map(name => ({
+                    name: name.trim(),
+                    imageInputType: "IMAGE_INPUT_TYPE_REFERENCE"  // QUAN TRONG!
+                }));
 
             // Build requests array
             const requests = [];
@@ -555,25 +558,43 @@
             }
 
             // =====================================================================
-            // Build JSON prompt (co references) hoac plain text
+            // Build JSON prompt - GIONG HET API FORMAT
             // =====================================================================
             let textToSend;
 
-            if (referenceNames.length > 0) {
-                // CO REFERENCES: Gui JSON format
-                const jsonPayload = {
-                    prompt: prompt,
+            // LUON GUI JSON FORMAT (giong API) de dam bao chat luong
+            const projectId = API.getProjectId();
+            const sessionId = API.generateSessionId();
+
+            // Build imageInputs voi day du fields (giong API)
+            const imageInputs = referenceNames.map(name => ({
+                name: name,
+                imageInputType: "IMAGE_INPUT_TYPE_REFERENCE"  // QUAN TRONG!
+            }));
+
+            const jsonPayload = {
+                requests: [{
+                    clientContext: {
+                        sessionId: sessionId,
+                        projectId: projectId || "default",
+                        tool: CONFIG.tool
+                    },
                     seed: API.generateSeed(),
-                    imageInputs: referenceNames.map(name => ({ name: name }))
-                };
-                textToSend = JSON.stringify(jsonPayload);
+                    imageModelName: CONFIG.imageModel,
+                    imageAspectRatio: CONFIG.aspectRatio,
+                    prompt: prompt,
+                    imageInputs: imageInputs
+                }]
+            };
+
+            textToSend = JSON.stringify(jsonPayload);
+
+            if (referenceNames.length > 0) {
                 Utils.log(`[JSON MODE] Gui JSON voi ${referenceNames.length} references`, 'info');
-                Utils.log(`JSON: ${textToSend.slice(0, 100)}...`, 'info');
             } else {
-                // KHONG CO REFERENCES: Gui plain text
-                textToSend = prompt;
-                Utils.log('[TEXT MODE] Gui plain text prompt', 'info');
+                Utils.log('[JSON MODE] Gui JSON (khong co references)', 'info');
             }
+            Utils.log(`JSON: ${textToSend.slice(0, 150)}...`, 'info');
 
             // 1. Dien prompt (JSON hoac text)
             if (!UI.setPrompt(textToSend)) {
