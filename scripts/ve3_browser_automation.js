@@ -673,6 +673,59 @@
             return false;
         },
 
+        // Xoa tat ca reference images hien tai truoc khi upload moi
+        clearReferenceImages: async () => {
+            Utils.log('[CLEAR] Xoa reference images cu...', 'info');
+
+            // Tim container chua reference images - thuong la .sc-51248dda-0 hoac tuong tu
+            const container = document.querySelector('.sc-51248dda-0');
+            if (!container) {
+                Utils.log('[CLEAR] Khong tim thay container reference', 'info');
+                return true;  // Khong co gi de xoa
+            }
+
+            // Tim cac nut xoa (X, close, delete) trong container
+            // Method 1: Tim icon close/delete
+            const closeIcons = container.querySelectorAll('i.google-symbols, mat-icon, .material-icons');
+            let deletedCount = 0;
+
+            for (const icon of closeIcons) {
+                const text = icon.textContent.trim().toLowerCase();
+                if (text === 'close' || text === 'delete' || text === 'cancel' || text === 'remove') {
+                    icon.click();
+                    deletedCount++;
+                    await Utils.sleep(300);
+                }
+            }
+
+            // Method 2: Tim button voi aria-label delete/remove
+            const deleteButtons = container.querySelectorAll('[aria-label*="delete" i], [aria-label*="remove" i], [aria-label*="xoa" i], [aria-label*="Xóa" i]');
+            for (const btn of deleteButtons) {
+                btn.click();
+                deletedCount++;
+                await Utils.sleep(300);
+            }
+
+            // Method 3: Tim button nho o goc cua thumbnail (thuong la X)
+            const thumbnails = container.querySelectorAll('div[style*="opacity: 1"]');
+            for (const thumb of thumbnails) {
+                const closeBtn = thumb.querySelector('button, [role="button"]');
+                if (closeBtn) {
+                    closeBtn.click();
+                    deletedCount++;
+                    await Utils.sleep(300);
+                }
+            }
+
+            if (deletedCount > 0) {
+                Utils.log(`[CLEAR] Da xoa ${deletedCount} reference images`, 'success');
+            } else {
+                Utils.log('[CLEAR] Khong tim thay reference images de xoa', 'info');
+            }
+
+            return true;
+        },
+
         uploadReferenceImage: async (base64Data, filename) => {
             Utils.log(`[UPLOAD] Bat dau upload reference: ${filename}`, 'info');
 
@@ -1227,6 +1280,11 @@
             return await UI.triggerConsent();
         },
 
+        // NEW: Xoa tat ca reference images (goi truoc khi upload)
+        clearReferences: async () => {
+            return await UI.clearReferenceImages();
+        },
+
         // NEW: Upload anh reference tu base64
         // Python se doc file local, convert sang base64, roi goi ham nay
         // base64Data: string base64 (khong co prefix data:image/...)
@@ -1240,6 +1298,10 @@
         // Returns: {success: boolean, successCount: number, errors: Array<{file, error}>}
         uploadReferences: async (images) => {
             Utils.log(`[UPLOAD] Bat dau upload ${images.length} reference images...`, 'info');
+
+            // QUAN TRONG: Xoa reference images cu truoc khi upload moi
+            // Neu khong xoa, anh cu se van duoc dung cho prompt moi
+            await UI.clearReferenceImages();
 
             // Trigger consent truoc khi upload (chi lan dau)
             await UI.triggerConsent();
