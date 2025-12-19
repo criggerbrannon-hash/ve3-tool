@@ -98,15 +98,19 @@ class Character:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Character":
         """Tạo Character từ dictionary."""
+        # Helper to safely convert to string (handle None from Excel empty cells)
+        def safe_str(val, default=""):
+            return str(val) if val is not None else default
+
         return cls(
-            id=str(data.get("id", "")),
-            role=str(data.get("role", "supporting")),
-            name=str(data.get("name", "")),
-            english_prompt=str(data.get("english_prompt", "")),
-            vietnamese_prompt=str(data.get("vietnamese_prompt", "")),
-            character_lock=str(data.get("character_lock", "")),
-            image_file=str(data.get("image_file", "")),
-            status=str(data.get("status", "pending")),
+            id=safe_str(data.get("id"), ""),
+            role=safe_str(data.get("role"), "supporting"),
+            name=safe_str(data.get("name"), ""),
+            english_prompt=safe_str(data.get("english_prompt"), ""),
+            vietnamese_prompt=safe_str(data.get("vietnamese_prompt"), ""),
+            character_lock=safe_str(data.get("character_lock"), ""),
+            image_file=safe_str(data.get("image_file"), ""),
+            status=safe_str(data.get("status"), "pending"),
         )
 
 
@@ -150,14 +154,18 @@ class Location:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Location":
         """Tao Location tu dictionary."""
+        # Helper to safely convert to string (handle None from Excel empty cells)
+        def safe_str(val, default=""):
+            return str(val) if val is not None else default
+
         return cls(
-            id=str(data.get("id", "")),
-            name=str(data.get("name", "")),
-            english_prompt=str(data.get("english_prompt", "")),
-            location_lock=str(data.get("location_lock", "")),
-            lighting_default=str(data.get("lighting_default", "")),
-            image_file=str(data.get("image_file", "")),
-            status=str(data.get("status", "pending")),
+            id=safe_str(data.get("id"), ""),
+            name=safe_str(data.get("name"), ""),
+            english_prompt=safe_str(data.get("english_prompt"), ""),
+            location_lock=safe_str(data.get("location_lock"), ""),
+            lighting_default=safe_str(data.get("lighting_default"), ""),
+            image_file=safe_str(data.get("image_file"), ""),
+            status=safe_str(data.get("status"), "pending"),
         )
 
 
