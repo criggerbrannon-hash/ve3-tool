@@ -23,40 +23,46 @@ from datetime import datetime
 
 class LabsGoogleAPI:
     """
-    Client để gọi labs.google API với session token.
-    Sử dụng tRPC API endpoint thay vì aisandbox-pa.googleapis.com.
+    Client để gọi labs.google API với Bearer token.
+    Sử dụng aisandbox-pa.googleapis.com API endpoint.
     """
 
-    # API Endpoints - sử dụng tRPC API của labs.google
+    # API Endpoints
     BASE_URL = "https://labs.google"
-    TRPC_URL = "https://labs.google/fx/api/trpc"
+    API_URL = "https://aisandbox-pa.googleapis.com"
 
     # reCAPTCHA config cho labs.google
     RECAPTCHA_SITE_KEY = "6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV"
     RECAPTCHA_ACTION = "FLOW_GENERATION"
 
+    # Default project ID (có thể thay đổi)
+    DEFAULT_PROJECT_ID = "94941870-dd8c-4be6-a79d-eb2966833249"
+
     def __init__(
         self,
-        session_token: str,
+        session_token: str = None,
+        bearer_token: str = None,
         captcha_api_key: str = None,
         captcha_service: str = "capsolver",
-        csrf_token: str = None,
+        project_id: str = None,
         verbose: bool = True
     ):
         """
         Khởi tạo Labs Google API client.
 
         Args:
-            session_token: __Secure-next-auth.session-token từ Cookie Editor
+            session_token: __Secure-next-auth.session-token (legacy, không dùng nữa)
+            bearer_token: OAuth Bearer token (ya29.xxx) - LẤY TỪ NETWORK TAB
             captcha_api_key: API key của dịch vụ CAPTCHA solver
             captcha_service: Tên dịch vụ ("capsolver", "2captcha", etc.)
-            csrf_token: __Host-next-auth.csrf-token (optional)
+            project_id: Project ID từ URL (default sử dụng chung)
             verbose: In log chi tiết
         """
         self.session_token = session_token
+        self.bearer_token = bearer_token
         self.captcha_api_key = captcha_api_key
         self.captcha_service = captcha_service.lower()
-        self.csrf_token = csrf_token
+        self.project_id = project_id or self.DEFAULT_PROJECT_ID
         self.verbose = verbose
 
         self.session = self._create_session()
@@ -67,42 +73,31 @@ class LabsGoogleAPI:
             print(f"[{timestamp}] [LabsAPI] {msg}")
 
     def _create_session(self) -> requests.Session:
-        """Tạo HTTP session với cookies."""
+        """Tạo HTTP session với Bearer token."""
         session = requests.Session()
 
-        # Set session token cookie
-        session.cookies.set(
-            "__Secure-next-auth.session-token",
-            self.session_token,
-            domain=".labs.google",
-            path="/",
-            secure=True
-        )
-
-        # Set CSRF token if available
-        if self.csrf_token:
-            session.cookies.set(
-                "__Host-next-auth.csrf-token",
-                self.csrf_token,
-                domain="labs.google",
-                path="/"
-            )
-
-        # Headers giống browser
+        # Headers giống browser - cho aisandbox-pa.googleapis.com
         session.headers.update({
             "Accept": "*/*",
-            "Accept-Language": "en-US,en;q=0.9,vi;q=0.8",
-            "Content-Type": "application/json",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Content-Type": "text/plain;charset=UTF-8",
             "Origin": "https://labs.google",
-            "Referer": "https://labs.google/fx/tools/flow",
-            "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+            "Referer": "https://labs.google/",
+            "Sec-Ch-Ua": '"Google Chrome";v="143", "Chromium";v="143", "Not A(Brand";v="24"',
             "Sec-Ch-Ua-Mobile": "?0",
             "Sec-Ch-Ua-Platform": '"Windows"',
             "Sec-Fetch-Dest": "empty",
             "Sec-Fetch-Mode": "cors",
-            "Sec-Fetch-Site": "same-origin",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+            "Sec-Fetch-Site": "cross-site",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
+            "X-Browser-Channel": "stable",
+            "X-Browser-Copyright": "Copyright 2025 Google LLC. All Rights reserved.",
+            "X-Browser-Year": "2025"
         })
+
+        # Add Bearer token if available
+        if self.bearer_token:
+            session.headers["Authorization"] = f"Bearer {self.bearer_token}"
 
         return session
 
@@ -271,23 +266,29 @@ class LabsGoogleAPI:
         prompt: str,
         count: int = 1,
         aspect_ratio: str = "landscape",
-        model: str = "IMAGEN_4",
-        seed: int = None
+        model: str = "GEM_PIX_2",
+        seed: int = None,
+        image_inputs: list = None
     ) -> Tuple[bool, List[Dict], str]:
         """
-        Tạo ảnh với labs.google tRPC API.
+        Tạo ảnh với aisandbox-pa.googleapis.com API.
 
         Args:
             prompt: Text mô tả ảnh
             count: Số lượng ảnh (1-4)
             aspect_ratio: "landscape", "portrait", "square"
-            model: Model tạo ảnh
+            model: Model tạo ảnh (GEM_PIX_2, IMAGEN_4)
             seed: Seed cho random (optional)
+            image_inputs: List ảnh reference (optional)
 
         Returns:
             Tuple[success, list_of_images, error_message]
         """
         self._log(f"Generating: {prompt[:50]}...")
+
+        # Check Bearer token
+        if not self.bearer_token:
+            return False, [], "Thiếu Bearer token! Lấy từ Network tab (Authorization header)"
 
         # Map aspect ratio
         ar_map = {
@@ -297,74 +298,67 @@ class LabsGoogleAPI:
         }
         aspect = ar_map.get(aspect_ratio.lower(), ar_map["landscape"])
 
-        # Solve CAPTCHA first
-        captcha_token = None
+        # Solve CAPTCHA
+        captcha_token = ""
         if self.captcha_api_key:
             captcha_token = self.solve_captcha()
             if not captcha_token:
                 return False, [], "Failed to solve CAPTCHA"
 
-        # Build tRPC request for imageFx.generateImage
+        # Generate seed and sessionId
         import random
+        import time as time_module
 
         if seed is None:
-            seed = random.randint(1, 999999999)
+            seed = random.randint(1, 999999)
 
-        # tRPC mutation format (POST with JSON body, no batch)
-        trpc_body = {
-            "json": {
-                "generationParams": {
-                    "prompts": [prompt],
-                    "seed": seed,
-                    "candidatesCount": count,
-                    "aspectRatio": aspect,
-                    "imageGenerationModel": model
-                },
-                "recaptchaToken": captcha_token or ""
-            }
+        session_id = f";{int(time_module.time() * 1000)}"
+
+        # Build payload theo format thật
+        payload = {
+            "clientContext": {},
+            "recaptchaToken": captcha_token,
+            "sessionId": session_id,
+            "requests": []
         }
 
-        # tRPC mutation endpoint (POST)
-        url = f"{self.TRPC_URL}/imageFx.generateImage"
+        # Add requests (1 request per image)
+        for i in range(count):
+            request = {
+                "clientContext": {},
+                "seed": seed + i,
+                "imageModelName": model,
+                "imageAspectRatio": aspect,
+                "imageInputs": image_inputs or [],
+                "prompt": prompt
+            }
+            payload["requests"].append(request)
 
-        headers = dict(self.session.headers)
-        headers["Content-Type"] = "application/json"
-
-        # Add x-recaptcha-token header
-        if captcha_token:
-            headers["x-recaptcha-token"] = captcha_token
+        # API endpoint
+        url = f"{self.API_URL}/v1/projects/{self.project_id}/flowMedia:batchGenerateImages"
 
         try:
-            self._log(f"Calling tRPC mutation: {url}")
-            # Use POST for tRPC mutation
-            response = self.session.post(url, json=trpc_body, headers=headers, timeout=120)
+            self._log(f"Calling API: {url}")
+            self._log(f"Bearer token: {self.bearer_token[:20]}...")
+
+            response = self.session.post(url, json=payload, timeout=120)
 
             self._log(f"Response status: {response.status_code}")
 
-            # Update session token if server sends new one
-            new_token = response.cookies.get("__Secure-next-auth.session-token")
-            if new_token:
-                self._log("Got new session token from response")
-                self.session_token = new_token
-                self.session.cookies.set(
-                    "__Secure-next-auth.session-token",
-                    new_token,
-                    domain=".labs.google"
-                )
-
             if response.status_code == 200:
                 data = response.json()
-                self._log(f"Response data keys: {data[0].keys() if isinstance(data, list) and data else 'N/A'}")
-                images = self._parse_trpc_response(data)
+                self._log(f"Response keys: {data.keys() if isinstance(data, dict) else type(data)}")
+                images = self._parse_batch_response(data)
                 if images:
+                    self._log(f"Got {len(images)} images!")
                     return True, images, ""
-                return False, [], f"No images in response: {str(data)[:200]}"
+                return False, [], f"No images in response: {str(data)[:300]}"
 
             elif response.status_code == 401:
-                return False, [], "Session expired - cần lấy cookie mới"
+                return False, [], "Bearer token expired - lấy token mới từ Network tab"
 
             elif response.status_code == 403:
-                return False, [], "Access denied - có thể cần CAPTCHA token"
+                return False, [], "Access denied - kiểm tra Bearer token"
 
             else:
                 return False, [], f"API error: {response.status_code} - {response.text[:300]}"
@@ -373,6 +367,55 @@ class LabsGoogleAPI:
             import traceback
             self._log(f"Request error: {traceback.format_exc()}")
             return False, [], f"Request error: {e}"
+
+    def _parse_batch_response(self, data: Dict) -> List[Dict]:
+        """Parse response từ batchGenerateImages API."""
+        images = []
+
+        try:
+            # Response format: {"generatedImages": [...], ...}
+            if "generatedImages" in data:
+                for img in data.get("generatedImages", []):
+                    if img.get("encodedImage"):
+                        images.append({
+                            "base64": img["encodedImage"],
+                            "seed": img.get("seed"),
+                            "id": img.get("mediaGenerationId")
+                        })
+                    elif img.get("image", {}).get("encodedImage"):
+                        images.append({
+                            "base64": img["image"]["encodedImage"],
+                            "seed": img.get("seed"),
+                            "id": img.get("mediaGenerationId")
+                        })
+
+            # Alternative format: {"imagePanels": [...]}
+            elif "imagePanels" in data:
+                for panel in data.get("imagePanels", []):
+                    for img in panel.get("generatedImages", []):
+                        if img.get("encodedImage"):
+                            images.append({
+                                "base64": img["encodedImage"],
+                                "seed": img.get("seed"),
+                                "id": img.get("mediaGenerationId")
+                            })
+
+            # Try responses array
+            elif "responses" in data:
+                for resp in data.get("responses", []):
+                    if resp.get("generatedImage", {}).get("encodedImage"):
+                        images.append({
+                            "base64": resp["generatedImage"]["encodedImage"],
+                            "seed": resp.get("seed"),
+                            "id": resp.get("mediaGenerationId")
+                        })
+
+            self._log(f"Parsed {len(images)} images from response")
+
+        except Exception as e:
+            self._log(f"Parse error: {e}")
+
+        return images
 
     def _parse_trpc_response(self, data: Any) -> List[Dict]:
         """Parse tRPC response format (non-batch)."""
