@@ -799,6 +799,12 @@ directors_shooting_plan: |
      - Construction → work clothes, dusty shirt, tool belt
      - Office → business attire, shirt and tie
      - DO NOT repeat fixed appearance (hair, eyes, age) - only describe COSTUME and EMOTION!
+  10. **🚨 FILENAME ANNOTATIONS - CRITICAL! 🚨**
+      - MUST include filename in parentheses for EVERY character and location in img_prompt!
+      - Format: "Man (nvc.png) walking in living room (loc_apartment.png)"
+      - This helps AI match reference images to prompt!
+      - ❌ WRONG: "Man walking in living room"
+      - ✅ RIGHT: "Man (nvc.png) walking in living room (loc_apartment.png)"
 
   ## ⚠️ LOCATION CONSISTENCY - CRITICAL BUG FIX! ⚠️
 
@@ -899,9 +905,15 @@ generate_scenes: |
 
   | Loi ke (SRT text) | SAI (generic) | DUNG (ke chuyen) |
   |-------------------|---------------|------------------|
-  | "Toi 28 tuoi, tiet kiem du tien mua dat" | "Man standing" | "28yo man dung giua manh dat trong, tay cam giay to dat, cuoi tu hao, hoang hon phia sau" |
-  | "Me lam 2 cong viec de nuoi toi" | "Woman working" | "32yo me met moi van hanh may ep ao, mo hoi tran, dong phuc cu nat, dong ho chi 9PM" |
-  | "Toi xay nha bang chinh doi tay minh" | "Man with tools" | "28yo man dong dinh vao khung go, mun cua tren mat, bung dung cu, nha dang xay phia sau" |
+  | "Toi 28 tuoi, tiet kiem du tien mua dat" | "Man standing" | "Man (nvc_young.png) dung giua manh dat trong, tay cam giay to dat, cuoi tu hao, hoang hon phia sau" |
+  | "Me lam 2 cong viec de nuoi toi" | "Woman working" | "Mother (nv1_young.png) met moi van hanh may ep ao (loc_dryclean.png), mo hoi tran, dong phuc cu nat, dong ho chi 9PM" |
+  | "Toi xay nha bang chinh doi tay minh" | "Man with tools" | "Man (nvc_young.png) dong dinh vao khung go (loc_construction.png), mun cua tren mat, bung dung cu, nha dang xay phia sau" |
+
+  ### 🚨 FILENAME ANNOTATIONS - BAT BUOC! 🚨
+  - PHAI them filename vao img_prompt cho MOI nhan vat va dia diem!
+  - Format: "Man (nvc.png) walking in apartment (loc_apartment.png)"
+  - KHONG mo ta ngoai hinh (tuoi, toc, mat) - anh tham chieu da co!
+  - Chi mo ta: HANH DONG + CAM XUC + TRANG PHUC + ANH SANG
 
   ## NGUYEN TAC SO 2: KHONG DUOC DUNG TEXT/DIALOGUE TRONG IMG_PROMPT!
   - img_prompt CHI MO TA HINH ANH
