@@ -188,11 +188,20 @@ class SmartEngine:
         """Get generation mode from settings.yaml: 'chrome', 'api', or 'labs'."""
         try:
             import yaml
-            settings_path = self.config_dir / "settings.yaml"
-            if settings_path.exists():
-                with open(settings_path, 'r', encoding='utf-8') as f:
-                    config = yaml.safe_load(f) or {}
-                return config.get('generation_mode', 'chrome')
+            # Try multiple paths for settings.yaml
+            possible_paths = [
+                self.config_dir / "settings.yaml",
+                Path("config") / "settings.yaml",
+                Path(__file__).parent.parent / "config" / "settings.yaml"
+            ]
+
+            for settings_path in possible_paths:
+                if settings_path.exists():
+                    with open(settings_path, 'r', encoding='utf-8') as f:
+                        config = yaml.safe_load(f) or {}
+                    mode = config.get('generation_mode', 'chrome')
+                    return mode
+
         except Exception as e:
             self.log(f"Get generation_mode error: {e}", "WARN")
         return 'chrome'  # Default: browser mode
@@ -201,17 +210,24 @@ class SmartEngine:
         """Get Labs API config from settings.yaml."""
         try:
             import yaml
-            settings_path = self.config_dir / "settings.yaml"
-            if settings_path.exists():
-                with open(settings_path, 'r', encoding='utf-8') as f:
-                    config = yaml.safe_load(f) or {}
-                return {
-                    'session_token': config.get('labs_session_token', ''),
-                    'captcha_api_key': config.get('captcha_api_key', ''),
-                    'captcha_service': config.get('captcha_service', 'capsolver'),
-                    'aspect_ratio': config.get('flow_aspect_ratio', 'landscape'),
-                    'delay': config.get('labs_delay', 2.0)
-                }
+            # Try multiple paths for settings.yaml
+            possible_paths = [
+                self.config_dir / "settings.yaml",
+                Path("config") / "settings.yaml",
+                Path(__file__).parent.parent / "config" / "settings.yaml"
+            ]
+
+            for settings_path in possible_paths:
+                if settings_path.exists():
+                    with open(settings_path, 'r', encoding='utf-8') as f:
+                        config = yaml.safe_load(f) or {}
+                    return {
+                        'session_token': config.get('labs_session_token', ''),
+                        'captcha_api_key': config.get('captcha_api_key', ''),
+                        'captcha_service': config.get('captcha_service', 'capsolver'),
+                        'aspect_ratio': config.get('flow_aspect_ratio', 'landscape'),
+                        'delay': config.get('labs_delay', 2.0)
+                    }
         except Exception as e:
             self.log(f"Get labs config error: {e}", "WARN")
         return {}
