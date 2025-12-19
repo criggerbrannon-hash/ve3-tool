@@ -24,7 +24,8 @@ CHARACTERS_COLUMNS = [
     "id",               # ID nhân vật (nvc, nvp1, nvp2, ...)
     "role",             # Vai trò (main/supporting)
     "name",             # Tên nhân vật trong truyện
-    "english_prompt",   # Prompt tiếng Anh mô tả ngoại hình
+    "english_prompt",   # Prompt tiếng Anh mô tả ngoại hình (portrait_prompt - dùng tạo ảnh tham chiếu)
+    "character_lock",   # Mô tả ngắn cho scene prompts (QUAN TRỌNG - không có white background)
     "vietnamese_prompt", # Prompt tiếng Việt (nếu cần)
     "image_file",       # Tên file ảnh tham chiếu (nvc.png, nvp1.png, ...)
     "status",           # Trạng thái (pending/done/error)
@@ -369,6 +370,7 @@ class PromptWorkbook:
             "role": 12,
             "name": 20,
             "english_prompt": 60,
+            "character_lock": 50,
             "vietnamese_prompt": 40,
             "image_file": 15,
             "status": 10,
