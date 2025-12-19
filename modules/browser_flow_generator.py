@@ -55,6 +55,67 @@ except ImportError:
 SELENIUM_AVAILABLE = DRIVER_TYPE is not None
 
 
+def _is_child_character(prompt: str) -> bool:
+    """
+    Kiểm tra xem prompt có mô tả nhân vật trẻ em không (< 18 tuổi).
+
+    Trẻ em không nên tạo ảnh tham chiếu vì:
+    1. AI có thể có hạn chế với hình trẻ em
+    2. Ảnh tham chiếu trẻ em thường không dùng được
+    3. Thay vào đó, mô tả trẻ em trực tiếp trong scene prompt
+
+    Args:
+        prompt: english_prompt của nhân vật
+
+    Returns:
+        True nếu là trẻ em (< 18 tuổi), False nếu không
+    """
+    import re
+
+    if not prompt:
+        return False
+
+    # Pattern để tìm tuổi: "8-year-old", "12 year old", "15yo", etc.
+    age_patterns = [
+        r'(\d{1,2})[-\s]?year[-\s]?old',  # 8-year-old, 12 year old
+        r'(\d{1,2})[-\s]?yo\b',            # 8yo, 12-yo
+        r'\bage\s*(\d{1,2})\b',            # age 8, age 12
+        r'\b(\d{1,2})[-\s]?tuoi\b',        # 8 tuổi (Vietnamese)
+    ]
+
+    for pattern in age_patterns:
+        match = re.search(pattern, prompt.lower())
+        if match:
+            age = int(match.group(1))
+            if age < 18:
+                return True
+
+    # Các từ khóa chỉ trẻ em
+    child_keywords = [
+        r'\bchild\b', r'\bkid\b', r'\bboy\b', r'\bgirl\b',
+        r'\bteen\b', r'\bteenager\b', r'\btoddler\b', r'\bbaby\b',
+        r'\binfant\b', r'\byoung child\b', r'\blittle\s+(boy|girl)\b',
+        r'\btre em\b', r'\bcon trai\b', r'\bcon gai\b',  # Vietnamese
+    ]
+
+    prompt_lower = prompt.lower()
+    for keyword in child_keywords:
+        if re.search(keyword, prompt_lower):
+            # Kiểm tra thêm - "boy" hoặc "girl" phải đi kèm với context trẻ em
+            # Ví dụ: "8-year-old boy" là trẻ em, nhưng "young man" không phải
+            if 'boy' in prompt_lower or 'girl' in prompt_lower:
+                # Nếu có số tuổi >= 18 thì không phải trẻ em
+                for pattern in age_patterns[:2]:  # Chỉ check year-old pattern
+                    match = re.search(pattern, prompt_lower)
+                    if match and int(match.group(1)) >= 18:
+                        return False
+                # Nếu không có tuổi, coi "boy/girl" là trẻ em
+                return True
+            return True
+
+    return False
+
+
 class BrowserFlowGenerator:
     """
     Tao anh tu Excel bang browser automation.
@@ -1662,6 +1723,7 @@ class BrowserFlowGenerator:
         # Lay cac nhan vat can tao anh
         characters = workbook.get_characters()
         chars_to_process = []
+        skipped_children = []
 
         for char in characters:
             if not char.english_prompt:
@@ -1670,11 +1732,21 @@ class BrowserFlowGenerator:
             if char.status == "done" and not overwrite:
                 continue
 
+            # Skip nhân vật trẻ em - không tạo ảnh tham chiếu
+            # Thay vào đó, mô tả trẻ em trực tiếp trong scene prompt
+            if _is_child_character(char.english_prompt):
+                skipped_children.append(char.id)
+                continue
+
             chars_to_process.append(char)
+
+        if skipped_children:
+            self._log(f"Skip {len(skipped_children)} nhan vat tre em: {', '.join(skipped_children)}", "warn")
+            self._log("  (Tre em se duoc mo ta truc tiep trong scene prompt)")
 
         if not chars_to_process:
             self._log("Khong co nhan vat nao can tao anh", "warn")
-            return {"success": True, "message": "No characters to process"}
+            return {"success": True, "message": "No characters to process", "skipped_children": skipped_children}
 
         self._log(f"Se tao {len(chars_to_process)} anh nhan vat")
 

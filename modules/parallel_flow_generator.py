@@ -24,7 +24,7 @@ from concurrent.futures import ThreadPoolExecutor, wait, ALL_COMPLETED
 from dataclasses import dataclass, field
 
 # Import từ modules hiện có
-from modules.browser_flow_generator import BrowserFlowGenerator
+from modules.browser_flow_generator import BrowserFlowGenerator, _is_child_character
 from modules.excel_manager import PromptWorkbook
 from modules.utils import get_logger, load_settings
 
@@ -413,17 +413,26 @@ class ParallelFlowGenerator:
 
         # Lấy tất cả prompts
         all_prompts = []
+        skipped_children = []
 
-        # Characters
+        # Characters - skip trẻ em
         for char in workbook.get_characters():
             if char.english_prompt:
                 if char.status == "done" and not overwrite:
+                    continue
+                # Skip nhân vật trẻ em - không tạo ảnh tham chiếu
+                if _is_child_character(char.english_prompt):
+                    skipped_children.append(char.id)
                     continue
                 all_prompts.append({
                     'id': char.id,
                     'prompt': char.english_prompt,
                     'reference_files': []
                 })
+
+        if skipped_children:
+            self._log(f"Skip {len(skipped_children)} nhân vật trẻ em: {', '.join(skipped_children)}", "warn")
+            self._log("  (Trẻ em sẽ được mô tả trực tiếp trong scene prompt)")
 
         # Scenes
         for scene in workbook.get_scenes():
