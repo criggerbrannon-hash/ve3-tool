@@ -24,11 +24,12 @@ from datetime import datetime
 class LabsGoogleAPI:
     """
     Client để gọi labs.google API với session token.
+    Sử dụng tRPC API endpoint thay vì aisandbox-pa.googleapis.com.
     """
 
-    # API Endpoints
+    # API Endpoints - sử dụng tRPC API của labs.google
     BASE_URL = "https://labs.google"
-    API_URL = "https://aisandbox-pa.googleapis.com"
+    TRPC_URL = "https://labs.google/fx/api/trpc"
 
     # reCAPTCHA config cho labs.google
     RECAPTCHA_SITE_KEY = "6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV"
@@ -39,6 +40,7 @@ class LabsGoogleAPI:
         session_token: str,
         captcha_api_key: str = None,
         captcha_service: str = "capsolver",
+        csrf_token: str = None,
         verbose: bool = True
     ):
         """
@@ -48,11 +50,13 @@ class LabsGoogleAPI:
             session_token: __Secure-next-auth.session-token từ Cookie Editor
             captcha_api_key: API key của dịch vụ CAPTCHA solver
             captcha_service: Tên dịch vụ ("capsolver", "2captcha", etc.)
+            csrf_token: __Host-next-auth.csrf-token (optional)
             verbose: In log chi tiết
         """
         self.session_token = session_token
         self.captcha_api_key = captcha_api_key
         self.captcha_service = captcha_service.lower()
+        self.csrf_token = csrf_token
         self.verbose = verbose
 
         self.session = self._create_session()
@@ -66,19 +70,38 @@ class LabsGoogleAPI:
         """Tạo HTTP session với cookies."""
         session = requests.Session()
 
-        # Set cookies cho labs.google
+        # Set session token cookie
         session.cookies.set(
             "__Secure-next-auth.session-token",
             self.session_token,
-            domain="labs.google"
+            domain=".labs.google",
+            path="/",
+            secure=True
         )
 
+        # Set CSRF token if available
+        if self.csrf_token:
+            session.cookies.set(
+                "__Host-next-auth.csrf-token",
+                self.csrf_token,
+                domain="labs.google",
+                path="/"
+            )
+
+        # Headers giống browser
         session.headers.update({
-            "Accept": "application/json",
+            "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9,vi;q=0.8",
             "Content-Type": "application/json",
             "Origin": "https://labs.google",
-            "Referer": "https://labs.google/",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            "Referer": "https://labs.google/fx/tools/flow",
+            "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"Windows"',
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         })
 
         return session
@@ -248,16 +271,18 @@ class LabsGoogleAPI:
         prompt: str,
         count: int = 1,
         aspect_ratio: str = "landscape",
-        model: str = "IMAGEN_4"
+        model: str = "IMAGEN_4",
+        seed: int = None
     ) -> Tuple[bool, List[Dict], str]:
         """
-        Tạo ảnh với labs.google API.
+        Tạo ảnh với labs.google tRPC API.
 
         Args:
             prompt: Text mô tả ảnh
             count: Số lượng ảnh (1-4)
             aspect_ratio: "landscape", "portrait", "square"
             model: Model tạo ảnh
+            seed: Seed cho random (optional)
 
         Returns:
             Tuple[success, list_of_images, error_message]
@@ -266,8 +291,8 @@ class LabsGoogleAPI:
 
         # Map aspect ratio
         ar_map = {
-            "landscape": "IMAGE_ASPECT_RATIO_LANDSCAPE_16_9",
-            "portrait": "IMAGE_ASPECT_RATIO_PORTRAIT_16_9",
+            "landscape": "IMAGE_ASPECT_RATIO_LANDSCAPE",
+            "portrait": "IMAGE_ASPECT_RATIO_PORTRAIT",
             "square": "IMAGE_ASPECT_RATIO_SQUARE"
         }
         aspect = ar_map.get(aspect_ratio.lower(), ar_map["landscape"])
@@ -279,43 +304,61 @@ class LabsGoogleAPI:
             if not captcha_token:
                 return False, [], "Failed to solve CAPTCHA"
 
-        # Build request
-        # Note: Endpoint và format có thể cần điều chỉnh dựa trên actual API
-        url = f"{self.API_URL}/v1:runImageFx"
+        # Build tRPC request for imageFx.generateImage
+        # tRPC uses batch format with input as JSON
+        import random
+        if seed is None:
+            seed = random.randint(1, 999999999)
 
-        payload = {
-            "userInput": {
-                "candidatesCount": count,
-                "prompts": [prompt],
-            },
-            "generationParams": {
-                "imageGenerationModel": model,
-                "aspectRatio": aspect,
-            },
-            "clientContext": {
-                "tool": "IMAGE_FX"
+        trpc_input = {
+            "0": {
+                "json": {
+                    "generationParams": {
+                        "prompts": [prompt],
+                        "seed": seed,
+                        "candidatesCount": count,
+                        "aspectRatio": aspect,
+                        "imageGenerationModel": model
+                    },
+                    "recaptchaToken": captcha_token or ""
+                }
             }
         }
 
-        headers = dict(self.session.headers)
+        # tRPC batch endpoint
+        url = f"{self.TRPC_URL}/imageFx.generateImage?batch=1"
 
-        # Add CAPTCHA token if available
+        headers = dict(self.session.headers)
+        headers["Content-Type"] = "application/json"
+
+        # Add x-recaptcha-token header
         if captcha_token:
             headers["x-recaptcha-token"] = captcha_token
-            # Or it might be in the payload
-            payload["recaptchaToken"] = captcha_token
 
         try:
-            response = self.session.post(url, json=payload, headers=headers, timeout=120)
+            self._log(f"Calling tRPC: {url}")
+            response = self.session.post(url, json=trpc_input, headers=headers, timeout=120)
 
             self._log(f"Response status: {response.status_code}")
 
+            # Update session token if server sends new one
+            new_token = response.cookies.get("__Secure-next-auth.session-token")
+            if new_token:
+                self._log("Got new session token from response")
+                self.session_token = new_token
+                self.session.cookies.set(
+                    "__Secure-next-auth.session-token",
+                    new_token,
+                    domain=".labs.google"
+                )
+
             if response.status_code == 200:
                 data = response.json()
-                images = self._parse_response(data)
+                self._log(f"Response data keys: {data[0].keys() if isinstance(data, list) and data else 'N/A'}")
+                images = self._parse_trpc_response(data)
                 if images:
                     return True, images, ""
-                return False, [], "No images in response"
+                return False, [], f"No images in response: {str(data)[:200]}"
 
             elif response.status_code == 401:
                 return False, [], "Session expired - cần lấy cookie mới"
@@ -324,10 +367,66 @@ class LabsGoogleAPI:
                 return False, [], "Access denied - có thể cần CAPTCHA token"
 
             else:
-                return False, [], f"API error: {response.status_code} - {response.text[:200]}"
+                return False, [], f"API error: {response.status_code} - {response.text[:300]}"
 
         except Exception as e:
+            import traceback
+            self._log(f"Request error: {traceback.format_exc()}")
             return False, [], f"Request error: {e}"
+
+    def _parse_trpc_response(self, data: Any) -> List[Dict]:
+        """Parse tRPC response format."""
+        images = []
+
+        try:
+            # tRPC batch response is array of results
+            if isinstance(data, list) and len(data) > 0:
+                result = data[0]
+
+                # Check for error
+                if "error" in result:
+                    self._log(f"tRPC error: {result['error']}")
+                    return []
+
+                # Get result data
+                result_data = result.get("result", {}).get("data", {}).get("json", {})
+
+                # Parse images from response
+                if "imagePanels" in result_data:
+                    for panel in result_data.get("imagePanels", []):
+                        for img in panel.get("generatedImages", []):
+                            if img.get("encodedImage"):
+                                images.append({
+                                    "base64": img["encodedImage"],
+                                    "seed": img.get("seed"),
+                                    "id": img.get("mediaGenerationId")
+                                })
+
+                elif "media" in result_data:
+                    for media in result_data.get("media", []):
+                        gen_img = media.get("image", {}).get("generatedImage", {})
+                        if gen_img.get("encodedImage"):
+                            images.append({
+                                "base64": gen_img["encodedImage"],
+                                "url": gen_img.get("fifeUrl"),
+                                "seed": gen_img.get("seed"),
+                                "id": gen_img.get("mediaGenerationId")
+                            })
+
+                # Try direct image data
+                elif "generatedImages" in result_data:
+                    for img in result_data.get("generatedImages", []):
+                        if img.get("encodedImage"):
+                            images.append({
+                                "base64": img["encodedImage"],
+                                "seed": img.get("seed"),
+                                "id": img.get("mediaGenerationId")
+                            })
+
+        except Exception as e:
+            self._log(f"Parse error: {e}")
+
+        return images
 
     def _parse_response(self, data: Dict) -> List[Dict]:
         """Parse response từ API."""
@@ -416,6 +515,77 @@ def parse_cookie_json(cookie_json: str) -> str:
         return ""
     except:
         return ""
+
+
+def parse_cookie_header(cookie_header: str) -> Dict[str, str]:
+    """
+    Parse cookie header string (format: name1=value1;name2=value2).
+
+    Args:
+        cookie_header: Cookie header string từ browser
+
+    Returns:
+        Dict với tất cả cookies
+    """
+    cookies = {}
+    try:
+        # Split by semicolon and parse each cookie
+        for part in cookie_header.split(";"):
+            part = part.strip()
+            if "=" in part:
+                # Find first = only (value may contain =)
+                idx = part.index("=")
+                name = part[:idx].strip()
+                value = part[idx+1:].strip()
+                cookies[name] = value
+    except:
+        pass
+    return cookies
+
+
+def extract_session_token(cookie_input: str) -> Tuple[str, str]:
+    """
+    Trích xuất session token và csrf token từ nhiều format khác nhau.
+
+    Args:
+        cookie_input: Cookie string (có thể là JSON, header string, hoặc token trực tiếp)
+
+    Returns:
+        Tuple[session_token, csrf_token]
+    """
+    session_token = ""
+    csrf_token = ""
+
+    cookie_input = cookie_input.strip()
+
+    # Try JSON format first
+    if cookie_input.startswith("["):
+        try:
+            cookies = json.loads(cookie_input)
+            for cookie in cookies:
+                name = cookie.get("name", "")
+                value = cookie.get("value", "")
+                if name == "__Secure-next-auth.session-token":
+                    session_token = value
+                elif name == "__Host-next-auth.csrf-token":
+                    csrf_token = value
+            return session_token, csrf_token
+        except:
+            pass
+
+    # Try header string format (name=value;name=value)
+    if "__Secure-next-auth.session-token=" in cookie_input or "=" in cookie_input:
+        cookies = parse_cookie_header(cookie_input)
+        session_token = cookies.get("__Secure-next-auth.session-token", "")
+        csrf_token = cookies.get("__Host-next-auth.csrf-token", "")
+        if session_token:
+            return session_token, csrf_token
+
+    # Assume it's direct token value
+    if cookie_input.startswith("eyJ"):  # JWT format
+        return cookie_input, ""
+
+    return session_token, csrf_token
 
 
 def parse_cookie_netscape(cookie_text: str) -> str:
