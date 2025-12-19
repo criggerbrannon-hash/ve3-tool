@@ -998,8 +998,90 @@ class UnixVoiceToVideo:
         ttk.Button(prof_btn_row1, text="🗑️ Xóa", command=delete_profile).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(prof_btn_row1, text="🔄", command=refresh_profile_list, width=3).pack(side=tk.LEFT)
 
+        # ========== LABS API SETTINGS (Session Token + CAPTCHA) ==========
+        ttk.Separator(prof_tab, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(15, 10))
+        ttk.Label(prof_tab, text="Labs API (Cookie + CAPTCHA Solver):",
+                  font=('Segoe UI', 10, 'bold')).pack(anchor=tk.W)
+        ttk.Label(prof_tab, text="Paste cookie tu Cookie Editor - tu dong trich xuat session token",
+                  foreground='gray', font=('Segoe UI', 9)).pack(anchor=tk.W, pady=(0, 5))
+
+        # Cookie input
+        cookie_frame = ttk.Frame(prof_tab)
+        cookie_frame.pack(fill=tk.X, pady=(5, 5))
+        ttk.Label(cookie_frame, text="Cookie:").pack(side=tk.LEFT)
+        cookie_entry = ttk.Entry(cookie_frame, font=('Consolas', 9))
+        cookie_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 5))
+
+        # Load current session token to show status
+        current_session = self._get_labs_session_token()
+        if current_session:
+            cookie_status = ttk.Label(cookie_frame, text="[OK]", foreground='green')
+        else:
+            cookie_status = ttk.Label(cookie_frame, text="[Chua co]", foreground='orange')
+        cookie_status.pack(side=tk.LEFT)
+
+        # CAPTCHA API Key input
+        captcha_frame = ttk.Frame(prof_tab)
+        captcha_frame.pack(fill=tk.X, pady=(5, 5))
+        ttk.Label(captcha_frame, text="Capsolver API Key:").pack(side=tk.LEFT)
+        captcha_entry = ttk.Entry(captcha_frame, font=('Consolas', 9))
+        captcha_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(5, 5))
+
+        # Load current captcha key
+        current_captcha = self._get_captcha_api_key()
+        if current_captcha:
+            captcha_entry.insert(0, current_captcha)
+            captcha_status = ttk.Label(captcha_frame, text="[OK]", foreground='green')
+        else:
+            captcha_status = ttk.Label(captcha_frame, text="[Chua co]", foreground='orange')
+        captcha_status.pack(side=tk.LEFT)
+
+        def save_labs_settings():
+            """Parse cookie string and save Labs settings."""
+            cookie_str = cookie_entry.get().strip()
+            captcha_key = captcha_entry.get().strip()
+
+            # Parse session token from cookie string
+            session_token = ""
+            if cookie_str:
+                # Find __Secure-next-auth.session-token in cookie string
+                import re
+                match = re.search(r'__Secure-next-auth\.session-token=([^;]+)', cookie_str)
+                if match:
+                    session_token = match.group(1)
+                    cookie_status.config(text="[OK]", foreground='green')
+                    self.log(f"Extracted session token: {session_token[:20]}...", "OK")
+                else:
+                    # Maybe they pasted just the token value
+                    if cookie_str.startswith("eyJ"):
+                        session_token = cookie_str
+                        cookie_status.config(text="[OK]", foreground='green')
+                    else:
+                        cookie_status.config(text="[Loi]", foreground='red')
+                        messagebox.showwarning("Loi", "Khong tim thay session token trong cookie!\nHay copy day du cookie tu Cookie Editor.")
+                        return
+
+            # Save to config
+            self._save_labs_settings(session_token, captcha_key)
+
+            if captcha_key:
+                captcha_status.config(text="[OK]", foreground='green')
+            else:
+                captcha_status.config(text="[Chua co]", foreground='orange')
+
+            messagebox.showinfo("OK", "Da luu Labs API settings!")
+
+        # Link to Capsolver
+        capsolver_link = ttk.Label(prof_tab, text="Dang ky Capsolver: capsolver.com",
+                                   foreground='blue', cursor='hand2', font=('Segoe UI', 9))
+        capsolver_link.pack(anchor=tk.W, pady=(2, 5))
+        capsolver_link.bind('<Button-1>', lambda e: webbrowser.open("https://www.capsolver.com/"))
+
+        # Save button
+        ttk.Button(prof_tab, text="Luu Labs Settings", command=save_labs_settings).pack(anchor=tk.W, pady=(5, 10))
+
         # Info
-        ttk.Label(prof_tab, text="💡 Mỗi voice sẽ dùng 1 profile khác nhau khi chạy song song",
+        ttk.Label(prof_tab, text="Moi voice se dung 1 profile khac nhau khi chay song song",
                   foreground='#666', font=('Segoe UI', 9)).pack(anchor=tk.W, pady=(10, 0))
 
         # Tab 2: API Keys
@@ -1313,6 +1395,54 @@ class UnixVoiceToVideo:
             self.log(f"Generation mode: {mode_names.get(mode, mode)}", "OK")
         except Exception as e:
             print(f"Save generation_mode error: {e}")
+
+    def _get_labs_session_token(self) -> str:
+        """Get Labs session token from config."""
+        try:
+            import yaml
+            config_path = CONFIG_DIR / "settings.yaml"
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+                return config.get('labs_session_token', '')
+        except:
+            pass
+        return ''
+
+    def _get_captcha_api_key(self) -> str:
+        """Get CAPTCHA API key from config."""
+        try:
+            import yaml
+            config_path = CONFIG_DIR / "settings.yaml"
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+                return config.get('captcha_api_key', '')
+        except:
+            pass
+        return ''
+
+    def _save_labs_settings(self, session_token: str, captcha_api_key: str):
+        """Save Labs API settings to config."""
+        try:
+            import yaml
+            config_path = CONFIG_DIR / "settings.yaml"
+            config = {}
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+
+            if session_token:
+                config['labs_session_token'] = session_token
+            if captcha_api_key:
+                config['captcha_api_key'] = captcha_api_key
+
+            with open(config_path, 'w', encoding='utf-8') as f:
+                yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+
+            self.log("Labs settings saved!", "OK")
+        except Exception as e:
+            print(f"Save labs settings error: {e}")
 
     def _get_parallel_browsers(self) -> int:
         """Get number of parallel browsers from config."""
