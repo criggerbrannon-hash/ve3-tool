@@ -761,9 +761,10 @@ class BrowserFlowGenerator:
                 }}, {timeout_ms});
 
                 try {{
-                    VE3.uploadReferences({images_json}).then(success => {{
+                    VE3.uploadReferences({images_json}).then(result => {{
                         clearTimeout(timeout);
-                        callback({{ success: success, message: 'Upload completed' }});
+                        // Pass result truc tiep, khong wrap lai
+                        callback(result);
                     }}).catch(e => {{
                         clearTimeout(timeout);
                         callback({{ success: false, error: e.message || 'Upload exception' }});
