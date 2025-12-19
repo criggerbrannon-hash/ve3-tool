@@ -83,6 +83,11 @@ log_level: "INFO"
 # ============================================================================
 # Su dung browser automation thay cho API (khong can bearer token)
 
+# Generation mode: "chrome" (browser automation) or "api" (direct API call)
+# Chrome mode: Dung Playwright/Selenium dieu khien trinh duyet, khong can token
+# API mode: Goi truc tiep batchGenerateImages API, can bearer token
+generation_mode: "chrome"
+
 # Thu muc chua Chrome profiles (luu session login)
 browser_profiles_dir: "./chrome_profiles"
 

@@ -1656,16 +1656,104 @@ class BrowserFlowGenerator:
             "characters_failed": failed_count
         }
 
+    def _get_generation_mode(self) -> str:
+        """
+        Lay generation mode tu config: 'chrome' hoac 'api'.
+        Mac dinh: 'chrome'.
+        """
+        return self.config.get('generation_mode', 'chrome')
+
+    def generate_images_auto(
+        self,
+        excel_path: Optional[Path] = None,
+        start_scene: int = 1,
+        end_scene: Optional[int] = None,
+        overwrite: bool = False,
+        bearer_token: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Tao anh tu dong - chon mode dua tren config.
+
+        Mode duoc cau hinh trong settings.yaml (generation_mode: 'chrome' hoac 'api')
+
+        Args:
+            excel_path: Duong dan file Excel
+            start_scene: Scene bat dau
+            end_scene: Scene ket thuc
+            overwrite: Ghi de anh da co
+            bearer_token: Bearer token (chi can cho API mode)
+
+        Returns:
+            Dict voi ket qua
+        """
+        mode = self._get_generation_mode()
+        self._log(f"[AUTO] Generation mode: {mode.upper()}")
+
+        if mode == 'api':
+            # API mode - goi truc tiep API
+            return self.generate_scene_images_api(
+                excel_path=excel_path,
+                start_scene=start_scene,
+                end_scene=end_scene,
+                overwrite=overwrite,
+                bearer_token=bearer_token
+            )
+        else:
+            # Chrome mode (default) - browser automation
+            return self.generate_scene_images(
+                excel_path=excel_path,
+                start_scene=start_scene,
+                end_scene=end_scene,
+                overwrite=overwrite
+            )
+
+    def generate_from_prompts_auto(
+        self,
+        prompts: List[Dict],
+        excel_path: Optional[Path] = None,
+        bearer_token: Optional[str] = None,
+        max_setup_retries: int = 3
+    ) -> Dict[str, Any]:
+        """
+        Tao anh tu prompts - tu dong chon mode dua tren config.
+
+        Args:
+            prompts: List prompts [{'id': '1', 'prompt': '...'}]
+            excel_path: Duong dan Excel
+            bearer_token: Bearer token (chi can cho API mode)
+            max_setup_retries: So lan retry setup (chi cho Chrome mode)
+
+        Returns:
+            Dict voi ket qua
+        """
+        mode = self._get_generation_mode()
+        self._log(f"[AUTO] Generation mode: {mode.upper()}")
+
+        if mode == 'api':
+            return self.generate_from_prompts_api(
+                prompts=prompts,
+                excel_path=excel_path,
+                bearer_token=bearer_token
+            )
+        else:
+            return self.generate_from_prompts(
+                prompts=prompts,
+                excel_path=excel_path,
+                max_setup_retries=max_setup_retries
+            )
+
     def generate_all(
         self,
         characters: bool = True,
         scenes: bool = True,
         start_scene: int = 1,
         end_scene: Optional[int] = None,
-        overwrite: bool = False
+        overwrite: bool = False,
+        bearer_token: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Tao tat ca anh (nhan vat + scenes).
+        Tu dong chon mode dua tren config (generation_mode).
 
         Args:
             characters: Tao anh nhan vat
@@ -1673,6 +1761,7 @@ class BrowserFlowGenerator:
             start_scene: Scene bat dau
             end_scene: Scene ket thuc
             overwrite: Ghi de
+            bearer_token: Bearer token (chi can cho API mode)
 
         Returns:
             Dict voi ket qua
@@ -1682,15 +1771,19 @@ class BrowserFlowGenerator:
             "scenes": {},
         }
 
+        mode = self._get_generation_mode()
+        self._log(f"[GENERATE_ALL] Mode: {mode.upper()}")
+
         try:
             # AUTO-UPDATE: Them filename annotations vao prompts (neu chua co)
             # Giup Flow match uploaded reference images voi prompt
-            if scenes and self.excel_path.exists():
+            excel_path = self._find_excel_file()
+            if scenes and excel_path and excel_path.exists():
                 self._log("[AUTO] Kiem tra va cap nhat filename annotations trong prompts...", "info")
                 try:
                     from modules.prompts_generator import PromptsGenerator
                     pg = PromptsGenerator()
-                    updated = pg.update_excel_prompts_with_annotations(str(self.excel_path))
+                    updated = pg.update_excel_prompts_with_annotations(str(excel_path))
                     if updated:
                         self._log("[AUTO] Da cap nhat prompts voi filename annotations", "success")
                     else:
@@ -1701,17 +1794,21 @@ class BrowserFlowGenerator:
                     self._log(f"[AUTO] Loi khi cap nhat annotations: {e}", "warn")
 
             if characters:
+                # Characters luon dung Chrome mode (can UI de handle consent)
                 results["characters"] = self.generate_character_images(overwrite=overwrite)
 
             if scenes:
-                results["scenes"] = self.generate_scene_images(
+                # Scenes su dung mode tu config
+                results["scenes"] = self.generate_images_auto(
                     start_scene=start_scene,
                     end_scene=end_scene,
-                    overwrite=overwrite
+                    overwrite=overwrite,
+                    bearer_token=bearer_token
                 )
         finally:
-            # Dong browser khi xong
-            self.stop_browser()
+            # Dong browser khi xong (chi can cho Chrome mode)
+            if mode == 'chrome':
+                self.stop_browser()
 
         return results
 
@@ -1724,6 +1821,379 @@ class BrowserFlowGenerator:
             .replace("\n", "\\n")
             .replace("\r", "\\r")
             .replace("\t", "\\t"))
+
+    # =========================================================================
+    # API MODE - Direct API call without browser
+    # =========================================================================
+
+    def generate_scene_images_api(
+        self,
+        excel_path: Optional[Path] = None,
+        start_scene: int = 1,
+        end_scene: Optional[int] = None,
+        overwrite: bool = False,
+        bearer_token: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Tao anh bang API mode - goi truc tiep batchGenerateImages API.
+
+        Uu diem:
+        - Nhanh hon Chrome mode (khong can khoi dong browser)
+        - On dinh hon (khong bi loi UI)
+
+        Nhuoc diem:
+        - Can bearer token (het han sau ~1h)
+        - Khong tu dong xu ly consent dialogs
+
+        Args:
+            excel_path: Duong dan file Excel
+            start_scene: Scene bat dau (1-indexed)
+            end_scene: Scene ket thuc (None = tat ca)
+            overwrite: Ghi de anh da co
+            bearer_token: Bearer token (bat buoc)
+
+        Returns:
+            Dict voi ket qua
+        """
+        self._log("=" * 60)
+        self._log("API MODE - TAO ANH BANG DIRECT API CALL")
+        self._log("=" * 60)
+
+        # Import GoogleFlowAPI
+        try:
+            from modules.google_flow_api import GoogleFlowAPI, AspectRatio
+        except ImportError as e:
+            return {"success": False, "error": f"Khong import duoc GoogleFlowAPI: {e}"}
+
+        # Check bearer token
+        if not bearer_token:
+            # Thu lay tu config
+            bearer_token = self.config.get('flow_bearer_token', '')
+
+        if not bearer_token:
+            return {
+                "success": False,
+                "error": "Can bearer token cho API mode. Lay token tu Settings > Token"
+            }
+
+        # Tim file Excel
+        if excel_path is None:
+            excel_path = self._find_excel_file()
+
+        if excel_path is None or not excel_path.exists():
+            return {"success": False, "error": "Khong tim thay file Excel"}
+
+        self._log(f"Excel: {excel_path}")
+        self._log(f"Project: {self.project_code}")
+        self._log(f"Token: {bearer_token[:20]}...{bearer_token[-10:]}")
+
+        # Create API client
+        api = GoogleFlowAPI(
+            bearer_token=bearer_token,
+            project_id=self.project_code,
+            timeout=self.config.get('flow_timeout', 120),
+            verbose=self.verbose
+        )
+
+        # Map aspect ratio
+        ar_setting = self.config.get('flow_aspect_ratio', 'landscape')
+        ar_map = {
+            'landscape': AspectRatio.LANDSCAPE,
+            'portrait': AspectRatio.PORTRAIT,
+            'square': AspectRatio.SQUARE,
+        }
+        aspect_ratio = ar_map.get(ar_setting, AspectRatio.LANDSCAPE)
+
+        # Load Excel
+        workbook = PromptWorkbook(excel_path)
+        workbook.load_or_create()
+
+        # Lay cac scene can tao anh
+        all_scenes = workbook.get_scenes()
+        scenes_to_process = []
+
+        for scene in all_scenes:
+            if scene.scene_id < start_scene:
+                continue
+            if end_scene is not None and scene.scene_id > end_scene:
+                break
+            if not scene.img_prompt:
+                continue
+            if scene.status_img == "done" and not overwrite:
+                self.stats["skipped"] += 1
+                continue
+            scenes_to_process.append(scene)
+
+        if not scenes_to_process:
+            self._log("Khong co scene nao can tao anh", "warn")
+            return {"success": True, "message": "No scenes to process"}
+
+        self._log(f"Se tao {len(scenes_to_process)} anh bang API")
+        self.stats["total"] = len(scenes_to_process)
+
+        # Load media cache cho reference
+        cached_media_names = self._load_media_cache()
+        if cached_media_names:
+            self._log(f"Loaded {len(cached_media_names)} media references")
+
+        # Process tung scene
+        for i, scene in enumerate(scenes_to_process):
+            scene_id = str(scene.scene_id)
+            prompt = scene.img_prompt
+
+            self._log(f"\n[{i+1}/{len(scenes_to_process)}] Scene {scene_id}")
+            self._log(f"Prompt ({len(prompt)} chars): {prompt[:100]}...")
+
+            try:
+                # Build image inputs from references
+                image_inputs = []
+                ref_str = getattr(scene, 'reference_files', '') or ''
+                if ref_str:
+                    try:
+                        ref_files = json.loads(ref_str) if ref_str.startswith('[') else [f.strip() for f in ref_str.split(',') if f.strip()]
+                    except:
+                        ref_files = [f.strip() for f in str(ref_str).split(',') if f.strip()]
+
+                    for ref_file in ref_files:
+                        ref_id = ref_file.replace('.png', '').replace('.jpg', '')
+                        # Check cache for media_name
+                        if ref_id in cached_media_names:
+                            media_info = cached_media_names[ref_id]
+                            media_name = media_info.get('mediaName') if isinstance(media_info, dict) else media_info
+                            if media_name:
+                                from modules.google_flow_api import ImageInput, ImageInputType
+                                image_inputs.append(ImageInput(
+                                    name=media_name,
+                                    input_type=ImageInputType.REFERENCE
+                                ))
+                                self._log(f"[REF] Using cached media: {ref_id}")
+
+                # Generate image
+                success, images, error = api.generate_images(
+                    prompt=prompt,
+                    count=self.config.get('flow_image_count', 2),
+                    aspect_ratio=aspect_ratio,
+                    image_inputs=[inp.to_dict() for inp in image_inputs] if image_inputs else None
+                )
+
+                if success and images:
+                    # Download best image
+                    output_file = self.img_path / f"{scene_id}.png"
+
+                    downloaded = api.download_image(
+                        images[0],  # Take first image
+                        self.img_path,
+                        scene_id
+                    )
+
+                    if downloaded:
+                        # Update Excel
+                        relative_path = f"img/{scene_id}.png"
+                        workbook.update_scene(
+                            scene.scene_id,
+                            img_path=relative_path,
+                            status_img="done"
+                        )
+                        workbook.save()
+
+                        # Save media_name to cache
+                        if images[0].media_name:
+                            cached_media_names[scene_id] = {
+                                'mediaName': images[0].media_name,
+                                'seed': images[0].seed
+                            }
+
+                        self._log(f"OK - Da tao va luu anh: {downloaded}", "success")
+                        self.stats["success"] += 1
+                    else:
+                        self._log("Loi download anh", "error")
+                        workbook.update_scene(scene.scene_id, status_img="error")
+                        workbook.save()
+                        self.stats["failed"] += 1
+                else:
+                    self._log(f"Loi: {error}", "error")
+                    workbook.update_scene(scene.scene_id, status_img="error")
+                    workbook.save()
+                    self.stats["failed"] += 1
+
+                # Delay giua cac prompt
+                delay = self.config.get('flow_delay', 3.0)
+                if i < len(scenes_to_process) - 1:
+                    time.sleep(delay)
+
+            except Exception as e:
+                self._log(f"Exception: {e}", "error")
+                import traceback
+                traceback.print_exc()
+                workbook.update_scene(scene.scene_id, status_img="error")
+                workbook.save()
+                self.stats["failed"] += 1
+
+        # Save updated media cache
+        if cached_media_names:
+            self._save_media_cache(cached_media_names)
+
+        # Summary
+        self._log("\n" + "=" * 60)
+        self._log("HOAN THANH (API MODE)")
+        self._log("=" * 60)
+        self._log(f"Tong: {self.stats['total']}")
+        self._log(f"Thanh cong: {self.stats['success']}")
+        self._log(f"That bai: {self.stats['failed']}")
+        self._log(f"Bo qua: {self.stats['skipped']}")
+
+        return {
+            "success": True,
+            "stats": self.stats.copy()
+        }
+
+    def generate_from_prompts_api(
+        self,
+        prompts: List[Dict],
+        excel_path: Optional[Path] = None,
+        bearer_token: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Tao anh tu danh sach prompts bang API mode.
+
+        Args:
+            prompts: List prompts [{'id': '1', 'prompt': '...'}]
+            excel_path: Duong dan Excel (de cap nhat status)
+            bearer_token: Bearer token (bat buoc)
+
+        Returns:
+            Dict voi ket qua
+        """
+        self._log("=" * 60)
+        self._log("API MODE - TAO ANH TU PROMPTS")
+        self._log("=" * 60)
+
+        try:
+            from modules.google_flow_api import GoogleFlowAPI, AspectRatio
+        except ImportError as e:
+            return {"success": False, "error": f"Khong import duoc GoogleFlowAPI: {e}"}
+
+        if not bearer_token:
+            bearer_token = self.config.get('flow_bearer_token', '')
+
+        if not bearer_token:
+            return {"success": False, "error": "Can bearer token cho API mode"}
+
+        if not prompts:
+            return {"success": False, "error": "Khong co prompts"}
+
+        self._log(f"Tong: {len(prompts)} prompts")
+        self._log(f"Token: {bearer_token[:20]}...{bearer_token[-10:]}")
+
+        # Create API client
+        api = GoogleFlowAPI(
+            bearer_token=bearer_token,
+            project_id=self.project_code,
+            timeout=self.config.get('flow_timeout', 120),
+            verbose=self.verbose
+        )
+
+        # Map aspect ratio
+        ar_setting = self.config.get('flow_aspect_ratio', 'landscape')
+        ar_map = {
+            'landscape': AspectRatio.LANDSCAPE,
+            'portrait': AspectRatio.PORTRAIT,
+            'square': AspectRatio.SQUARE,
+        }
+        aspect_ratio = ar_map.get(ar_setting, AspectRatio.LANDSCAPE)
+
+        # Reset stats
+        self.stats = {"total": len(prompts), "success": 0, "failed": 0, "skipped": 0}
+
+        # Load Excel workbook
+        workbook = None
+        if excel_path and Path(excel_path).exists():
+            try:
+                workbook = PromptWorkbook(excel_path)
+                workbook.load_or_create()
+            except Exception as e:
+                self._log(f"Warning: Khong load duoc Excel: {e}", "warn")
+
+        # Load media cache
+        cached_media_names = self._load_media_cache()
+
+        for i, prompt_data in enumerate(prompts):
+            pid = str(prompt_data.get('id', i + 1))
+            prompt = prompt_data.get('prompt', '')
+
+            if not prompt:
+                self._log(f"[{i+1}/{len(prompts)}] ID: {pid} - Skip (prompt rong)", "warn")
+                self.stats["skipped"] += 1
+                continue
+
+            self._log(f"\n[{i+1}/{len(prompts)}] ID: {pid}")
+            self._log(f"Prompt ({len(prompt)} chars): {prompt[:100]}...")
+
+            try:
+                # Generate
+                success, images, error = api.generate_images(
+                    prompt=prompt,
+                    count=self.config.get('flow_image_count', 2),
+                    aspect_ratio=aspect_ratio
+                )
+
+                if success and images:
+                    # Determine output dir
+                    is_character = pid.startswith('nv') or pid.startswith('loc')
+                    out_dir = self.nv_path if is_character else self.img_path
+
+                    downloaded = api.download_image(images[0], out_dir, pid)
+
+                    if downloaded:
+                        # Update Excel
+                        if workbook and pid.isdigit():
+                            scene_id = int(pid)
+                            relative_path = f"img/{pid}.png"
+                            workbook.update_scene(scene_id, img_path=relative_path, status_img="done")
+                            workbook.save()
+
+                        # Save media cache
+                        if images[0].media_name:
+                            cached_media_names[pid] = {
+                                'mediaName': images[0].media_name,
+                                'seed': images[0].seed
+                            }
+
+                        self._log(f"OK - Da tao: {downloaded}", "success")
+                        self.stats["success"] += 1
+                    else:
+                        self._log("Loi download", "error")
+                        self.stats["failed"] += 1
+                else:
+                    self._log(f"Loi: {error}", "error")
+                    self.stats["failed"] += 1
+
+                # Delay
+                delay = self.config.get('flow_delay', 3.0)
+                if i < len(prompts) - 1:
+                    time.sleep(delay)
+
+            except Exception as e:
+                self._log(f"Exception: {e}", "error")
+                self.stats["failed"] += 1
+
+        # Save media cache
+        if cached_media_names:
+            self._save_media_cache(cached_media_names)
+
+        # Summary
+        self._log("\n" + "=" * 60)
+        self._log("HOAN THANH (API MODE)")
+        self._log("=" * 60)
+        self._log(f"Tong: {self.stats['total']}")
+        self._log(f"Thanh cong: {self.stats['success']}")
+        self._log(f"That bai: {self.stats['failed']}")
+        self._log(f"Bo qua: {self.stats['skipped']}")
+
+        return {
+            "success": True,
+            "stats": self.stats.copy()
+        }
 
     def __enter__(self):
         """Context manager entry."""
