@@ -574,6 +574,29 @@ directors_shooting_plan: |
   | COMPLETION | Flashback 2yr | nvc_young (28yo) | nv1 (55yo) | House finished |
   | BETRAYAL | Present | nvc (30yo) | nv1 (55yo) | Current conflict |
 
+  ## COSTUME BY LOCATION - VERY IMPORTANT!
+
+  Khi có ảnh tham chiếu, KHÔNG mô tả ngoại hình cố định (tóc, mắt, râu...).
+  CHỈ mô tả TRANG PHỤC phù hợp với BỐI CẢNH hiện tại:
+
+  | Location | Costume Examples |
+  |----------|------------------|
+  | Phòng ngủ | pyjamas, áo ngủ, tóc rối |
+  | Tiệc/đám cưới | vest, suit, áo dài, váy dạ hội |
+  | Công trường | dusty work shirt, tool belt, hard hat |
+  | Văn phòng | business suit, áo sơ mi, tie |
+  | Bãi biển | áo thun, quần short, sandals |
+  | Bệnh viện | áo bệnh nhân, áo blouse |
+  | Nhà bếp | apron, tay bẩn bột |
+  | Chợ | quần áo giản dị, nón lá |
+
+  **TRONG img_prompt:**
+  - ✅ ĐÚNG: "man (nvc.png), wearing elegant black suit and red tie, at the party"
+  - ✅ ĐÚNG: "man (nvc.png), wearing old pyjamas, messy morning hair, in bedroom"
+  - ❌ SAI: "30yo Caucasian man, short brown hair, blue eyes, wearing gray t-shirt" (mô tả cố định)
+
+  **KHÔNG dùng character_lock cho quần áo - tự chọn trang phục phù hợp scene!**
+
   ## CHILD CHARACTER RULES:
   - Children (nvc1, etc.) should NOT be in reference_files (API policy)
   - Describe children INLINE in img_prompt: "(Child: 8yo boy, thin, hopeful eyes)"
@@ -732,6 +755,12 @@ directors_shooting_plan: |
   8. DO NOT add nationality/ethnicity (Vietnamese, American, etc.) unless EXPLICITLY mentioned in the story
      - If story doesn't mention nationality, just describe features (hair color, skin tone, etc.)
      - Only add nationality when it's RELEVANT to the story
+  9. COSTUME BY SCENE - Choose outfit based on LOCATION, not character_lock!
+     - Bedroom scene → pyjamas, casual sleepwear
+     - Party/wedding → formal suit, dress, elegant outfit
+     - Construction → work clothes, dusty shirt, tool belt
+     - Office → business attire, shirt and tie
+     - DO NOT repeat fixed appearance (hair, eyes, age) - only describe COSTUME and EMOTION!
 
   ## ⚠️ LOCATION CONSISTENCY - CRITICAL BUG FIX! ⚠️
 
