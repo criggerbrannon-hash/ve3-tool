@@ -1459,20 +1459,20 @@
                     fileInput.dispatchEvent(new Event('input', { bubbles: true }));
 
                     // Step 5: Wait for crop dialog and click "Cắt và lưu"
+                    // Button có icon material-icons với text "crop"
                     await Utils.sleep(1000);
                     let cropClicked = false;
                     for (let attempt = 0; attempt < 10; attempt++) {
-                        const buttons = document.querySelectorAll('button');
-                        for (const btn of buttons) {
-                            const text = btn.textContent || '';
-                            if (text.includes('Cắt và lưu') || text.includes('crop')) {
-                                btn.click();
-                                Utils.log(`[UPLOAD] Clicked "Cắt và lưu" button`, 'success');
-                                cropClicked = true;
-                                break;
-                            }
+                        const cropBtn = [...document.querySelectorAll('button')].find(b => {
+                            const icon = b.querySelector('i.material-icons');
+                            return icon && icon.textContent.trim() === 'crop';
+                        });
+                        if (cropBtn) {
+                            cropBtn.click();
+                            Utils.log(`[UPLOAD] Clicked "Cắt và lưu" button`, 'success');
+                            cropClicked = true;
+                            break;
                         }
-                        if (cropClicked) break;
                         await Utils.sleep(300);
                     }
 
