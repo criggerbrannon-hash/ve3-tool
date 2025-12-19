@@ -90,10 +90,12 @@ class LabsGoogleAPI:
     def _solve_captcha_capsolver(self) -> Optional[str]:
         """Giải reCAPTCHA v3 bằng Capsolver."""
         if not self.captcha_api_key:
-            self._log("ERROR: Thiếu captcha_api_key!")
+            self._log("ERROR: Thiếu captcha_api_key! Vui lòng cấu hình trong Settings > Labs API")
             return None
 
-        self._log("Đang giải CAPTCHA với Capsolver...")
+        # Mask key for display
+        key_masked = self.captcha_api_key[:8] + "..." if len(self.captcha_api_key) > 8 else "***"
+        self._log(f"Đang giải CAPTCHA với Capsolver (key: {key_masked})...")
 
         try:
             # Tạo task
@@ -101,19 +103,34 @@ class LabsGoogleAPI:
             task_data = {
                 "clientKey": self.captcha_api_key,
                 "task": {
-                    "type": "ReCaptchaV3TaskProxyLess",
+                    "type": "ReCaptchaV3EnterpriseTaskProxyLess",
                     "websiteURL": "https://labs.google",
                     "websiteKey": self.RECAPTCHA_SITE_KEY,
-                    "pageAction": self.RECAPTCHA_ACTION,
-                    "isEnterprise": True
+                    "pageAction": self.RECAPTCHA_ACTION
                 }
             }
 
+            self._log(f"Creating task: {task_data['task']['type']}")
             response = requests.post(create_task_url, json=task_data, timeout=30)
             result = response.json()
 
+            self._log(f"Capsolver response: errorId={result.get('errorId')}, errorCode={result.get('errorCode')}")
+
             if result.get("errorId") != 0:
-                self._log(f"Capsolver error: {result.get('errorDescription')}")
+                error_code = result.get('errorCode', 'UNKNOWN')
+                error_desc = result.get('errorDescription', 'No description')
+                self._log(f"Capsolver ERROR: [{error_code}] {error_desc}")
+
+                # Common errors
+                if error_code == "ERROR_INVALID_TASK_DATA":
+                    self._log("  -> Kiểm tra lại cấu hình task (websiteKey, pageAction)")
+                elif error_code == "ERROR_KEY_DOES_NOT_EXIST":
+                    self._log("  -> API key không hợp lệ! Kiểm tra lại Capsolver API key")
+                elif error_code == "ERROR_ZERO_BALANCE":
+                    self._log("  -> Hết tiền trong tài khoản Capsolver! Nạp thêm credit")
+                elif error_code == "ERROR_RECAPTCHA_INVALID_SITEKEY":
+                    self._log("  -> Website key không đúng")
+
                 return None
 
             task_id = result.get("taskId")
@@ -143,8 +160,14 @@ class LabsGoogleAPI:
             self._log("CAPTCHA timeout!")
             return None
 
+        except requests.exceptions.RequestException as e:
+            self._log(f"CAPTCHA network error: {e}")
+            self._log("  -> Kiểm tra kết nối internet")
+            return None
         except Exception as e:
-            self._log(f"CAPTCHA error: {e}")
+            self._log(f"CAPTCHA error: {type(e).__name__}: {e}")
+            import traceback
+            self._log(f"Traceback: {traceback.format_exc()}")
             return None
 
     def _solve_captcha_2captcha(self) -> Optional[str]:
