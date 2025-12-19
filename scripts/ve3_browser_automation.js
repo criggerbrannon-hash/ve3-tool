@@ -1322,11 +1322,11 @@
             return await UI.uploadReferenceImage(base64Data, filename);
         },
 
-        // NEW: Upload nhieu anh reference CUNG LUC (thay vi tung file)
+        // NEW: Upload nhieu anh reference
         // images: [{base64: '...', filename: 'nvc.png'}, ...]
         // Returns: {success: boolean, successCount: number, errors: Array<{file, error}>}
         uploadReferences: async (images) => {
-            Utils.log(`[UPLOAD] Bat dau upload ${images.length} reference images CUNG LUC...`, 'info');
+            Utils.log(`[UPLOAD] Bat dau upload ${images.length} reference images...`, 'info');
 
             // QUAN TRONG: Xoa reference images cu truoc khi upload moi
             await UI.clearReferenceImages();
@@ -1338,85 +1338,107 @@
                 return { success: true, successCount: 0, totalCount: 0, errors: [] };
             }
 
-            // Step 1: Click ADD button
-            let addBtn = null;
-            const addIcons = document.querySelectorAll('i.google-symbols');
-            for (const icon of addIcons) {
-                if (icon.textContent.trim() === 'add') {
-                    addBtn = icon;
-                    break;
-                }
-            }
+            // Helper: Tìm ADD button ở khu vực INPUT (dưới cùng trong viewport)
+            // Có nhiều icon "add" trên trang, cần lấy cái ở dưới cùng
+            const findBottomAddButton = () => {
+                let addBtn = null;
+                let maxY = 0;
+                const addIcons = document.querySelectorAll('i.google-symbols');
 
-            if (!addBtn) {
-                // Try finding button with add icon
-                const allBtns = document.querySelectorAll('button');
-                for (const btn of allBtns) {
-                    const icon = btn.querySelector('i.google-symbols');
-                    if (icon && icon.textContent.trim() === 'add') {
-                        addBtn = btn;
-                        break;
+                for (const icon of addIcons) {
+                    if (icon.textContent.trim() === 'add') {
+                        const rect = icon.getBoundingClientRect();
+                        // Lấy cái trong viewport và có y cao nhất (dưới cùng)
+                        if (rect.y < window.innerHeight && rect.y > maxY) {
+                            maxY = rect.y;
+                            addBtn = icon;
+                        }
                     }
                 }
-            }
+                return { addBtn, y: maxY };
+            };
 
-            if (!addBtn) {
-                Utils.log('[UPLOAD] Khong tim thay nut ADD', 'error');
-                return { success: false, successCount: 0, totalCount: images.length, errors: [{ file: 'all', error: 'ADD button not found' }] };
-            }
-
-            addBtn.click();
-            Utils.log('[UPLOAD] Clicked ADD button', 'success');
-            await Utils.sleep(500);
-
-            // Step 2: Click Upload button
-            const uploadBtns = document.querySelectorAll('button');
-            let uploadBtn = null;
-            for (const btn of uploadBtns) {
-                const text = btn.textContent || '';
-                if (text.includes('Tải lên') || text.includes('Upload') || text.includes('upload')) {
-                    uploadBtn = btn;
-                    break;
+            // Helper: Click nút "Tải lên" sau khi panel mở
+            const clickUploadButton = async () => {
+                await Utils.sleep(500);
+                const buttons = document.querySelectorAll('button');
+                for (const btn of buttons) {
+                    const text = btn.textContent || '';
+                    // Ưu tiên button có ".png" (nút upload thật)
+                    if (text.includes('Tải lên') && text.includes('.png')) {
+                        btn.click();
+                        Utils.log('[UPLOAD] Clicked "Tải lên" button', 'success');
+                        return true;
+                    }
                 }
-            }
-
-            if (uploadBtn) {
-                uploadBtn.click();
-                Utils.log('[UPLOAD] Clicked UPLOAD button', 'success');
-                await Utils.sleep(800);
-            }
-
-            // Check consent
-            await UI.checkAndClickConsent();
-            await Utils.sleep(500);
-
-            // Step 3: Find file input
-            let fileInput = document.querySelector('input[type="file"]');
-            if (!fileInput) {
-                for (let i = 0; i < 5; i++) {
-                    await Utils.sleep(500);
-                    await UI.checkAndClickConsent();
-                    fileInput = document.querySelector('input[type="file"]');
-                    if (fileInput) break;
+                // Fallback
+                for (const btn of buttons) {
+                    const text = btn.textContent || '';
+                    if (text.includes('Tải lên') || text.includes('Upload')) {
+                        btn.click();
+                        Utils.log('[UPLOAD] Clicked upload button (fallback)', 'success');
+                        return true;
+                    }
                 }
-            }
+                return false;
+            };
 
-            if (!fileInput) {
-                Utils.log('[UPLOAD] Khong tim thay file input', 'error');
-                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
-                return { success: false, successCount: 0, totalCount: images.length, errors: [{ file: 'all', error: 'File input not found' }] };
-            }
-
-            // Step 4: Create ALL Files and add to DataTransfer
-            const dataTransfer = new DataTransfer();
             let errors = [];
+            let successCount = 0;
 
-            for (const img of images) {
+            // Upload từng file một (vì file input không hỗ trợ multiple)
+            for (let i = 0; i < images.length; i++) {
+                const img = images[i];
+                Utils.log(`[UPLOAD] Uploading ${i+1}/${images.length}: ${img.filename}`, 'info');
+
                 try {
+                    // Step 1: Tìm và click ADD button (dưới cùng viewport)
+                    const { addBtn, y } = findBottomAddButton();
+                    if (!addBtn) {
+                        Utils.log('[UPLOAD] Khong tim thay nut ADD trong viewport', 'error');
+                        errors.push({ file: img.filename, error: 'ADD button not found' });
+                        continue;
+                    }
+
+                    addBtn.click();
+                    Utils.log(`[UPLOAD] Clicked ADD at y=${y}`, 'info');
+                    await Utils.sleep(600);
+
+                    // Step 2: Click nút "Tải lên"
+                    const uploadClicked = await clickUploadButton();
+                    if (!uploadClicked) {
+                        Utils.log('[UPLOAD] Khong tim thay nut "Tải lên"', 'error');
+                        errors.push({ file: img.filename, error: '"Tải lên" button not found' });
+                        continue;
+                    }
+                    await Utils.sleep(600);
+
+                    // Check consent
+                    await UI.checkAndClickConsent();
+                    await Utils.sleep(300);
+
+                    // Step 3: Find file input
+                    let fileInput = document.querySelector('input[type="file"]');
+                    if (!fileInput) {
+                        for (let j = 0; j < 5; j++) {
+                            await Utils.sleep(400);
+                            fileInput = document.querySelector('input[type="file"]');
+                            if (fileInput) break;
+                        }
+                    }
+
+                    if (!fileInput) {
+                        Utils.log('[UPLOAD] Khong tim thay file input', 'error');
+                        errors.push({ file: img.filename, error: 'File input not found' });
+                        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+                        continue;
+                    }
+
+                    // Step 4: Create File and upload
                     const byteCharacters = atob(img.base64);
                     const byteNumbers = new Array(byteCharacters.length);
-                    for (let i = 0; i < byteCharacters.length; i++) {
-                        byteNumbers[i] = byteCharacters.charCodeAt(i);
+                    for (let j = 0; j < byteCharacters.length; j++) {
+                        byteNumbers[j] = byteCharacters.charCodeAt(j);
                     }
                     const byteArray = new Uint8Array(byteNumbers);
 
@@ -1428,36 +1450,26 @@
                     }
 
                     const file = new File([byteArray], img.filename, { type: mimeType });
+                    const dataTransfer = new DataTransfer();
                     dataTransfer.items.add(file);
-                    Utils.log(`[UPLOAD] Added file: ${img.filename}`, 'info');
+                    fileInput.files = dataTransfer.files;
+
+                    // Trigger events
+                    fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+                    fileInput.dispatchEvent(new Event('input', { bubbles: true }));
+
+                    successCount++;
+                    Utils.log(`[UPLOAD] ✓ ${img.filename} thanh cong`, 'success');
+
+                    // Wait for upload to complete before next file
+                    await Utils.sleep(1500);
+
                 } catch (e) {
                     errors.push({ file: img.filename, error: e.message });
-                    Utils.log(`[UPLOAD] Error creating file ${img.filename}: ${e.message}`, 'error');
+                    Utils.log(`[UPLOAD] ✗ ${img.filename}: ${e.message}`, 'error');
                 }
             }
 
-            if (dataTransfer.files.length === 0) {
-                Utils.log('[UPLOAD] Khong co file nao duoc tao', 'error');
-                return { success: false, successCount: 0, totalCount: images.length, errors };
-            }
-
-            // Step 5: Set files and trigger events
-            fileInput.files = dataTransfer.files;
-            Utils.log(`[UPLOAD] Set ${dataTransfer.files.length} files to input`, 'info');
-
-            // Trigger change event
-            fileInput.dispatchEvent(new Event('change', { bubbles: true }));
-            fileInput.dispatchEvent(new Event('input', { bubbles: true }));
-            Utils.log('[UPLOAD] Triggered change event', 'success');
-
-            // Wait for upload to complete
-            await Utils.sleep(2000);
-
-            // Verify: count thumbnails
-            const thumbnails = document.querySelectorAll('[class*="thumbnail"], [class*="preview"], img[src*="blob:"]');
-            Utils.log(`[UPLOAD] Found ${thumbnails.length} thumbnails after upload`, 'info');
-
-            const successCount = dataTransfer.files.length - errors.length;
             Utils.log(`[UPLOAD] Hoan thanh: ${successCount}/${images.length} thanh cong`, successCount > 0 ? 'success' : 'error');
 
             return {
