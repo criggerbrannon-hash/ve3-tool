@@ -1480,11 +1480,38 @@
                         Utils.log(`[UPLOAD] Warning: "Cắt và lưu" button not found, continuing...`, 'warn');
                     }
 
+                    // Step 6: Doi loading xong - dem so div co opacity: 1 trong .sc-51248dda-0
+                    Utils.log('[UPLOAD] Doi anh load...', 'info');
+                    const countLoadedImages = () => {
+                        const container = document.querySelector('.sc-51248dda-0');
+                        if (!container) return 0;
+                        const divs = container.querySelectorAll('div[style*="opacity: 1"]');
+                        return divs.length;
+                    };
+
+                    const initialCount = countLoadedImages();
+
+                    // Doi so luong tang len (max 20 giay)
+                    for (let w = 0; w < 40; w++) {
+                        // Check consent moi 2 giay
+                        if (w % 4 === 0) {
+                            await UI.checkAndClickConsent();
+                        }
+
+                        const currentCount = countLoadedImages();
+                        if (currentCount > initialCount) {
+                            Utils.log(`[UPLOAD] Anh da load! Count: ${initialCount} -> ${currentCount}`, 'success');
+                            break;
+                        }
+                        await Utils.sleep(500);
+                    }
+
+                    // Doi them 1 chut de dam bao
+                    await Utils.sleep(1000);
+                    await UI.checkAndClickConsent();
+
                     successCount++;
                     Utils.log(`[UPLOAD] ✓ ${img.filename} thanh cong`, 'success');
-
-                    // Wait for upload to complete before next file
-                    await Utils.sleep(2000);
 
                 } catch (e) {
                     errors.push({ file: img.filename, error: e.message });
