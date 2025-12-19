@@ -555,13 +555,38 @@
 
             Utils.log('[CONSENT] Bat dau trigger consent...', 'info');
 
-            // Step 1: Click ADD
-            const addButtons = document.querySelectorAll('i.google-symbols');
+            // Step 1: Click ADD - thu nhieu selectors
             let addBtn = null;
-            for (const btn of addButtons) {
-                if (btn.textContent.trim() === 'add') {
-                    addBtn = btn;
+
+            // Method 1: Tim i.google-symbols voi text "add"
+            const addIcons = document.querySelectorAll('i.google-symbols');
+            for (const icon of addIcons) {
+                if (icon.textContent.trim() === 'add') {
+                    addBtn = icon;
                     break;
+                }
+            }
+
+            // Method 2: Tim mat-icon voi text "add"
+            if (!addBtn) {
+                const matIcons = document.querySelectorAll('mat-icon, .mat-icon, .material-icons');
+                for (const icon of matIcons) {
+                    if (icon.textContent.trim() === 'add') {
+                        addBtn = icon;
+                        break;
+                    }
+                }
+            }
+
+            // Method 3: Tim button co icon add ben trong
+            if (!addBtn) {
+                const allBtns = document.querySelectorAll('button');
+                for (const btn of allBtns) {
+                    const icon = btn.querySelector('i, mat-icon, .material-icons');
+                    if (icon && icon.textContent.trim() === 'add') {
+                        addBtn = btn;
+                        break;
+                    }
                 }
             }
 
@@ -570,18 +595,25 @@
                 Utils.log('[CONSENT] Clicked ADD', 'info');
                 await Utils.sleep(500);
             } else {
-                Utils.log('[CONSENT] Khong thay nut ADD', 'warn');
-                return false;
+                Utils.log('[CONSENT] Khong thay nut ADD - skip consent', 'warn');
+                STATE.consentTriggered = true;  // Danh dau da thu, khong thu lai
+                return true;  // Van return true de tiep tuc upload
             }
 
             // Step 2: Click Upload (se trigger consent dialog)
             const uploadBtns = document.querySelectorAll('button');
             let uploadBtn = null;
+            const uploadTexts = ['Tải lên', 'Tải ảnh lên', 'Upload', 'upload', 'Từ máy tính', 'From computer'];
+
             for (const btn of uploadBtns) {
-                if (btn.textContent.includes('Tải lên')) {
-                    uploadBtn = btn;
-                    break;
+                const text = btn.textContent || '';
+                for (const pattern of uploadTexts) {
+                    if (text.includes(pattern)) {
+                        uploadBtn = btn;
+                        break;
+                    }
                 }
+                if (uploadBtn) break;
             }
 
             if (uploadBtn) {
@@ -593,14 +625,19 @@
             // Step 3: Click "Tôi đồng ý" neu co
             const buttons = document.querySelectorAll('button');
             let foundConsent = false;
+            const consentTexts = ['Tôi đồng ý', 'Đồng ý', 'I agree', 'Agree', 'Accept'];
             for (const btn of buttons) {
-                if (btn.textContent.trim() === 'Tôi đồng ý') {
-                    btn.click();
-                    Utils.log('[CONSENT] Clicked "Tôi đồng ý"', 'success');
-                    foundConsent = true;
-                    await Utils.sleep(500);
-                    break;
+                const text = btn.textContent.trim();
+                for (const pattern of consentTexts) {
+                    if (text === pattern || text.includes(pattern)) {
+                        btn.click();
+                        Utils.log(`[CONSENT] Clicked "${text}"`, 'success');
+                        foundConsent = true;
+                        await Utils.sleep(500);
+                        break;
+                    }
                 }
+                if (foundConsent) break;
             }
 
             if (!foundConsent) {
@@ -621,13 +658,16 @@
         // Helper: Check va click "Tôi đồng ý" neu xuat hien
         checkAndClickConsent: async () => {
             const buttons = document.querySelectorAll('button');
+            const consentTexts = ['Tôi đồng ý', 'Đồng ý', 'I agree', 'Agree', 'Accept', 'OK', 'Cho phép', 'Allow'];
             for (const btn of buttons) {
                 const text = btn.textContent.trim();
-                if (text === 'Tôi đồng ý' || text === 'Đồng ý' || text === 'I agree' || text === 'Agree') {
-                    btn.click();
-                    Utils.log('[CONSENT] Clicked consent button: ' + text, 'success');
-                    await Utils.sleep(500);
-                    return true;
+                for (const pattern of consentTexts) {
+                    if (text === pattern || text.includes(pattern)) {
+                        btn.click();
+                        Utils.log('[CONSENT] Clicked consent button: ' + text, 'success');
+                        await Utils.sleep(500);
+                        return true;
+                    }
                 }
             }
             return false;
@@ -636,13 +676,50 @@
         uploadReferenceImage: async (base64Data, filename) => {
             Utils.log(`[UPLOAD] Bat dau upload reference: ${filename}`, 'info');
 
-            // Step 1: Click nut "add" (icon add)
-            const addButtons = document.querySelectorAll('i.google-symbols');
+            // Step 1: Click nut "add" (icon add) - thu nhieu selector
             let addBtn = null;
-            for (const btn of addButtons) {
-                if (btn.textContent.trim() === 'add') {
-                    addBtn = btn;
+
+            // Method 1: Tim i.google-symbols voi text "add"
+            const addIcons = document.querySelectorAll('i.google-symbols');
+            for (const icon of addIcons) {
+                if (icon.textContent.trim() === 'add') {
+                    addBtn = icon;
+                    Utils.log('[UPLOAD] Found ADD via i.google-symbols', 'info');
                     break;
+                }
+            }
+
+            // Method 2: Tim mat-icon voi text "add"
+            if (!addBtn) {
+                const matIcons = document.querySelectorAll('mat-icon, .mat-icon, .material-icons');
+                for (const icon of matIcons) {
+                    if (icon.textContent.trim() === 'add') {
+                        addBtn = icon;
+                        Utils.log('[UPLOAD] Found ADD via mat-icon', 'info');
+                        break;
+                    }
+                }
+            }
+
+            // Method 3: Tim button co icon add ben trong
+            if (!addBtn) {
+                const allBtns = document.querySelectorAll('button');
+                for (const btn of allBtns) {
+                    const icon = btn.querySelector('i, mat-icon, .material-icons');
+                    if (icon && icon.textContent.trim() === 'add') {
+                        addBtn = btn;
+                        Utils.log('[UPLOAD] Found ADD via button>icon', 'info');
+                        break;
+                    }
+                }
+            }
+
+            // Method 4: Tim theo aria-label
+            if (!addBtn) {
+                const ariaBtn = document.querySelector('[aria-label*="add" i], [aria-label*="thêm" i], [aria-label*="Thêm" i]');
+                if (ariaBtn) {
+                    addBtn = ariaBtn;
+                    Utils.log('[UPLOAD] Found ADD via aria-label', 'info');
                 }
             }
 
@@ -653,18 +730,39 @@
                 // Check consent sau khi click ADD
                 await UI.checkAndClickConsent();
             } else {
+                // Debug: log all icons found
+                Utils.log(`[UPLOAD] DEBUG: Found ${addIcons.length} i.google-symbols icons`, 'warn');
+                for (let i = 0; i < Math.min(5, addIcons.length); i++) {
+                    Utils.log(`[UPLOAD] Icon ${i}: "${addIcons[i].textContent.trim()}"`, 'info');
+                }
                 Utils.log('[UPLOAD] Khong tim thay nut ADD', 'error');
-                return false;
+                return { success: false, error: 'ADD button not found' };
             }
 
-            // Step 2: Click nut "upload"
+            // Step 2: Click nut "upload" - thu nhieu text patterns
+            await Utils.sleep(300);
             const uploadBtns = document.querySelectorAll('button');
             let uploadBtn = null;
+            const uploadTexts = ['Tải lên', 'Tải ảnh lên', 'Upload', 'upload', 'Từ máy tính', 'From computer'];
+
             for (const btn of uploadBtns) {
                 const text = btn.textContent || '';
-                if (text.includes('Tải lên') || text.includes('upload') || text.includes('Upload')) {
-                    uploadBtn = btn;
-                    break;
+                for (const pattern of uploadTexts) {
+                    if (text.includes(pattern)) {
+                        uploadBtn = btn;
+                        Utils.log(`[UPLOAD] Found UPLOAD button with text: "${text.trim().slice(0,30)}"`, 'info');
+                        break;
+                    }
+                }
+                if (uploadBtn) break;
+            }
+
+            // Fallback: tim input[type=file] truc tiep
+            if (!uploadBtn) {
+                const fileInput = document.querySelector('input[type="file"]');
+                if (fileInput) {
+                    Utils.log('[UPLOAD] Found file input directly, skipping button click', 'info');
+                    // Tiep tuc xuong step 3
                 }
             }
 
@@ -674,9 +772,15 @@
                 await Utils.sleep(800);
                 // Check consent sau khi click Upload - day la cho hay xuat hien nhat!
                 await UI.checkAndClickConsent();
-            } else {
+            } else if (!document.querySelector('input[type="file"]')) {
+                // Debug: log all buttons
+                Utils.log(`[UPLOAD] DEBUG: Found ${uploadBtns.length} buttons`, 'warn');
+                for (let i = 0; i < Math.min(5, uploadBtns.length); i++) {
+                    const text = uploadBtns[i].textContent || '';
+                    Utils.log(`[UPLOAD] Btn ${i}: "${text.trim().slice(0,40)}"`, 'info');
+                }
                 Utils.log('[UPLOAD] Khong tim thay nut UPLOAD', 'error');
-                return false;
+                return { success: false, error: 'UPLOAD button not found' };
             }
 
             // Step 3: Tim input file - doi them va check consent
@@ -700,7 +804,7 @@
                 Utils.log('[UPLOAD] Khong tim thay file input', 'error');
                 // ESC de dong dialog neu co
                 document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
-                return false;
+                return { success: false, error: 'File input not found' };
             }
 
             // Step 4: Tao File tu base64 va set vao input
@@ -797,10 +901,10 @@
                 await UI.checkAndClickConsent();
 
                 Utils.log(`[UPLOAD] Hoan thanh: ${filename}`, 'success');
-                return true;
+                return { success: true, filename: filename };
             } catch (e) {
                 Utils.log(`[UPLOAD] Loi khi upload: ${e.message}`, 'error');
-                return false;
+                return { success: false, error: e.message };
             }
         }
     };
@@ -1133,13 +1237,14 @@
 
         // NEW: Upload nhieu anh reference
         // images: [{base64: '...', filename: 'nvc.png'}, ...]
+        // Returns: {success: boolean, successCount: number, errors: Array<{file, error}>}
         uploadReferences: async (images) => {
             Utils.log(`[UPLOAD] Bat dau upload ${images.length} reference images...`, 'info');
 
             // Trigger consent truoc khi upload (chi lan dau)
             await UI.triggerConsent();
 
-            let success = 0;
+            let successCount = 0;
             let errors = [];
 
             for (let i = 0; i < images.length; i++) {
@@ -1148,15 +1253,17 @@
 
                 try {
                     const result = await UI.uploadReferenceImage(img.base64, img.filename);
-                    if (result) {
-                        success++;
+                    // result is now {success: bool, error?: string, filename?: string}
+                    if (result && result.success) {
+                        successCount++;
                         Utils.log(`[UPLOAD] ✓ ${img.filename} thanh cong`, 'success');
                     } else {
-                        errors.push(`${img.filename}: upload returned false`);
-                        Utils.log(`[UPLOAD] ✗ ${img.filename} that bai`, 'error');
+                        const errMsg = result?.error || 'Unknown error';
+                        errors.push({ file: img.filename, error: errMsg });
+                        Utils.log(`[UPLOAD] ✗ ${img.filename}: ${errMsg}`, 'error');
                     }
                 } catch (e) {
-                    errors.push(`${img.filename}: ${e.message}`);
+                    errors.push({ file: img.filename, error: e.message });
                     Utils.log(`[UPLOAD] ✗ ${img.filename} exception: ${e.message}`, 'error');
                 }
 
@@ -1166,13 +1273,19 @@
                 }
             }
 
-            Utils.log(`[UPLOAD] Hoan thanh: ${success}/${images.length} thanh cong`, success === images.length ? 'success' : 'warn');
+            Utils.log(`[UPLOAD] Hoan thanh: ${successCount}/${images.length} thanh cong`, successCount === images.length ? 'success' : 'warn');
 
             if (errors.length > 0) {
-                Utils.log(`[UPLOAD] Errors: ${errors.join(', ')}`, 'error');
+                Utils.log(`[UPLOAD] Errors: ${JSON.stringify(errors)}`, 'error');
             }
 
-            return success > 0;  // Return true if at least 1 upload succeeded
+            // Return detailed result to Python
+            return {
+                success: successCount > 0,
+                successCount: successCount,
+                totalCount: images.length,
+                errors: errors
+            };
         },
 
         // Help
