@@ -306,13 +306,12 @@ class LabsGoogleAPI:
 
         # Build tRPC request for imageFx.generateImage
         import random
-        import urllib.parse
 
         if seed is None:
             seed = random.randint(1, 999999999)
 
-        # tRPC non-batch format: input as URL-encoded JSON in query string
-        trpc_input = {
+        # tRPC mutation format (POST with JSON body, no batch)
+        trpc_body = {
             "json": {
                 "generationParams": {
                     "prompts": [prompt],
@@ -325,26 +324,20 @@ class LabsGoogleAPI:
             }
         }
 
-        # Encode input as query parameter
-        input_json = json.dumps(trpc_input)
-        encoded_input = urllib.parse.quote(input_json)
-
-        # tRPC single endpoint (no batch)
-        url = f"{self.TRPC_URL}/imageFx.generateImage?input={encoded_input}"
+        # tRPC mutation endpoint (POST)
+        url = f"{self.TRPC_URL}/imageFx.generateImage"
 
         headers = dict(self.session.headers)
-        # Remove Content-Type for GET request
-        if "Content-Type" in headers:
-            del headers["Content-Type"]
+        headers["Content-Type"] = "application/json"
 
         # Add x-recaptcha-token header
         if captcha_token:
             headers["x-recaptcha-token"] = captcha_token
 
         try:
-            self._log(f"Calling tRPC: {url[:100]}...")
-            # Use GET for tRPC query
-            response = self.session.get(url, headers=headers, timeout=120)
+            self._log(f"Calling tRPC mutation: {url}")
+            # Use POST for tRPC mutation
+            response = self.session.post(url, json=trpc_body, headers=headers, timeout=120)
 
             self._log(f"Response status: {response.status_code}")
 
