@@ -16,24 +16,26 @@ echo.
 where git >nul 2>&1
 if %errorlevel% equ 0 (
     if exist ".git" (
-        echo [*] Syncing from all sessions...
+        echo [*] Checking for updates...
 
-        :: Fetch TAT CA branches
-        git fetch --all --prune 2>nul
+        :: Fetch chi branch hien tai
+        for /f "tokens=*" %%B in ('git rev-parse --abbrev-ref HEAD 2^>nul') do set "CURRENT_BRANCH=%%B"
 
-        :: Tu dong merge tu TAT CA branches co prefix "claude/"
-        for /f "tokens=*" %%B in ('git branch -r ^| findstr "origin/claude/"') do (
-            set "BRANCH=%%B"
-            set "BRANCH=!BRANCH:origin/=!"
-            set "BRANCH=!BRANCH: =!"
-            if not "!BRANCH!"=="" (
-                echo     Merging: !BRANCH!
-                git merge origin/!BRANCH! --no-edit -m "Auto-merge" >nul 2>&1
+        if defined CURRENT_BRANCH (
+            echo     Current branch: !CURRENT_BRANCH!
+            git fetch origin !CURRENT_BRANCH! 2>nul
+
+            :: Chi pull neu co update moi (khong merge nhieu branches)
+            git pull origin !CURRENT_BRANCH! --ff-only 2>nul
+            if !errorlevel! equ 0 (
+                echo [OK] Updated successfully!
+            ) else (
+                echo [WARN] Cannot fast-forward, keeping local version
             )
+        ) else (
+            echo [WARN] Could not determine current branch
         )
 
-        echo.
-        echo [OK] Synced from all sessions!
         echo.
         goto :run
     )
