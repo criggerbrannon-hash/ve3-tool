@@ -516,6 +516,74 @@ class BrowserFlowGenerator:
 
         return False
 
+    def _simplify_prompt_for_reference(self, prompt: str, reference_files: List[str]) -> str:
+        """
+        Đơn giản hóa prompt khi có ảnh reference - loại bỏ mô tả ngoại hình chi tiết.
+
+        Khi đã có ảnh tham chiếu, việc mô tả chi tiết (tóc, mắt, râu, da...)
+        sẽ khiến Flow tạo ra nhân vật MỚI thay vì dùng ảnh reference.
+
+        Giữ lại: cảm xúc, hành động, tư thế, bối cảnh
+        Loại bỏ: tuổi, chủng tộc, màu tóc, màu mắt, râu, mô tả da
+
+        Args:
+            prompt: Prompt gốc
+            reference_files: List các file reference (nvc.png, nv1.png, loc.png...)
+
+        Returns:
+            Prompt đã được đơn giản hóa
+        """
+        import re
+
+        if not prompt or not reference_files:
+            return prompt
+
+        # Tìm các character references (nvc, nv1, nv2... không phải loc)
+        char_refs = [r for r in reference_files if r.startswith('nv') and not r.startswith('loc')]
+
+        if not char_refs:
+            return prompt  # Không có character reference, giữ nguyên
+
+        result = prompt
+
+        # Patterns cần loại bỏ (mô tả ngoại hình)
+        # Chỉ loại bỏ khi TRƯỚC hoặc SAU filename annotation
+        appearance_patterns = [
+            # Tuổi + chủng tộc trước filename: "30-year-old Caucasian man, short brown hair (nvc.png)"
+            r'\d{1,2}[-\s]?year[-\s]?old\s+',  # "30-year-old "
+            r'(?:Caucasian|Asian|African|European|American|Vietnamese|Korean|Japanese|Chinese|Latino|Hispanic|Indian)\s+',  # chủng tộc
+
+            # Mô tả chi tiết trước (filename.png)
+            r'(?:short|long|medium|curly|straight|wavy|messy|neat|slicked)\s+(?:brown|black|blonde|red|gray|grey|white|dark|light)\s+hair,?\s*',  # tóc
+            r'(?:tired|bright|piercing|gentle|kind|cold|warm|deep)?\s*(?:brown|blue|green|hazel|gray|grey|black|dark)\s+eyes,?\s*',  # mắt
+            r'(?:light|heavy|thick|thin|full)?\s*(?:stubble|beard|mustache|goatee),?\s*',  # râu
+            r'(?:fair|dark|tan|pale|olive|brown|light|medium)\s+skin,?\s*',  # da
+            r'(?:slim|athletic|muscular|heavy|petite|tall|short)\s+build,?\s*',  # thể hình
+
+            # Quần áo cơ bản (giữ lại quần áo đặc biệt)
+            r'wearing\s+(?:a\s+)?(?:simple|plain|basic|casual)\s+(?:gray|grey|white|black|blue|red)\s+(?:t-shirt|shirt|top),?\s*',
+        ]
+
+        # Áp dụng các pattern
+        for pattern in appearance_patterns:
+            result = re.sub(pattern, '', result, flags=re.IGNORECASE)
+
+        # Dọn dẹp: loại bỏ dấu phẩy thừa, khoảng trắng thừa
+        result = re.sub(r',\s*,', ',', result)  # ",," -> ","
+        result = re.sub(r'\s+,', ',', result)   # " ," -> ","
+        result = re.sub(r',\s*\.', '.', result)  # ",." -> "."
+        result = re.sub(r'\s+', ' ', result)    # multiple spaces -> single space
+        result = result.strip()
+
+        # Log nếu có thay đổi
+        if result != prompt:
+            removed_chars = len(prompt) - len(result)
+            self._log(f"[SIMPLIFY] Đã loại bỏ {removed_chars} ký tự mô tả ngoại hình", "info")
+            self._log(f"[SIMPLIFY] Trước: {prompt[:100]}...", "info")
+            self._log(f"[SIMPLIFY] Sau: {result[:100]}...", "info")
+
+        return result
+
     def _filter_children_from_refs(self, ref_files: List[str]) -> List[str]:
         """
         Filter out child characters from reference_files list.
@@ -975,6 +1043,11 @@ class BrowserFlowGenerator:
             self._log(f"Prompt ({len(prompt)} chars): {prompt[:100]}...")
             self._log(f"[REF] Final reference_files: {reference_files}")
 
+            # QUAN TRONG: Loại bỏ mô tả ngoại hình khi có ảnh reference
+            # Vì đã có ảnh tham chiếu, mô tả chi tiết (tóc, mắt, râu) sẽ khiến Flow tạo nhân vật MỚI
+            if reference_files:
+                prompt = self._simplify_prompt_for_reference(prompt, reference_files)
+
             # VERIFY: Check if prompt has filename annotations
             has_annotations = False
             for ref in reference_files:
@@ -1112,6 +1185,10 @@ class BrowserFlowGenerator:
         if not prompt:
             self._log("Skip - prompt rong", "warn")
             return False, None, 0.0
+
+        # QUAN TRONG: Loại bỏ mô tả ngoại hình khi có ảnh reference
+        if reference_files:
+            prompt = self._simplify_prompt_for_reference(prompt, reference_files)
 
         try:
             # UPLOAD REFERENCE IMAGES TRUOC KHI TAO ANH
