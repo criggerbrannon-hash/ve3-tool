@@ -574,10 +574,50 @@ directors_shooting_plan: |
   | COMPLETION | Flashback 2yr | nvc_young (28yo) | nv1 (55yo) | House finished |
   | BETRAYAL | Present | nvc (30yo) | nv1 (55yo) | Current conflict |
 
-  ## COSTUME BY LOCATION - VERY IMPORTANT!
+  ## 🚨 CRITICAL RULE: REFERENCE IMAGES = NO APPEARANCE DESCRIPTION! 🚨
 
-  Khi có ảnh tham chiếu, KHÔNG mô tả ngoại hình cố định (tóc, mắt, râu...).
-  CHỈ mô tả TRANG PHỤC phù hợp với BỐI CẢNH hiện tại:
+  **KHI CÓ ẢNH THAM CHIẾU (reference_files chứa nvc.png, nv1.png, etc.):**
+
+  ẢNH THAM CHIẾU ĐÃ CHỨA MẶT, TÓC, MẮT, DA CỦA NHÂN VẬT!
+  AI SẼ TỰ NHẬN DIỆN TỪ ẢNH - KHÔNG CẦN MÔ TẢ LẠI!
+
+  **TRONG img_prompt CHỈ MÔ TẢ:**
+  1. HÀNH ĐỘNG (đang làm gì)
+  2. CẢM XÚC (vui, buồn, tức giận, sợ hãi)
+  3. TRANG PHỤC cho scene này (không phải trang phục mặc định)
+  4. GÓC MÁY, ÁNH SÁNG, STYLE
+
+  **TUYỆT ĐỐI KHÔNG MÔ TẢ:**
+  - ❌ Tuổi (30-year-old, 25yo)
+  - ❌ Chủng tộc (Caucasian, Asian)
+  - ❌ Màu tóc (brown hair, black hair)
+  - ❌ Màu mắt (blue eyes, brown eyes)
+  - ❌ Đặc điểm mặt (stubble, freckles, wrinkles)
+  - ❌ Màu da (fair skin, tan)
+
+  **VÍ DỤ ĐÚNG vs SAI:**
+
+  ✅ ĐÚNG (có reference_files: ["nvc.png"]):
+  ```
+  "WIDE shot, 24mm lens. Man (nvc.png) SITTING ALONE on courthouse steps,
+  HUNCHED posture, DEVASTATED expression, wearing wrinkled gray suit.
+  Overcast sky, cold atmosphere. Cinematic."
+  ```
+
+  ❌ SAI (mô tả ngoại hình - KHÔNG CẦN vì đã có nvc.png!):
+  ```
+  "WIDE shot, 24mm lens. 30-year-old Caucasian man with short brown hair,
+  tired blue eyes, light stubble, fair skin, sitting on courthouse steps..."
+  ```
+
+  **TẠI SAO?**
+  - AI image generator sẽ lấy mặt từ ảnh tham chiếu (nvc.png)
+  - Nếu mô tả thêm "brown hair, blue eyes" → AI có thể tạo người MỚI
+  - Chỉ cần mô tả HÀNH ĐỘNG + CẢM XÚC + TRANG PHỤC CHO SCENE NÀY
+
+  ## COSTUME BY LOCATION
+
+  Chọn trang phục PHÙ HỢP với bối cảnh, KHÔNG dùng trang phục mặc định:
 
   | Location | Costume Examples |
   |----------|------------------|
@@ -590,12 +630,10 @@ directors_shooting_plan: |
   | Nhà bếp | apron, tay bẩn bột |
   | Chợ | quần áo giản dị, nón lá |
 
-  **TRONG img_prompt:**
-  - ✅ ĐÚNG: "man (nvc.png), wearing elegant black suit and red tie, at the party"
-  - ✅ ĐÚNG: "man (nvc.png), wearing old pyjamas, messy morning hair, in bedroom"
-  - ❌ SAI: "30yo Caucasian man, short brown hair, blue eyes, wearing gray t-shirt" (mô tả cố định)
-
-  **KHÔNG dùng character_lock cho quần áo - tự chọn trang phục phù hợp scene!**
+  **VÍ DỤ TRANG PHỤC ĐÚNG:**
+  - ✅ "man (nvc.png), wearing elegant black suit, at the party"
+  - ✅ "man (nvc.png), wearing old pyjamas, messy hair, in bedroom"
+  - ✅ "man (nvc.png), wearing dusty work clothes, tool belt, at construction site"
 
   ## CHILD CHARACTER RULES:
   - Children (nvc1, etc.) should NOT be in reference_files (API policy)
@@ -697,7 +735,7 @@ directors_shooting_plan: |
               "camera_angle": "Low angle, 24mm - makes courthouse imposing",
               "characters_in_shot": ["nvc"],
               "reference_files": ["nvc.png", "loc_courthouse.png"],
-              "img_prompt": "Wide shot, low angle, 24mm lens. IMPOSING courthouse with massive columns TOWERING over scene. TINY figure of 30yo man sitting ALONE on steps, hunched, defeated, holding crumpled papers. OVERCAST sky, OMINOUS atmosphere. Cold, desaturated colors. Expression of UTTER DEVASTATION. Cinematic, 4K photorealistic."
+              "img_prompt": "Wide shot, low angle, 24mm lens. IMPOSING courthouse with massive columns TOWERING over scene. TINY figure of man (nvc.png) sitting ALONE on steps, HUNCHED posture, DEFEATED expression, wearing wrinkled gray suit, holding crumpled papers. OVERCAST sky, OMINOUS atmosphere. Cold, desaturated colors. Cinematic, 4K photorealistic."
             }},
             {{
               "shot_number": 2,
@@ -708,7 +746,7 @@ directors_shooting_plan: |
               "camera_angle": "Slight low angle, 85mm - dramatic",
               "characters_in_shot": ["nvc"],
               "reference_files": ["nvc.png"],
-              "img_prompt": "Close-up, 85mm lens, slight low angle. 30yo man's face, eyes RED and WELLING with tears, jaw CLENCHED tight, TREMBLING lips. Expression of DISBELIEF and BETRAYAL - 'how could my own mother do this?' Soft cold light. Cinematic, 4K photorealistic."
+              "img_prompt": "Close-up, 85mm lens, slight low angle. Man's face (nvc.png), eyes RED and WELLING with tears, jaw CLENCHED tight, TREMBLING lips. Expression of DISBELIEF and BETRAYAL. Soft cold light. Cinematic, 4K photorealistic."
             }}
           ]
         }},
@@ -735,7 +773,7 @@ directors_shooting_plan: |
               "camera_angle": "Eye level, 24mm - intimate establishing",
               "characters_in_shot": ["nv1_young", "nvc1"],
               "reference_files": ["nv1_young.png", "loc_old_house.png"],
-              "img_prompt": "Wide shot, 24mm lens, GOLDEN HOUR warm light. Rural countryside, small THATCHED-ROOF HOUSE with HOLES in roof, but WARM light glowing from inside. 32yo mother in worn but clean clothes, hand lovingly on young son's shoulder. NOSTALGIC, slightly faded warm colors. Despite poverty, feeling of LOVE and TOGETHERNESS. Cinematic, 4K photorealistic. (Child: 8yo boy, thin but bright-eyed, looking up at mother with trust)"
+              "img_prompt": "Wide shot, 24mm lens, GOLDEN HOUR warm light. Rural countryside, small THATCHED-ROOF HOUSE with HOLES in roof, but WARM light glowing from inside. Mother (nv1_young.png) in worn but clean clothes, hand lovingly on young son's shoulder. NOSTALGIC, slightly faded warm colors. Despite poverty, feeling of LOVE and TOGETHERNESS. Cinematic, 4K photorealistic. (Child: 8yo boy, thin but bright-eyed, looking up at mother with trust)"
             }}
           ]
         }}
@@ -924,23 +962,23 @@ generate_scenes: |
         "characters_used": ["nv1"],
         "location_used": "loc1",
         "reference_files": ["nv1.png", "loc1.png"],
-        "img_prompt": "Wide shot, 24mm lens. Minh, 32-year-old man with short black side-parted hair, oval face, light tan skin, wearing navy blue polo shirt, WALKING SLOWLY toward the window, his back partially turned to viewer. Modern apartment living room, beige sofa, wooden coffee table, large window with city view, warm afternoon sunlight streaming in. Cinematic, 4K photorealistic, shot on Arri Alexa, soft film grain, natural lighting.",
-        "video_prompt": "Slow tracking shot following Minh as he walks to window."
+        "img_prompt": "Wide shot, 24mm lens. Man (nv1.png) wearing navy blue polo shirt, WALKING SLOWLY toward the window, his back partially turned to viewer. Modern apartment living room (loc1.png), beige sofa, wooden coffee table, large window with city view, warm afternoon sunlight streaming in. Cinematic, 4K photorealistic, natural lighting.",
+        "video_prompt": "Slow tracking shot following man as he walks to window."
       }},
       {{
         "scene_id": 2,
         "characters_used": ["nv1", "nv2"],
         "location_used": "loc1",
         "reference_files": ["nv1.png", "nv2.png", "loc1.png"],
-        "img_prompt": "Over-the-shoulder shot from behind Lan, 50mm lens. Minh, 32-year-old man with short black side-parted hair, sitting on beige sofa, LEANING FORWARD while speaking, hands gesturing. In soft focus foreground: back of Lan's head, long black hair. Two people in conversation. Modern apartment living room, warm afternoon light. Cinematic, 4K photorealistic, natural lighting.",
-        "video_prompt": "Minh speaks animatedly, hands moving to emphasize points."
+        "img_prompt": "Over-the-shoulder shot from behind woman (nv2.png), 50mm lens. Man (nv1.png) sitting on beige sofa, LEANING FORWARD while speaking, hands gesturing, wearing casual shirt. In soft focus foreground: back of woman's head. Two people in conversation. Modern apartment living room (loc1.png), warm afternoon light. Cinematic, 4K photorealistic.",
+        "video_prompt": "Man speaks animatedly, hands moving to emphasize points."
       }},
       {{
         "scene_id": 3,
         "characters_used": ["nv1"],
         "location_used": "loc1",
         "reference_files": ["nv1.png", "loc1.png"],
-        "img_prompt": "Extreme close-up, 100mm macro lens. Minh's hands CLENCHING into fists on his lap, knuckles whitening, wedding ring visible. Shallow depth of field. Warm afternoon lighting. Cinematic, 4K photorealistic.",
+        "img_prompt": "Extreme close-up, 100mm macro lens. Man's hands (nv1.png) CLENCHING into fists on his lap, knuckles whitening, wedding ring visible. Shallow depth of field. Warm afternoon lighting. Cinematic, 4K photorealistic.",
         "video_prompt": "The hands slowly tighten, tension building."
       }}
     ]
@@ -1213,7 +1251,7 @@ smart_divide_scenes: |
         "location_id": "loc_courthouse",
         "characters_in_scene": ["nvc"],
         "reference_files": ["nvc.png", "loc_courthouse.png"],
-        "img_prompt": "WIDE LOW ANGLE shot, 24mm lens. IMPOSING courthouse columns TOWERING overhead. TINY figure of 30yo man with brown hair, tired eyes, gray t-shirt, hunched ALONE on massive stone steps, documents scattered beside him. Ominous overcast sky. Feeling of ISOLATION and DEVASTATION. Cinematic."
+        "img_prompt": "WIDE LOW ANGLE shot, 24mm lens. IMPOSING courthouse columns (loc_courthouse.png) TOWERING overhead. TINY figure of man (nvc.png) HUNCHED ALONE on massive stone steps, wearing wrinkled gray suit, documents scattered beside him. Ominous overcast sky. Feeling of ISOLATION and DEVASTATION. Cinematic."
       }},
       {{
         "scene_id": 2,
@@ -1223,7 +1261,7 @@ smart_divide_scenes: |
         "location_id": "loc_courthouse",
         "characters_in_scene": ["nvc"],
         "reference_files": ["nvc.png"],
-        "img_prompt": "CLOSE-UP, 85mm lens. 30yo man's face, eyes RED and WELLING with tears, jaw CLENCHED, TREMBLING lips. Expression of UTTER DISBELIEF and BETRAYAL. Soft cold light on face. Cinematic."
+        "img_prompt": "CLOSE-UP, 85mm lens. Man's face (nvc.png), eyes RED and WELLING with tears, jaw CLENCHED, TREMBLING lips. Expression of UTTER DISBELIEF and BETRAYAL. Soft cold light on face. Cinematic."
       }},
       {{
         "scene_id": 3,
@@ -1233,7 +1271,7 @@ smart_divide_scenes: |
         "location_id": "loc_dryclean",
         "characters_in_scene": ["nv1_young"],
         "reference_files": ["nv1_young.png", "loc_dryclean.png"],
-        "img_prompt": "Medium shot, 50mm lens. 32yo blonde mother in faded work uniform, PRESSING shirts at industrial machine, EXHAUSTED face with dark circles, sweat glistening on forehead, wisps of hair escaping ponytail. 1990s dry cleaning shop, fluorescent lights, clock showing 9PM. Warm nostalgic tones. Cinematic."
+        "img_prompt": "Medium shot, 50mm lens. Mother (nv1_young.png) in faded work uniform, PRESSING shirts at industrial machine, EXHAUSTED expression with dark circles, sweat glistening on forehead. 1990s dry cleaning shop (loc_dryclean.png), fluorescent lights, clock showing 9PM. Warm nostalgic tones. Cinematic."
       }},
       {{
         "scene_id": 4,
@@ -1243,7 +1281,7 @@ smart_divide_scenes: |
         "location_id": "loc_dryclean",
         "characters_in_scene": ["nv1_young"],
         "reference_files": ["nv1_young.png"],
-        "img_prompt": "EXTREME CLOSE-UP, 100mm macro lens. Mother's WORN HANDS gripping iron press handle, CRACKED skin, simple wedding ring, steam rising. Detail shot showing SACRIFICE and hard labor. Warm nostalgic. Cinematic."
+        "img_prompt": "EXTREME CLOSE-UP, 100mm macro lens. Mother's WORN HANDS (nv1_young.png) gripping iron press handle, CRACKED skin, simple wedding ring, steam rising. Detail shot showing SACRIFICE and hard labor. Warm nostalgic. Cinematic."
       }},
       {{
         "scene_id": 5,
@@ -1253,7 +1291,7 @@ smart_divide_scenes: |
         "location_id": "loc_apartment",
         "characters_in_scene": ["nv1_young", "nvc1"],
         "reference_files": ["nv1_young.png", "loc_apartment.png"],
-        "img_prompt": "WIDE shot, 24mm lens. Small cramped 1990s apartment. 32yo blonde mother HUGGING a young 8-year-old Caucasian boy with messy brown hair, innocent blue eyes, freckles, wearing old faded t-shirt. Two figures EMBRACING in center of sparse room. Worn furniture, single lamp casting warm glow. Intimate, nostalgic. Cinematic."
+        "img_prompt": "WIDE shot, 24mm lens. Small cramped 1990s apartment (loc_apartment.png). Mother (nv1_young.png) HUGGING a young child. Two figures EMBRACING in center of sparse room. Worn furniture, single lamp casting warm glow. Intimate, nostalgic. Cinematic. (Child: 8yo boy, thin, wearing old faded t-shirt, looking up at mother with trust)"
       }},
       {{
         "scene_id": 6,
@@ -1263,7 +1301,7 @@ smart_divide_scenes: |
         "location_id": "loc_construction",
         "characters_in_scene": ["nvc_young"],
         "reference_files": ["nvc_young.png", "loc_construction.png"],
-        "img_prompt": "LOW ANGLE hero shot, 35mm lens. 28yo muscular man SWINGING HAMMER down at wooden beam, shot from below. POWERFUL, DETERMINED expression, sawdust falling, sweat dripping, tool belt at waist. House frame RISING against blue sky behind. Golden hour sunlight. Cinematic."
+        "img_prompt": "LOW ANGLE hero shot, 35mm lens. Man (nvc_young.png) SWINGING HAMMER down at wooden beam, shot from below. POWERFUL, DETERMINED expression, wearing dusty work shirt, tool belt at waist, sawdust falling, sweat dripping. House frame RISING against blue sky behind. Golden hour sunlight. Cinematic."
       }},
       {{
         "scene_id": 7,
@@ -1273,7 +1311,7 @@ smart_divide_scenes: |
         "location_id": "loc_construction",
         "characters_in_scene": ["nvc_young"],
         "reference_files": ["nvc_young.png"],
-        "img_prompt": "EXTREME CLOSE-UP, 100mm macro lens. CALLOUSED HANDS gripping hammer mid-swing, BLISTERS visible, sawdust on knuckles, wedding ring. Detail shot showing years of SACRIFICE and HARD LABOR. Natural sunlight. Cinematic."
+        "img_prompt": "EXTREME CLOSE-UP, 100mm macro lens. Man's CALLOUSED HANDS (nvc_young.png) gripping hammer mid-swing, BLISTERS visible, sawdust on knuckles, wedding ring. Detail shot showing years of SACRIFICE and HARD LABOR. Natural sunlight. Cinematic."
       }},
       {{
         "scene_id": 8,
@@ -1283,7 +1321,7 @@ smart_divide_scenes: |
         "location_id": "loc_construction",
         "characters_in_scene": ["nvc_young"],
         "reference_files": ["nvc_young.png", "loc_construction.png"],
-        "img_prompt": "CLOSE-UP, 85mm lens. 28yo man's face, TIRED but PROUD eyes, sweat on brow, STUDYING blueprints intently. SERIOUS expression showing weight of decade of sacrifice. Construction site blurred behind. Late afternoon light. Cinematic."
+        "img_prompt": "CLOSE-UP, 85mm lens. Man's face (nvc_young.png), TIRED but PROUD eyes, sweat on brow, STUDYING blueprints intently. SERIOUS expression showing weight of decade of sacrifice. Construction site (loc_construction.png) blurred behind. Late afternoon light. Cinematic."
       }},
       {{
         "scene_id": 9,
@@ -1293,7 +1331,7 @@ smart_divide_scenes: |
         "location_id": "loc_finished_house",
         "characters_in_scene": ["nvc_young", "nv1"],
         "reference_files": ["nvc_young.png", "nv1.png", "loc_finished_house.png"],
-        "img_prompt": "TWO-SHOT, 50mm lens. 55yo graying blonde mother standing in doorway, hand over mouth, CRYING tears of joy. 28yo muscular son beside her, arm around her shoulder, PROUD but emotional. New house interior visible behind, warm evening light streaming in. Cinematic."
+        "img_prompt": "TWO-SHOT, 50mm lens. Mother (nv1.png) standing in doorway, hand over mouth, CRYING tears of joy. Son (nvc_young.png) beside her, arm around her shoulder, PROUD but emotional expression. New house interior (loc_finished_house.png) visible behind, warm evening light streaming in. Cinematic."
       }},
       {{
         "scene_id": 10,
@@ -1303,7 +1341,7 @@ smart_divide_scenes: |
         "location_id": "loc_finished_house",
         "characters_in_scene": ["nvc_young", "nv1"],
         "reference_files": ["nvc_young.png", "nv1.png", "loc_finished_house.png"],
-        "img_prompt": "CLOSE-UP, 85mm lens. Mother's face PRESSED against son's chest in tight embrace, tears streaming down wrinkled cheeks, eyes closed with overwhelming PRIDE and LOVE. Son's hand cradling her head. Warm golden interior light. Emotional climax. Cinematic."
+        "img_prompt": "CLOSE-UP, 85mm lens. Mother's face (nv1.png) PRESSED against son's chest in tight embrace, tears streaming down cheeks, eyes closed with overwhelming PRIDE and LOVE. Son's hand (nvc_young.png) cradling her head. Warm golden interior light. Emotional climax. Cinematic."
       }},
       {{
         "scene_id": 11,
@@ -1313,7 +1351,7 @@ smart_divide_scenes: |
         "location_id": "loc_courthouse",
         "characters_in_scene": ["nvc"],
         "reference_files": ["nvc.png", "loc_courthouse.png"],
-        "img_prompt": "Medium shot, 50mm lens. 30yo man CLUTCHING crumpled legal documents to chest, SHOCKED expression, wide disbelieving eyes, jaw dropped. Courthouse columns behind him. Cold overcast light. Expression of ULTIMATE BETRAYAL. Cinematic."
+        "img_prompt": "Medium shot, 50mm lens. Man (nvc.png) CLUTCHING crumpled legal documents to chest, SHOCKED expression, wide disbelieving eyes, jaw dropped. Wearing wrinkled suit. Courthouse columns (loc_courthouse.png) behind him. Cold overcast light. Expression of ULTIMATE BETRAYAL. Cinematic."
       }},
       {{
         "scene_id": 12,
@@ -1323,7 +1361,7 @@ smart_divide_scenes: |
         "location_id": "loc_courthouse",
         "characters_in_scene": ["nvc"],
         "reference_files": ["nvc.png", "loc_courthouse.png"],
-        "img_prompt": "WIDE shot, 24mm lens. 30yo man SITTING ALONE on vast courthouse steps, documents scattered beside him, head BOWED in reflection. Imposing columns frame the scene. Overcast sky. LONELY, CONTEMPLATIVE atmosphere. Story weight maintained. Cinematic."
+        "img_prompt": "WIDE shot, 24mm lens. Man (nvc.png) SITTING ALONE on vast courthouse steps, documents scattered beside him, head BOWED in reflection. Imposing columns (loc_courthouse.png) frame the scene. Overcast sky. LONELY, CONTEMPLATIVE atmosphere. Story weight maintained. Cinematic."
       }}
     ]
   }}

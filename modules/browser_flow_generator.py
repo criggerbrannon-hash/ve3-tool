@@ -1126,10 +1126,8 @@ class BrowserFlowGenerator:
             self._log(f"Prompt ({len(prompt)} chars): {prompt[:100]}...")
             self._log(f"[REF] Final reference_files: {reference_files}")
 
-            # QUAN TRONG: Loại bỏ mô tả ngoại hình khi có ảnh reference
-            # Vì đã có ảnh tham chiếu, mô tả chi tiết (tóc, mắt, râu) sẽ khiến Flow tạo nhân vật MỚI
-            if reference_files:
-                prompt = self._simplify_prompt_for_reference(prompt, reference_files)
+            # NOTE: Không cần simplify nữa vì prompts.yaml đã yêu cầu AI không mô tả ngoại hình
+            # khi có reference images. AI sẽ tạo prompt đúng từ đầu.
 
             # VERIFY: Check if prompt has filename annotations
             has_annotations = False
@@ -1269,9 +1267,7 @@ class BrowserFlowGenerator:
             self._log("Skip - prompt rong", "warn")
             return False, None, 0.0
 
-        # QUAN TRONG: Loại bỏ mô tả ngoại hình khi có ảnh reference
-        if reference_files:
-            prompt = self._simplify_prompt_for_reference(prompt, reference_files)
+        # NOTE: Không cần simplify nữa - AI đã được hướng dẫn không mô tả ngoại hình
 
         try:
             # UPLOAD REFERENCE IMAGES TRUOC KHI TAO ANH
