@@ -13,14 +13,31 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-# Branch chua code moi nhat
-# Cac session se dong bo code qua branch nay
-BRANCH = "claude/ve3-image-generation-vmOC4"
-REPO = "criggerbrannon-hash/ve3-tool"
-ZIP_URL = f"https://github.com/{REPO}/archive/refs/heads/{BRANCH}.zip"
-
 # Thu muc hien tai
 CURRENT_DIR = Path(__file__).parent
+
+# Branch chua code moi nhat
+# Doc tu file config/main_branch.txt, hoac dung default
+REPO = "criggerbrannon-hash/ve3-tool"
+
+def get_main_branch():
+    """Doc branch chinh tu file config."""
+    config_file = CURRENT_DIR / "config" / "main_branch.txt"
+    default_branch = "claude/ve3-image-generation-vmOC4"
+
+    if config_file.exists():
+        try:
+            with open(config_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        return line
+        except:
+            pass
+    return default_branch
+
+BRANCH = get_main_branch()
+ZIP_URL = f"https://github.com/{REPO}/archive/refs/heads/{BRANCH}.zip"
 
 # Cac thu muc/file KHONG duoc ghi de (du lieu nguoi dung)
 PROTECTED = [

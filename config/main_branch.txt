@@ -1,0 +1,5 @@
+# Branch chinh de sync
+# Khi session cu het, doi thanh branch moi o day
+# Chi can sua 1 dong ben duoi:
+
+claude/image-generation-api-t0qZp
