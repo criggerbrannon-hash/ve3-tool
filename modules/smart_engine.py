@@ -184,6 +184,114 @@ class SmartEngine:
         except Exception as e:
             self.log(f"Load config error: {e}", "ERROR")
 
+    def _get_generation_mode(self) -> str:
+        """Get generation mode from settings.yaml: 'chrome', 'api', or 'labs'."""
+        try:
+            import yaml
+            settings_path = self.config_dir / "settings.yaml"
+            if settings_path.exists():
+                with open(settings_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+                return config.get('generation_mode', 'chrome')
+        except Exception as e:
+            self.log(f"Get generation_mode error: {e}", "WARN")
+        return 'chrome'  # Default: browser mode
+
+    def _get_labs_config(self) -> dict:
+        """Get Labs API config from settings.yaml."""
+        try:
+            import yaml
+            settings_path = self.config_dir / "settings.yaml"
+            if settings_path.exists():
+                with open(settings_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+                return {
+                    'session_token': config.get('labs_session_token', ''),
+                    'captcha_api_key': config.get('captcha_api_key', ''),
+                    'captcha_service': config.get('captcha_service', 'capsolver'),
+                    'aspect_ratio': config.get('flow_aspect_ratio', 'landscape'),
+                    'delay': config.get('labs_delay', 2.0)
+                }
+        except Exception as e:
+            self.log(f"Get labs config error: {e}", "WARN")
+        return {}
+
+    def generate_images_labs(self, prompts: List[Dict], proj_dir: Path) -> Dict:
+        """Generate images using Labs API (session token + CAPTCHA solver)."""
+        self.log("=== TAO ANH BANG LABS API ===")
+
+        labs_config = self._get_labs_config()
+
+        if not labs_config.get('session_token'):
+            self.log("KHONG CO session_token! Vao Settings > Labs API de cau hinh.", "ERROR")
+            return {"success": 0, "failed": len(prompts), "error": "missing_session_token"}
+
+        if not labs_config.get('captcha_api_key'):
+            self.log("KHONG CO captcha_api_key! Vao Settings > Labs API de cau hinh.", "ERROR")
+            return {"success": 0, "failed": len(prompts), "error": "missing_captcha_api_key"}
+
+        try:
+            from .labs_google_api import LabsGoogleAPI
+
+            # Create Labs API client
+            labs_client = LabsGoogleAPI(
+                session_token=labs_config['session_token'],
+                captcha_api_key=labs_config['captcha_api_key'],
+                captcha_service=labs_config.get('captcha_service', 'capsolver'),
+                verbose=True
+            )
+
+            success_count = 0
+            failed_count = 0
+            delay = labs_config.get('delay', 2.0)
+
+            for i, p in enumerate(prompts):
+                prompt_text = p.get('prompt', '')
+                output_path = Path(p.get('output_path', ''))
+                prompt_id = p.get('id', f'item_{i}')
+
+                self.log(f"[{i+1}/{len(prompts)}] {prompt_id}: {prompt_text[:50]}...")
+
+                try:
+                    # Generate image
+                    ok, images, error = labs_client.generate_image(
+                        prompt=prompt_text,
+                        count=1,
+                        aspect_ratio=labs_config.get('aspect_ratio', 'landscape')
+                    )
+
+                    if ok and images:
+                        # Save first image
+                        output_path.parent.mkdir(parents=True, exist_ok=True)
+                        saved = labs_client.save_image(images[0], output_path)
+                        if saved:
+                            self.log(f"  -> OK: {output_path.name}")
+                            success_count += 1
+                        else:
+                            self.log(f"  -> FAIL: Khong luu duoc file", "WARN")
+                            failed_count += 1
+                    else:
+                        self.log(f"  -> FAIL: {error}", "WARN")
+                        failed_count += 1
+
+                except Exception as e:
+                    self.log(f"  -> ERROR: {e}", "ERROR")
+                    failed_count += 1
+
+                # Delay between requests
+                if i < len(prompts) - 1 and delay > 0:
+                    time.sleep(delay)
+
+            self.log(f"Labs API: {success_count} thanh cong, {failed_count} that bai")
+            return {"success": success_count, "failed": failed_count}
+
+        except ImportError as e:
+            self.log(f"Khong import duoc labs_google_api: {e}", "ERROR")
+            return {"success": 0, "failed": len(prompts), "error": str(e)}
+        except Exception as e:
+            self.log(f"Labs API error: {e}", "ERROR")
+            return {"success": 0, "failed": len(prompts), "error": str(e)}
+
     # ========== TOKEN CACHING ==========
 
     def load_cached_tokens(self):
@@ -1378,8 +1486,16 @@ class SmartEngine:
         excel_path = proj_dir / "prompts" / f"{name}_prompts.xlsx"
         srt_path = proj_dir / "srt" / f"{name}.srt"
 
+        # Get generation mode from settings
+        gen_mode = self._get_generation_mode()
+        mode_names = {
+            "chrome": "BROWSER JS MODE",
+            "api": "API MODE (Bearer Token)",
+            "labs": "LABS API MODE (Cookie + CAPTCHA)"
+        }
+
         self.log("="*50)
-        self.log(f"VE3 TOOL v{__version__} - BROWSER JS MODE")
+        self.log(f"VE3 TOOL v{__version__} - {mode_names.get(gen_mode, gen_mode.upper())}")
         self.log(f"INPUT: {inp}")
         self.log(f"OUTPUT: {proj_dir}")
         self.log("="*50)
@@ -1394,8 +1510,14 @@ class SmartEngine:
                 self.log(f"  - {m}", "ERROR")
             return {"error": "missing_requirements", "missing": missing}
 
-        # BROWSER MODE - khong can tokens
-        self.log("  MODE: Browser JS automation (khong can API token)")
+        # Show mode info
+        if gen_mode == "labs":
+            labs_cfg = self._get_labs_config()
+            has_token = "OK" if labs_cfg.get('session_token') else "THIEU"
+            has_captcha = "OK" if labs_cfg.get('captcha_api_key') else "THIEU"
+            self.log(f"  MODE: Labs API (Session token: {has_token}, Captcha key: {has_captcha})")
+        else:
+            self.log(f"  MODE: {mode_names.get(gen_mode, gen_mode)}")
         self.log(f"  AI keys: DeepSeek={len(self.deepseek_keys)}, Groq={len(self.groq_keys)}, Gemini={len(self.gemini_keys)}")
 
         # === 2. TAO SRT + PROMPTS (BROWSER MODE - khong can token) ===
@@ -1420,7 +1542,10 @@ class SmartEngine:
             if not self.make_prompts(proj_dir, name, excel_path):
                 return {"error": "prompts_failed"}
 
-        self.log("BROWSER MODE: Khong can token, su dung JS automation")
+        if gen_mode == "labs":
+            self.log("LABS MODE: Dung session token + CAPTCHA solver")
+        else:
+            self.log("BROWSER MODE: Khong can token, su dung JS automation")
 
         # === 3. DOI CHARACTER GENERATION (PARALLEL) ===
         # Neu character generation dang chay song song, doi no xong
@@ -1458,11 +1583,13 @@ class SmartEngine:
                 "skipped": "all_exist"
             }
         else:
-            # === 5. TAO SCENE IMAGES (BROWSER - khong can token) ===
-            self.log("[STEP 5] Tao scene images bang BROWSER...")
-
-            # CHI DUNG BROWSER - khong dung API
-            scene_results = self.generate_images_browser(prompts, proj_dir)
+            # === 5. TAO SCENE IMAGES ===
+            if gen_mode == "labs":
+                self.log("[STEP 5] Tao scene images bang LABS API...")
+                scene_results = self.generate_images_labs(prompts, proj_dir)
+            else:
+                self.log("[STEP 5] Tao scene images bang BROWSER...")
+                scene_results = self.generate_images_browser(prompts, proj_dir)
 
             # Merge results
             results = {
