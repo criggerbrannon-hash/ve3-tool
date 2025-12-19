@@ -640,11 +640,19 @@ class BrowserFlowGenerator:
             self._log(f"[UPLOAD] JS result: {result}", "info")
 
             if result and result.get('success'):
-                self._log(f"[UPLOAD] Da upload {len(images_to_upload)} anh reference", "success")
+                success_count = result.get('successCount', 0)
+                total_count = result.get('totalCount', len(images_to_upload))
+                self._log(f"[UPLOAD] Da upload {success_count}/{total_count} anh reference", "success")
                 return True
             else:
-                error = result.get('error', 'Unknown') if result else 'No response from JS'
-                self._log(f"[UPLOAD] Loi upload: {error}", "error")
+                # Log chi tiet loi tu JS
+                errors = result.get('errors', []) if result else []
+                if errors:
+                    for err in errors:
+                        self._log(f"[UPLOAD] - {err.get('file', '?')}: {err.get('error', 'Unknown')}", "error")
+                else:
+                    error = result.get('error', 'Unknown') if result else 'No response from JS'
+                    self._log(f"[UPLOAD] Loi upload: {error}", "error")
                 # Tiep tuc du co loi - khong block generation
                 return False
 

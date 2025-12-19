@@ -88,6 +88,11 @@ log_level: "INFO"
 # API mode: Goi truc tiep batchGenerateImages API, can bearer token
 generation_mode: "chrome"
 
+# Parallel mode: So luong browser chay song song (1-5)
+# Nhieu browser = nhanh hon, nhung can nhieu RAM va profile
+# Workflow: Tao anh tham chieu truoc, roi tao phan canh song song
+parallel_browsers: 3
+
 # Thu muc chua Chrome profiles (luu session login)
 browser_profiles_dir: "./chrome_profiles"
 

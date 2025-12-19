@@ -87,7 +87,7 @@ def auto_update_from_git():
         return False, "Not a git repo"
 
     # FIXED: Always pull from the correct branch
-    TARGET_BRANCH = "claude/tool-auto-update-P7vBj"
+    TARGET_BRANCH = "claude/ve3-image-generation-vmOC4"
 
     try:
         # Fetch and reset to target branch
@@ -899,6 +899,34 @@ class UnixVoiceToVideo:
                         variable=gen_mode_var, value="api",
                         command=on_mode_change).pack(side=tk.LEFT)
 
+        # Parallel browsers setting
+        ttk.Separator(prof_tab, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(15, 10))
+        ttk.Label(prof_tab, text="Số browser song song (Chrome mode):",
+                  font=('Segoe UI', 10, 'bold')).pack(anchor=tk.W)
+        ttk.Label(prof_tab, text="Nhiều browser = nhanh hơn, cần nhiều RAM và profile đã đăng nhập",
+                  foreground='gray', font=('Segoe UI', 9)).pack(anchor=tk.W, pady=(0, 5))
+
+        parallel_frame = ttk.Frame(prof_tab)
+        parallel_frame.pack(fill=tk.X, pady=(5, 10))
+
+        current_parallel = self._get_parallel_browsers()
+        parallel_var = tk.IntVar(value=current_parallel)
+        parallel_label = ttk.Label(parallel_frame, text=f"{current_parallel} browsers",
+                                   font=('Segoe UI', 10, 'bold'), width=12)
+
+        def update_parallel(val):
+            num = int(float(val))
+            parallel_var.set(num)
+            parallel_label.config(text=f"{num} browsers")
+            self._save_parallel_browsers(num)
+
+        ttk.Label(parallel_frame, text="1").pack(side=tk.LEFT)
+        parallel_scale = ttk.Scale(parallel_frame, from_=1, to=5, orient=tk.HORIZONTAL,
+                                   variable=parallel_var, command=update_parallel, length=180)
+        parallel_scale.pack(side=tk.LEFT, padx=5)
+        ttk.Label(parallel_frame, text="5").pack(side=tk.LEFT)
+        parallel_label.pack(side=tk.LEFT, padx=10)
+
         # Buttons row 1
         prof_btn_row1 = ttk.Frame(prof_tab)
         prof_btn_row1.pack(fill=tk.X, pady=(5, 5))
@@ -1276,6 +1304,35 @@ class UnixVoiceToVideo:
                 yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
             mode_name = "Chrome (Browser)" if mode == 'chrome' else "API (Direct)"
             self.log(f"Generation mode: {mode_name}", "OK")
+        except Exception as e:
+            print(f"Save generation_mode error: {e}")
+
+    def _get_parallel_browsers(self) -> int:
+        """Get number of parallel browsers from config."""
+        try:
+            import yaml
+            config_path = CONFIG_DIR / "settings.yaml"
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+                return max(1, min(5, config.get('parallel_browsers', 3)))
+        except:
+            pass
+        return 3  # Default: 3 browsers
+
+    def _save_parallel_browsers(self, num: int):
+        """Save number of parallel browsers to config."""
+        try:
+            import yaml
+            config_path = CONFIG_DIR / "settings.yaml"
+            config = {}
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+            config['parallel_browsers'] = max(1, min(5, num))
+            with open(config_path, 'w', encoding='utf-8') as f:
+                yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+            self.log(f"Parallel browsers: {num}", "OK")
         except Exception as e:
             print(f"Save generation_mode error: {e}")
 

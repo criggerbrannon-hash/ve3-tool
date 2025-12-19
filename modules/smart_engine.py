@@ -1038,6 +1038,9 @@ class SmartEngine:
         """
         Tao anh bang BROWSER AUTOMATION (khong can API token).
         Day la phuong phap CHINH - chay headless, song song.
+
+        Neu parallel_browsers > 1: Dung ParallelFlowGenerator (nhanh hon)
+        Neu parallel_browsers = 1: Dung BrowserFlowGenerator (tuan tu)
         """
         self.log("=== TAO ANH BANG BROWSER ===")
 
@@ -1055,20 +1058,9 @@ class SmartEngine:
         prompts = sorted(prompts, key=sort_key)
         self.log(f"Da sap xep: {[p.get('id') for p in prompts[:5]]}... (nv/loc truoc, scene sau)")
 
-        try:
-            from modules.browser_flow_generator import BrowserFlowGenerator
-        except ImportError:
-            self.log("Khong import duoc BrowserFlowGenerator!", "ERROR")
-            return {"success": 0, "failed": len(prompts)}
-
-        # Tim Excel file
-        excel_files = list((proj_dir / "prompts").glob("*_prompts.xlsx"))
-        if not excel_files:
-            self.log("Khong tim thay file Excel!", "ERROR")
-            return {"success": 0, "failed": len(prompts)}
-
-        # Load headless setting from config
-        headless = True  # Default: chay an
+        # Load settings
+        headless = True
+        parallel_browsers = 1
         try:
             import yaml
             config_path = self.config_dir / "settings.yaml"
@@ -1076,8 +1068,66 @@ class SmartEngine:
                 with open(config_path, 'r', encoding='utf-8') as f:
                     settings = yaml.safe_load(f) or {}
                 headless = settings.get('browser_headless', True)
+                parallel_browsers = max(1, min(5, settings.get('parallel_browsers', 1)))
         except:
             pass
+
+        # Tim Excel file
+        excel_files = list((proj_dir / "prompts").glob("*_prompts.xlsx"))
+        if not excel_files:
+            self.log("Khong tim thay file Excel!", "ERROR")
+            return {"success": 0, "failed": len(prompts)}
+
+        # =====================================================================
+        # PARALLEL MODE: Nhieu browser song song
+        # =====================================================================
+        if parallel_browsers > 1:
+            self.log(f"[PARALLEL] Chay {parallel_browsers} browsers song song")
+            try:
+                from modules.parallel_flow_generator import ParallelFlowGenerator
+
+                generator = ParallelFlowGenerator(
+                    project_path=str(proj_dir),
+                    num_browsers=parallel_browsers,
+                    headless=headless,
+                    verbose=True
+                )
+
+                result = generator.generate_parallel(
+                    excel_path=excel_files[0],
+                    overwrite=False
+                )
+
+                if result.get("success"):
+                    stats = result.get("stats", {})
+                    return {
+                        "success": stats.get("success", 0),
+                        "failed": stats.get("failed", 0),
+                        "parallel": True,
+                        "speedup": stats.get("speedup", 1)
+                    }
+                else:
+                    self.log(f"Parallel error: {result.get('error')}", "ERROR")
+                    return {"success": 0, "failed": len(prompts)}
+
+            except ImportError as e:
+                self.log(f"Khong import duoc ParallelFlowGenerator: {e}", "WARN")
+                self.log("Fallback ve mode 1 browser...", "WARN")
+                # Fallback to single browser
+            except Exception as e:
+                self.log(f"Parallel error: {e}", "ERROR")
+                import traceback
+                traceback.print_exc()
+                return {"success": 0, "failed": len(prompts)}
+
+        # =====================================================================
+        # SEQUENTIAL MODE: 1 browser
+        # =====================================================================
+        try:
+            from modules.browser_flow_generator import BrowserFlowGenerator
+        except ImportError:
+            self.log("Khong import duoc BrowserFlowGenerator!", "ERROR")
+            return {"success": 0, "failed": len(prompts)}
 
         # Find profile to use
         profile_name = "main"  # Default
