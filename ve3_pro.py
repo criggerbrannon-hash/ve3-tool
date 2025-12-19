@@ -81,42 +81,20 @@ def get_git_info():
 
 def auto_update_from_git():
     """Auto pull latest code from git if available."""
-    import subprocess
-    git_dir = ROOT_DIR / ".git"
-    if not git_dir.exists():
-        return False, "Not a git repo"
-
-    # FIXED: Always pull from the correct branch
-    TARGET_BRANCH = "claude/ve3-image-generation-vmOC4"
-
-    try:
-        # Fetch and reset to target branch
-        subprocess.run(
-            ["git", "fetch", "origin", TARGET_BRANCH],
-            cwd=ROOT_DIR, capture_output=True, text=True, timeout=30
-        )
-
-        result = subprocess.run(
-            ["git", "reset", "--hard", f"origin/{TARGET_BRANCH}"],
-            cwd=ROOT_DIR, capture_output=True, text=True, timeout=30
-        )
-
-        if result.returncode == 0:
-            return True, f"Updated to {TARGET_BRANCH}"
-        else:
-            return False, result.stderr.strip()[:100]
-    except Exception as e:
-        return False, str(e)[:100]
+    # DISABLED: RUN.bat already handles syncing from all claude/* branches
+    # This was causing issues by resetting to an old branch
+    return False, "Disabled - RUN.bat handles sync"
 
 
-# Auto-update on startup
+# Auto-update on startup (disabled)
 _update_ok, _update_msg = auto_update_from_git()
 GIT_INFO = get_git_info()  # Store for GUI display
 
 if _update_ok:
     print(f"[Auto-Update] {_update_msg}")
-else:
-    print(f"[Auto-Update] Skip: {_update_msg}")
+# Don't print skip message to avoid confusion
+# else:
+#     print(f"[Auto-Update] Skip: {_update_msg}")
 
 if GIT_INFO:
     print(f"[Version] {GIT_INFO['hash']} - {GIT_INFO['date']} - {GIT_INFO['message']}")
