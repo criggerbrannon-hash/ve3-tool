@@ -305,39 +305,46 @@ class LabsGoogleAPI:
                 return False, [], "Failed to solve CAPTCHA"
 
         # Build tRPC request for imageFx.generateImage
-        # tRPC uses batch format with input as JSON
         import random
+        import urllib.parse
+
         if seed is None:
             seed = random.randint(1, 999999999)
 
+        # tRPC non-batch format: input as URL-encoded JSON in query string
         trpc_input = {
-            "0": {
-                "json": {
-                    "generationParams": {
-                        "prompts": [prompt],
-                        "seed": seed,
-                        "candidatesCount": count,
-                        "aspectRatio": aspect,
-                        "imageGenerationModel": model
-                    },
-                    "recaptchaToken": captcha_token or ""
-                }
+            "json": {
+                "generationParams": {
+                    "prompts": [prompt],
+                    "seed": seed,
+                    "candidatesCount": count,
+                    "aspectRatio": aspect,
+                    "imageGenerationModel": model
+                },
+                "recaptchaToken": captcha_token or ""
             }
         }
 
-        # tRPC batch endpoint
-        url = f"{self.TRPC_URL}/imageFx.generateImage?batch=1"
+        # Encode input as query parameter
+        input_json = json.dumps(trpc_input)
+        encoded_input = urllib.parse.quote(input_json)
+
+        # tRPC single endpoint (no batch)
+        url = f"{self.TRPC_URL}/imageFx.generateImage?input={encoded_input}"
 
         headers = dict(self.session.headers)
-        headers["Content-Type"] = "application/json"
+        # Remove Content-Type for GET request
+        if "Content-Type" in headers:
+            del headers["Content-Type"]
 
         # Add x-recaptcha-token header
         if captcha_token:
             headers["x-recaptcha-token"] = captcha_token
 
         try:
-            self._log(f"Calling tRPC: {url}")
-            response = self.session.post(url, json=trpc_input, headers=headers, timeout=120)
+            self._log(f"Calling tRPC: {url[:100]}...")
+            # Use GET for tRPC query
+            response = self.session.get(url, headers=headers, timeout=120)
 
             self._log(f"Response status: {response.status_code}")
 
@@ -375,47 +382,45 @@ class LabsGoogleAPI:
             return False, [], f"Request error: {e}"
 
     def _parse_trpc_response(self, data: Any) -> List[Dict]:
-        """Parse tRPC response format."""
+        """Parse tRPC response format (non-batch)."""
         images = []
 
         try:
-            # tRPC batch response is array of results
+            self._log(f"Parsing response type: {type(data)}")
+
+            # Non-batch response is direct object, not array
+            result_data = None
+
+            # Handle batch response (array)
             if isinstance(data, list) and len(data) > 0:
                 result = data[0]
-
-                # Check for error
                 if "error" in result:
                     self._log(f"tRPC error: {result['error']}")
                     return []
-
-                # Get result data
                 result_data = result.get("result", {}).get("data", {}).get("json", {})
 
-                # Parse images from response
-                if "imagePanels" in result_data:
-                    for panel in result_data.get("imagePanels", []):
-                        for img in panel.get("generatedImages", []):
-                            if img.get("encodedImage"):
-                                images.append({
-                                    "base64": img["encodedImage"],
-                                    "seed": img.get("seed"),
-                                    "id": img.get("mediaGenerationId")
-                                })
+            # Handle non-batch response (direct object)
+            elif isinstance(data, dict):
+                if "error" in data:
+                    self._log(f"tRPC error: {data['error']}")
+                    return []
+                # Try different paths
+                result_data = data.get("result", {}).get("data", {}).get("json", {})
+                if not result_data:
+                    result_data = data.get("data", {}).get("json", {})
+                if not result_data:
+                    result_data = data
 
-                elif "media" in result_data:
-                    for media in result_data.get("media", []):
-                        gen_img = media.get("image", {}).get("generatedImage", {})
-                        if gen_img.get("encodedImage"):
-                            images.append({
-                                "base64": gen_img["encodedImage"],
-                                "url": gen_img.get("fifeUrl"),
-                                "seed": gen_img.get("seed"),
-                                "id": gen_img.get("mediaGenerationId")
-                            })
+            if not result_data:
+                self._log(f"No result_data found in response")
+                return []
 
-                # Try direct image data
-                elif "generatedImages" in result_data:
-                    for img in result_data.get("generatedImages", []):
+            self._log(f"Result data keys: {result_data.keys() if isinstance(result_data, dict) else 'N/A'}")
+
+            # Parse images from response
+            if "imagePanels" in result_data:
+                for panel in result_data.get("imagePanels", []):
+                    for img in panel.get("generatedImages", []):
                         if img.get("encodedImage"):
                             images.append({
                                 "base64": img["encodedImage"],
@@ -423,8 +428,33 @@ class LabsGoogleAPI:
                                 "id": img.get("mediaGenerationId")
                             })
 
+            elif "media" in result_data:
+                for media in result_data.get("media", []):
+                    gen_img = media.get("image", {}).get("generatedImage", {})
+                    if gen_img.get("encodedImage"):
+                        images.append({
+                            "base64": gen_img["encodedImage"],
+                            "url": gen_img.get("fifeUrl"),
+                            "seed": gen_img.get("seed"),
+                            "id": gen_img.get("mediaGenerationId")
+                        })
+
+            # Try direct image data
+            elif "generatedImages" in result_data:
+                for img in result_data.get("generatedImages", []):
+                    if img.get("encodedImage"):
+                        images.append({
+                            "base64": img["encodedImage"],
+                            "seed": img.get("seed"),
+                            "id": img.get("mediaGenerationId")
+                        })
+
+            self._log(f"Parsed {len(images)} images")
+
         except Exception as e:
             self._log(f"Parse error: {e}")
+            import traceback
+            self._log(traceback.format_exc())
 
         return images
 
