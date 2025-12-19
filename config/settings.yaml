@@ -83,10 +83,11 @@ log_level: "INFO"
 # ============================================================================
 # Su dung browser automation thay cho API (khong can bearer token)
 
-# Generation mode: "chrome" (browser automation) or "api" (direct API call)
-# Chrome mode: Dung Playwright/Selenium dieu khien trinh duyet, khong can token
-# API mode: Goi truc tiep batchGenerateImages API, can bearer token
-generation_mode: "chrome"
+# Generation mode: "chrome", "api", or "labs"
+# - chrome: Selenium browser automation (khong can token)
+# - api: Bearer token ya29.xxx (can Chrome profile)
+# - labs: Session token + CAPTCHA solver (DE DUNG NHAT - chi can cookie)
+generation_mode: "labs"
 
 # Parallel mode: So luong browser chay song song (1-5)
 # Nhieu browser = nhanh hon, nhung can nhieu RAM va profile
@@ -107,3 +108,35 @@ browser_delay_between_prompts: 2000
 
 # Timeout cho moi anh (giay)
 browser_generate_timeout: 120
+
+# ============================================================================
+# LABS GOOGLE API (Session Token + CAPTCHA Solver)
+# ============================================================================
+# Mode moi: Dung session cookie tu Cookie Editor + CAPTCHA solver
+# Khong can Chrome automation, goi API truc tiep
+
+# Generation mode co the la:
+# - "chrome": Browser automation (Selenium) - mac dinh
+# - "api": Bearer token (ya29.xxx) - can lay token tu Chrome
+# - "labs": Session token + CAPTCHA solver - de dung nhat
+
+# Session token tu labs.google (lay tu Cookie Editor)
+# Ten cookie: __Secure-next-auth.session-token
+# Cach lay:
+# 1. Cai extension Cookie Editor (Chrome/Firefox)
+# 2. Vao labs.google, dang nhap Google
+# 3. Mo Cookie Editor, tim __Secure-next-auth.session-token
+# 4. Copy value vao day
+labs_session_token: ""
+
+# CAPTCHA Solver Configuration
+# Dich vu ho tro: capsolver, 2captcha
+# Dang ky tai:
+# - Capsolver: https://www.capsolver.com/ (nhanh, re)
+# - 2Captcha: https://2captcha.com/ (pho bien)
+captcha_service: "capsolver"
+captcha_api_key: ""
+
+# Labs API settings
+labs_timeout: 120
+labs_delay: 2.0

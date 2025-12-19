@@ -879,7 +879,7 @@ class UnixVoiceToVideo:
         ttk.Separator(prof_tab, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(15, 10))
         ttk.Label(prof_tab, text="Chế độ tạo ảnh:",
                   font=('Segoe UI', 10, 'bold')).pack(anchor=tk.W)
-        ttk.Label(prof_tab, text="Chrome: Tự động hóa trình duyệt  |  API: Gọi trực tiếp API (cần token)",
+        ttk.Label(prof_tab, text="Labs: Cookie + CAPTCHA solver (de nhat) | Chrome: Browser | API: Bearer token",
                   foreground='gray', font=('Segoe UI', 9)).pack(anchor=tk.W, pady=(0, 5))
 
         gen_mode_frame = ttk.Frame(prof_tab)
@@ -892,10 +892,13 @@ class UnixVoiceToVideo:
             mode = gen_mode_var.get()
             self._save_generation_mode(mode)
 
-        ttk.Radiobutton(gen_mode_frame, text="🌐 Chrome (Browser Automation)",
+        ttk.Radiobutton(gen_mode_frame, text="🔑 Labs (Cookie + CAPTCHA)",
+                        variable=gen_mode_var, value="labs",
+                        command=on_mode_change).pack(side=tk.LEFT, padx=(0, 15))
+        ttk.Radiobutton(gen_mode_frame, text="🌐 Chrome (Browser)",
                         variable=gen_mode_var, value="chrome",
-                        command=on_mode_change).pack(side=tk.LEFT, padx=(0, 20))
-        ttk.Radiobutton(gen_mode_frame, text="⚡ API (Direct - cần Bearer Token)",
+                        command=on_mode_change).pack(side=tk.LEFT, padx=(0, 15))
+        ttk.Radiobutton(gen_mode_frame, text="⚡ API (Bearer Token)",
                         variable=gen_mode_var, value="api",
                         command=on_mode_change).pack(side=tk.LEFT)
 
@@ -1291,7 +1294,7 @@ class UnixVoiceToVideo:
         return 'chrome'  # Default: browser mode
 
     def _save_generation_mode(self, mode: str):
-        """Save generation mode to config: 'chrome' or 'api'."""
+        """Save generation mode to config: 'chrome', 'api', or 'labs'."""
         try:
             import yaml
             config_path = CONFIG_DIR / "settings.yaml"
@@ -1302,8 +1305,12 @@ class UnixVoiceToVideo:
             config['generation_mode'] = mode
             with open(config_path, 'w', encoding='utf-8') as f:
                 yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
-            mode_name = "Chrome (Browser)" if mode == 'chrome' else "API (Direct)"
-            self.log(f"Generation mode: {mode_name}", "OK")
+            mode_names = {
+                "chrome": "Chrome (Browser)",
+                "api": "API (Bearer Token)",
+                "labs": "Labs (Cookie + CAPTCHA)"
+            }
+            self.log(f"Generation mode: {mode_names.get(mode, mode)}", "OK")
         except Exception as e:
             print(f"Save generation_mode error: {e}")
 
@@ -2153,28 +2160,17 @@ class UnixVoiceToVideo:
 
     def _regenerate_single_image(self, item_id: str, prompt: str, is_char: bool = False):
         """Regenerate a single image."""
-        if not self.profiles:
+        mode = self._get_generation_mode()
+
+        # Labs mode doesn't need Chrome profiles
+        if mode != "labs" and not self.profiles:
             messagebox.showerror("Lỗi", "Chưa có Chrome profile!")
             return
 
-        self.log(f"🔄 Đang tạo lại ảnh: {item_id}...")
+        self.log(f"🔄 Đang tạo lại ảnh: {item_id} (mode: {mode})...")
 
         def worker():
             try:
-                from modules.smart_engine import SmartEngine
-
-                engine = SmartEngine()
-
-                # Get token
-                token, proj_id = engine.get_token_for_profile(self.profiles[0])
-                if not token:
-                    self.root.after(0, lambda: self.log(f"❌ Không lấy được token", "ERROR"))
-                    return
-
-                # Generate image
-                from modules.flow_image_generator import FlowImageGenerator
-                generator = FlowImageGenerator()
-
                 # Determine output path
                 if is_char:
                     output_path = self.current_project_dir / "nv" / f"{item_id}.png"
@@ -2186,12 +2182,47 @@ class UnixVoiceToVideo:
                     backup = output_path.with_suffix('.bak.png')
                     shutil.copy(output_path, backup)
 
-                success = generator.generate_and_save(
-                    prompt=prompt,
-                    output_path=str(output_path),
-                    token=token,
-                    project_id=proj_id
-                )
+                success = False
+
+                if mode == "labs":
+                    # Labs mode: Use session token + CAPTCHA solver
+                    try:
+                        from modules.labs_flow_generator import create_labs_generator_from_config
+                        generator = create_labs_generator_from_config(
+                            str(self.current_project_dir),
+                            verbose=True
+                        )
+                        success, error = generator.generate_single_image(
+                            prompt=prompt,
+                            output_path=output_path
+                        )
+                        if not success:
+                            self.root.after(0, lambda e=error: self.log(f"❌ Labs error: {e}", "ERROR"))
+                    except ValueError as ve:
+                        self.root.after(0, lambda e=ve: self.log(f"❌ Config error: {e}", "ERROR"))
+                        return
+                else:
+                    # Chrome/API mode: Use bearer token
+                    from modules.smart_engine import SmartEngine
+
+                    engine = SmartEngine()
+
+                    # Get token
+                    token, proj_id = engine.get_token_for_profile(self.profiles[0])
+                    if not token:
+                        self.root.after(0, lambda: self.log(f"❌ Không lấy được token", "ERROR"))
+                        return
+
+                    # Generate image
+                    from modules.flow_image_generator import FlowImageGenerator
+                    generator = FlowImageGenerator()
+
+                    success = generator.generate_and_save(
+                        prompt=prompt,
+                        output_path=str(output_path),
+                        token=token,
+                        project_id=proj_id
+                    )
 
                 if success:
                     self.root.after(0, lambda: self.log(f"✅ Đã tạo lại: {item_id}", "OK"))
@@ -2427,6 +2458,8 @@ class UnixVoiceToVideo:
         if not self.current_project_dir:
             return
 
+        mode = self._get_generation_mode()
+
         # Collect pending items from unified tree
         pending = []
 
@@ -2449,51 +2482,88 @@ class UnixVoiceToVideo:
             messagebox.showinfo("Thông báo", "Tất cả ảnh đã hoàn thành!")
             return
 
-        if not messagebox.askyesno("Xác nhận", f"Tạo lại {len(pending)} ảnh chưa xong?"):
+        if not messagebox.askyesno("Xác nhận", f"Tạo lại {len(pending)} ảnh chưa xong? (Mode: {mode})"):
             return
 
-        self.log(f"🔄 Bắt đầu tạo lại {len(pending)} ảnh...")
+        self.log(f"🔄 Bắt đầu tạo lại {len(pending)} ảnh (mode: {mode})...")
 
         def worker():
             try:
-                from modules.smart_engine import SmartEngine
-                from modules.flow_image_generator import FlowImageGenerator
+                if mode == "labs":
+                    # Labs mode: Use session token + CAPTCHA solver
+                    from modules.labs_flow_generator import create_labs_generator_from_config
 
-                engine = SmartEngine()
-                generator = FlowImageGenerator()
+                    try:
+                        labs_gen = create_labs_generator_from_config(
+                            str(self.current_project_dir),
+                            verbose=True
+                        )
+                    except ValueError as ve:
+                        self.root.after(0, lambda e=ve: self.log(f"❌ Config error: {e}", "ERROR"))
+                        return
 
-                for i, (item_id, prompt, is_reference) in enumerate(pending):
-                    self.root.after(0, lambda id=item_id, n=i+1, t=len(pending):
-                        self.log(f"[{n}/{t}] Đang tạo: {id}..."))
+                    for i, (item_id, prompt, is_reference) in enumerate(pending):
+                        self.root.after(0, lambda id=item_id, n=i+1, t=len(pending):
+                            self.log(f"[{n}/{t}] Đang tạo: {id}..."))
 
-                    # Get token
-                    profile = self.profiles[i % len(self.profiles)]
-                    token, proj_id = engine.get_token_for_profile(profile)
+                        # Output path
+                        if is_reference:
+                            output_path = nv_dir / f"{item_id}.png"
+                        else:
+                            output_path = img_dir / f"{item_id}.png"
 
-                    if not token:
-                        self.root.after(0, lambda id=item_id:
-                            self.log(f"❌ Không có token cho {id}", "ERROR"))
-                        continue
+                        success, error = labs_gen.generate_single_image(
+                            prompt=prompt,
+                            output_path=output_path
+                        )
 
-                    # Output path - reference images (nv*, loc*) in nv/, scenes in img/
-                    if is_reference:
-                        output_path = nv_dir / f"{item_id}.png"
-                    else:
-                        output_path = img_dir / f"{item_id}.png"
+                        if success:
+                            self.root.after(0, lambda id=item_id:
+                                self.log(f"✅ Xong: {id}", "OK"))
+                        else:
+                            self.root.after(0, lambda id=item_id, e=error:
+                                self.log(f"❌ Lỗi: {id} - {e}", "ERROR"))
 
-                    success = generator.generate_and_save(
-                        prompt=prompt,
-                        output_path=str(output_path),
-                        token=token,
-                        project_id=proj_id
-                    )
+                else:
+                    # Chrome/API mode: Use bearer token
+                    from modules.smart_engine import SmartEngine
+                    from modules.flow_image_generator import FlowImageGenerator
 
-                    if success:
-                        self.root.after(0, lambda id=item_id:
-                            self.log(f"✅ Xong: {id}", "OK"))
-                    else:
-                        self.root.after(0, lambda id=item_id:
-                            self.log(f"❌ Lỗi: {id}", "ERROR"))
+                    engine = SmartEngine()
+                    generator = FlowImageGenerator()
+
+                    for i, (item_id, prompt, is_reference) in enumerate(pending):
+                        self.root.after(0, lambda id=item_id, n=i+1, t=len(pending):
+                            self.log(f"[{n}/{t}] Đang tạo: {id}..."))
+
+                        # Get token
+                        profile = self.profiles[i % len(self.profiles)]
+                        token, proj_id = engine.get_token_for_profile(profile)
+
+                        if not token:
+                            self.root.after(0, lambda id=item_id:
+                                self.log(f"❌ Không có token cho {id}", "ERROR"))
+                            continue
+
+                        # Output path - reference images (nv*, loc*) in nv/, scenes in img/
+                        if is_reference:
+                            output_path = nv_dir / f"{item_id}.png"
+                        else:
+                            output_path = img_dir / f"{item_id}.png"
+
+                        success = generator.generate_and_save(
+                            prompt=prompt,
+                            output_path=str(output_path),
+                            token=token,
+                            project_id=proj_id
+                        )
+
+                        if success:
+                            self.root.after(0, lambda id=item_id:
+                                self.log(f"✅ Xong: {id}", "OK"))
+                        else:
+                            self.root.after(0, lambda id=item_id:
+                                self.log(f"❌ Lỗi: {id}", "ERROR"))
 
                 self.root.after(0, lambda: self.log("🎉 Hoàn tất tạo lại ảnh!", "OK"))
                 self.root.after(0, self.refresh_preview)
