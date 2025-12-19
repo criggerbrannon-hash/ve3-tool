@@ -282,6 +282,10 @@ class ParallelFlowGenerator:
                                 ref_files = [f.strip() for f in ref_files.split(',') if f.strip()]
                         generator._upload_reference_images(ref_files)
 
+                    # QUAN TRONG: Loại bỏ mô tả ngoại hình khi có ảnh reference
+                    if ref_files:
+                        prompt_text = generator._simplify_prompt_for_reference(prompt_text, ref_files)
+
                     # =========================================================
                     # XẾP HÀNG DOWNLOAD: Acquire lock trước khi generate
                     # Đảm bảo chỉ 1 browser download tại 1 thời điểm

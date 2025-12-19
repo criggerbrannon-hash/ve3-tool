@@ -677,50 +677,79 @@
         clearReferenceImages: async () => {
             Utils.log('[CLEAR] Xoa reference images cu...', 'info');
 
-            // Tim container chua reference images - thuong la .sc-51248dda-0 hoac tuong tu
-            const container = document.querySelector('.sc-51248dda-0');
-            if (!container) {
-                Utils.log('[CLEAR] Khong tim thay container reference', 'info');
-                return true;  // Khong co gi de xoa
-            }
-
-            // Tim cac nut xoa (X, close, delete) trong container
-            // Method 1: Tim icon close/delete
-            const closeIcons = container.querySelectorAll('i.google-symbols, mat-icon, .material-icons');
             let deletedCount = 0;
+            let maxAttempts = 10;  // Toi da 10 lan xoa
 
-            for (const icon of closeIcons) {
-                const text = icon.textContent.trim().toLowerCase();
-                if (text === 'close' || text === 'delete' || text === 'cancel' || text === 'remove') {
-                    icon.click();
-                    deletedCount++;
-                    await Utils.sleep(300);
+            // Loop de xoa het tat ca reference images
+            for (let attempt = 0; attempt < maxAttempts; attempt++) {
+                let foundAny = false;
+
+                // Method 1: Tim icon "close" trong toan bo page (cho reference thumbnails)
+                const allIcons = document.querySelectorAll('i.google-symbols, mat-icon, .material-icons');
+                for (const icon of allIcons) {
+                    const text = icon.textContent.trim().toLowerCase();
+                    if (text === 'close') {
+                        // Check xem icon nay co phai trong reference area khong
+                        // (thuong nam trong container nho, khong phai header/dialog)
+                        const parent = icon.closest('div');
+                        if (parent && parent.offsetWidth < 200 && parent.offsetHeight < 200) {
+                            icon.click();
+                            deletedCount++;
+                            foundAny = true;
+                            Utils.log(`[CLEAR] Clicked close icon (attempt ${attempt + 1})`, 'info');
+                            await Utils.sleep(500);
+                            break;  // Sau moi lan click, bat dau lai tu dau
+                        }
+                    }
                 }
-            }
 
-            // Method 2: Tim button voi aria-label delete/remove
-            const deleteButtons = container.querySelectorAll('[aria-label*="delete" i], [aria-label*="remove" i], [aria-label*="xoa" i], [aria-label*="Xóa" i]');
-            for (const btn of deleteButtons) {
-                btn.click();
-                deletedCount++;
-                await Utils.sleep(300);
-            }
+                // Method 2: Tim button voi aria-label chua "delete", "remove", "xoa"
+                if (!foundAny) {
+                    const deleteButtons = document.querySelectorAll('[aria-label*="delete" i], [aria-label*="remove" i], [aria-label*="xóa" i], [aria-label*="xoa" i]');
+                    for (const btn of deleteButtons) {
+                        // Check size nho (reference thumbnail)
+                        if (btn.offsetWidth < 100 && btn.offsetHeight < 100) {
+                            btn.click();
+                            deletedCount++;
+                            foundAny = true;
+                            Utils.log(`[CLEAR] Clicked delete button via aria-label`, 'info');
+                            await Utils.sleep(500);
+                            break;
+                        }
+                    }
+                }
 
-            // Method 3: Tim button nho o goc cua thumbnail (thuong la X)
-            const thumbnails = container.querySelectorAll('div[style*="opacity: 1"]');
-            for (const thumb of thumbnails) {
-                const closeBtn = thumb.querySelector('button, [role="button"]');
-                if (closeBtn) {
-                    closeBtn.click();
-                    deletedCount++;
-                    await Utils.sleep(300);
+                // Method 3: Tim nut X trong cac thumbnail nho (50-150px)
+                if (!foundAny) {
+                    const allDivs = document.querySelectorAll('div');
+                    for (const div of allDivs) {
+                        const rect = div.getBoundingClientRect();
+                        // Reference thumbnails thuong co size 50-150px
+                        if (rect.width >= 50 && rect.width <= 150 && rect.height >= 50 && rect.height <= 150) {
+                            const closeBtn = div.querySelector('button, [role="button"], i');
+                            if (closeBtn && closeBtn.offsetWidth < 40) {
+                                closeBtn.click();
+                                deletedCount++;
+                                foundAny = true;
+                                Utils.log(`[CLEAR] Clicked thumbnail close button`, 'info');
+                                await Utils.sleep(500);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                // Neu khong tim thay gi de xoa, dung lai
+                if (!foundAny) {
+                    break;
                 }
             }
 
             if (deletedCount > 0) {
                 Utils.log(`[CLEAR] Da xoa ${deletedCount} reference images`, 'success');
+                await Utils.sleep(500);  // Doi UI update
             } else {
-                Utils.log('[CLEAR] Khong tim thay reference images de xoa', 'info');
+                Utils.log('[CLEAR] Khong tim thay reference images de xoa (co the chua co)', 'info');
             }
 
             return true;
