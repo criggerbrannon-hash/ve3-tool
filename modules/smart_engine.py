@@ -222,25 +222,28 @@ class SmartEngine:
                     with open(settings_path, 'r', encoding='utf-8') as f:
                         config = yaml.safe_load(f) or {}
                     return {
-                        'session_token': config.get('labs_session_token', ''),
+                        'bearer_token': config.get('labs_bearer_token', ''),
+                        'session_token': config.get('labs_session_token', ''),  # legacy
                         'captcha_api_key': config.get('captcha_api_key', ''),
                         'captcha_service': config.get('captcha_service', 'capsolver'),
                         'aspect_ratio': config.get('flow_aspect_ratio', 'landscape'),
-                        'delay': config.get('labs_delay', 2.0)
+                        'delay': config.get('labs_delay', 2.0),
+                        'project_id': config.get('labs_project_id', '')
                     }
         except Exception as e:
             self.log(f"Get labs config error: {e}", "WARN")
         return {}
 
     def generate_images_labs(self, prompts: List[Dict], proj_dir: Path) -> Dict:
-        """Generate images using Labs API (session token + CAPTCHA solver)."""
+        """Generate images using Labs API (Bearer token + CAPTCHA solver)."""
         self.log("=== TAO ANH BANG LABS API ===")
 
         labs_config = self._get_labs_config()
 
-        if not labs_config.get('session_token'):
-            self.log("KHONG CO session_token! Vao Settings > Labs API de cau hinh.", "ERROR")
-            return {"success": 0, "failed": len(prompts), "error": "missing_session_token"}
+        if not labs_config.get('bearer_token'):
+            self.log("KHONG CO Bearer token! Lay tu Network tab (Authorization header)", "ERROR")
+            self.log("Huong dan: F12 > Network > flowMedia:batchGenerateImages > Authorization", "INFO")
+            return {"success": 0, "failed": len(prompts), "error": "missing_bearer_token"}
 
         if not labs_config.get('captcha_api_key'):
             self.log("KHONG CO captcha_api_key! Vao Settings > Labs API de cau hinh.", "ERROR")
@@ -251,9 +254,10 @@ class SmartEngine:
 
             # Create Labs API client
             labs_client = LabsGoogleAPI(
-                session_token=labs_config['session_token'],
+                bearer_token=labs_config['bearer_token'],
                 captcha_api_key=labs_config['captcha_api_key'],
                 captcha_service=labs_config.get('captcha_service', 'capsolver'),
+                project_id=labs_config.get('project_id', ''),
                 verbose=True
             )
 
@@ -1529,9 +1533,9 @@ class SmartEngine:
         # Show mode info
         if gen_mode == "labs":
             labs_cfg = self._get_labs_config()
-            has_token = "OK" if labs_cfg.get('session_token') else "THIEU"
+            has_token = "OK" if labs_cfg.get('bearer_token') else "THIEU"
             has_captcha = "OK" if labs_cfg.get('captcha_api_key') else "THIEU"
-            self.log(f"  MODE: Labs API (Session token: {has_token}, Captcha key: {has_captcha})")
+            self.log(f"  MODE: Labs API (Bearer token: {has_token}, Captcha key: {has_captcha})")
         else:
             self.log(f"  MODE: {mode_names.get(gen_mode, gen_mode)}")
         self.log(f"  AI keys: DeepSeek={len(self.deepseek_keys)}, Groq={len(self.groq_keys)}, Gemini={len(self.gemini_keys)}")

@@ -110,23 +110,25 @@ browser_delay_between_prompts: 2000
 browser_generate_timeout: 120
 
 # ============================================================================
-# LABS GOOGLE API (Session Token + CAPTCHA Solver)
+# LABS GOOGLE API (Bearer Token + CAPTCHA Solver)
 # ============================================================================
-# Mode moi: Dung session cookie tu Cookie Editor + CAPTCHA solver
-# Khong can Chrome automation, goi API truc tiep
+# Goi API aisandbox-pa.googleapis.com truc tiep
 
 # Generation mode co the la:
 # - "chrome": Browser automation (Selenium) - mac dinh
 # - "api": Bearer token (ya29.xxx) - can lay token tu Chrome
-# - "labs": Session token + CAPTCHA solver - de dung nhat
+# - "labs": Bearer token + CAPTCHA solver - NHANH NHAT
 
-# Session token tu labs.google (lay tu Cookie Editor)
-# Ten cookie: __Secure-next-auth.session-token
+# Bearer token (ya29.xxx) - LAY TU NETWORK TAB
 # Cach lay:
-# 1. Cai extension Cookie Editor (Chrome/Firefox)
-# 2. Vao labs.google, dang nhap Google
-# 3. Mo Cookie Editor, tim __Secure-next-auth.session-token
-# 4. Copy value vao day
+# 1. Mo Chrome DevTools (F12) > Network tab
+# 2. Vao labs.google, tao 1 anh
+# 3. Tim request "flowMedia:batchGenerateImages"
+# 4. Copy gia tri "Authorization: Bearer ya29.xxx..."
+# 5. Paste phan "ya29.xxx..." vao day (BO CHU "Bearer ")
+labs_bearer_token: ""
+
+# Session token (legacy - khong can nua)
 labs_session_token: ""
 
 # CAPTCHA Solver Configuration
@@ -140,3 +142,4 @@ captcha_api_key: ""
 # Labs API settings
 labs_timeout: 120
 labs_delay: 2.0
+labs_project_id: "94941870-dd8c-4be6-a79d-eb2966833249"
