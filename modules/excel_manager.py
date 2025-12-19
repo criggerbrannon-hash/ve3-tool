@@ -430,24 +430,33 @@ class PromptWorkbook:
     def get_characters(self) -> List[Character]:
         """
         Lấy danh sách tất cả nhân vật.
-        
+
         Returns:
             List các Character objects
         """
         if self.workbook is None:
             self.load_or_create()
-        
+
         ws = self.workbook[self.CHARACTERS_SHEET]
         characters = []
-        
+
+        # Đọc header thực tế từ Excel (dòng 1) - QUAN TRỌNG để tương thích với Excel cũ/mới
+        header_row = [cell.value for cell in ws[1]]
+        # Loại bỏ None values ở cuối
+        while header_row and header_row[-1] is None:
+            header_row.pop()
+
+        self.logger.debug(f"Excel Characters header: {header_row}")
+
         # Đọc từ dòng 2 (skip header)
         for row in ws.iter_rows(min_row=2, values_only=True):
             if row[0] is None:  # Skip empty rows
                 continue
-            
-            data = dict(zip(CHARACTERS_COLUMNS, row))
+
+            # Zip với header thực tế từ Excel, không phải CHARACTERS_COLUMNS
+            data = dict(zip(header_row, row[:len(header_row)]))
             characters.append(Character.from_dict(data))
-        
+
         return characters
     
     def add_character(self, character: Character) -> None:
@@ -521,24 +530,33 @@ class PromptWorkbook:
     def get_scenes(self) -> List[Scene]:
         """
         Lấy danh sách tất cả scenes.
-        
+
         Returns:
             List các Scene objects
         """
         if self.workbook is None:
             self.load_or_create()
-        
+
         ws = self.workbook[self.SCENES_SHEET]
         scenes = []
-        
+
+        # Đọc header thực tế từ Excel (dòng 1) - QUAN TRỌNG để tương thích với Excel cũ/mới
+        header_row = [cell.value for cell in ws[1]]
+        # Loại bỏ None values ở cuối
+        while header_row and header_row[-1] is None:
+            header_row.pop()
+
+        self.logger.debug(f"Excel Scenes header: {header_row}")
+
         # Đọc từ dòng 2 (skip header)
         for row in ws.iter_rows(min_row=2, values_only=True):
             if row[0] is None:  # Skip empty rows
                 continue
-            
-            data = dict(zip(SCENES_COLUMNS, row))
+
+            # Zip với header thực tế từ Excel, không phải SCENES_COLUMNS
+            data = dict(zip(header_row, row[:len(header_row)]))
             scenes.append(Scene.from_dict(data))
-        
+
         return scenes
     
     def add_scene(self, scene: Scene) -> None:
