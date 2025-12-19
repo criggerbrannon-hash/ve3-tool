@@ -546,22 +546,30 @@ class BrowserFlowGenerator:
 
         result = prompt
 
-        # Patterns cần loại bỏ (mô tả ngoại hình)
-        # Chỉ loại bỏ khi TRƯỚC hoặc SAU filename annotation
+        # Patterns cần loại bỏ (mô tả ngoại hình CỐ ĐỊNH của nhân vật)
+        # GIỮ LẠI: quần áo (vì mỗi bối cảnh cần trang phục khác nhau theo kế hoạch đạo diễn)
+        # LOẠI BỎ: tuổi, chủng tộc, tóc, mắt, râu, da, thể hình (đã có trong ảnh reference)
         appearance_patterns = [
-            # Tuổi + chủng tộc trước filename: "30-year-old Caucasian man, short brown hair (nvc.png)"
+            # Tuổi + chủng tộc: "30-year-old Caucasian man"
             r'\d{1,2}[-\s]?year[-\s]?old\s+',  # "30-year-old "
             r'(?:Caucasian|Asian|African|European|American|Vietnamese|Korean|Japanese|Chinese|Latino|Hispanic|Indian)\s+',  # chủng tộc
 
-            # Mô tả chi tiết trước (filename.png)
-            r'(?:short|long|medium|curly|straight|wavy|messy|neat|slicked)\s+(?:brown|black|blonde|red|gray|grey|white|dark|light)\s+hair,?\s*',  # tóc
-            r'(?:tired|bright|piercing|gentle|kind|cold|warm|deep)?\s*(?:brown|blue|green|hazel|gray|grey|black|dark)\s+eyes,?\s*',  # mắt
-            r'(?:light|heavy|thick|thin|full)?\s*(?:stubble|beard|mustache|goatee),?\s*',  # râu
-            r'(?:fair|dark|tan|pale|olive|brown|light|medium)\s+skin,?\s*',  # da
-            r'(?:slim|athletic|muscular|heavy|petite|tall|short)\s+build,?\s*',  # thể hình
+            # Tóc: "short brown hair"
+            r'(?:short|long|medium|curly|straight|wavy|messy|neat|slicked)\s+(?:brown|black|blonde|red|gray|grey|white|dark|light)\s+hair,?\s*',
 
-            # Quần áo cơ bản (giữ lại quần áo đặc biệt)
-            r'wearing\s+(?:a\s+)?(?:simple|plain|basic|casual)\s+(?:gray|grey|white|black|blue|red)\s+(?:t-shirt|shirt|top),?\s*',
+            # Mắt: "tired blue eyes"
+            r'(?:tired|bright|piercing|gentle|kind|cold|warm|deep)?\s*(?:brown|blue|green|hazel|gray|grey|black|dark)\s+eyes,?\s*',
+
+            # Râu: "light stubble"
+            r'(?:light|heavy|thick|thin|full)?\s*(?:stubble|beard|mustache|goatee),?\s*',
+
+            # Da: "fair skin"
+            r'(?:fair|dark|tan|pale|olive|brown|light|medium)\s+skin,?\s*',
+
+            # Thể hình: "slim build"
+            r'(?:slim|athletic|muscular|heavy|petite|tall|short)\s+build,?\s*',
+
+            # LƯU Ý: KHÔNG loại bỏ quần áo - giữ nguyên để đạo diễn kiểm soát trang phục theo từng bối cảnh
         ]
 
         # Áp dụng các pattern
