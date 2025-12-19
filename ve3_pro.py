@@ -875,6 +875,30 @@ class UnixVoiceToVideo:
                         variable=headless_var, command=lambda: self._save_headless_setting(headless_var.get())
                         ).pack(side=tk.LEFT)
 
+        # Generation Mode toggle (Chrome vs API)
+        ttk.Separator(prof_tab, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(15, 10))
+        ttk.Label(prof_tab, text="Chế độ tạo ảnh:",
+                  font=('Segoe UI', 10, 'bold')).pack(anchor=tk.W)
+        ttk.Label(prof_tab, text="Chrome: Tự động hóa trình duyệt  |  API: Gọi trực tiếp API (cần token)",
+                  foreground='gray', font=('Segoe UI', 9)).pack(anchor=tk.W, pady=(0, 5))
+
+        gen_mode_frame = ttk.Frame(prof_tab)
+        gen_mode_frame.pack(fill=tk.X, pady=(5, 10))
+
+        current_mode = self._get_generation_mode()
+        gen_mode_var = tk.StringVar(value=current_mode)
+
+        def on_mode_change():
+            mode = gen_mode_var.get()
+            self._save_generation_mode(mode)
+
+        ttk.Radiobutton(gen_mode_frame, text="🌐 Chrome (Browser Automation)",
+                        variable=gen_mode_var, value="chrome",
+                        command=on_mode_change).pack(side=tk.LEFT, padx=(0, 20))
+        ttk.Radiobutton(gen_mode_frame, text="⚡ API (Direct - cần Bearer Token)",
+                        variable=gen_mode_var, value="api",
+                        command=on_mode_change).pack(side=tk.LEFT)
+
         # Buttons row 1
         prof_btn_row1 = ttk.Frame(prof_tab)
         prof_btn_row1.pack(fill=tk.X, pady=(5, 5))
@@ -1224,6 +1248,36 @@ class UnixVoiceToVideo:
             self.log(f"Headless mode: {'ON' if headless else 'OFF'}", "OK")
         except Exception as e:
             print(f"Save headless error: {e}")
+
+    def _get_generation_mode(self) -> str:
+        """Get generation mode from config: 'chrome' or 'api'."""
+        try:
+            import yaml
+            config_path = CONFIG_DIR / "settings.yaml"
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+                return config.get('generation_mode', 'chrome')
+        except:
+            pass
+        return 'chrome'  # Default: browser mode
+
+    def _save_generation_mode(self, mode: str):
+        """Save generation mode to config: 'chrome' or 'api'."""
+        try:
+            import yaml
+            config_path = CONFIG_DIR / "settings.yaml"
+            config = {}
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+            config['generation_mode'] = mode
+            with open(config_path, 'w', encoding='utf-8') as f:
+                yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+            mode_name = "Chrome (Browser)" if mode == 'chrome' else "API (Direct)"
+            self.log(f"Generation mode: {mode_name}", "OK")
+        except Exception as e:
+            print(f"Save generation_mode error: {e}")
 
     def _open_browser_for_login(self, profile_path: str, profile_name: str):
         """Open Chrome browser with profile for Google login."""

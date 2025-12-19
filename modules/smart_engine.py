@@ -1136,7 +1136,8 @@ class SmartEngine:
             generator._log = custom_log
 
             # Truyen prompts da load san (tu _load_prompts) thay vi doc lai Excel
-            result = generator.generate_from_prompts(
+            # Su dung generate_from_prompts_auto de tu dong chon mode (chrome/api)
+            result = generator.generate_from_prompts_auto(
                 prompts=prompts,
                 excel_path=excel_files[0]
             )
