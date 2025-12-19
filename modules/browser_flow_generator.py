@@ -24,6 +24,7 @@ import time
 import json
 import shutil
 import glob
+import base64
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime
@@ -125,6 +126,7 @@ class BrowserFlowGenerator:
         # Driver
         self.driver = None
         self._js_injected = False
+        self._project_url = ""  # Luu project URL de giu nguyen phien lam viec
 
         # Logger
         self.logger = get_logger("browser_flow")
@@ -179,17 +181,17 @@ class BrowserFlowGenerator:
         """
         Tao Chrome WebDriver - PARALLEL SAFE.
         - Moi instance dung port rieng (khong xung dot)
-        - Profile rieng biet
+        - Dung working profile rieng (giu nguyen settings nhu download permission)
         - Mac dinh headless (chay an)
         """
         import random
-        import tempfile
 
         # Download prefs
         prefs = {
             "download.default_directory": str(self.downloads_dir),
             "download.prompt_for_download": False,
             "download.directory_upgrade": True,
+            "safebrowsing.enabled": True,
         }
 
         self._log(f"Headless: {self.headless}")
@@ -211,31 +213,36 @@ class BrowserFlowGenerator:
                     self._log(f"Chrome: {chrome_path}")
                     break
 
-            # PARALLEL SAFE: Copy profile sang temp directory
-            # Giu nguyen profile goc (khong bi lock), dung ban copy
+            # Tao working profile rieng (khong phai temp, giu nguyen settings)
+            # Vi tri: ~/.ve3_chrome_profiles/{profile_name}
             self.profile_dir.mkdir(parents=True, exist_ok=True)
+            working_profile_base = Path.home() / ".ve3_chrome_profiles"
+            working_profile_base.mkdir(parents=True, exist_ok=True)
+            working_profile = working_profile_base / self.profile_name
 
-            # Tao temp profile
-            temp_profile = tempfile.mkdtemp(prefix=f"ve3_chrome_{self.profile_name}_")
             self._log(f"Profile goc: {self.profile_dir}")
-            self._log(f"Profile temp: {temp_profile}")
+            self._log(f"Working profile: {working_profile}")
 
-            # Copy data tu profile goc sang temp (de co session dang nhap)
+            # Copy data tu profile goc sang working profile (chi lan dau)
             import shutil
-            if any(self.profile_dir.iterdir()):  # Neu profile goc co data
-                for item in self.profile_dir.iterdir():
-                    try:
-                        dest = Path(temp_profile) / item.name
-                        if item.is_dir():
-                            shutil.copytree(item, dest, dirs_exist_ok=True)
-                        else:
-                            shutil.copy2(item, dest)
-                    except Exception:
-                        pass  # Skip locked files
-                self._log(f"Da copy profile data")
+            if not working_profile.exists():
+                working_profile.mkdir(parents=True, exist_ok=True)
+                if any(self.profile_dir.iterdir()):  # Neu profile goc co data
+                    for item in self.profile_dir.iterdir():
+                        try:
+                            dest = working_profile / item.name
+                            if item.is_dir():
+                                shutil.copytree(item, dest, dirs_exist_ok=True)
+                            else:
+                                shutil.copy2(item, dest)
+                        except Exception:
+                            pass  # Skip locked files
+                    self._log(f"Da copy profile data lan dau")
+            else:
+                self._log(f"Su dung working profile da co (giu settings)")
 
-            self._temp_profile = temp_profile  # Luu de cleanup sau
-            options.add_argument(f"--user-data-dir={temp_profile}")
+            self._working_profile = str(working_profile)  # Luu de reference
+            options.add_argument(f"--user-data-dir={working_profile}")
 
             # PARALLEL SAFE: Moi instance dung port rieng
             debug_port = random.randint(9222, 9999)
@@ -288,6 +295,10 @@ class BrowserFlowGenerator:
             self.driver = self._create_driver()
             self._log("Da khoi dong Chrome", "success")
 
+            # Tang timeout cho async script (mac dinh 30s, can nhieu hon cho upload/generate)
+            self.driver.set_script_timeout(300)  # 5 phut
+            self._log("Set script timeout: 300s")
+
             # Navigate den Google Flow
             self._log(f"Navigate den: {self.FLOW_URL}")
             self.driver.get(self.FLOW_URL)
@@ -302,7 +313,7 @@ class BrowserFlowGenerator:
             return False
 
     def stop_browser(self) -> None:
-        """Dong trinh duyet va cleanup temp profile."""
+        """Dong trinh duyet (giu nguyen working profile de luu settings)."""
         if self.driver:
             self._log("Dong trinh duyet...")
             try:
@@ -311,16 +322,7 @@ class BrowserFlowGenerator:
                 pass
             self.driver = None
             self._js_injected = False
-
-        # Cleanup temp profile (giu nguyen profile goc)
-        if hasattr(self, '_temp_profile') and self._temp_profile:
-            try:
-                import shutil
-                shutil.rmtree(self._temp_profile, ignore_errors=True)
-                self._log(f"Da xoa temp profile")
-            except:
-                pass
-            self._temp_profile = None
+            # Khong xoa working profile - giu nguyen de luu settings (download permission, etc.)
 
     def wait_for_login(self, timeout: int = 300) -> bool:
         """
@@ -381,6 +383,10 @@ class BrowserFlowGenerator:
 
             if setup_result and setup_result.get('success'):
                 self._log("Setup UI thanh cong!", "success")
+                # Luu project URL de giu nguyen phien
+                self._project_url = self._get_project_url_from_js()
+                if self._project_url:
+                    self._log(f"Project URL: {self._project_url}", "info")
             else:
                 error = setup_result.get('error', 'Unknown') if setup_result else 'No response'
                 self._log(f"Setup UI that bai: {error}", "warn")
@@ -393,6 +399,259 @@ class BrowserFlowGenerator:
             self._log(f"Loi inject JS: {e}", "error")
             import traceback
             traceback.print_exc()
+            return False
+
+    # =========================================================================
+    # MEDIA NAMES CACHE - Luu media_name de reference
+    # =========================================================================
+
+    def _get_media_cache_path(self) -> Path:
+        """Duong dan file cache media_names."""
+        return self.project_path / "prompts" / ".media_cache.json"
+
+    def _load_media_cache(self) -> Dict[str, Any]:
+        """
+        Load media_names tu cache file.
+
+        Format moi: {id: {mediaName: str, seed: int|null}}
+        Backward compatible voi format cu: {id: str}
+        """
+        cache_path = self._get_media_cache_path()
+        if cache_path.exists():
+            try:
+                with open(cache_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    self._log(f"Loaded {len(data)} media_names from cache")
+                    return data
+            except:
+                pass
+        return {}
+
+    def _save_media_cache(self, media_names: Dict[str, Any]) -> None:
+        """
+        Luu media_names vao cache file.
+
+        Format: {id: {mediaName: str, seed: int|null}}
+        """
+        cache_path = self._get_media_cache_path()
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(cache_path, 'w', encoding='utf-8') as f:
+                json.dump(media_names, f, indent=2)
+            self._log(f"Saved {len(media_names)} media_names to cache")
+        except Exception as e:
+            self._log(f"Loi save cache: {e}", "warn")
+
+    def _get_media_names_from_js(self) -> Dict[str, Any]:
+        """
+        Lay tat ca media_names tu JS.
+
+        Returns:
+            Dict voi format: {id: {mediaName: str, seed: int|null}}
+        """
+        if not self.driver:
+            return {}
+        try:
+            return self.driver.execute_script("return VE3.getMediaNames();") or {}
+        except:
+            return {}
+
+    def _get_project_url_from_js(self) -> str:
+        """Lay project URL tu JS."""
+        if not self.driver:
+            return ""
+        try:
+            return self.driver.execute_script("return VE3.getProjectUrl();") or ""
+        except:
+            return ""
+
+    def _load_media_names_to_js(self, media_names: Dict[str, Any]) -> None:
+        """
+        Load media_names vao JS tu cache.
+
+        Supports ca format cu (string) va moi ({mediaName, seed}).
+        JS se xu ly chinh xac dua vao format.
+        """
+        if not self.driver or not media_names:
+            return
+        try:
+            self.driver.execute_script(f"VE3.setMediaNames({json.dumps(media_names)});")
+        except Exception as e:
+            self._log(f"Loi load media_names to JS: {e}", "warn")
+
+    def _is_child_character(self, char_id: str) -> bool:
+        """
+        Check if a character ID represents a child (under 15 years old).
+        Children cannot use reference images due to API policy.
+
+        Child patterns:
+        - nvc1 (exactly) = narrator as child
+        - nv1c (exactly) = character 1 as child
+        - *_child, *-child = any character with child suffix
+        - *child* (but not just containing 'child' in middle of word)
+        """
+        if not char_id:
+            return False
+
+        char_id_clean = char_id.replace('.png', '').replace('.jpg', '').replace('.jpeg', '').replace('.webp', '').lower().strip()
+
+        # Exact child character IDs (narrator/character as child)
+        exact_child_ids = ['nvc1', 'nv1c', 'nvc_child', 'nv1_child', 'child']
+
+        if char_id_clean in exact_child_ids:
+            self._log(f"[CHILD] {char_id} matched exact child ID: {char_id_clean}", "info")
+            return True
+
+        # Suffix patterns for child characters
+        if char_id_clean.endswith('_child') or char_id_clean.endswith('-child'):
+            self._log(f"[CHILD] {char_id} matched child suffix pattern", "info")
+            return True
+
+        # Pattern: nvc followed by single digit 1 (nvc1 but not nvc10, nvc11, etc.)
+        # This is for narrator-child-version-1
+        import re
+        if re.match(r'^nvc1$', char_id_clean):  # Exactly nvc1
+            self._log(f"[CHILD] {char_id} matched nvc1 pattern", "info")
+            return True
+
+        return False
+
+    def _filter_children_from_refs(self, ref_files: List[str]) -> List[str]:
+        """
+        Filter out child characters from reference_files list.
+        Children under 15 should not be uploaded as reference.
+        """
+        if not ref_files:
+            return []
+
+        filtered = []
+        for ref in ref_files:
+            if self._is_child_character(ref):
+                self._log(f"[FILTER] Bo qua tre em: {ref}", "info")
+                continue
+            filtered.append(ref)
+
+        return filtered
+
+    def _upload_reference_images(self, reference_files: List[str]) -> bool:
+        """
+        Upload cac anh reference truoc khi tao scene.
+
+        Args:
+            reference_files: List ten file (vd: ["nvc.png", "nv1.png"])
+
+        Returns:
+            True neu upload thanh cong
+        """
+        if not reference_files or not self.driver:
+            return True
+
+        self._log(f"[UPLOAD] Input reference_files: {reference_files}", "info")
+        self._log(f"[UPLOAD] nv_path: {self.nv_path}", "info")
+
+        # Filter out children under 15
+        filtered_refs = self._filter_children_from_refs(reference_files)
+        if not filtered_refs:
+            self._log("[UPLOAD] Khong con anh nao sau khi filter tre em", "info")
+            return True
+
+        self._log(f"[UPLOAD] After filter children: {filtered_refs}", "info")
+
+        images_to_upload = []
+
+        for ref_file in filtered_refs:
+            # Xac dinh duong dan file - ref_file co the la "nvc.png" hoac "nvc"
+            ref_id = ref_file.replace('.png', '').replace('.jpg', '').replace('.jpeg', '').replace('.webp', '')
+
+            # Tim file voi nhieu extension
+            file_path = None
+            filename = None
+
+            # Thu cac extension khac nhau
+            extensions = ['.png', '.jpg', '.jpeg', '.webp', '']
+            search_dirs = [self.nv_path, self.project_path / "img"]
+
+            for search_dir in search_dirs:
+                if file_path:
+                    break
+                for ext in extensions:
+                    test_path = search_dir / f"{ref_id}{ext}"
+                    if test_path.exists():
+                        file_path = test_path
+                        filename = f"{ref_id}{ext}" if ext else ref_id
+                        self._log(f"[UPLOAD] Found: {test_path}", "info")
+                        break
+
+            if not file_path:
+                self._log(f"[UPLOAD] Khong tim thay file: {ref_id} (searched in nv/ and img/)", "warn")
+                # List available files in nv/ for debugging
+                if self.nv_path.exists():
+                    available = list(self.nv_path.glob("*.*"))
+                    self._log(f"[UPLOAD] Files in nv/: {[f.name for f in available[:10]]}", "info")
+                continue
+
+            # Doc file va convert sang base64
+            try:
+                with open(file_path, 'rb') as f:
+                    image_data = f.read()
+                    base64_data = base64.b64encode(image_data).decode('utf-8')
+                    images_to_upload.append({
+                        'base64': base64_data,
+                        'filename': filename
+                    })
+                    self._log(f"[UPLOAD] Doc file: {filename} ({len(image_data)/1024:.1f} KB)")
+            except Exception as e:
+                self._log(f"[UPLOAD] Loi doc file {filename}: {e}", "error")
+                continue
+
+        if not images_to_upload:
+            self._log("[UPLOAD] Khong co anh nao de upload", "warn")
+            return True
+
+        # Upload qua JS
+        try:
+            self._log(f"[UPLOAD] Goi JS VE3.uploadReferences() voi {len(images_to_upload)} files...", "info")
+            images_json = json.dumps(images_to_upload)
+
+            # Timeout dai hon cho upload nhieu file
+            timeout_ms = 60000 + (len(images_to_upload) * 30000)  # 60s + 30s per file
+            self._log(f"[UPLOAD] Timeout: {timeout_ms/1000:.0f}s", "info")
+
+            result = self.driver.execute_async_script(f"""
+                const callback = arguments[arguments.length - 1];
+                const timeout = setTimeout(() => {{
+                    callback({{ success: false, error: 'JS timeout' }});
+                }}, {timeout_ms});
+
+                try {{
+                    VE3.uploadReferences({images_json}).then(success => {{
+                        clearTimeout(timeout);
+                        callback({{ success: success, message: 'Upload completed' }});
+                    }}).catch(e => {{
+                        clearTimeout(timeout);
+                        callback({{ success: false, error: e.message || 'Upload exception' }});
+                    }});
+                }} catch (e) {{
+                    clearTimeout(timeout);
+                    callback({{ success: false, error: 'JS error: ' + e.message }});
+                }}
+            """)
+
+            self._log(f"[UPLOAD] JS result: {result}", "info")
+
+            if result and result.get('success'):
+                self._log(f"[UPLOAD] Da upload {len(images_to_upload)} anh reference", "success")
+                return True
+            else:
+                error = result.get('error', 'Unknown') if result else 'No response from JS'
+                self._log(f"[UPLOAD] Loi upload: {error}", "error")
+                # Tiep tuc du co loi - khong block generation
+                return False
+
+        except Exception as e:
+            self._log(f"[UPLOAD] Python Exception: {e}", "error")
+            import traceback
+            self._log(f"[UPLOAD] Traceback: {traceback.format_exc()}", "error")
             return False
 
     def _find_downloaded_files(self, pattern: str, wait_timeout: int = 30) -> List[Path]:
@@ -635,6 +894,14 @@ class BrowserFlowGenerator:
         if not self._inject_js():
             return {"success": False, "error": "Khong inject duoc JS"}
 
+        # IMPORTANT: Load media_names tu cache de reference characters
+        cached_media_names = self._load_media_cache()
+        if cached_media_names:
+            self._load_media_names_to_js(cached_media_names)
+            self._log(f"Loaded {len(cached_media_names)} media references (nv/loc)")
+        else:
+            self._log("Khong co media cache - scenes se khong co reference", "warn")
+
         # Chuan bi prompts cho VE3.run()
         # QUAN TRONG: Dung numeric ID (1, 2, 3) de khop voi SmartEngine video composer
         prompts_data = []
@@ -647,11 +914,27 @@ class BrowserFlowGenerator:
 
         self._log(f"\nBat dau tao {len(prompts_data)} anh...")
 
-        # DEBUG: Hien thi scene dau tien de kiem tra data
-        if scenes_to_process:
-            s = scenes_to_process[0]
-            self._log(f"[DEBUG] Scene dau tien: id={s.scene_id}, srt_start={s.srt_start}")
-            self._log(f"[DEBUG] img_prompt = '{s.img_prompt[:100] if s.img_prompt else 'EMPTY'}'")
+        # DEBUG: List files trong thu muc nv/
+        self._log("\n" + "=" * 60)
+        self._log("[DEBUG] FILES TRONG THU MUC NV/:")
+        self._log(f"  nv_path: {self.nv_path}")
+        if self.nv_path.exists():
+            nv_files = list(self.nv_path.glob("*.*"))
+            self._log(f"  Found {len(nv_files)} files:")
+            for f in nv_files:
+                self._log(f"    - {f.name} ({f.stat().st_size / 1024:.1f} KB)")
+        else:
+            self._log(f"  [ERROR] Thu muc nv/ KHONG TON TAI!")
+        self._log("=" * 60)
+
+        # DEBUG: Hien thi cac scene de kiem tra reference_files
+        self._log("\n" + "=" * 60)
+        self._log("[DEBUG] KIEM TRA REFERENCE_FILES TU EXCEL:")
+        self._log("=" * 60)
+        for idx, s in enumerate(scenes_to_process[:5]):  # Hien thi 5 scene dau
+            ref_raw = getattr(s, 'reference_files', None)
+            self._log(f"  Scene {s.scene_id}: reference_files = '{ref_raw}'")
+        self._log("=" * 60 + "\n")
 
         # Goi VE3.run() - xu ly tung prompt mot de cap nhat Excel theo thoi gian thuc
         for i, item in enumerate(prompts_data):
@@ -659,11 +942,63 @@ class BrowserFlowGenerator:
             scene_id = item["sceneId"]
             prompt = item["prompt"]
 
+            # Lay reference_files tu scene (JSON string hoac list)
+            reference_files = []
+            ref_str = getattr(scene, 'reference_files', '') or ''
+
+            self._log(f"\n[DEBUG] Scene {scene_id} raw reference_files: '{ref_str}' (type={type(ref_str).__name__})")
+
+            if ref_str:
+                try:
+                    # Thu parse JSON truoc
+                    if ref_str.startswith('['):
+                        parsed = json.loads(ref_str)
+                        reference_files = parsed if isinstance(parsed, list) else [parsed]
+                        self._log(f"[DEBUG] Parsed JSON: {reference_files}")
+                    else:
+                        # Khong phai JSON, split by comma
+                        reference_files = [f.strip() for f in str(ref_str).split(',') if f.strip()]
+                        self._log(f"[DEBUG] Split by comma: {reference_files}")
+                except Exception as e:
+                    self._log(f"[DEBUG] Parse error: {e}, trying split...")
+                    reference_files = [f.strip() for f in str(ref_str).split(',') if f.strip()]
+
             self._log(f"\n[{i+1}/{len(prompts_data)}] Scene {scene_id}")
             self._log(f"Prompt ({len(prompt)} chars): {prompt[:100]}...")
+            self._log(f"[REF] Final reference_files: {reference_files}")
+
+            # VERIFY: Check if prompt has filename annotations
+            has_annotations = False
+            for ref in reference_files:
+                ref_name = ref.replace('.png', '').replace('.jpg', '')
+                if f"({ref})" in prompt or f"({ref_name}.png)" in prompt:
+                    has_annotations = True
+                    break
+            if "(reference:" in prompt:
+                has_annotations = True
+
+            if reference_files:
+                if has_annotations:
+                    self._log(f"[ANNOTATION] ✓ Prompt DA CO annotations", "success")
+                else:
+                    self._log(f"[ANNOTATION] ⚠️ Prompt CHUA CO annotations - them vao cuoi...", "warn")
+                    # Them annotation neu chua co
+                    refs_str = ", ".join(reference_files)
+                    prompt = prompt.rstrip('. ') + f" (reference: {refs_str})."
+                    self._log(f"[ANNOTATION] Prompt sau khi them: ...{prompt[-80:]}", "info")
 
             try:
-                # Goi VE3.run() cho 1 prompt
+                # QUAN TRONG: Upload reference images TRUOC KHI tao anh
+                if reference_files:
+                    self._log(f"[UPLOAD] Dang upload {len(reference_files)} anh reference...")
+                    upload_success = self._upload_reference_images(reference_files)
+                    if upload_success:
+                        self._log(f"[UPLOAD] Upload thanh cong!", "success")
+                    else:
+                        self._log("[UPLOAD] Upload that bai, tiep tuc khong co reference", "warn")
+
+                # Goi VE3.run() cho 1 prompt (voi reference_files)
+                ref_files_json = json.dumps(reference_files)
                 result = self.driver.execute_async_script(f"""
                     const callback = arguments[arguments.length - 1];
                     const timeout = setTimeout(() => {{
@@ -672,7 +1007,8 @@ class BrowserFlowGenerator:
 
                     VE3.run([{{
                         sceneId: "{scene_id}",
-                        prompt: `{self._escape_js_string(prompt)}`
+                        prompt: `{self._escape_js_string(prompt)}`,
+                        referenceFiles: {ref_files_json}
                     }}]).then(r => {{
                         clearTimeout(timeout);
                         callback({{ success: true, result: r }});
@@ -737,25 +1073,48 @@ class BrowserFlowGenerator:
             "stats": self.stats.copy()
         }
 
-    def _process_single_prompt(self, prompt_data: Dict, index: int, total: int) -> Tuple[bool, Optional[Path], float]:
+    def _process_single_prompt(self, prompt_data: Dict, index: int, total: int) -> Tuple[bool, Optional[Path], float, str]:
         """
         Xu ly mot prompt don le.
 
         Returns:
-            Tuple[success, image_path, score]
+            Tuple[success, image_path, score, prompt_json]
         """
         pid = str(prompt_data.get('id', index + 1))
         prompt = prompt_data.get('prompt', '')
 
+        # Lay reference_files tu prompt_data (JSON string hoac list)
+        reference_files = []
+        ref_str = prompt_data.get('reference_files', '')
+        if ref_str:
+            try:
+                parsed = json.loads(ref_str) if isinstance(ref_str, str) else ref_str
+                reference_files = parsed if isinstance(parsed, list) else [parsed]
+            except:
+                reference_files = [f.strip() for f in str(ref_str).split(',') if f.strip()]
+
         self._log(f"\n[{index+1}/{total}] ID: {pid}")
         self._log(f"Prompt ({len(prompt)} chars): {prompt[:100]}...")
+        if reference_files:
+            self._log(f"[REF] reference_files: {reference_files}")
+        else:
+            self._log(f"[REF] ⚠️ NO REFERENCES - Excel cot 'reference_files' trong!")
+            self._log(f"[REF] raw value from Excel: '{ref_str}'")
 
         if not prompt:
             self._log("Skip - prompt rong", "warn")
             return False, None, 0.0
 
         try:
-            # Goi VE3.run() cho 1 prompt
+            # UPLOAD REFERENCE IMAGES TRUOC KHI TAO ANH
+            if reference_files:
+                self._log(f"[UPLOAD] Dang upload {len(reference_files)} anh reference...")
+                upload_success = self._upload_reference_images(reference_files)
+                if not upload_success:
+                    self._log("[UPLOAD] Upload that bai, tiep tuc khong co reference", "warn")
+
+            # Goi VE3.run() cho 1 prompt (voi reference_files)
+            ref_files_json = json.dumps(reference_files)
             result = self.driver.execute_async_script(f"""
                 const callback = arguments[arguments.length - 1];
                 const timeout = setTimeout(() => {{
@@ -764,7 +1123,8 @@ class BrowserFlowGenerator:
 
                 VE3.run([{{
                     sceneId: "{pid}",
-                    prompt: `{self._escape_js_string(prompt)}`
+                    prompt: `{self._escape_js_string(prompt)}`,
+                    referenceFiles: {ref_files_json}
                 }}]).then(r => {{
                     clearTimeout(timeout);
                     callback({{ success: true, result: r }});
@@ -775,35 +1135,75 @@ class BrowserFlowGenerator:
             """)
 
             if result and result.get("success"):
+                # Lay prompt_json va images tu result
+                js_result = result.get("result", {})
+                prompt_json = js_result.get("prompt_json", "") if isinstance(js_result, dict) else ""
+                js_images = js_result.get("images", []) if isinstance(js_result, dict) else []
+
+                self._log(f"[DEBUG] prompt_json: {prompt_json[:100] if prompt_json else '(empty)'}...")
+                self._log(f"[DEBUG] JS returned {len(js_images)} images with mediaNames")
+
                 # Di chuyen file tu Downloads (timeout 2 phut)
                 img_file, score, needs_regen = self._move_downloaded_images(pid)
 
                 if img_file:
+                    # TIM MEDIA_NAME VA SEED DUNG CHO ANH DA CHON
+                    selected_media_name = ""
+                    selected_seed = None
+                    if js_images:
+                        # Neu chi co 1 anh, lay mediaName va seed cua no
+                        if len(js_images) == 1:
+                            selected_media_name = js_images[0].get("mediaName", "")
+                            selected_seed = js_images[0].get("seed")
+                            self._log(f"[MEDIA] 1 image -> mediaName: {selected_media_name[:50] if selected_media_name else 'NONE'}, seed={selected_seed}")
+                        else:
+                            # Neu co nhieu anh, lay anh dau tien (thuong la best)
+                            # TODO: Match filename de lay dung anh duoc chon
+                            selected_media_name = js_images[0].get("mediaName", "")
+                            selected_seed = js_images[0].get("seed")
+                            self._log(f"[MEDIA] {len(js_images)} images, selected first -> mediaName: {selected_media_name[:50] if selected_media_name else 'NONE'}, seed={selected_seed}")
+
+                    # Set mediaName + seed vao JS STATE de reference sau
+                    if selected_media_name and self.driver:
+                        try:
+                            # Pass ca mediaName va seed
+                            seed_arg = f", {selected_seed}" if selected_seed else ", null"
+                            self.driver.execute_script(
+                                f"VE3.setMediaName('{pid}', '{selected_media_name}'{seed_arg});"
+                            )
+                            self._log(f"[MEDIA] Saved mediaInfo for {pid}: mediaName + seed={selected_seed}")
+                        except Exception as e:
+                            self._log(f"[MEDIA] Warning: Could not set mediaName: {e}", "warn")
+
                     if needs_regen:
                         self._log(f"OK - Da tao anh nhung chua dat chuan (score={score:.1f})", "warn")
                     else:
                         self._log(f"OK - Da tao va luu anh (score={score:.1f})", "success")
-                    return True, img_file, score
+                    return True, img_file, score, prompt_json
                 else:
                     self._log(f"Khong tim thay file download sau 2 phut", "warn")
-                    return False, None, 0.0
+                    return False, None, 0.0, prompt_json
             else:
                 error = result.get("error", "Unknown") if result else "No response"
                 self._log(f"Loi: {error}", "error")
-                return False, None, 0.0
+                return False, None, 0.0, ""
 
         except Exception as e:
             self._log(f"Exception: {e}", "error")
-            return False, None, 0.0
+            return False, None, 0.0, ""
 
     def _restart_browser_and_setup(self) -> bool:
         """
         Khoi dong lai browser va setup (dung khi setup that bai).
+        Neu da co project URL, navigate ve do thay vi tao project moi.
 
         Returns:
             True neu thanh cong
         """
         self._log("Khoi dong lai browser...", "warn")
+
+        # Luu project URL truoc khi dong browser
+        saved_project_url = self._project_url
 
         # Dong browser cu
         self.stop_browser()
@@ -820,11 +1220,53 @@ class BrowserFlowGenerator:
             self.stop_browser()
             return False
 
-        # Inject JS
-        if not self._inject_js():
-            return False
+        # Neu co project URL cu, navigate ve do thay vi setup moi
+        if saved_project_url and '/project/' in saved_project_url:
+            self._log(f"Navigate ve project cu: {saved_project_url}", "info")
+            self.driver.get(saved_project_url)
+            time.sleep(5)  # Cho page load
+
+            # Inject JS nhung KHONG goi VE3.setup()
+            if not self._inject_js_without_setup():
+                return False
+
+            # Restore project URL
+            self._project_url = saved_project_url
+        else:
+            # Inject JS va setup moi
+            if not self._inject_js():
+                return False
 
         return True
+
+    def _inject_js_without_setup(self) -> bool:
+        """Inject JS ma khong goi VE3.setup() - dung khi navigate ve project cu."""
+        if self._js_injected:
+            return True
+
+        try:
+            self._log("Inject JavaScript (khong setup)...")
+            js_code = self._get_js_script()
+            self.driver.execute_script(js_code)
+
+            # Init VE3 voi project name
+            self.driver.execute_script(f'VE3.init("{self.project_code}")')
+
+            # Danh dau da setup (vi da co project)
+            self.driver.execute_script("VE3.markSetupDone();")
+
+            # Load media_names tu cache
+            cached_media_names = self._load_media_cache()
+            if cached_media_names:
+                self._load_media_names_to_js(cached_media_names)
+
+            self._js_injected = True
+            self._log("Da san sang tao anh (project cu)!", "success")
+            return True
+
+        except Exception as e:
+            self._log(f"Loi inject JS: {e}", "error")
+            return False
 
     def generate_from_prompts(
         self,
@@ -862,6 +1304,16 @@ class BrowserFlowGenerator:
         # Reset stats
         self.stats = {"total": len(prompts), "success": 0, "failed": 0, "skipped": 0, "low_quality": 0}
 
+        # Load Excel workbook de cap nhat prompt_json
+        workbook = None
+        if excel_path and Path(excel_path).exists():
+            try:
+                workbook = PromptWorkbook(excel_path)
+                workbook.load_or_create()
+                self._log(f"[Excel] Loaded: {excel_path}")
+            except Exception as e:
+                self._log(f"[Excel] Warning: Khong load duoc Excel: {e}", "warn")
+
         # Khoi dong browser
         if not self.driver:
             if not self.start_browser():
@@ -874,6 +1326,23 @@ class BrowserFlowGenerator:
         # Inject JS
         if not self._inject_js():
             return {"success": False, "error": "Khong inject duoc JS"}
+
+        # Load media_names tu cache va set vao JS
+        cached_media_names = self._load_media_cache()
+        if cached_media_names:
+            self._log(f"[CACHE] Loaded {len(cached_media_names)} media_names:")
+            for key, val in cached_media_names.items():
+                # Support ca format cu (string) va moi ({mediaName, seed})
+                if isinstance(val, dict):
+                    mn = val.get('mediaName', '')
+                    seed = val.get('seed')
+                    self._log(f"  {key} -> mediaName:{mn[:40] if mn else 'None'}..., seed:{seed}")
+                else:
+                    self._log(f"  {key} -> {val[:50] if val else 'None'}...")
+            self._load_media_names_to_js(cached_media_names)
+        else:
+            self._log("[CACHE] ⚠️ EMPTY - Characters (nv/loc) chua duoc tao!", "warn")
+            self._log("[CACHE] Hay chay tao anh nhan vat truoc de co media_names", "warn")
 
         self._log(f"\nBat dau tao {len(prompts)} anh...")
 
@@ -900,13 +1369,34 @@ class BrowserFlowGenerator:
                     continue
 
             # Thu prompt dau tien
-            success, img_file, score = self._process_single_prompt(prompts[0], 0, len(prompts))
+            success, img_file, score, prompt_json = self._process_single_prompt(prompts[0], 0, len(prompts))
 
             if success:
                 first_prompt_success = True
                 self.stats["success"] += 1
                 if score < 50.0:
                     self.stats["low_quality"] += 1
+                # Luu prompt_json vao prompt_data
+                if prompt_json:
+                    prompts[0]['prompt_json'] = prompt_json
+                # Cap nhat Excel (prompt_json, img_path)
+                if workbook:
+                    try:
+                        pid = prompts[0].get('id', '1')
+                        # Chi cap nhat cho scenes (so), khong phai nv/loc
+                        if pid.isdigit():
+                            scene_id = int(pid)
+                            relative_path = f"img/{pid}.png" if img_file else ""
+                            workbook.update_scene(
+                                scene_id,
+                                img_path=relative_path,
+                                status_img="done" if score >= 50.0 else "low_quality",
+                                prompt_json=prompt_json
+                            )
+                            workbook.save()
+                            self._log(f"[Excel] Updated scene {scene_id}: prompt_json saved")
+                    except Exception as e:
+                        self._log(f"[Excel] Warning: {e}", "warn")
             else:
                 self._log(f"Prompt dau tien that bai (lan {setup_attempts})", "error")
 
@@ -926,12 +1416,32 @@ class BrowserFlowGenerator:
                 self.stats["skipped"] += 1
                 continue
 
-            success, img_file, score = self._process_single_prompt(prompt_data, i, len(prompts))
+            success, img_file, score, prompt_json = self._process_single_prompt(prompt_data, i, len(prompts))
 
             if success:
                 self.stats["success"] += 1
                 if score < 50.0:
                     self.stats["low_quality"] += 1
+                # Luu prompt_json vao prompt_data
+                if prompt_json:
+                    prompt_data['prompt_json'] = prompt_json
+                # Cap nhat Excel (prompt_json, img_path)
+                if workbook:
+                    try:
+                        # Chi cap nhat cho scenes (so), khong phai nv/loc
+                        if pid.isdigit():
+                            scene_id = int(pid)
+                            relative_path = f"img/{pid}.png" if img_file else ""
+                            workbook.update_scene(
+                                scene_id,
+                                img_path=relative_path,
+                                status_img="done" if score >= 50.0 else "low_quality",
+                                prompt_json=prompt_json
+                            )
+                            workbook.save()
+                            self._log(f"[Excel] Updated scene {scene_id}: prompt_json saved")
+                    except Exception as e:
+                        self._log(f"[Excel] Warning: {e}", "warn")
             else:
                 failed_prompts.append((prompt_data, i))
                 self.stats["failed"] += 1
@@ -951,7 +1461,7 @@ class BrowserFlowGenerator:
                 pid = str(prompt_data.get('id', original_index + 1))
                 self._log(f"\nRetry ID: {pid}")
 
-                success, img_file, score = self._process_single_prompt(
+                success, img_file, score, prompt_json = self._process_single_prompt(
                     prompt_data, original_index, len(prompts)
                 )
 
@@ -961,11 +1471,38 @@ class BrowserFlowGenerator:
                     self.stats["failed"] -= 1  # Giam failed vi da thanh cong
                     if score < 50.0:
                         self.stats["low_quality"] += 1
+                    # Luu prompt_json vao prompt_data
+                    if prompt_json:
+                        prompt_data['prompt_json'] = prompt_json
+                    # Cap nhat Excel (prompt_json, img_path)
+                    if workbook:
+                        try:
+                            # Chi cap nhat cho scenes (so), khong phai nv/loc
+                            if pid.isdigit():
+                                scene_id = int(pid)
+                                relative_path = f"img/{pid}.png" if img_file else ""
+                                workbook.update_scene(
+                                    scene_id,
+                                    img_path=relative_path,
+                                    status_img="done" if score >= 50.0 else "low_quality",
+                                    prompt_json=prompt_json
+                                )
+                                workbook.save()
+                                self._log(f"[Excel] Updated scene {scene_id}: prompt_json saved (retry)")
+                        except Exception as e:
+                            self._log(f"[Excel] Warning: {e}", "warn")
 
                 # Delay
                 time.sleep(2)
 
             self._log(f"\nRetry: {retry_success}/{len(failed_prompts)} thanh cong")
+
+        # Luu media_names tu JS vao cache (cho cac lan chay sau)
+        js_media_names = self._get_media_names_from_js()
+        if js_media_names:
+            # Merge voi cached (uu tien moi)
+            all_media_names = {**cached_media_names, **js_media_names}
+            self._save_media_cache(all_media_names)
 
         # Summary
         self._log("\n" + "=" * 60)
@@ -977,6 +1514,8 @@ class BrowserFlowGenerator:
         self._log(f"Bo qua: {self.stats['skipped']}")
         if self.stats.get('low_quality', 0) > 0:
             self._log(f"Chat luong thap: {self.stats['low_quality']}")
+        if js_media_names:
+            self._log(f"Media names saved: {len(js_media_names)}")
 
         return {
             "success": True,
@@ -1044,6 +1583,11 @@ class BrowserFlowGenerator:
         if not self._inject_js():
             return {"success": False, "error": "Khong inject duoc JS"}
 
+        # Load media cache de co the reference characters da tao truoc do
+        cached_media_names = self._load_media_cache()
+        if cached_media_names:
+            self._load_media_names_to_js(cached_media_names)
+
         success_count = 0
         failed_count = 0
 
@@ -1096,6 +1640,16 @@ class BrowserFlowGenerator:
 
         self._log(f"\nNhan vat: {success_count} thanh cong, {failed_count} that bai")
 
+        # IMPORTANT: Luu mediaNames vao cache sau khi tao xong characters
+        # De khi tao scenes co the reference den characters
+        try:
+            media_names = self._get_media_names_from_js()
+            if media_names:
+                self._save_media_cache(media_names)
+                self._log(f"Da luu {len(media_names)} media_names cho reference", "success")
+        except Exception as e:
+            self._log(f"Loi luu media cache: {e}", "warn")
+
         return {
             "success": True,
             "characters_success": success_count,
@@ -1129,6 +1683,23 @@ class BrowserFlowGenerator:
         }
 
         try:
+            # AUTO-UPDATE: Them filename annotations vao prompts (neu chua co)
+            # Giup Flow match uploaded reference images voi prompt
+            if scenes and self.excel_path.exists():
+                self._log("[AUTO] Kiem tra va cap nhat filename annotations trong prompts...", "info")
+                try:
+                    from modules.prompts_generator import PromptsGenerator
+                    pg = PromptsGenerator()
+                    updated = pg.update_excel_prompts_with_annotations(str(self.excel_path))
+                    if updated:
+                        self._log("[AUTO] Da cap nhat prompts voi filename annotations", "success")
+                    else:
+                        self._log("[AUTO] Khong can cap nhat annotations (da co san hoac khong co ref_files)", "info")
+                except ImportError:
+                    self._log("[AUTO] Khong the import PromptsGenerator, bo qua auto-update", "warn")
+                except Exception as e:
+                    self._log(f"[AUTO] Loi khi cap nhat annotations: {e}", "warn")
+
             if characters:
                 results["characters"] = self.generate_character_images(overwrite=overwrite)
 

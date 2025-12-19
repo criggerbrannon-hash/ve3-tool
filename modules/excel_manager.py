@@ -33,15 +33,24 @@ CHARACTERS_COLUMNS = [
 # Cột cho sheet Scenes
 SCENES_COLUMNS = [
     "scene_id",         # ID scene (1, 2, 3, ...)
-    "srt_start",        # Index bắt đầu trong SRT
-    "srt_end",          # Index kết thúc trong SRT
+    "srt_start",        # Index bắt đầu trong SRT (HH:MM:SS,mmm)
+    "srt_end",          # Index kết thúc trong SRT (HH:MM:SS,mmm)
     "srt_text",         # Nội dung text của scene
-    "img_prompt",       # Prompt tạo ảnh
+    "img_prompt",       # Prompt tạo ảnh (text)
+    "prompt_json",      # JSON prompt đầy đủ (có seed, imageInputs) - dùng khi tạo ảnh
     "video_prompt",     # Prompt tạo video
     "img_path",         # Path đến ảnh đã tạo
     "video_path",       # Path đến video đã tạo
     "status_img",       # Trạng thái ảnh (pending/done/error)
     "status_vid",       # Trạng thái video (pending/done/error)
+    # Thông tin thời gian
+    "start_time",       # Thời gian bắt đầu (HH:MM:SS,mmm)
+    "end_time",         # Thời gian kết thúc (HH:MM:SS,mmm)
+    "duration",         # Độ dài (giây)
+    # Thông tin reference
+    "characters_used",  # JSON list nhân vật trong scene
+    "location_used",    # Location ID
+    "reference_files",  # JSON list reference files cho image generation
 ]
 
 
@@ -157,30 +166,48 @@ class Location:
 
 class Scene:
     """Đại diện cho một scene trong video."""
-    
+
     def __init__(
         self,
         scene_id: int,
-        srt_start: int = 0,
-        srt_end: int = 0,
+        srt_start: str = "",            # Timestamp bắt đầu từ SRT (HH:MM:SS,mmm)
+        srt_end: str = "",              # Timestamp kết thúc từ SRT (HH:MM:SS,mmm)
         srt_text: str = "",
         img_prompt: str = "",
+        prompt_json: str = "",          # JSON prompt đầy đủ (seed, imageInputs)
         video_prompt: str = "",
         img_path: str = "",
         video_path: str = "",
         status_img: str = "pending",
-        status_vid: str = "pending"
+        status_vid: str = "pending",
+        # Time tracking (alias of srt_start/srt_end for compatibility)
+        start_time: str = "",           # Thời gian bắt đầu (HH:MM:SS,mmm)
+        end_time: str = "",             # Thời gian kết thúc (HH:MM:SS,mmm)
+        duration: float = 0.0,          # Độ dài (giây)
+        # Reference info
+        characters_used: str = "",      # JSON list of character IDs used
+        location_used: str = "",        # Location ID used
+        reference_files: str = ""       # JSON list of reference files
     ):
         self.scene_id = scene_id
-        self.srt_start = srt_start
-        self.srt_end = srt_end
+        self.srt_start = str(srt_start) if srt_start else ""
+        self.srt_end = str(srt_end) if srt_end else ""
         self.srt_text = srt_text
         self.img_prompt = img_prompt
+        self.prompt_json = prompt_json
         self.video_prompt = video_prompt
         self.img_path = img_path
         self.video_path = video_path
         self.status_img = status_img
         self.status_vid = status_vid
+        # Time
+        self.start_time = start_time
+        self.end_time = end_time
+        self.duration = duration
+        # References
+        self.characters_used = characters_used
+        self.location_used = location_used
+        self.reference_files = reference_files
     
     def to_dict(self) -> Dict[str, Any]:
         """Chuyển đổi thành dictionary."""
@@ -190,11 +217,18 @@ class Scene:
             "srt_end": self.srt_end,
             "srt_text": self.srt_text,
             "img_prompt": self.img_prompt,
+            "prompt_json": self.prompt_json,
             "video_prompt": self.video_prompt,
             "img_path": self.img_path,
             "video_path": self.video_path,
             "status_img": self.status_img,
             "status_vid": self.status_vid,
+            "start_time": self.start_time,
+            "end_time": self.end_time,
+            "duration": self.duration,
+            "characters_used": self.characters_used,
+            "location_used": self.location_used,
+            "reference_files": self.reference_files,
         }
     
     @classmethod
@@ -218,17 +252,33 @@ class Scene:
                     return default
             return default
 
+        def safe_float(val, default=0.0):
+            """Convert to float safely."""
+            if val is None or val == "":
+                return default
+            try:
+                return float(val)
+            except (ValueError, TypeError):
+                return default
+
         return cls(
             scene_id=safe_int(data.get("scene_id", 0)),
-            srt_start=safe_int(data.get("srt_start", 0)),
-            srt_end=safe_int(data.get("srt_end", 0)),
+            srt_start=str(data.get("srt_start", "") or ""),  # Timestamp string
+            srt_end=str(data.get("srt_end", "") or ""),      # Timestamp string
             srt_text=str(data.get("srt_text", "") or ""),
             img_prompt=str(data.get("img_prompt", "") or ""),
+            prompt_json=str(data.get("prompt_json", "") or ""),
             video_prompt=str(data.get("video_prompt", "") or ""),
             img_path=str(data.get("img_path", "") or ""),
             video_path=str(data.get("video_path", "") or ""),
             status_img=str(data.get("status_img", "pending") or "pending"),
             status_vid=str(data.get("status_vid", "pending") or "pending"),
+            start_time=str(data.get("start_time", "") or ""),
+            end_time=str(data.get("end_time", "") or ""),
+            duration=safe_float(data.get("duration", 0.0)),
+            characters_used=str(data.get("characters_used", "") or ""),
+            location_used=str(data.get("location_used", "") or ""),
+            reference_files=str(data.get("reference_files", "") or ""),
         )
 
 

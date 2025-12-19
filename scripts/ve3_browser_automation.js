@@ -32,6 +32,15 @@
 
         // Auto download
         autoDownload: true,
+
+        // API settings
+        apiBaseUrl: 'https://labs.google/api',
+        imageModel: 'GEM_PIX_2',
+        aspectRatio: 'IMAGE_ASPECT_RATIO_LANDSCAPE',
+        tool: 'flow',
+
+        // NEW: Mode - 'textarea' (cu) hoac 'api' (moi - goi truc tiep API)
+        mode: 'api',  // Mac dinh dung API mode de co reference images
     };
 
     // =========================================================================
@@ -41,6 +50,8 @@
         isInitialized: false,
         isRunning: false,
         shouldStop: false,
+        isSetupDone: false,  // NEW: Chi setup 1 lan
+        consentTriggered: false,  // Da trigger consent dialog chua
 
         // Queue - moi item la {sceneId, prompt} hoac string
         promptQueue: [],
@@ -52,6 +63,10 @@
         totalImages: 0,
         downloadedImages: 0,
         errors: [],
+
+        // NEW: Luu project URL va media_names cho reference
+        projectUrl: '',      // URL cua project hien tai
+        mediaNames: {},      // {sceneId: media_name} - de reference sau
 
         // Callback khi 1 prompt hoan thanh
         onPromptComplete: null,
@@ -97,6 +112,99 @@
             }
             textarea.dispatchEvent(new Event('input', { bubbles: true }));
             textarea.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+    };
+
+    // =========================================================================
+    // API CALLER - Goi truc tiep batchGenerateImages API
+    // =========================================================================
+    const API = {
+        // Lay projectId tu URL hien tai
+        // URL format: https://labs.google/fx/vi/tools/flow/project/{projectId}
+        getProjectId: () => {
+            const url = window.location.href;
+            const match = url.match(/\/project\/([a-f0-9-]+)/i);
+            return match ? match[1] : null;
+        },
+
+        // Tao sessionId random
+        generateSessionId: () => {
+            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+                const r = Math.random() * 16 | 0;
+                const v = c === 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+        },
+
+        // Tao seed random
+        generateSeed: () => {
+            return Math.floor(Math.random() * 999999) + 1;
+        },
+
+        // Build request payload - GIONG HET google_flow_api.py
+        buildPayload: (prompt, referenceNames = [], count = 2) => {
+            const projectId = API.getProjectId();
+            const sessionId = API.generateSessionId();
+
+            // Build imageInputs voi day du fields (giong API)
+            const imageInputs = referenceNames
+                .filter(name => name && name.trim())
+                .map(name => ({
+                    name: name.trim(),
+                    imageInputType: "IMAGE_INPUT_TYPE_REFERENCE"  // QUAN TRONG!
+                }));
+
+            // Build requests array
+            const requests = [];
+            for (let i = 0; i < count; i++) {
+                requests.push({
+                    clientContext: {
+                        sessionId: sessionId,
+                        projectId: projectId,
+                        tool: CONFIG.tool
+                    },
+                    seed: API.generateSeed(),
+                    imageModelName: CONFIG.imageModel,
+                    imageAspectRatio: CONFIG.aspectRatio,
+                    prompt: prompt,
+                    imageInputs: imageInputs
+                });
+            }
+
+            return { requests };
+        },
+
+        // Goi API tao anh
+        generateImages: async (prompt, referenceNames = [], count = 2) => {
+            const projectId = API.getProjectId();
+            if (!projectId) {
+                throw new Error('Khong tim thay projectId trong URL. Hay mo project truoc!');
+            }
+
+            const url = `${CONFIG.apiBaseUrl}/v1/projects/${projectId}/flowMedia:batchGenerateImages`;
+            const payload = API.buildPayload(prompt, referenceNames, count);
+
+            Utils.log(`API Call: ${url}`, 'info');
+            Utils.log(`Prompt: ${prompt.slice(0, 50)}...`, 'info');
+            if (referenceNames.length > 0) {
+                Utils.log(`References: ${referenceNames.join(', ')}`, 'info');
+            }
+
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                credentials: 'include',  // Quan trong: gui cookies de xac thuc
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                const errorText = await response.text();
+                throw new Error(`API error ${response.status}: ${errorText.slice(0, 200)}`);
+            }
+
+            return await response.json();
         }
     };
 
@@ -167,9 +275,14 @@
 
                 const urlStr = url?.toString() || '';
 
-                // Bat response tu batchGenerateImages
-                if (urlStr.includes('batchGenerateImages')) {
-                    Utils.log('Đang tạo ảnh...', 'wait');
+                // DEBUG: Log all fetch calls to understand API
+                if (urlStr.includes('labs.google') || urlStr.includes('generate') || urlStr.includes('flow')) {
+                    Utils.log(`[FETCH] URL: ${urlStr.slice(0, 100)}...`, 'info');
+                }
+
+                // Bat response tu batchGenerateImages hoac cac endpoint tuong tu
+                if (urlStr.includes('batchGenerateImages') || urlStr.includes('generateImages') || urlStr.includes('generate')) {
+                    Utils.log(`[FETCH] Matched generate endpoint: ${urlStr.slice(0, 80)}...`, 'wait');
 
                     result.then(async res => {
                         try {
@@ -185,6 +298,10 @@
                                 return;
                             }
 
+                            // DEBUG: Log raw response structure
+                            Utils.log(`[DEBUG] Response keys: ${Object.keys(data).join(', ')}`, 'info');
+                            Utils.log(`[DEBUG] data.media exists: ${!!data.media}, length: ${data.media?.length || 0}`, 'info');
+
                             // Extract va download anh
                             if (data.media && data.media.length > 0) {
                                 Utils.log(`Nhận được ${data.media.length} ảnh!`, 'img');
@@ -192,15 +309,35 @@
                                 const downloadPromises = [];
 
                                 for (let i = 0; i < data.media.length; i++) {
-                                    const img = data.media[i]?.image?.generatedImage;
+                                    const mediaItem = data.media[i];
+                                    const img = mediaItem?.image?.generatedImage;
+
+                                    // DEBUG: Log mediaItem structure
+                                    Utils.log(`[DEBUG] mediaItem keys: ${Object.keys(mediaItem || {}).join(', ')}`, 'info');
+
+                                    // QUAN TRONG: Lay media_name de reference sau!
+                                    const mediaName = mediaItem?.name || '';
+                                    const workflowId = mediaItem?.workflowId || '';
+
+                                    // DEBUG: Log mediaName
+                                    Utils.log(`[DEBUG] mediaName = "${mediaName}", workflowId = "${workflowId}"`, 'info');
+
                                     if (img && img.fifeUrl) {
                                         const filename = Utils.generateFilename(i + 1);
 
                                         self.imageBuffer.push({
                                             url: img.fifeUrl,
                                             seed: img.seed,
-                                            filename: filename
+                                            filename: filename,
+                                            mediaName: mediaName,      // media_name de reference sau
+                                            workflowId: workflowId,
+                                            index: i,                  // Vi tri trong response
                                         });
+
+                                        Utils.log(`Image ${i+1}: filename=${filename}, mediaName=${mediaName ? mediaName.slice(0,40)+'...' : 'NONE'}`, 'info');
+
+                                        // KHONG tu dong luu mediaName vao STATE o day!
+                                        // Python se chon anh tot nhat roi goi setMediaName() voi mediaName dung
 
                                         if (CONFIG.autoDownload) {
                                             downloadPromises.push(
@@ -222,6 +359,16 @@
                                         images: [...self.imageBuffer]
                                     });
                                     self.imageBuffer = [];
+                                }
+                            } else {
+                                // Khong co media trong response
+                                Utils.log(`[DEBUG] No media in response. Full data: ${JSON.stringify(data).slice(0, 500)}`, 'warn');
+                                // Van resolve voi empty images de khong bi hang
+                                if (self.resolveWait) {
+                                    self.resolveWait({
+                                        success: true,
+                                        images: []
+                                    });
                                 }
                             }
                         } catch (e) {
@@ -392,6 +539,269 @@
 
             Utils.log('FAIL - Khong tim thay nut gui', 'error');
             return false;
+        },
+
+        // Upload anh reference tu base64
+        // base64Data: string base64 cua anh (khong co prefix data:image/...)
+        // filename: ten file (vd: nvc.png)
+
+        // Trigger consent dialog khi bat dau du an moi
+        // Flow: Click ADD -> Click Upload -> Click "Tôi đồng ý" -> ESC 2 lan
+        triggerConsent: async () => {
+            if (STATE.consentTriggered) {
+                Utils.log('[CONSENT] Da trigger truoc do, skip', 'info');
+                return true;
+            }
+
+            Utils.log('[CONSENT] Bat dau trigger consent...', 'info');
+
+            // Step 1: Click ADD
+            const addButtons = document.querySelectorAll('i.google-symbols');
+            let addBtn = null;
+            for (const btn of addButtons) {
+                if (btn.textContent.trim() === 'add') {
+                    addBtn = btn;
+                    break;
+                }
+            }
+
+            if (addBtn) {
+                addBtn.click();
+                Utils.log('[CONSENT] Clicked ADD', 'info');
+                await Utils.sleep(500);
+            } else {
+                Utils.log('[CONSENT] Khong thay nut ADD', 'warn');
+                return false;
+            }
+
+            // Step 2: Click Upload (se trigger consent dialog)
+            const uploadBtns = document.querySelectorAll('button');
+            let uploadBtn = null;
+            for (const btn of uploadBtns) {
+                if (btn.textContent.includes('Tải lên')) {
+                    uploadBtn = btn;
+                    break;
+                }
+            }
+
+            if (uploadBtn) {
+                uploadBtn.click();
+                Utils.log('[CONSENT] Clicked Upload - Cho dialog...', 'info');
+                await Utils.sleep(800);
+            }
+
+            // Step 3: Click "Tôi đồng ý" neu co
+            const buttons = document.querySelectorAll('button');
+            let foundConsent = false;
+            for (const btn of buttons) {
+                if (btn.textContent.trim() === 'Tôi đồng ý') {
+                    btn.click();
+                    Utils.log('[CONSENT] Clicked "Tôi đồng ý"', 'success');
+                    foundConsent = true;
+                    await Utils.sleep(500);
+                    break;
+                }
+            }
+
+            if (!foundConsent) {
+                Utils.log('[CONSENT] Khong thay dialog (co the da dong y truoc do)', 'info');
+            }
+
+            // Step 4: ESC 2 lan de dong file dialog
+            for (let i = 0; i < 2; i++) {
+                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+                await Utils.sleep(300);
+            }
+            Utils.log('[CONSENT] ESC 2 lan - Done', 'success');
+
+            STATE.consentTriggered = true;
+            return true;
+        },
+
+        // Helper: Check va click "Tôi đồng ý" neu xuat hien
+        checkAndClickConsent: async () => {
+            const buttons = document.querySelectorAll('button');
+            for (const btn of buttons) {
+                const text = btn.textContent.trim();
+                if (text === 'Tôi đồng ý' || text === 'Đồng ý' || text === 'I agree' || text === 'Agree') {
+                    btn.click();
+                    Utils.log('[CONSENT] Clicked consent button: ' + text, 'success');
+                    await Utils.sleep(500);
+                    return true;
+                }
+            }
+            return false;
+        },
+
+        uploadReferenceImage: async (base64Data, filename) => {
+            Utils.log(`[UPLOAD] Bat dau upload reference: ${filename}`, 'info');
+
+            // Step 1: Click nut "add" (icon add)
+            const addButtons = document.querySelectorAll('i.google-symbols');
+            let addBtn = null;
+            for (const btn of addButtons) {
+                if (btn.textContent.trim() === 'add') {
+                    addBtn = btn;
+                    break;
+                }
+            }
+
+            if (addBtn) {
+                addBtn.click();
+                Utils.log('[UPLOAD] Clicked ADD button', 'success');
+                await Utils.sleep(500);
+                // Check consent sau khi click ADD
+                await UI.checkAndClickConsent();
+            } else {
+                Utils.log('[UPLOAD] Khong tim thay nut ADD', 'error');
+                return false;
+            }
+
+            // Step 2: Click nut "upload"
+            const uploadBtns = document.querySelectorAll('button');
+            let uploadBtn = null;
+            for (const btn of uploadBtns) {
+                const text = btn.textContent || '';
+                if (text.includes('Tải lên') || text.includes('upload') || text.includes('Upload')) {
+                    uploadBtn = btn;
+                    break;
+                }
+            }
+
+            if (uploadBtn) {
+                uploadBtn.click();
+                Utils.log('[UPLOAD] Clicked UPLOAD button', 'success');
+                await Utils.sleep(800);
+                // Check consent sau khi click Upload - day la cho hay xuat hien nhat!
+                await UI.checkAndClickConsent();
+            } else {
+                Utils.log('[UPLOAD] Khong tim thay nut UPLOAD', 'error');
+                return false;
+            }
+
+            // Step 3: Tim input file - doi them va check consent
+            await Utils.sleep(500);
+            await UI.checkAndClickConsent();
+
+            let fileInput = document.querySelector('input[type="file"]');
+
+            // Neu khong tim thay, thu doi them va check consent
+            if (!fileInput) {
+                Utils.log('[UPLOAD] Chua thay file input, doi them...', 'info');
+                for (let i = 0; i < 5; i++) {
+                    await Utils.sleep(500);
+                    await UI.checkAndClickConsent();
+                    fileInput = document.querySelector('input[type="file"]');
+                    if (fileInput) break;
+                }
+            }
+
+            if (!fileInput) {
+                Utils.log('[UPLOAD] Khong tim thay file input', 'error');
+                // ESC de dong dialog neu co
+                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+                return false;
+            }
+
+            // Step 4: Tao File tu base64 va set vao input
+            try {
+                // Decode base64 to binary
+                const byteCharacters = atob(base64Data);
+                const byteNumbers = new Array(byteCharacters.length);
+                for (let i = 0; i < byteCharacters.length; i++) {
+                    byteNumbers[i] = byteCharacters.charCodeAt(i);
+                }
+                const byteArray = new Uint8Array(byteNumbers);
+
+                // Xac dinh MIME type tu filename
+                let mimeType = 'image/png';
+                if (filename.endsWith('.jpg') || filename.endsWith('.jpeg')) {
+                    mimeType = 'image/jpeg';
+                } else if (filename.endsWith('.webp')) {
+                    mimeType = 'image/webp';
+                }
+
+                // Tao File object
+                const file = new File([byteArray], filename, { type: mimeType });
+
+                // Set file vao input bang DataTransfer
+                const dataTransfer = new DataTransfer();
+                dataTransfer.items.add(file);
+                fileInput.files = dataTransfer.files;
+
+                // Trigger change event
+                fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+                fileInput.dispatchEvent(new Event('input', { bubbles: true }));
+
+                Utils.log(`[UPLOAD] Da inject file: ${filename} (${(byteArray.length / 1024).toFixed(1)} KB)`, 'success');
+
+                // Step 5: Doi va click nut "Cắt và lưu" - check consent trong khi doi
+                await Utils.sleep(1000);
+                await UI.checkAndClickConsent();
+
+                let cropBtn = null;
+                for (let attempt = 0; attempt < 10; attempt++) {
+                    // Check consent moi lan loop
+                    await UI.checkAndClickConsent();
+
+                    const buttons = document.querySelectorAll('button');
+                    for (const btn of buttons) {
+                        if (btn.textContent.includes('Cắt và lưu')) {
+                            cropBtn = btn;
+                            break;
+                        }
+                    }
+                    if (cropBtn) break;
+                    await Utils.sleep(500);
+                }
+
+                if (cropBtn) {
+                    cropBtn.click();
+                    Utils.log('[UPLOAD] Clicked "Cắt và lưu"', 'success');
+                    await Utils.sleep(500);
+                    // Check consent sau khi cat va luu
+                    await UI.checkAndClickConsent();
+                } else {
+                    Utils.log('[UPLOAD] Khong tim thay nut "Cắt và lưu" (co the khong can)', 'warn');
+                }
+
+                // Step 6: Doi loading xong - dem so div co opacity: 1 trong .sc-51248dda-0
+                Utils.log('[UPLOAD] Doi anh load...', 'info');
+                const countLoadedImages = () => {
+                    const container = document.querySelector('.sc-51248dda-0');
+                    if (!container) return 0;
+                    const divs = container.querySelectorAll('div[style*="opacity: 1"]');
+                    return divs.length;
+                };
+
+                const initialCount = countLoadedImages();
+                Utils.log(`[UPLOAD] Initial loaded count: ${initialCount}`, 'info');
+
+                // Doi so luong tang len (max 20 giay) - check consent trong khi doi
+                for (let i = 0; i < 40; i++) {
+                    // Check consent moi 2 giay
+                    if (i % 4 === 0) {
+                        await UI.checkAndClickConsent();
+                    }
+
+                    const currentCount = countLoadedImages();
+                    if (currentCount > initialCount) {
+                        Utils.log(`[UPLOAD] Anh da load! Count: ${initialCount} -> ${currentCount}`, 'success');
+                        break;
+                    }
+                    await Utils.sleep(500);
+                }
+
+                // Doi them 1 chut de dam bao
+                await Utils.sleep(1000);
+                await UI.checkAndClickConsent();
+
+                Utils.log(`[UPLOAD] Hoan thanh: ${filename}`, 'success');
+                return true;
+            } catch (e) {
+                Utils.log(`[UPLOAD] Loi khi upload: ${e.message}`, 'error');
+                return false;
+            }
         }
     };
 
@@ -400,16 +810,18 @@
     // =========================================================================
     const Runner = {
         // Xu ly 1 prompt
-        // item co the la string hoac {sceneId, prompt}
+        // item co the la string hoac {sceneId, prompt, referenceFiles}
         processOnePrompt: async (item, index) => {
             // Parse item
-            let prompt, sceneId;
+            let prompt, sceneId, referenceFiles;
             if (typeof item === 'string') {
                 prompt = item;
                 sceneId = `scene_${String(index + 1).padStart(3, '0')}`;
+                referenceFiles = [];
             } else {
                 prompt = item.prompt;
                 sceneId = item.sceneId || item.scene_id || `scene_${String(index + 1).padStart(3, '0')}`;
+                referenceFiles = item.referenceFiles || item.reference_files || [];
             }
 
             STATE.currentPrompt = prompt;
@@ -418,13 +830,34 @@
 
             Utils.log(`\n━━━ [${index + 1}/${STATE.promptQueue.length}] ${sceneId} ━━━`, 'info');
 
-            // NOTE: 1 Du an = 1 Voice
-            // Chi can click "Du an moi" 1 lan o dau (trong VE3.setup())
-            // Cac prompt tiep theo chi can gui trong cung du an
+            // Log reference files info (reference images da duoc upload truoc qua Python)
+            if (referenceFiles && referenceFiles.length > 0) {
+                Utils.log(`[REF] Using ${referenceFiles.length} reference(s): ${referenceFiles.join(', ')}`, 'info');
+            } else {
+                Utils.log(`[REF] No reference files`, 'info');
+            }
 
-            // 1. Dien prompt
-            Utils.log('Dien prompt...', 'info');
-            if (!UI.setPrompt(prompt)) {
+            // =====================================================================
+            // Build JSON prompt - Them reference annotation vao prompt
+            // Reference images da duoc upload truoc qua VE3.uploadReferences()
+            // Prompt tu Excel da co filename annotation: "James (nv1.png) walking..."
+            // =====================================================================
+            let textToSend;
+
+            const jsonPayload = {
+                prompt: prompt  // Prompt da co annotation tu Python
+            };
+            textToSend = JSON.stringify(jsonPayload);
+
+            if (referenceFiles && referenceFiles.length > 0) {
+                Utils.log(`[JSON MODE] Prompt with ${referenceFiles.length} reference(s)`, 'info');
+            } else {
+                Utils.log(`[JSON MODE] Prompt without references`, 'info');
+            }
+            Utils.log(`JSON: ${textToSend.slice(0, 200)}...`, 'info');
+
+            // 1. Dien prompt (JSON hoac text)
+            if (!UI.setPrompt(textToSend)) {
                 return { success: false, error: 'Cannot set prompt' };
             }
 
@@ -455,7 +888,8 @@
                 STATE.onPromptComplete(index, prompt, result);
             }
 
-            return result;
+            // Them prompt_json vao result de Python co the luu vao Excel
+            return { ...result, prompt_json: textToSend };
         },
 
         // Chay tat ca prompts trong queue
@@ -473,6 +907,7 @@
             const total = STATE.promptQueue.length;
             let success = 0;
             let failed = 0;
+            const results = []; // Luu chi tiet result de tra ve cho Python
 
             Utils.log(`\n${'═'.repeat(50)}`, 'info');
             Utils.log(`BẮT ĐẦU TẠO ${total} ẢNH`, 'info');
@@ -486,6 +921,7 @@
                 }
 
                 const result = await Runner.processOnePrompt(STATE.promptQueue[i], i);
+                results.push(result); // Luu lai result (bao gom prompt_json)
 
                 if (result.success) {
                     success++;
@@ -513,7 +949,13 @@
                 STATE.onAllComplete({ success, failed, total: STATE.downloadedImages });
             }
 
-            return { success, failed };
+            // Tra ve ket qua chi tiet neu chi co 1 prompt (cho Python)
+            // Bao gom prompt_json de luu vao Excel
+            if (total === 1 && results.length === 1) {
+                return results[0];
+            }
+
+            return { success, failed, results };
         }
     };
 
@@ -564,9 +1006,18 @@
         },
 
         // Setup UI (click New Project + chon Generate Image)
-        // Flow giong token code: New Project -> 5s -> Select Image Mode -> 3s -> Focus textarea -> 1s
+        // CHI CHAY 1 LAN - giu nguyen project de reference images hoat dong!
         setup: async () => {
-            Utils.log('=== SETUP UI ===', 'info');
+            // QUAN TRONG: Chi setup 1 lan! Khong mo project moi nua!
+            if (STATE.isSetupDone) {
+                Utils.log('Setup da chay roi, skip (giu nguyen project)', 'info');
+                // Chi can focus textarea
+                await UI.focusTextarea();
+                await Utils.sleep(500);
+                return;
+            }
+
+            Utils.log('=== SETUP UI (LAN DAU) ===', 'info');
 
             // 1. Click "Du an moi"
             Utils.log('Buoc 1: Click Du an moi...', 'info');
@@ -592,7 +1043,14 @@
             Utils.log('Doi 1s...', 'wait');
             await Utils.sleep(1000);
 
-            Utils.log('=== SETUP XONG - San sang gui prompt ===', 'success');
+            // 7. LUU PROJECT URL
+            STATE.projectUrl = window.location.href;
+            Utils.log(`Project URL: ${STATE.projectUrl}`, 'success');
+
+            // 8. Danh dau da setup xong
+            STATE.isSetupDone = true;
+
+            Utils.log('=== SETUP XONG - TAT CA ANH SE DUNG CUNG PROJECT ===', 'success');
         },
 
         // Callbacks
@@ -608,6 +1066,113 @@
         destroy: () => {
             FetchHook.destroy();
             STATE.isInitialized = false;
+            STATE.isSetupDone = false;
+            STATE.projectUrl = '';
+            STATE.mediaNames = {};
+        },
+
+        // NEW: Lay project URL hien tai
+        getProjectUrl: () => {
+            return STATE.projectUrl || window.location.href;
+        },
+
+        // NEW: Lay tat ca media_names da luu
+        getMediaNames: () => {
+            return { ...STATE.mediaNames };
+        },
+
+        // NEW: Lay media info (mediaName + seed) cho 1 scene_id
+        getMediaInfo: (sceneId) => {
+            const info = STATE.mediaNames[sceneId];
+            // Ho tro ca format cu (string) va moi (object)
+            if (typeof info === 'string') {
+                return { mediaName: info, seed: null };
+            }
+            return info || null;
+        },
+
+        // Legacy: Lay chi mediaName (tuong thich nguoc)
+        getMediaName: (sceneId) => {
+            const info = STATE.mediaNames[sceneId];
+            if (typeof info === 'string') return info;
+            return info?.mediaName || null;
+        },
+
+        // NEW: Set media info (mediaName + seed) cho 1 scene_id
+        setMediaName: (sceneId, mediaName, seed = null) => {
+            STATE.mediaNames[sceneId] = { mediaName, seed };
+            Utils.log(`Set mediaInfo for ${sceneId}: mediaName=${mediaName ? mediaName.slice(0,40)+'...' : 'NONE'}, seed=${seed}`, 'success');
+        },
+
+        // NEW: Set media_names tu Python (load tu cache)
+        // Ho tro ca format cu (string) va moi (object with mediaName + seed)
+        setMediaNames: (mediaNames) => {
+            STATE.mediaNames = { ...STATE.mediaNames, ...mediaNames };
+            Utils.log(`Loaded ${Object.keys(mediaNames).length} media_names from cache`, 'success');
+        },
+
+        // NEW: Danh dau da setup xong (dung khi navigate ve project cu)
+        markSetupDone: () => {
+            STATE.isSetupDone = true;
+            STATE.projectUrl = window.location.href;
+            Utils.log('Marked setup as done (existing project)', 'success');
+        },
+
+        // NEW: Trigger consent dialog (goi truoc khi upload lan dau)
+        triggerConsent: async () => {
+            return await UI.triggerConsent();
+        },
+
+        // NEW: Upload anh reference tu base64
+        // Python se doc file local, convert sang base64, roi goi ham nay
+        // base64Data: string base64 (khong co prefix data:image/...)
+        // filename: ten file (vd: nvc.png)
+        uploadReference: async (base64Data, filename) => {
+            return await UI.uploadReferenceImage(base64Data, filename);
+        },
+
+        // NEW: Upload nhieu anh reference
+        // images: [{base64: '...', filename: 'nvc.png'}, ...]
+        uploadReferences: async (images) => {
+            Utils.log(`[UPLOAD] Bat dau upload ${images.length} reference images...`, 'info');
+
+            // Trigger consent truoc khi upload (chi lan dau)
+            await UI.triggerConsent();
+
+            let success = 0;
+            let errors = [];
+
+            for (let i = 0; i < images.length; i++) {
+                const img = images[i];
+                Utils.log(`[UPLOAD] Uploading ${i+1}/${images.length}: ${img.filename}`, 'info');
+
+                try {
+                    const result = await UI.uploadReferenceImage(img.base64, img.filename);
+                    if (result) {
+                        success++;
+                        Utils.log(`[UPLOAD] ✓ ${img.filename} thanh cong`, 'success');
+                    } else {
+                        errors.push(`${img.filename}: upload returned false`);
+                        Utils.log(`[UPLOAD] ✗ ${img.filename} that bai`, 'error');
+                    }
+                } catch (e) {
+                    errors.push(`${img.filename}: ${e.message}`);
+                    Utils.log(`[UPLOAD] ✗ ${img.filename} exception: ${e.message}`, 'error');
+                }
+
+                // Delay nho giua cac upload
+                if (i < images.length - 1) {
+                    await Utils.sleep(1000);
+                }
+            }
+
+            Utils.log(`[UPLOAD] Hoan thanh: ${success}/${images.length} thanh cong`, success === images.length ? 'success' : 'warn');
+
+            if (errors.length > 0) {
+                Utils.log(`[UPLOAD] Errors: ${errors.join(', ')}`, 'error');
+            }
+
+            return success > 0;  // Return true if at least 1 upload succeeded
         },
 
         // Help

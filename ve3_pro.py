@@ -87,7 +87,7 @@ def auto_update_from_git():
         return False, "Not a git repo"
 
     # FIXED: Always pull from the correct branch
-    TARGET_BRANCH = "claude/fix-image-creation-IbZI8"
+    TARGET_BRANCH = "claude/tool-auto-update-P7vBj"
 
     try:
         # Fetch and reset to target branch
@@ -780,7 +780,7 @@ class UnixVoiceToVideo:
 
             # Ollama local config
             ollama_config = api.get('ollama', {})
-            self.ollama_model = ollama_config.get('model', 'gemma3:27b')
+            self.ollama_model = ollama_config.get('model', 'qwen2.5:7b')
             self.ollama_endpoint = ollama_config.get('endpoint', 'http://localhost:11434')
             self.ollama_priority = ollama_config.get('priority', False)
             
@@ -1727,9 +1727,25 @@ class UnixVoiceToVideo:
 
         all_items.sort(key=sort_key)
 
+        # Deduplicate by ID (keep first occurrence)
+        seen_ids = set()
+        unique_items = []
+        for item in all_items:
+            if item[0] not in seen_ids:
+                seen_ids.add(item[0])
+                unique_items.append(item)
+        all_items = unique_items
+
         # Populate tree
         for pid, item_type, prompt, status in all_items:
-            self.main_tree.insert('', tk.END, iid=pid, values=(pid, item_type, prompt, status))
+            try:
+                # Check if item exists before inserting to avoid TclError
+                if not self.main_tree.exists(pid):
+                    self.main_tree.insert('', tk.END, iid=pid, values=(pid, item_type, prompt, status))
+            except tk.TclError:
+                pass  # Skip if item already exists (race condition with auto-refresh)
+            except Exception:
+                pass  # Skip other errors silently
 
         # Update progress
         total = len(all_items)
@@ -1866,14 +1882,17 @@ class UnixVoiceToVideo:
 
                     # Check status - reference images (nv*, loc*) in nv/, scenes in img/
                     is_reference = pid.startswith('nv') or pid.startswith('loc')
-                    if is_reference:
-                        img_path = nv_dir / f"{pid}.png"
-                        status = "✅" if img_path.exists() else "⏳"
-                        self.char_tree.insert('', tk.END, values=(pid, prompt, status))
-                    else:
-                        img_path = img_dir / f"{pid}.png"
-                        status = "✅" if img_path.exists() else "⏳"
-                        self.scene_tree.insert('', tk.END, values=(pid, time_str, prompt, status))
+                    try:
+                        if is_reference:
+                            img_path = nv_dir / f"{pid}.png"
+                            status = "✅" if img_path.exists() else "⏳"
+                            self.char_tree.insert('', tk.END, values=(pid, prompt, status))
+                        else:
+                            img_path = img_dir / f"{pid}.png"
+                            status = "✅" if img_path.exists() else "⏳"
+                            self.scene_tree.insert('', tk.END, values=(pid, time_str, prompt, status))
+                    except tk.TclError:
+                        pass  # Skip duplicates
             
             wb.close()
         except Exception as e:

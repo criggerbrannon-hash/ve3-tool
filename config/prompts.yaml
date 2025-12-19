@@ -63,6 +63,7 @@ analyze_story: |
   ## OUTPUT FORMAT - PURE JSON (khong markdown):
   ## IMPORTANT: ALL names MUST be in ENGLISH (not Vietnamese)!
   ## IMPORTANT: Create MULTIPLE character ages and ALL locations for visual variety!
+  ## IMPORTANT: DO NOT add nationality/ethnicity (Vietnamese, American, etc.) in portrait_prompt unless story EXPLICITLY mentions it!
 
   {{
     "production_info": {{
@@ -575,7 +576,7 @@ directors_shooting_plan: |
 
   ## CHILD CHARACTER RULES:
   - Children (nvc1, etc.) should NOT be in reference_files (API policy)
-  - Describe children INLINE in img_prompt: "(Child: 8yo Vietnamese boy, thin, hopeful eyes)"
+  - Describe children INLINE in img_prompt: "(Child: 8yo boy, thin, hopeful eyes)"
   - Only use adult references: nv1_young.png, loc_xxx.png
 
   ## INPUT:
@@ -673,7 +674,7 @@ directors_shooting_plan: |
               "camera_angle": "Low angle, 24mm - makes courthouse imposing",
               "characters_in_shot": ["nvc"],
               "reference_files": ["nvc.png", "loc_courthouse.png"],
-              "img_prompt": "Wide shot, low angle, 24mm lens. IMPOSING Vietnamese courthouse with massive columns TOWERING over scene. TINY figure of 30yo man sitting ALONE on steps, hunched, defeated, holding crumpled papers. OVERCAST sky, OMINOUS atmosphere. Cold, desaturated colors. Expression of UTTER DEVASTATION. Cinematic, 4K photorealistic."
+              "img_prompt": "Wide shot, low angle, 24mm lens. IMPOSING courthouse with massive columns TOWERING over scene. TINY figure of 30yo man sitting ALONE on steps, hunched, defeated, holding crumpled papers. OVERCAST sky, OMINOUS atmosphere. Cold, desaturated colors. Expression of UTTER DEVASTATION. Cinematic, 4K photorealistic."
             }},
             {{
               "shot_number": 2,
@@ -684,7 +685,7 @@ directors_shooting_plan: |
               "camera_angle": "Slight low angle, 85mm - dramatic",
               "characters_in_shot": ["nvc"],
               "reference_files": ["nvc.png"],
-              "img_prompt": "Close-up, 85mm lens, slight low angle. 30yo Vietnamese man's face, eyes RED and WELLING with tears, jaw CLENCHED tight, TREMBLING lips. Expression of DISBELIEF and BETRAYAL - 'how could my own mother do this?' Soft cold light. Cinematic, 4K photorealistic."
+              "img_prompt": "Close-up, 85mm lens, slight low angle. 30yo man's face, eyes RED and WELLING with tears, jaw CLENCHED tight, TREMBLING lips. Expression of DISBELIEF and BETRAYAL - 'how could my own mother do this?' Soft cold light. Cinematic, 4K photorealistic."
             }}
           ]
         }},
@@ -711,7 +712,7 @@ directors_shooting_plan: |
               "camera_angle": "Eye level, 24mm - intimate establishing",
               "characters_in_shot": ["nv1_young", "nvc1"],
               "reference_files": ["nv1_young.png", "loc_old_house.png"],
-              "img_prompt": "Wide shot, 24mm lens, GOLDEN HOUR warm light. Vietnamese countryside, small THATCHED-ROOF HOUSE with HOLES in roof, but WARM light glowing from inside. 32yo mother in worn but clean clothes, hand lovingly on young son's shoulder. NOSTALGIC, slightly faded warm colors. Despite poverty, feeling of LOVE and TOGETHERNESS. Cinematic, 4K photorealistic. (Child: 8yo Vietnamese boy, thin but bright-eyed, looking up at mother with trust)"
+              "img_prompt": "Wide shot, 24mm lens, GOLDEN HOUR warm light. Rural countryside, small THATCHED-ROOF HOUSE with HOLES in roof, but WARM light glowing from inside. 32yo mother in worn but clean clothes, hand lovingly on young son's shoulder. NOSTALGIC, slightly faded warm colors. Despite poverty, feeling of LOVE and TOGETHERNESS. Cinematic, 4K photorealistic. (Child: 8yo boy, thin but bright-eyed, looking up at mother with trust)"
             }}
           ]
         }}
@@ -728,6 +729,9 @@ directors_shooting_plan: |
   5. Children (nvc1) should be DESCRIBED in img_prompt, NOT in reference_files
   6. Every img_prompt MUST end with the global_style
   7. Make it feel like a FILM with visual variety!
+  8. DO NOT add nationality/ethnicity (Vietnamese, American, etc.) unless EXPLICITLY mentioned in the story
+     - If story doesn't mention nationality, just describe features (hair color, skin tone, etc.)
+     - Only add nationality when it's RELEVANT to the story
 
   ## ⚠️ LOCATION CONSISTENCY - CRITICAL BUG FIX! ⚠️
 
@@ -891,7 +895,7 @@ generate_scenes: |
         "characters_used": ["nv1"],
         "location_used": "loc1",
         "reference_files": ["nv1.png", "loc1.png"],
-        "img_prompt": "Wide shot, 24mm lens. Minh, 32-year-old Vietnamese man with short black side-parted hair, oval face, light tan skin, wearing navy blue polo shirt, WALKING SLOWLY toward the window, his back partially turned to viewer. Modern apartment living room, beige sofa, wooden coffee table, large window with city view, warm afternoon sunlight streaming in. Cinematic, 4K photorealistic, shot on Arri Alexa, soft film grain, natural lighting.",
+        "img_prompt": "Wide shot, 24mm lens. Minh, 32-year-old man with short black side-parted hair, oval face, light tan skin, wearing navy blue polo shirt, WALKING SLOWLY toward the window, his back partially turned to viewer. Modern apartment living room, beige sofa, wooden coffee table, large window with city view, warm afternoon sunlight streaming in. Cinematic, 4K photorealistic, shot on Arri Alexa, soft film grain, natural lighting.",
         "video_prompt": "Slow tracking shot following Minh as he walks to window."
       }},
       {{
@@ -899,7 +903,7 @@ generate_scenes: |
         "characters_used": ["nv1", "nv2"],
         "location_used": "loc1",
         "reference_files": ["nv1.png", "nv2.png", "loc1.png"],
-        "img_prompt": "Over-the-shoulder shot from behind Lan, 50mm lens. Minh, 32-year-old Vietnamese man with short black side-parted hair, sitting on beige sofa, LEANING FORWARD while speaking, hands gesturing. In soft focus foreground: back of Lan's head, long black hair. Two people in conversation. Modern apartment living room, warm afternoon light. Cinematic, 4K photorealistic, natural lighting.",
+        "img_prompt": "Over-the-shoulder shot from behind Lan, 50mm lens. Minh, 32-year-old man with short black side-parted hair, sitting on beige sofa, LEANING FORWARD while speaking, hands gesturing. In soft focus foreground: back of Lan's head, long black hair. Two people in conversation. Modern apartment living room, warm afternoon light. Cinematic, 4K photorealistic, natural lighting.",
         "video_prompt": "Minh speaks animatedly, hands moving to emphasize points."
       }},
       {{

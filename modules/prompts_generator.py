@@ -10,7 +10,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 from datetime import timedelta
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Callable
 import threading
 
 import requests
@@ -55,7 +55,7 @@ class MultiAIClient:
         Config format:
         {
             "deepseek_api_keys": ["key1"],
-            "ollama_model": "gemma3:27b",  # Optional: local model fallback
+            "ollama_model": "qwen2.5:7b",  # Optional: local model fallback
         }
 
         auto_filter: Tự động test và loại bỏ API keys không hoạt động
@@ -64,7 +64,7 @@ class MultiAIClient:
         self.deepseek_keys = [k for k in config.get("deepseek_api_keys", []) if k and k.strip()]
 
         # Ollama model (fallback)
-        self.ollama_model = config.get("ollama_model", "gemma3:27b")
+        self.ollama_model = config.get("ollama_model", "qwen2.5:7b")
         self.ollama_endpoint = config.get("ollama_endpoint", "http://localhost:11434")
         self.OLLAMA_URL = f"{self.ollama_endpoint}/api/generate"
         self.ollama_available = False
@@ -310,7 +310,7 @@ class MultiAIClient:
             "options": {
                 "temperature": temperature,
                 "num_predict": max_tokens,  # Higher for Director's Shooting Plan
-                "num_ctx": 32768,  # Context window - gemma3:27b supports up to 128k
+                "num_ctx": 32768,  # Context window - qwen2.5:7b supports up to 128k
             }
         }
 
@@ -322,7 +322,11 @@ class MultiAIClient:
 
         if resp.status_code == 200:
             result = resp.json()
-            return result.get("response", "")
+            response_text = result.get("response", "")
+            if not response_text or not response_text.strip():
+                self.logger.warning(f"[Ollama] Returned empty response. Full result: {result}")
+                raise ValueError("Ollama returned empty response")
+            return response_text
         else:
             raise requests.RequestException(f"Ollama API error {resp.status_code}: {resp.text[:200]}")
 
@@ -661,6 +665,128 @@ class PromptGenerator:
 
         return filtered
 
+    def _add_filename_annotations_to_prompt(
+        self,
+        img_prompt: str,
+        reference_files: list,
+        characters: list = None,
+        locations: list = None
+    ) -> str:
+        """
+        Add filename annotations to img_prompt for Flow to match uploaded reference images.
+
+        Args:
+            img_prompt: Original prompt
+            reference_files: List of reference files (e.g., ["nvc.png", "nv1.png", "loc_apartment.png"])
+            characters: List of Character objects (optional, for better matching)
+            locations: List of Location objects (optional, for better matching)
+
+        Returns:
+            Updated prompt with filename annotations
+
+        Example:
+            Input:  "A 30-year-old man walking in the living room"
+            Output: "A 30-year-old man (nvc.png) walking in the living room (loc_apartment.png)"
+        """
+        if not img_prompt or not reference_files:
+            return img_prompt
+
+        result = img_prompt
+        annotations_added = []
+
+        # Build lookup maps
+        char_map = {}  # id -> character_lock
+        loc_map = {}   # id -> location_lock
+
+        if characters:
+            for c in characters:
+                char_map[c.id] = c.character_lock or c.vietnamese_prompt or c.name
+
+        if locations:
+            for loc in locations:
+                loc_map[loc.id] = loc.location_lock or loc.name
+
+        # Add annotations for each reference file
+        for ref_file in reference_files:
+            # Ensure filename has extension
+            if not any(ref_file.endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.webp']):
+                ref_file = f"{ref_file}.png"
+
+            ref_id = ref_file.replace('.png', '').replace('.jpg', '').replace('.jpeg', '').replace('.webp', '')
+            annotation = f"({ref_file})"
+
+            # Check if annotation already exists
+            if annotation in result:
+                annotations_added.append(ref_file)
+                continue
+
+            # Try to find where to insert annotation
+            inserted = False
+
+            # Method 1: Match character_lock/location_lock in prompt
+            if ref_id in char_map and char_map[ref_id]:
+                desc = char_map[ref_id]
+                # Try to find description in prompt and add annotation after
+                match_len = min(30, len(desc))
+                if match_len > 5 and desc[:match_len] in result:
+                    # Find end of description (next comma, period, or clause)
+                    idx = result.find(desc[:match_len])
+                    if idx >= 0:
+                        # Find the end of this character description
+                        end_idx = idx + match_len
+                        for end_char in [',', '.', ' in ', ' at ', ' with ', ' and ']:
+                            pos = result.find(end_char, end_idx)
+                            if pos > 0 and pos < end_idx + 100:
+                                end_idx = pos
+                                break
+                        # Insert annotation
+                        result = result[:end_idx] + f" {annotation}" + result[end_idx:]
+                        inserted = True
+                        annotations_added.append(ref_file)
+
+            if not inserted and ref_id in loc_map and loc_map[ref_id]:
+                desc = loc_map[ref_id]
+                match_len = min(20, len(desc))
+                if match_len > 5 and desc[:match_len] in result:
+                    idx = result.find(desc[:match_len])
+                    if idx >= 0:
+                        end_idx = idx + match_len
+                        for end_char in [',', '.', ' with ', ' and ']:
+                            pos = result.find(end_char, end_idx)
+                            if pos > 0 and pos < end_idx + 80:
+                                end_idx = pos
+                                break
+                        result = result[:end_idx] + f" {annotation}" + result[end_idx:]
+                        inserted = True
+                        annotations_added.append(ref_file)
+
+            # Method 2: If not inserted, will be added at the end as consolidated annotation
+            if not inserted:
+                annotations_added.append(ref_file)
+
+        # Method 3: Add consolidated reference annotation at the end
+        # This ensures ALL reference files are mentioned even if not inserted inline
+        missing_annotations = [f for f in reference_files if f"({f}" not in result and f not in [a for a in annotations_added if f"({a})" in result]]
+
+        # Ensure all refs have .png extension for checking
+        all_refs_normalized = []
+        for ref in reference_files:
+            if not any(ref.endswith(ext) for ext in ['.png', '.jpg', '.jpeg', '.webp']):
+                ref = f"{ref}.png"
+            all_refs_normalized.append(ref)
+
+        # Check which refs are NOT yet in the result
+        refs_not_in_result = [ref for ref in all_refs_normalized if f"({ref})" not in result]
+
+        if refs_not_in_result:
+            # Add as consolidated annotation at end
+            refs_str = ", ".join(refs_not_in_result)
+            # Clean up ending
+            result = result.rstrip('. ')
+            result = f"{result} (reference: {refs_str})."
+
+        return result
+
     def _generate_content(self, prompt: str, temperature: float = 0.7, max_tokens: int = 8192) -> str:
         """Generate content using available AI providers (DeepSeek + Ollama)."""
         return self.ai_client.generate_content(prompt, temperature, max_tokens)
@@ -670,10 +796,10 @@ class PromptGenerator:
         Generate content với ưu tiên Ollama cho response dài (Director's Shooting Plan).
 
         DeepSeek có giới hạn max_tokens=8192, không đủ cho Director's Shooting Plan.
-        Ollama không có giới hạn tokens và gemma3:27b là model mạnh.
+        Ollama không có giới hạn tokens và qwen2.5:7b là model mạnh.
 
         Priority cho QUALITY:
-        1. Ollama (gemma3:27b) - Model mạnh, không giới hạn tokens, chất lượng cao
+        1. Ollama (qwen2.5:7b) - Model mạnh, không giới hạn tokens, chất lượng cao
         2. DeepSeek - Nếu không có Ollama, dùng với JSON repair
         """
         # Ưu tiên Ollama cho chất lượng tốt nhất
@@ -697,16 +823,20 @@ class PromptGenerator:
         self,
         project_dir: Path,
         code: str,
-        overwrite: bool = False
+        overwrite: bool = False,
+        on_characters_ready: Callable = None
     ) -> bool:
         """
         Tạo prompts cho một project.
-        
+
         Args:
             project_dir: Path đến thư mục project
             code: Mã project
             overwrite: Nếu True, ghi đè prompts đã có
-            
+            on_characters_ready: Callback được gọi ngay khi characters được save
+                                 Signature: on_characters_ready(excel_path, proj_dir)
+                                 Cho phép caller bắt đầu tạo ảnh nhân vật song song
+
         Returns:
             True nếu thành công
         """
@@ -781,6 +911,16 @@ class PromptGenerator:
 
         workbook.save()
         self.logger.info(f"Đã lưu {len(characters)} nhân vật + {len(locations)} bối cảnh")
+
+        # === PARALLEL OPTIMIZATION ===
+        # Gọi callback để caller có thể bắt đầu tạo ảnh nhân vật SONG SONG
+        # trong khi vẫn tiếp tục tạo scene prompts
+        if on_characters_ready:
+            self.logger.info("[PARALLEL] Characters ready! Triggering character image generation...")
+            try:
+                on_characters_ready(excel_path, project_dir)
+            except Exception as e:
+                self.logger.warning(f"[PARALLEL] Callback error (non-fatal): {e}")
 
         # Step 1.5: Director's Treatment - Phân tích cấu trúc câu chuyện
         self.logger.info("=" * 50)
@@ -979,11 +1119,41 @@ class PromptGenerator:
                                 ref_files.append(char_id)
                         self.logger.debug(f"Scene {scene_data['scene_id']}: Using characters_in_scene: {chars_in_scene}")
 
-                # Thêm location đã dùng
+                # Thêm location đã dùng - MAP sang actual location ID
                 if location_used:
-                    loc_file = f"{location_used}.png" if not location_used.endswith('.png') else location_used
-                    if loc_file not in ref_files:
-                        ref_files.append(loc_file)
+                    # Tìm actual location ID từ locations list
+                    actual_loc_id = None
+
+                    # Nếu location_used đã là ID thực (có file tương ứng trong locations)
+                    for loc in locations:
+                        if loc.id == location_used:
+                            actual_loc_id = location_used
+                            break
+
+                    # Nếu không tìm thấy, location_used có thể là generic (loc1, loc2...)
+                    # Thử match theo index hoặc dùng location đầu tiên
+                    if not actual_loc_id and locations:
+                        # Nếu là loc1, loc2... thử parse index
+                        import re
+                        match = re.match(r'loc(\d+)', location_used)
+                        if match:
+                            idx = int(match.group(1)) - 1  # loc1 -> index 0
+                            if 0 <= idx < len(locations):
+                                actual_loc_id = locations[idx].id
+                                self.logger.debug(f"Scene: Mapped '{location_used}' to '{actual_loc_id}'")
+
+                        # Fallback: dùng location đầu tiên
+                        if not actual_loc_id:
+                            actual_loc_id = locations[0].id
+                            self.logger.debug(f"Scene: Fallback '{location_used}' to '{actual_loc_id}'")
+
+                    # Thêm vào ref_files nếu tìm được
+                    if actual_loc_id:
+                        loc_file = f"{actual_loc_id}.png" if not actual_loc_id.endswith('.png') else actual_loc_id
+                        if loc_file not in ref_files:
+                            ref_files.append(loc_file)
+                        # Cập nhật location_used thành actual ID
+                        location_used = actual_loc_id
 
                 if ref_files:
                     self.logger.debug(f"Scene {scene_data['scene_id']}: Auto-generated reference_files: {ref_files}")
@@ -1042,16 +1212,33 @@ class PromptGenerator:
             end_time = scene_data.get("end_time", "")
             duration = scene_data.get("duration_seconds", 0)
 
+            # === QUAN TRỌNG: Thêm filename annotations vào prompt ===
+            # Format: "A 30-year-old man (nvc.png) walking in the park (loc_park.png)"
+            # Giúp Flow match uploaded images với prompt
+            img_prompt = prompts.get("img_prompt", "")
+            video_prompt = prompts.get("video_prompt", "")
+            if ref_files:
+                img_prompt = self._add_filename_annotations_to_prompt(
+                    img_prompt, ref_files, characters, locations
+                )
+                video_prompt = self._add_filename_annotations_to_prompt(
+                    video_prompt, ref_files, characters, locations
+                )
+
+            # Lấy srt_start/srt_end với fallback sang start_time/end_time
+            srt_start_val = scene_data.get("srt_start") or start_time or ""
+            srt_end_val = scene_data.get("srt_end") or end_time or ""
+
             scene = Scene(
                 scene_id=scene_data["scene_id"],
                 start_time=start_time,          # Thời gian bắt đầu (HH:MM:SS,mmm)
                 end_time=end_time,              # Thời gian kết thúc (HH:MM:SS,mmm)
                 duration=round(duration, 2),    # Độ dài (giây)
-                srt_start=scene_data["srt_start"],
-                srt_end=scene_data["srt_end"],
-                srt_text=scene_data["text"][:500],  # Truncate nếu quá dài
-                img_prompt=prompts.get("img_prompt", ""),
-                video_prompt=prompts.get("video_prompt", ""),
+                srt_start=srt_start_val,        # Timestamp từ SRT
+                srt_end=srt_end_val,            # Timestamp từ SRT
+                srt_text=scene_data.get("text", "")[:500],  # Truncate nếu quá dài
+                img_prompt=img_prompt,
+                video_prompt=video_prompt,
                 status_img="pending",
                 status_vid="pending",
                 characters_used=chars_str,
@@ -1080,7 +1267,9 @@ class PromptGenerator:
         prompt = prompt_template.format(story_text=story_text[:8000])
 
         try:
-            response = self._generate_content(prompt, temperature=0.5)
+            # Dùng _generate_content_large để ưu tiên Ollama (không giới hạn tokens)
+            # DeepSeek chỉ có 8192 tokens output, không đủ cho analyze_story phức tạp
+            response = self._generate_content_large(prompt, temperature=0.5, max_tokens=16000)
 
             # Parse JSON từ response
             json_data = self._extract_json(response)
@@ -1567,7 +1756,7 @@ class PromptGenerator:
         prompt_template = get_smart_divide_scenes_prompt()
         if not prompt_template:
             self.logger.warning("Smart divide prompt not found, returning time-based scenes")
-            return self._format_time_based_scenes(time_based_scenes)
+            return self._format_time_based_scenes(time_based_scenes, locations=locations)
 
         # Get default global style if not provided
         if not global_style:
@@ -1602,7 +1791,7 @@ class PromptGenerator:
 
             if not json_data or "scenes" not in json_data:
                 self.logger.warning("[Smart Divide] AI không trả về scenes, dùng time-based")
-                return self._format_time_based_scenes(time_based_scenes)
+                return self._format_time_based_scenes(time_based_scenes, locations=locations)
 
             self.logger.info(f"[Smart Divide] AI trả về {len(json_data['scenes'])} scene analyses")
 
@@ -1652,11 +1841,35 @@ class PromptGenerator:
                 # KHÔNG DÙNG scene["text"] làm fallback - sẽ gây narration trong prompt!
                 final_visual = ai_img_prompt or ai_visual_moment or ""
 
+                # Map AI's location_id to actual location ID
+                ai_location = ai_data.get("location_id", "")
+                actual_location_id = ""
+                if ai_location:
+                    # Kiểm tra nếu ai_location là ID thực tế trong locations list
+                    for loc in locations:
+                        if loc.id == ai_location:
+                            actual_location_id = ai_location
+                            break
+                    # Nếu không tìm thấy, có thể AI trả về generic (loc1, loc2...)
+                    if not actual_location_id and locations:
+                        import re
+                        match = re.match(r'loc(\d+)', ai_location)
+                        if match:
+                            idx = int(match.group(1)) - 1  # loc1 -> index 0
+                            if 0 <= idx < len(locations):
+                                actual_location_id = locations[idx].id
+                        # Fallback: dùng location đầu tiên
+                        if not actual_location_id:
+                            actual_location_id = locations[0].id
+                elif locations:
+                    # AI không trả về location, dùng location đầu tiên
+                    actual_location_id = locations[0].id
+
                 final_scenes.append({
                     "scene_id": scene_id,
                     "scene_type": scene_type,  # NEW: Type of scene
                     "age_note": age_note,      # NEW: Age adjustment for flashbacks
-                    "location_id": ai_data.get("location_id", "loc1"),
+                    "location_id": actual_location_id,
                     "characters_in_scene": chars_in_scene,
                     "story_beat": ai_data.get("story_beat", ""),
                     "start_time": start_time,
@@ -1675,7 +1888,7 @@ class PromptGenerator:
 
         except Exception as e:
             self.logger.error(f"AI analysis failed: {e}, returning time-based scenes")
-            return self._format_time_based_scenes(time_based_scenes)
+            return self._format_time_based_scenes(time_based_scenes, locations=locations)
 
     def _force_split_scenes(self, scenes: List[Dict], srt_entries: List) -> List[Dict]:
         """Force split scenes that exceed max_duration."""
@@ -1736,8 +1949,13 @@ class PromptGenerator:
 
         return result
 
-    def _format_time_based_scenes(self, time_based_scenes: List[Dict], default_char: str = "nvc") -> List[Dict[str, Any]]:
+    def _format_time_based_scenes(self, time_based_scenes: List[Dict], default_char: str = "nvc", locations: List = None) -> List[Dict[str, Any]]:
         """Format time-based scenes khi không có AI analysis."""
+        # Lấy actual location ID từ locations list, không dùng generic loc1
+        actual_location_id = ""
+        if locations and len(locations) > 0:
+            actual_location_id = locations[0].id
+
         formatted = []
         for i, scene in enumerate(time_based_scenes):
             start_time = format_srt_time(scene["start_time"]) if isinstance(scene["start_time"], timedelta) else scene.get("srt_start", "00:00:00,000")
@@ -1746,7 +1964,7 @@ class PromptGenerator:
 
             formatted.append({
                 "scene_id": i + 1,
-                "location_id": "loc1",
+                "location_id": actual_location_id,
                 "characters_in_scene": [default_char],  # Default: nhân vật chính
                 "story_beat": "",
                 "start_time": start_time,
@@ -2111,15 +2329,19 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
         characters = characters or []
         locations = locations or []
 
-        # Build character description map
+        # Build character description map - THEM FILENAME ANNOTATION de Flow match anh reference
         char_desc = {}
         for c in characters:
-            char_desc[c.id] = c.character_lock or c.vietnamese_prompt or f"{c.name}"
+            desc = c.character_lock or c.vietnamese_prompt or f"{c.name}"
+            # Them annotation filename: "A 30-year-old man (nvc.png)"
+            char_desc[c.id] = f"{desc} ({c.id}.png)"
 
-        # Build location description map
+        # Build location description map - THEM FILENAME ANNOTATION
         loc_desc = {}
         for loc in locations:
-            loc_desc[loc.id] = loc.location_lock or loc.name
+            desc = loc.location_lock or loc.name
+            # Them annotation filename: "Modern apartment living room (loc_apartment.png)"
+            loc_desc[loc.id] = f"{desc} ({loc.id}.png)"
 
         style_suffix = global_style or "Cinematic, 4K photorealistic, natural lighting"
 
@@ -2144,7 +2366,30 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
                 # Cycle through variety for remaining scenes
                 shot_type = shot_types_cycle[(idx - 3) % len(shot_types_cycle)]
 
-            location_id = scene.get("location_id", "loc1")
+            # Map location_id to actual location ID, không dùng generic loc1
+            raw_location = scene.get("location_id", "")
+            location_id = ""
+            if raw_location:
+                # Kiểm tra nếu raw_location là ID thực tế trong locations list
+                for loc in locations:
+                    if loc.id == raw_location:
+                        location_id = raw_location
+                        break
+                # Nếu không tìm thấy, có thể là generic (loc1, loc2...)
+                if not location_id and locations:
+                    import re
+                    match = re.match(r'loc(\d+)', raw_location)
+                    if match:
+                        idx_loc = int(match.group(1)) - 1  # loc1 -> index 0
+                        if 0 <= idx_loc < len(locations):
+                            location_id = locations[idx_loc].id
+                    # Fallback: dùng location đầu tiên
+                    if not location_id:
+                        location_id = locations[0].id
+            elif locations:
+                # Không có location trong scene data, dùng location đầu tiên
+                location_id = locations[0].id
+
             chars_in_scene = scene.get("characters_in_scene", [])
 
             # Build character part
@@ -2197,14 +2442,25 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
                             parts.append(loc_part)
                         parts.append(style_suffix)
                         img_prompt = ". ".join([p for p in parts if p])
-                        # Build reference_files, filtering out children (API policy)
-                        all_refs = [f"{c}.png" for c in chars_in_scene] + ([f"{location_id}.png"] if location_id else [])
+
+                        # Build reference_files với actual location ID
+                        hook_actual_loc = None
+                        if location_id:
+                            if location_id in loc_desc:
+                                hook_actual_loc = location_id
+                            elif locations:
+                                hook_actual_loc = locations[0].id
+
+                        all_refs = [f"{c}.png" for c in chars_in_scene]
+                        if hook_actual_loc:
+                            all_refs.append(f"{hook_actual_loc}.png")
+
                         filtered_refs = self._filter_children_from_refs(all_refs)
                         result.append({
                             "img_prompt": img_prompt,
                             "video_prompt": img_prompt,
                             "characters_used": chars_in_scene,
-                            "location_used": location_id,
+                            "location_used": hook_actual_loc or location_id,
                             "reference_files": filtered_refs
                         })
                         continue  # Skip to next scene
@@ -2259,14 +2515,30 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
             img_prompt = ". ".join([p for p in parts if p])
 
             # Build reference_files, filtering out children (API policy)
-            all_refs = [f"{c}.png" for c in chars_in_scene] + ([f"{location_id}.png"] if location_id else [])
+            # QUAN TRONG: Dùng location ID thực tế từ locations list, không dùng generic loc1/loc2
+            actual_location_id = None
+            if location_id:
+                # Kiểm tra nếu location_id đã là ID thực (có trong loc_desc)
+                if location_id in loc_desc:
+                    actual_location_id = location_id
+                else:
+                    # location_id là generic (loc1, loc2...), tìm location phù hợp từ list
+                    # Ưu tiên: dùng location đầu tiên trong list nếu có
+                    if locations:
+                        actual_location_id = locations[0].id
+                        self.logger.debug(f"Scene {idx+1}: Mapped '{location_id}' to '{actual_location_id}'")
+
+            all_refs = [f"{c}.png" for c in chars_in_scene]
+            if actual_location_id:
+                all_refs.append(f"{actual_location_id}.png")
+
             filtered_refs = self._filter_children_from_refs(all_refs)
 
             result.append({
                 "img_prompt": img_prompt,
                 "video_prompt": img_prompt,
                 "characters_used": chars_in_scene,
-                "location_used": location_id,
+                "location_used": actual_location_id or location_id,
                 "reference_files": filtered_refs
             })
 
@@ -2453,10 +2725,20 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
             self.logger.warning("[_extract_json] Empty text received")
             return None
 
+        if not text.strip():
+            self.logger.warning("[_extract_json] Text is only whitespace")
+            return None
+
         import re
 
         # Bước 1: Loại bỏ DeepSeek <think>...</think> tags
         clean_text = re.sub(r'<think>[\s\S]*?</think>', '', text).strip()
+
+        # Kiểm tra sau khi loại bỏ <think> tags
+        if not clean_text:
+            self.logger.warning("[_extract_json] Text empty after removing <think> tags")
+            self.logger.debug(f"[_extract_json] Original text (first 300 chars): {text[:300]}")
+            return None
 
         # Bước 2: Thử parse trực tiếp
         try:
@@ -2465,12 +2747,31 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
             self.logger.warning(f"[_extract_json] Direct parse failed at position {e.pos}: {e.msg}")
 
         # Bước 3: Thử tìm JSON trong code block ```json ... ```
+        # Improved: xử lý cả trường hợp không có closing ```
         json_block = re.search(r'```(?:json)?\s*\n?([\s\S]*?)\n?```', clean_text)
         if json_block:
+            block_content = json_block.group(1).strip()
+            # Nếu có ``` thừa ở cuối, cắt bỏ
+            if block_content.endswith('```'):
+                block_content = block_content[:-3].strip()
             try:
-                return json.loads(json_block.group(1))
+                return json.loads(block_content)
             except json.JSONDecodeError as e:
                 self.logger.debug(f"[_extract_json] Code block parse failed: {e}")
+                # Thử repair JSON trong code block nếu bị truncated
+                if block_content.startswith('{'):
+                    self.logger.info("[_extract_json] Attempting to repair JSON from code block...")
+                    clean_text = block_content  # Dùng nội dung code block cho bước 4
+        else:
+            # Không tìm thấy code block đóng - thử tìm code block mở không đóng
+            json_block_open = re.search(r'```(?:json)?\s*\n?([\s\S]*)', clean_text)
+            if json_block_open:
+                block_content = json_block_open.group(1).strip()
+                # Loại bỏ trailing ``` nếu có
+                block_content = re.sub(r'```\s*$', '', block_content).strip()
+                self.logger.info(f"[_extract_json] Found unclosed code block, extracted {len(block_content)} chars")
+                if block_content.startswith('{'):
+                    clean_text = block_content  # Dùng cho bước 4
 
         # Bước 4: Tìm JSON object bắt đầu bằng { và kết thúc bằng }
         start_idx = clean_text.find('{')
@@ -2670,3 +2971,71 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
 
         suffix = ']' * max(0, new_bracket_count) + '}' * max(0, new_brace_count)
         return truncated + suffix
+
+    def update_excel_prompts_with_annotations(self, excel_path: str) -> bool:
+        """
+        Update existing Excel prompts with filename annotations.
+        Use this to add annotations to prompts that were generated before this feature.
+
+        Args:
+            excel_path: Path to Excel file
+
+        Returns:
+            True if successful
+        """
+        from modules.excel_manager import PromptWorkbook
+
+        try:
+            excel_path = Path(excel_path)
+            if not excel_path.exists():
+                self.logger.error(f"Excel file not found: {excel_path}")
+                return False
+
+            workbook = PromptWorkbook(excel_path).load_or_create()
+
+            # Load characters and locations
+            characters = workbook.get_characters()
+            locations = [c for c in characters if c.role == "location"]
+            characters = [c for c in characters if c.role != "location"]
+
+            # Update scenes
+            scenes = workbook.get_scenes()
+            updated_count = 0
+
+            for scene in scenes:
+                # Get reference_files
+                ref_files = []
+                if scene.reference_files:
+                    try:
+                        ref_files = json.loads(scene.reference_files) if scene.reference_files.startswith('[') else [scene.reference_files]
+                    except:
+                        ref_files = [f.strip() for f in scene.reference_files.split(',') if f.strip()]
+
+                if not ref_files:
+                    continue
+
+                # Update img_prompt
+                new_img_prompt = self._add_filename_annotations_to_prompt(
+                    scene.img_prompt or "", ref_files, characters, locations
+                )
+                new_video_prompt = self._add_filename_annotations_to_prompt(
+                    scene.video_prompt or "", ref_files, characters, locations
+                )
+
+                # Check if changed
+                if new_img_prompt != scene.img_prompt or new_video_prompt != scene.video_prompt:
+                    workbook.update_scene(
+                        scene.scene_id,
+                        img_prompt=new_img_prompt,
+                        video_prompt=new_video_prompt
+                    )
+                    updated_count += 1
+                    self.logger.info(f"Updated scene {scene.scene_id} with filename annotations")
+
+            workbook.save()
+            self.logger.info(f"Updated {updated_count} scenes with filename annotations")
+            return True
+
+        except Exception as e:
+            self.logger.error(f"Error updating Excel prompts: {e}")
+            return False

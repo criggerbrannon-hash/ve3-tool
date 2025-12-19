@@ -80,8 +80,8 @@ class SmartEngine:
         self.gemini_keys: List[Resource] = []
 
         # Ollama model (fallback when all APIs fail)
-        # Default: gemma3:27b (local, stable)
-        self.ollama_model: str = "gemma3:27b"
+        # Default: qwen2.5:7b (fast, 32k context)
+        self.ollama_model: str = "qwen2.5:7b"
         self.ollama_endpoint: str = "http://localhost:11434"
 
         # Settings - TOI UU TOC DO (PARALLEL OPTIMIZED)
@@ -96,6 +96,14 @@ class SmartEngine:
         self.stop_flag = False
         self.callback = None
         self._lock = threading.Lock()
+
+        # Parallel processing state
+        self._character_gen_thread = None
+        self._character_gen_result = None
+        self._character_gen_error = None
+
+        # Browser generator - reuse cho ca characters va scenes
+        self._browser_generator = None
 
         # Cache media_name per profile: {profile_name: {image_id: media_name}}
         # QUAN TRONG: media_name chi valid cho token da tao ra no
@@ -164,7 +172,7 @@ class SmartEngine:
             # Ollama local (fallback)
             ollama_cfg = api.get('ollama', {})
             if ollama_cfg:
-                self.ollama_model = ollama_cfg.get('model', 'gemma3:27b')
+                self.ollama_model = ollama_cfg.get('model', 'qwen2.5:7b')
                 self.ollama_endpoint = ollama_cfg.get('endpoint', 'http://localhost:11434')
 
             # Settings
@@ -622,7 +630,11 @@ class SmartEngine:
                 from modules.prompts_generator import PromptGenerator
                 gen = PromptGenerator(cfg)
 
-                if gen.generate_for_project(proj_dir, name):
+                # Pass callback de bat dau character generation song song
+                if gen.generate_for_project(
+                    proj_dir, name,
+                    on_characters_ready=lambda ep, pd: self._on_characters_ready(ep, pd)
+                ):
                     self.mark_resource_used(ai_key, True)
                     self.log(f"OK: {excel_path.name}", "OK")
                     return True
@@ -634,6 +646,135 @@ class SmartEngine:
                 self.mark_resource_used(ai_key, False)
 
         return False
+
+    # ========== PARALLEL CHARACTER GENERATION ==========
+
+    def _load_character_prompts(self, excel_path: Path, proj_dir: Path) -> List[Dict]:
+        """Load CHI character prompts (nv*, loc*) tu Excel - cho parallel generation."""
+        import openpyxl
+
+        prompts = []
+        wb = openpyxl.load_workbook(excel_path)
+
+        for sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+
+            # Get headers
+            headers = []
+            for cell in ws[1]:
+                headers.append(cell.value)
+
+            if not headers or all(h is None for h in headers):
+                continue
+
+            # Tim cot ID va Prompt
+            id_col = None
+            prompt_col = None
+
+            for i, h in enumerate(headers):
+                if h is None:
+                    continue
+                h_lower = str(h).lower().strip()
+
+                if id_col is None and ('id' in h_lower):
+                    id_col = i
+                if 'english' in h_lower and 'prompt' in h_lower:
+                    prompt_col = i
+                elif prompt_col is None and h_lower == 'img_prompt':
+                    prompt_col = i
+                elif prompt_col is None and 'prompt' in h_lower and 'video' not in h_lower:
+                    prompt_col = i
+
+            if id_col is None or prompt_col is None:
+                continue
+
+            for row in ws.iter_rows(min_row=2, values_only=True):
+                if row is None or id_col >= len(row) or prompt_col >= len(row):
+                    continue
+
+                pid = row[id_col]
+                prompt = row[prompt_col]
+
+                if not pid or not prompt:
+                    continue
+
+                pid_str = str(pid).strip()
+
+                # CHI lay character/location prompts (nv*, loc*)
+                if pid_str.startswith('nv') or pid_str.startswith('loc'):
+                    out_path = proj_dir / "nv" / f"{pid_str}.png"
+                    if not out_path.exists():  # Chi lay chua co anh
+                        prompts.append({
+                            'id': pid_str,
+                            'prompt': str(prompt).strip(),
+                            'output_path': str(out_path),
+                            'reference_files': "",
+                            'nv_path': str(proj_dir / "nv")
+                        })
+
+        return prompts
+
+    def _generate_characters_async(self, excel_path: Path, proj_dir: Path):
+        """
+        Generate character images trong background thread.
+        Duoc goi tu callback khi characters ready.
+        """
+        def _worker():
+            try:
+                self.log("[PARALLEL] Bat dau tao anh nhan vat (background)...")
+
+                # Load character prompts
+                char_prompts = self._load_character_prompts(excel_path, proj_dir)
+
+                if not char_prompts:
+                    self.log("[PARALLEL] Khong co character prompts moi can tao")
+                    self._character_gen_result = {"success": 0, "failed": 0}
+                    return
+
+                self.log(f"[PARALLEL] Tao {len(char_prompts)} anh nhan vat...")
+
+                # Generate using browser
+                results = self.generate_images_browser(char_prompts, proj_dir)
+
+                self._character_gen_result = results
+                self.log(f"[PARALLEL] Xong! Success={results.get('success', 0)}, Failed={results.get('failed', 0)}")
+
+            except Exception as e:
+                self._character_gen_error = str(e)
+                self.log(f"[PARALLEL] Loi: {e}", "ERROR")
+
+        # Start thread
+        self._character_gen_thread = threading.Thread(target=_worker, daemon=True)
+        self._character_gen_thread.start()
+        self.log("[PARALLEL] Character generation thread started!")
+
+    def _wait_for_character_generation(self, timeout: int = 600) -> bool:
+        """
+        Doi character generation thread hoan thanh.
+        Returns True neu thanh cong, False neu loi hoac timeout.
+        """
+        if self._character_gen_thread is None:
+            return True  # Khong co thread nao dang chay
+
+        self.log("[PARALLEL] Doi character generation hoan thanh...")
+        self._character_gen_thread.join(timeout=timeout)
+
+        if self._character_gen_thread.is_alive():
+            self.log("[PARALLEL] Character generation timeout!", "WARN")
+            return False
+
+        if self._character_gen_error:
+            self.log(f"[PARALLEL] Character generation error: {self._character_gen_error}", "ERROR")
+            return False
+
+        return True
+
+    def _on_characters_ready(self, excel_path: Path, proj_dir: Path):
+        """
+        Callback duoc goi khi characters prompts da duoc save.
+        Bat dau generate character images song song.
+        """
+        self._generate_characters_async(excel_path, proj_dir)
 
     # ========== IMAGE GENERATION ==========
 
@@ -971,12 +1112,23 @@ class SmartEngine:
                 available_profiles = ["main"]
 
         try:
-            generator = BrowserFlowGenerator(
-                project_path=str(proj_dir),
-                profile_name=profile_name,
-                headless=headless,
-                verbose=True
-            )
+            # REUSE browser generator neu da co (giu nguyen session)
+            if self._browser_generator is None or self._browser_generator.driver is None:
+                self.log("Tao browser generator moi...")
+                generator = BrowserFlowGenerator(
+                    project_path=str(proj_dir),
+                    profile_name=profile_name,
+                    headless=headless,
+                    verbose=True
+                )
+                self._browser_generator = generator
+            else:
+                self.log("Reuse browser generator (giu nguyen session)...")
+                generator = self._browser_generator
+                # Update project path neu khac
+                if str(generator.project_path) != str(proj_dir):
+                    generator.project_path = Path(proj_dir)
+                    generator.project_code = proj_dir.name
 
             # Override callback
             def custom_log(msg, level="info"):
@@ -1219,45 +1371,68 @@ class SmartEngine:
 
         self.log("BROWSER MODE: Khong can token, su dung JS automation")
 
-        # === 3. LOAD PROMPTS ===
-        self.log("[STEP 3] Load prompts...")
+        # === 3. DOI CHARACTER GENERATION (PARALLEL) ===
+        # Neu character generation dang chay song song, doi no xong
+        if self._character_gen_thread is not None:
+            self.log("[STEP 3] Doi character generation hoan thanh...")
+            self._wait_for_character_generation(timeout=600)
 
-        prompts = self._load_prompts(excel_path, proj_dir)
+            # Lay ket qua character generation
+            char_results = self._character_gen_result or {"success": 0, "failed": 0}
+            self.log(f"  Character images: success={char_results.get('success', 0)}, failed={char_results.get('failed', 0)}")
+        else:
+            self.log("[STEP 3] Character generation khong chay song song")
+            char_results = {"success": 0, "failed": 0}
 
-        if not prompts:
+        # === 4. LOAD SCENE PROMPTS (chi scenes, bo qua characters da tao) ===
+        self.log("[STEP 4] Load scene prompts...")
+
+        all_prompts = self._load_prompts(excel_path, proj_dir)
+
+        if not all_prompts:
             return {"error": "no_prompts"}
 
-        self.log(f"  Tong: {len(prompts)} prompts")
+        self.log(f"  Tong: {len(all_prompts)} prompts")
 
-        # Filter existing
-        prompts = [p for p in prompts if not Path(p['output_path']).exists()]
-        self.log(f"  Can tao: {len(prompts)} anh")
+        # Filter: chi lay prompts CHUA co anh (characters da duoc tao song song)
+        prompts = [p for p in all_prompts if not Path(p['output_path']).exists()]
+        self.log(f"  Can tao: {len(prompts)} anh (sau khi bo characters da xong)")
 
         if not prompts:
             self.log("Tat ca anh da ton tai!", "OK")
-            # Vẫn ghép video nếu đủ nguyên liệu
-            results = {"success": 0, "failed": 0, "skipped": "all_exist"}
+            # Merge results with character generation
+            results = {
+                "success": char_results.get("success", 0),
+                "failed": char_results.get("failed", 0),
+                "skipped": "all_exist"
+            }
         else:
-            # === 4. TAO ANH (BROWSER - khong can token) ===
-            self.log("[STEP 4] Tao anh bang BROWSER...")
+            # === 5. TAO SCENE IMAGES (BROWSER - khong can token) ===
+            self.log("[STEP 5] Tao scene images bang BROWSER...")
 
             # CHI DUNG BROWSER - khong dung API
-            results = self.generate_images_browser(prompts, proj_dir)
+            scene_results = self.generate_images_browser(prompts, proj_dir)
 
-            # === 5. FINAL CHECK ===
-            self.log("[STEP 5] Kiem tra ket qua...")
+            # Merge results
+            results = {
+                "success": char_results.get("success", 0) + scene_results.get("success", 0),
+                "failed": char_results.get("failed", 0) + scene_results.get("failed", 0)
+            }
 
-            if results["failed"] > 0:
-                self.log(f"CON {results['failed']} ANH CHUA XONG!", "WARN")
-            else:
-                self.log("TAT CA ANH DA HOAN THANH!", "OK")
+        # === 6. FINAL CHECK ===
+        self.log("[STEP 6] Kiem tra ket qua...")
 
-        # === 6. EXPORT TXT & SRT ===
-        self.log("[STEP 6] Xuat TXT & SRT...")
+        if results.get("failed", 0) > 0:
+            self.log(f"CON {results['failed']} ANH CHUA XONG!", "WARN")
+        else:
+            self.log("TAT CA ANH DA HOAN THANH!", "OK")
+
+        # === 7. EXPORT TXT & SRT ===
+        self.log("[STEP 7] Xuat TXT & SRT...")
         self._export_scenes(excel_path, proj_dir, name)
 
-        # === 7. COMPOSE VIDEO (LUON chay - du co vai anh fail) ===
-        self.log("[STEP 7] Ghep video...")
+        # === 8. COMPOSE VIDEO (LUON chay - du co vai anh fail) ===
+        self.log("[STEP 8] Ghep video...")
         if results.get("failed", 0) > 0:
             self.log(f"  CANH BAO: {results['failed']} anh fail, nhung van ghep video voi anh co san!", "WARN")
 
@@ -1268,7 +1443,20 @@ class SmartEngine:
         else:
             self.log("  Video composer khong kha dung hoac thieu file", "WARN")
 
+        # === 9. DONG BROWSER ===
+        self._close_browser()
+
         return results
+
+    def _close_browser(self):
+        """Dong browser generator (giu nguyen working profile)."""
+        if self._browser_generator is not None:
+            try:
+                self.log("[CLEANUP] Dong browser...")
+                self._browser_generator.stop_browser()
+            except:
+                pass
+            self._browser_generator = None
 
     def _export_scenes(self, excel_path: Path, proj_dir: Path, name: str) -> None:
         """Export scenes ra TXT va SRT de ho tro video editing."""
