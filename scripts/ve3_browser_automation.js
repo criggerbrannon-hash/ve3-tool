@@ -275,9 +275,14 @@
 
                 const urlStr = url?.toString() || '';
 
-                // Bat response tu batchGenerateImages
-                if (urlStr.includes('batchGenerateImages')) {
-                    Utils.log('Đang tạo ảnh...', 'wait');
+                // DEBUG: Log all fetch calls to understand API
+                if (urlStr.includes('labs.google') || urlStr.includes('generate') || urlStr.includes('flow')) {
+                    Utils.log(`[FETCH] URL: ${urlStr.slice(0, 100)}...`, 'info');
+                }
+
+                // Bat response tu batchGenerateImages hoac cac endpoint tuong tu
+                if (urlStr.includes('batchGenerateImages') || urlStr.includes('generateImages') || urlStr.includes('generate')) {
+                    Utils.log(`[FETCH] Matched generate endpoint: ${urlStr.slice(0, 80)}...`, 'wait');
 
                     result.then(async res => {
                         try {

@@ -1756,7 +1756,7 @@ class PromptGenerator:
         prompt_template = get_smart_divide_scenes_prompt()
         if not prompt_template:
             self.logger.warning("Smart divide prompt not found, returning time-based scenes")
-            return self._format_time_based_scenes(time_based_scenes)
+            return self._format_time_based_scenes(time_based_scenes, locations=locations)
 
         # Get default global style if not provided
         if not global_style:
@@ -1791,7 +1791,7 @@ class PromptGenerator:
 
             if not json_data or "scenes" not in json_data:
                 self.logger.warning("[Smart Divide] AI không trả về scenes, dùng time-based")
-                return self._format_time_based_scenes(time_based_scenes)
+                return self._format_time_based_scenes(time_based_scenes, locations=locations)
 
             self.logger.info(f"[Smart Divide] AI trả về {len(json_data['scenes'])} scene analyses")
 
@@ -1841,11 +1841,35 @@ class PromptGenerator:
                 # KHÔNG DÙNG scene["text"] làm fallback - sẽ gây narration trong prompt!
                 final_visual = ai_img_prompt or ai_visual_moment or ""
 
+                # Map AI's location_id to actual location ID
+                ai_location = ai_data.get("location_id", "")
+                actual_location_id = ""
+                if ai_location:
+                    # Kiểm tra nếu ai_location là ID thực tế trong locations list
+                    for loc in locations:
+                        if loc.id == ai_location:
+                            actual_location_id = ai_location
+                            break
+                    # Nếu không tìm thấy, có thể AI trả về generic (loc1, loc2...)
+                    if not actual_location_id and locations:
+                        import re
+                        match = re.match(r'loc(\d+)', ai_location)
+                        if match:
+                            idx = int(match.group(1)) - 1  # loc1 -> index 0
+                            if 0 <= idx < len(locations):
+                                actual_location_id = locations[idx].id
+                        # Fallback: dùng location đầu tiên
+                        if not actual_location_id:
+                            actual_location_id = locations[0].id
+                elif locations:
+                    # AI không trả về location, dùng location đầu tiên
+                    actual_location_id = locations[0].id
+
                 final_scenes.append({
                     "scene_id": scene_id,
                     "scene_type": scene_type,  # NEW: Type of scene
                     "age_note": age_note,      # NEW: Age adjustment for flashbacks
-                    "location_id": ai_data.get("location_id", "loc1"),
+                    "location_id": actual_location_id,
                     "characters_in_scene": chars_in_scene,
                     "story_beat": ai_data.get("story_beat", ""),
                     "start_time": start_time,
@@ -1864,7 +1888,7 @@ class PromptGenerator:
 
         except Exception as e:
             self.logger.error(f"AI analysis failed: {e}, returning time-based scenes")
-            return self._format_time_based_scenes(time_based_scenes)
+            return self._format_time_based_scenes(time_based_scenes, locations=locations)
 
     def _force_split_scenes(self, scenes: List[Dict], srt_entries: List) -> List[Dict]:
         """Force split scenes that exceed max_duration."""
@@ -1925,8 +1949,13 @@ class PromptGenerator:
 
         return result
 
-    def _format_time_based_scenes(self, time_based_scenes: List[Dict], default_char: str = "nvc") -> List[Dict[str, Any]]:
+    def _format_time_based_scenes(self, time_based_scenes: List[Dict], default_char: str = "nvc", locations: List = None) -> List[Dict[str, Any]]:
         """Format time-based scenes khi không có AI analysis."""
+        # Lấy actual location ID từ locations list, không dùng generic loc1
+        actual_location_id = ""
+        if locations and len(locations) > 0:
+            actual_location_id = locations[0].id
+
         formatted = []
         for i, scene in enumerate(time_based_scenes):
             start_time = format_srt_time(scene["start_time"]) if isinstance(scene["start_time"], timedelta) else scene.get("srt_start", "00:00:00,000")
@@ -1935,7 +1964,7 @@ class PromptGenerator:
 
             formatted.append({
                 "scene_id": i + 1,
-                "location_id": "loc1",
+                "location_id": actual_location_id,
                 "characters_in_scene": [default_char],  # Default: nhân vật chính
                 "story_beat": "",
                 "start_time": start_time,
@@ -2337,7 +2366,30 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
                 # Cycle through variety for remaining scenes
                 shot_type = shot_types_cycle[(idx - 3) % len(shot_types_cycle)]
 
-            location_id = scene.get("location_id", "loc1")
+            # Map location_id to actual location ID, không dùng generic loc1
+            raw_location = scene.get("location_id", "")
+            location_id = ""
+            if raw_location:
+                # Kiểm tra nếu raw_location là ID thực tế trong locations list
+                for loc in locations:
+                    if loc.id == raw_location:
+                        location_id = raw_location
+                        break
+                # Nếu không tìm thấy, có thể là generic (loc1, loc2...)
+                if not location_id and locations:
+                    import re
+                    match = re.match(r'loc(\d+)', raw_location)
+                    if match:
+                        idx_loc = int(match.group(1)) - 1  # loc1 -> index 0
+                        if 0 <= idx_loc < len(locations):
+                            location_id = locations[idx_loc].id
+                    # Fallback: dùng location đầu tiên
+                    if not location_id:
+                        location_id = locations[0].id
+            elif locations:
+                # Không có location trong scene data, dùng location đầu tiên
+                location_id = locations[0].id
+
             chars_in_scene = scene.get("characters_in_scene", [])
 
             # Build character part
@@ -2695,8 +2747,8 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
             self.logger.warning(f"[_extract_json] Direct parse failed at position {e.pos}: {e.msg}")
 
         # Bước 3: Thử tìm JSON trong code block ```json ... ```
-        # Improved: tìm từ ```json đến ``` cuối cùng (greedy)
-        json_block = re.search(r'```(?:json)?\s*\n?([\s\S]*)\n?```', clean_text)
+        # Improved: xử lý cả trường hợp không có closing ```
+        json_block = re.search(r'```(?:json)?\s*\n?([\s\S]*?)\n?```', clean_text)
         if json_block:
             block_content = json_block.group(1).strip()
             # Nếu có ``` thừa ở cuối, cắt bỏ
@@ -2710,6 +2762,16 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
                 if block_content.startswith('{'):
                     self.logger.info("[_extract_json] Attempting to repair JSON from code block...")
                     clean_text = block_content  # Dùng nội dung code block cho bước 4
+        else:
+            # Không tìm thấy code block đóng - thử tìm code block mở không đóng
+            json_block_open = re.search(r'```(?:json)?\s*\n?([\s\S]*)', clean_text)
+            if json_block_open:
+                block_content = json_block_open.group(1).strip()
+                # Loại bỏ trailing ``` nếu có
+                block_content = re.sub(r'```\s*$', '', block_content).strip()
+                self.logger.info(f"[_extract_json] Found unclosed code block, extracted {len(block_content)} chars")
+                if block_content.startswith('{'):
+                    clean_text = block_content  # Dùng cho bước 4
 
         # Bước 4: Tìm JSON object bắt đầu bằng { và kết thúc bằng }
         start_idx = clean_text.find('{')
