@@ -880,17 +880,31 @@ class BrowserFlowGenerator:
         dst_file = dst_dir / f"{scene_id}.png"
 
         try:
+            # Lưu tên file gốc trước khi move
+            best_file_name = best_file.name
+
             shutil.move(str(best_file), str(dst_file))
-            self._log(f"Da di chuyen: {best_file.name} -> {dst_file} (score={score:.1f})", "success")
+            self._log(f"Da di chuyen: {best_file_name} -> {dst_file} (score={score:.1f})", "success")
 
             # Xoa cac file con lai (khong can nua)
+            # QUAN TRỌNG: So sánh bằng tên file, không phải Path (vì best_file đã bị move)
+            deleted_count = 0
             for f in files:
-                if f != best_file and f.exists():
+                if f.name != best_file_name:
                     try:
-                        os.remove(f)
-                        self._log(f"  Xoa file du: {f.name}")
-                    except:
-                        pass
+                        if f.exists():
+                            os.remove(f)
+                            deleted_count += 1
+                            self._log(f"  Xoa file khong chon: {f.name}")
+                        else:
+                            self._log(f"  File da bi xoa truoc do: {f.name}")
+                    except Exception as e:
+                        self._log(f"  Loi xoa file {f.name}: {e}", "warn")
+
+            if deleted_count > 0:
+                self._log(f"  Da xoa {deleted_count} file khong duoc chon")
+            elif len(files) > 1:
+                self._log(f"  Khong xoa duoc file nao (co {len(files)} files)")
 
             return dst_file, score, needs_regeneration
 
