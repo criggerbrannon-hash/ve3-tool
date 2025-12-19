@@ -1458,11 +1458,33 @@
                     fileInput.dispatchEvent(new Event('change', { bubbles: true }));
                     fileInput.dispatchEvent(new Event('input', { bubbles: true }));
 
+                    // Step 5: Wait for crop dialog and click "Cắt và lưu"
+                    await Utils.sleep(1000);
+                    let cropClicked = false;
+                    for (let attempt = 0; attempt < 10; attempt++) {
+                        const buttons = document.querySelectorAll('button');
+                        for (const btn of buttons) {
+                            const text = btn.textContent || '';
+                            if (text.includes('Cắt và lưu') || text.includes('crop')) {
+                                btn.click();
+                                Utils.log(`[UPLOAD] Clicked "Cắt và lưu" button`, 'success');
+                                cropClicked = true;
+                                break;
+                            }
+                        }
+                        if (cropClicked) break;
+                        await Utils.sleep(300);
+                    }
+
+                    if (!cropClicked) {
+                        Utils.log(`[UPLOAD] Warning: "Cắt và lưu" button not found, continuing...`, 'warn');
+                    }
+
                     successCount++;
                     Utils.log(`[UPLOAD] ✓ ${img.filename} thanh cong`, 'success');
 
                     // Wait for upload to complete before next file
-                    await Utils.sleep(1500);
+                    await Utils.sleep(2000);
 
                 } catch (e) {
                     errors.push({ file: img.filename, error: e.message });
