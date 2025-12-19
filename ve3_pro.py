@@ -1085,9 +1085,65 @@ class UnixVoiceToVideo:
 
             messagebox.showinfo("Thanh cong", "Da luu Labs API settings!\n\nBay gio ban co the dung mode 'Labs' de tao anh.")
 
+        def auto_get_token():
+            """Tu dong lay token tu Chrome profile."""
+            from modules.labs_google_api import auto_get_token_from_config
+
+            # Show progress
+            progress_win = tk.Toplevel(settings_win)
+            progress_win.title("Dang lay token...")
+            progress_win.geometry("350x120")
+            progress_win.resizable(False, False)
+            progress_win.transient(settings_win)
+            progress_win.grab_set()
+
+            ttk.Label(progress_win, text="Dang mo Chrome va lay token...",
+                     font=('Segoe UI', 11)).pack(pady=20)
+            ttk.Label(progress_win, text="Neu chua dang nhap Google, hay dang nhap trong cua so Chrome",
+                     font=('Segoe UI', 9), foreground='gray').pack()
+
+            progress_win.update()
+
+            def do_auto_get():
+                try:
+                    success, token, error = auto_get_token_from_config(
+                        config_path=str(CONFIG_DIR / "accounts.json"),
+                        verbose=True
+                    )
+
+                    progress_win.destroy()
+
+                    if success and token:
+                        # Update cookie entry
+                        cookie_text.delete("1.0", tk.END)
+                        cookie_text.insert("1.0", token)
+                        cookie_status.config(text=f"[OK] Token length: {len(token)}", foreground='green')
+
+                        # Auto save
+                        save_labs_settings()
+                        messagebox.showinfo("Thanh cong", f"Da lay duoc token tu dong!\nLength: {len(token)}")
+                    else:
+                        messagebox.showerror("Loi", f"Khong lay duoc token:\n{error}")
+
+                except Exception as e:
+                    progress_win.destroy()
+                    messagebox.showerror("Loi", f"Loi khi lay token: {str(e)}")
+
+            # Run in thread to not block UI
+            import threading
+            threading.Thread(target=do_auto_get, daemon=True).start()
+
+        # Button frame
+        btn_frame = ttk.Frame(labs_tab)
+        btn_frame.pack(anchor=tk.W, pady=(15, 10))
+
+        # Auto get token button
+        auto_btn = ttk.Button(btn_frame, text="🔄 Tu Dong Lay Token", command=auto_get_token)
+        auto_btn.pack(side=tk.LEFT, padx=(0, 10))
+
         # Save button
-        save_btn = ttk.Button(labs_tab, text="💾 Luu Labs Settings", command=save_labs_settings)
-        save_btn.pack(anchor=tk.W, pady=(15, 10))
+        save_btn = ttk.Button(btn_frame, text="💾 Luu Labs Settings", command=save_labs_settings)
+        save_btn.pack(side=tk.LEFT)
 
         # Status info
         status_text = "Trang thai: "

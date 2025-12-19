@@ -436,6 +436,163 @@ def parse_cookie_netscape(cookie_text: str) -> str:
     return ""
 
 
+def auto_get_session_token(
+    chrome_profile_path: str = None,
+    chrome_exe_path: str = None,
+    timeout: int = 30,
+    verbose: bool = True
+) -> Tuple[bool, str, str]:
+    """
+    Tự động lấy session token từ Chrome profile đã đăng nhập Google.
+
+    Args:
+        chrome_profile_path: Đường dẫn đến Chrome profile (User Data directory)
+        chrome_exe_path: Đường dẫn đến chrome.exe
+        timeout: Thời gian chờ tối đa (giây)
+        verbose: In log
+
+    Returns:
+        Tuple[success, token, error_message]
+    """
+    def log(msg):
+        if verbose:
+            print(f"[AutoToken] {msg}")
+
+    log("Đang tự động lấy session token...")
+
+    # Try undetected-chromedriver first
+    try:
+        import undetected_chromedriver as uc
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+        driver_type = "undetected"
+    except ImportError:
+        try:
+            from selenium import webdriver
+            from selenium.webdriver.chrome.service import Service
+            from selenium.webdriver.chrome.options import Options
+            driver_type = "selenium"
+        except ImportError:
+            return False, "", "Cần cài selenium: pip install selenium undetected-chromedriver"
+
+    driver = None
+    try:
+        # Setup Chrome options
+        if driver_type == "undetected":
+            options = uc.ChromeOptions()
+            if chrome_profile_path:
+                # Extract user-data-dir and profile-directory
+                profile_path = Path(chrome_profile_path)
+                if profile_path.name.startswith("Profile"):
+                    user_data_dir = str(profile_path.parent)
+                    profile_name = profile_path.name
+                    options.add_argument(f"--user-data-dir={user_data_dir}")
+                    options.add_argument(f"--profile-directory={profile_name}")
+                else:
+                    options.add_argument(f"--user-data-dir={chrome_profile_path}")
+
+            log("Khởi động Chrome (undetected-chromedriver)...")
+            driver = uc.Chrome(options=options)
+
+        else:  # selenium
+            options = Options()
+            if chrome_profile_path:
+                profile_path = Path(chrome_profile_path)
+                if profile_path.name.startswith("Profile"):
+                    user_data_dir = str(profile_path.parent)
+                    profile_name = profile_path.name
+                    options.add_argument(f"--user-data-dir={user_data_dir}")
+                    options.add_argument(f"--profile-directory={profile_name}")
+                else:
+                    options.add_argument(f"--user-data-dir={chrome_profile_path}")
+
+            if chrome_exe_path:
+                options.binary_location = chrome_exe_path
+
+            log("Khởi động Chrome (selenium)...")
+            driver = webdriver.Chrome(options=options)
+
+        # Navigate to labs.google
+        log("Đang mở labs.google...")
+        driver.get("https://labs.google/fx/tools/flow")
+
+        # Wait for page to load and check login
+        log(f"Đang chờ trang load (tối đa {timeout}s)...")
+        time.sleep(3)  # Initial wait
+
+        # Check for session token cookie
+        for attempt in range(timeout // 2):
+            cookies = driver.get_cookies()
+            for cookie in cookies:
+                if cookie.get("name") == "__Secure-next-auth.session-token":
+                    token = cookie.get("value", "")
+                    if token:
+                        log(f"Đã lấy được token! (length: {len(token)})")
+                        driver.quit()
+                        return True, token, ""
+
+            # Check if need login
+            current_url = driver.current_url
+            if "accounts.google.com" in current_url:
+                log("Cần đăng nhập Google - đang chờ user đăng nhập...")
+
+            time.sleep(2)
+
+        driver.quit()
+        return False, "", "Không tìm thấy session token. Kiểm tra xem đã đăng nhập Google chưa."
+
+    except Exception as e:
+        if driver:
+            try:
+                driver.quit()
+            except:
+                pass
+        return False, "", f"Lỗi: {str(e)}"
+
+
+def auto_get_token_from_config(config_path: str = "config/accounts.json", verbose: bool = True) -> Tuple[bool, str, str]:
+    """
+    Tự động lấy token sử dụng Chrome profile từ config.
+
+    Args:
+        config_path: Đường dẫn đến accounts.json
+        verbose: In log
+
+    Returns:
+        Tuple[success, token, error_message]
+    """
+    import json
+    from pathlib import Path
+
+    config_file = Path(config_path)
+    if not config_file.exists():
+        return False, "", f"Không tìm thấy config: {config_path}"
+
+    try:
+        with open(config_file, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+
+        # Get first available Chrome profile
+        profiles = config.get("chrome_profiles", [])
+        chrome_path = config.get("chrome_path", "")
+
+        for profile in profiles:
+            profile_path = profile if isinstance(profile, str) else profile.get("path", "")
+            if profile_path and Path(profile_path).exists():
+                if verbose:
+                    print(f"[AutoToken] Sử dụng profile: {profile_path}")
+                return auto_get_session_token(
+                    chrome_profile_path=profile_path,
+                    chrome_exe_path=chrome_path,
+                    verbose=verbose
+                )
+
+        return False, "", "Không tìm thấy Chrome profile hợp lệ trong config"
+
+    except Exception as e:
+        return False, "", f"Lỗi đọc config: {str(e)}"
+
+
 # =============================================================================
 # CLI TEST
 # =============================================================================
