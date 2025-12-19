@@ -414,37 +414,61 @@ class ParallelFlowGenerator:
         # Lấy tất cả prompts
         all_prompts = []
         skipped_children = []
+        skipped_existing = []
 
-        # Characters - skip trẻ em
+        # Characters - skip trẻ em và file đã tồn tại
         for char in workbook.get_characters():
             if char.english_prompt:
                 if char.status == "done" and not overwrite:
                     continue
+
+                # Skip nếu file đã tồn tại trong nv/ (không cần tạo lại)
+                existing_file = self.nv_path / f"{char.id}.png"
+                if existing_file.exists() and not overwrite:
+                    skipped_existing.append(char.id)
+                    continue
+
                 # Skip nhân vật trẻ em - không tạo ảnh tham chiếu
                 if _is_child_character(char.english_prompt):
                     skipped_children.append(char.id)
                     continue
+
                 all_prompts.append({
                     'id': char.id,
                     'prompt': char.english_prompt,
                     'reference_files': []
                 })
 
+        if skipped_existing:
+            self._log(f"Skip {len(skipped_existing)} ảnh đã tồn tại: {', '.join(skipped_existing)}")
+
         if skipped_children:
             self._log(f"Skip {len(skipped_children)} nhân vật trẻ em: {', '.join(skipped_children)}", "warn")
             self._log("  (Trẻ em sẽ được mô tả trực tiếp trong scene prompt)")
 
-        # Scenes
+        # Scenes - skip file đã tồn tại
+        skipped_scenes = []
         for scene in workbook.get_scenes():
             if scene.img_prompt:
                 if scene.status_img == "done" and not overwrite:
                     continue
+
+                # Skip nếu file đã tồn tại trong img/ (không cần tạo lại)
+                scene_id_str = str(scene.scene_id)
+                existing_file = self.img_path / f"{scene_id_str}.png"
+                if existing_file.exists() and not overwrite:
+                    skipped_scenes.append(scene_id_str)
+                    continue
+
                 ref_str = getattr(scene, 'reference_files', '') or ''
                 all_prompts.append({
-                    'id': str(scene.scene_id),
+                    'id': scene_id_str,
                     'prompt': scene.img_prompt,
                     'reference_files': ref_str
                 })
+
+        if skipped_scenes:
+            self._log(f"Skip {len(skipped_scenes)} scene ảnh đã tồn tại")
 
         if not all_prompts:
             self._log("Không có prompt nào cần xử lý", "warn")
