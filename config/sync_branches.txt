@@ -1,0 +1,11 @@
+# VE3 Tool - Danh sách branches để sync
+# ======================================
+# Thêm branch mới vào đây (mỗi dòng 1 branch)
+# Khi có session mới, chỉ cần thêm tên branch vào file này
+#
+# Cách lấy tên branch của session:
+#   Ở đầu mỗi session, Claude sẽ nói: "Develop on branch claude/xxx-xxx"
+#   Copy tên đó và thêm vào đây
+
+claude/ve3-image-generation-vmOC4
+claude/image-generation-api-t0qZp

@@ -19,18 +19,25 @@ if %errorlevel% equ 0 (
         :: Fetch tat ca branches
         git fetch --all 2>nul
 
-        :: Danh sach branches can sync (theo thu tu uu tien)
-        set "BRANCHES=claude/ve3-image-generation-vmOC4 claude/image-generation-api-t0qZp"
-
-        :: Merge tu tung branch
-        for %%B in (!BRANCHES!) do (
-            git show-ref --verify --quiet refs/remotes/origin/%%B 2>nul
-            if !errorlevel! equ 0 (
-                echo [*] Merging from: %%B
-                git merge origin/%%B --no-edit -m "Auto-merge from %%B" 2>nul
+        :: Doc danh sach branches tu file config
+        if exist "config\sync_branches.txt" (
+            echo [*] Reading branches from config\sync_branches.txt
+            for /f "usebackq tokens=* eol=#" %%B in ("config\sync_branches.txt") do (
+                if not "%%B"=="" (
+                    git show-ref --verify --quiet refs/remotes/origin/%%B 2>nul
+                    if !errorlevel! equ 0 (
+                        echo     Merging: %%B
+                        git merge origin/%%B --no-edit -m "Auto-merge from %%B" 2>nul
+                    )
+                )
             )
+        ) else (
+            :: Fallback: merge tu branches mac dinh
+            echo [*] No config found, using default branches
+            git merge origin/claude/ve3-image-generation-vmOC4 --no-edit 2>nul
         )
 
+        echo.
         echo [OK] Synced!
         echo.
         echo [*] Latest commits:

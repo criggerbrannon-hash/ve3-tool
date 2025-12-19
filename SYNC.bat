@@ -1,7 +1,7 @@
 @echo off
+setlocal enabledelayedexpansion
 :: VE3 Tool - Sync Code Between Sessions
 :: ======================================
-:: Chay file nay de dong bo code tu cac session khac
 
 cd /d "%~dp0"
 
@@ -14,59 +14,72 @@ echo.
 where git >nul 2>&1
 if %errorlevel% neq 0 (
     echo [ERROR] Git chua duoc cai dat!
-    echo Download tai: https://git-scm.com/downloads
     pause
     exit /b 1
 )
 
 :: Fetch tat ca branches
 echo [1/4] Fetching all branches...
-git fetch --all
+git fetch --all 2>nul
 
-:: Hien thi cac branch co san
+:: Hien thi branches hien co trong config
 echo.
-echo [2/4] Available branches:
+echo [2/4] Branches dang duoc sync:
 echo ----------------------------------------
-git branch -a | findstr "claude/"
+if exist "config\sync_branches.txt" (
+    type "config\sync_branches.txt" | findstr /v "^#"
+) else (
+    echo (Chua co file config)
+)
 echo ----------------------------------------
+
+:: Hien thi tat ca branches co san
+echo.
+echo [*] Tat ca branches tren remote:
+git branch -r | findstr "claude/"
 echo.
 
-:: Hoi nguoi dung muon sync tu branch nao
-set /p BRANCH="Nhap ten branch muon sync (Enter = ve3-image-generation-vmOC4): "
-if "%BRANCH%"=="" set BRANCH=claude/ve3-image-generation-vmOC4
-
-:: Kiem tra branch co ton tai khong
-git show-ref --verify --quiet refs/remotes/origin/%BRANCH% 2>nul
-if %errorlevel% neq 0 (
-    :: Thu them prefix claude/
-    git show-ref --verify --quiet refs/remotes/origin/claude/%BRANCH% 2>nul
-    if %errorlevel% equ 0 (
-        set BRANCH=claude/%BRANCH%
-    ) else (
-        echo [ERROR] Branch '%BRANCH%' khong ton tai!
-        pause
-        exit /b 1
+:: Hoi co muon them branch moi khong
+set /p ADD_NEW="Them branch moi vao danh sach sync? (y/n): "
+if /i "%ADD_NEW%"=="y" (
+    set /p NEW_BRANCH="Nhap ten branch (vd: claude/xxx-xxx): "
+    if not "!NEW_BRANCH!"=="" (
+        :: Kiem tra branch co ton tai khong
+        git show-ref --verify --quiet refs/remotes/origin/!NEW_BRANCH! 2>nul
+        if !errorlevel! equ 0 (
+            echo !NEW_BRANCH!>> "config\sync_branches.txt"
+            echo [OK] Da them: !NEW_BRANCH!
+        ) else (
+            echo [ERROR] Branch khong ton tai: !NEW_BRANCH!
+        )
     )
 )
 
-:: Pull code moi nhat
+:: Sync tu tat ca branches trong config
 echo.
-echo [3/4] Pulling latest code from: %BRANCH%
-git checkout -B local-sync origin/%BRANCH% 2>nul
-if %errorlevel% neq 0 (
-    git reset --hard origin/%BRANCH%
+echo [3/4] Syncing from all branches...
+if exist "config\sync_branches.txt" (
+    for /f "usebackq tokens=* eol=#" %%B in ("config\sync_branches.txt") do (
+        if not "%%B"=="" (
+            git show-ref --verify --quiet refs/remotes/origin/%%B 2>nul
+            if !errorlevel! equ 0 (
+                echo     Merging: %%B
+                git merge origin/%%B --no-edit -m "Sync from %%B" 2>nul
+            )
+        )
+    )
 )
 
 echo.
 echo [4/4] Done!
 echo ========================================
-echo   Code da duoc sync tu: %BRANCH%
+echo   Code da duoc sync!
 echo ========================================
 echo.
 
 :: Hien thi commit moi nhat
-echo Commit moi nhat:
-git log --oneline -3
+echo Latest commits:
+git log --oneline -5
 echo.
 
 pause
