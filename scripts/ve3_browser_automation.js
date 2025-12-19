@@ -1322,55 +1322,144 @@
             return await UI.uploadReferenceImage(base64Data, filename);
         },
 
-        // NEW: Upload nhieu anh reference
+        // NEW: Upload nhieu anh reference CUNG LUC (thay vi tung file)
         // images: [{base64: '...', filename: 'nvc.png'}, ...]
         // Returns: {success: boolean, successCount: number, errors: Array<{file, error}>}
         uploadReferences: async (images) => {
-            Utils.log(`[UPLOAD] Bat dau upload ${images.length} reference images...`, 'info');
+            Utils.log(`[UPLOAD] Bat dau upload ${images.length} reference images CUNG LUC...`, 'info');
 
             // QUAN TRONG: Xoa reference images cu truoc khi upload moi
-            // Neu khong xoa, anh cu se van duoc dung cho prompt moi
             await UI.clearReferenceImages();
 
             // Trigger consent truoc khi upload (chi lan dau)
             await UI.triggerConsent();
 
-            let successCount = 0;
+            if (images.length === 0) {
+                return { success: true, successCount: 0, totalCount: 0, errors: [] };
+            }
+
+            // Step 1: Click ADD button
+            let addBtn = null;
+            const addIcons = document.querySelectorAll('i.google-symbols');
+            for (const icon of addIcons) {
+                if (icon.textContent.trim() === 'add') {
+                    addBtn = icon;
+                    break;
+                }
+            }
+
+            if (!addBtn) {
+                // Try finding button with add icon
+                const allBtns = document.querySelectorAll('button');
+                for (const btn of allBtns) {
+                    const icon = btn.querySelector('i.google-symbols');
+                    if (icon && icon.textContent.trim() === 'add') {
+                        addBtn = btn;
+                        break;
+                    }
+                }
+            }
+
+            if (!addBtn) {
+                Utils.log('[UPLOAD] Khong tim thay nut ADD', 'error');
+                return { success: false, successCount: 0, totalCount: images.length, errors: [{ file: 'all', error: 'ADD button not found' }] };
+            }
+
+            addBtn.click();
+            Utils.log('[UPLOAD] Clicked ADD button', 'success');
+            await Utils.sleep(500);
+
+            // Step 2: Click Upload button
+            const uploadBtns = document.querySelectorAll('button');
+            let uploadBtn = null;
+            for (const btn of uploadBtns) {
+                const text = btn.textContent || '';
+                if (text.includes('Tải lên') || text.includes('Upload') || text.includes('upload')) {
+                    uploadBtn = btn;
+                    break;
+                }
+            }
+
+            if (uploadBtn) {
+                uploadBtn.click();
+                Utils.log('[UPLOAD] Clicked UPLOAD button', 'success');
+                await Utils.sleep(800);
+            }
+
+            // Check consent
+            await UI.checkAndClickConsent();
+            await Utils.sleep(500);
+
+            // Step 3: Find file input
+            let fileInput = document.querySelector('input[type="file"]');
+            if (!fileInput) {
+                for (let i = 0; i < 5; i++) {
+                    await Utils.sleep(500);
+                    await UI.checkAndClickConsent();
+                    fileInput = document.querySelector('input[type="file"]');
+                    if (fileInput) break;
+                }
+            }
+
+            if (!fileInput) {
+                Utils.log('[UPLOAD] Khong tim thay file input', 'error');
+                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+                return { success: false, successCount: 0, totalCount: images.length, errors: [{ file: 'all', error: 'File input not found' }] };
+            }
+
+            // Step 4: Create ALL Files and add to DataTransfer
+            const dataTransfer = new DataTransfer();
             let errors = [];
 
-            for (let i = 0; i < images.length; i++) {
-                const img = images[i];
-                Utils.log(`[UPLOAD] Uploading ${i+1}/${images.length}: ${img.filename}`, 'info');
-
+            for (const img of images) {
                 try {
-                    const result = await UI.uploadReferenceImage(img.base64, img.filename);
-                    // result is now {success: bool, error?: string, filename?: string}
-                    if (result && result.success) {
-                        successCount++;
-                        Utils.log(`[UPLOAD] ✓ ${img.filename} thanh cong`, 'success');
-                    } else {
-                        const errMsg = result?.error || 'Unknown error';
-                        errors.push({ file: img.filename, error: errMsg });
-                        Utils.log(`[UPLOAD] ✗ ${img.filename}: ${errMsg}`, 'error');
+                    const byteCharacters = atob(img.base64);
+                    const byteNumbers = new Array(byteCharacters.length);
+                    for (let i = 0; i < byteCharacters.length; i++) {
+                        byteNumbers[i] = byteCharacters.charCodeAt(i);
                     }
+                    const byteArray = new Uint8Array(byteNumbers);
+
+                    let mimeType = 'image/png';
+                    if (img.filename.endsWith('.jpg') || img.filename.endsWith('.jpeg')) {
+                        mimeType = 'image/jpeg';
+                    } else if (img.filename.endsWith('.webp')) {
+                        mimeType = 'image/webp';
+                    }
+
+                    const file = new File([byteArray], img.filename, { type: mimeType });
+                    dataTransfer.items.add(file);
+                    Utils.log(`[UPLOAD] Added file: ${img.filename}`, 'info');
                 } catch (e) {
                     errors.push({ file: img.filename, error: e.message });
-                    Utils.log(`[UPLOAD] ✗ ${img.filename} exception: ${e.message}`, 'error');
-                }
-
-                // Delay nho giua cac upload
-                if (i < images.length - 1) {
-                    await Utils.sleep(1000);
+                    Utils.log(`[UPLOAD] Error creating file ${img.filename}: ${e.message}`, 'error');
                 }
             }
 
-            Utils.log(`[UPLOAD] Hoan thanh: ${successCount}/${images.length} thanh cong`, successCount === images.length ? 'success' : 'warn');
-
-            if (errors.length > 0) {
-                Utils.log(`[UPLOAD] Errors: ${JSON.stringify(errors)}`, 'error');
+            if (dataTransfer.files.length === 0) {
+                Utils.log('[UPLOAD] Khong co file nao duoc tao', 'error');
+                return { success: false, successCount: 0, totalCount: images.length, errors };
             }
 
-            // Return detailed result to Python
+            // Step 5: Set files and trigger events
+            fileInput.files = dataTransfer.files;
+            Utils.log(`[UPLOAD] Set ${dataTransfer.files.length} files to input`, 'info');
+
+            // Trigger change event
+            fileInput.dispatchEvent(new Event('change', { bubbles: true }));
+            fileInput.dispatchEvent(new Event('input', { bubbles: true }));
+            Utils.log('[UPLOAD] Triggered change event', 'success');
+
+            // Wait for upload to complete
+            await Utils.sleep(2000);
+
+            // Verify: count thumbnails
+            const thumbnails = document.querySelectorAll('[class*="thumbnail"], [class*="preview"], img[src*="blob:"]');
+            Utils.log(`[UPLOAD] Found ${thumbnails.length} thumbnails after upload`, 'info');
+
+            const successCount = dataTransfer.files.length - errors.length;
+            Utils.log(`[UPLOAD] Hoan thanh: ${successCount}/${images.length} thanh cong`, successCount > 0 ? 'success' : 'error');
+
             return {
                 success: successCount > 0,
                 successCount: successCount,
