@@ -285,56 +285,55 @@ class ParallelFlowGenerator:
                     # NOTE: Không cần simplify - AI đã được hướng dẫn không mô tả ngoại hình
 
                     # =========================================================
-                    # XẾP HÀNG DOWNLOAD: Acquire lock trước khi generate
-                    # Đảm bảo chỉ 1 browser download tại 1 thời điểm
+                    # SONG SONG: Mỗi browser generate scene khác nhau
+                    # File name dựa trên scene_id nên không conflict
                     # =========================================================
-                    with self._download_lock:
-                        self._log(f"[{thread_name}] 🔒 Bắt đầu generate + download: {pid}")
+                    self._log(f"[{thread_name}] 🚀 Generate: {pid}")
 
-                        # Gọi VE3.run()
-                        ref_json = json.dumps(ref_files if ref_files else [])
-                        result = generator.driver.execute_async_script(f"""
-                            const callback = arguments[arguments.length - 1];
-                            const timeout = setTimeout(() => {{
-                                callback({{ success: false, error: 'Timeout 120s' }});
-                            }}, 120000);
+                    # Gọi VE3.run()
+                    ref_json = json.dumps(ref_files if ref_files else [])
+                    result = generator.driver.execute_async_script(f"""
+                        const callback = arguments[arguments.length - 1];
+                        const timeout = setTimeout(() => {{
+                            callback({{ success: false, error: 'Timeout 120s' }});
+                        }}, 120000);
 
-                            VE3.run([{{
-                                sceneId: "{pid}",
-                                prompt: `{generator._escape_js_string(prompt_text)}`,
-                                referenceFiles: {ref_json}
-                            }}]).then(r => {{
-                                clearTimeout(timeout);
-                                callback({{ success: true, result: r }});
-                            }}).catch(e => {{
-                                clearTimeout(timeout);
-                                callback({{ success: false, error: e.message }});
-                            }});
-                        """)
+                        VE3.run([{{
+                            sceneId: "{pid}",
+                            prompt: `{generator._escape_js_string(prompt_text)}`,
+                            referenceFiles: {ref_json}
+                        }}]).then(r => {{
+                            clearTimeout(timeout);
+                            callback({{ success: true, result: r }});
+                        }}).catch(e => {{
+                            clearTimeout(timeout);
+                            callback({{ success: false, error: e.message }});
+                        }});
+                    """)
 
-                        if result and result.get("success"):
-                            # Di chuyển file (trong lock để không nhầm)
-                            img_file, score, _ = generator._move_downloaded_images(pid)
-                            if img_file:
-                                success += 1
-                                self._log(f"[{thread_name}] ✅ OK: {pid} -> {img_file.name}", "success")
+                    if result and result.get("success"):
+                        # Di chuyển file - dùng scene_id làm pattern nên không nhầm
+                        img_file, score, _ = generator._move_downloaded_images(pid)
+                        if img_file:
+                            success += 1
+                            self._log(f"[{thread_name}] ✅ OK: {pid} -> {img_file.name}", "success")
 
-                                # Save media name (cho ref)
-                                if phase == "ref":
-                                    js_result = result.get("result", {})
-                                    js_images = js_result.get("images", []) if isinstance(js_result, dict) else []
-                                    if js_images and js_images[0].get("mediaName"):
-                                        generator.driver.execute_script(
-                                            f"VE3.setMediaName('{pid}', '{js_images[0]['mediaName']}', {js_images[0].get('seed', 'null')});"
-                                        )
-                            else:
-                                failed += 1
-                                self._log(f"[{thread_name}] ❌ Không tìm thấy file: {pid}", "error")
+                            # Save media name (cho ref)
+                            if phase == "ref":
+                                js_result = result.get("result", {})
+                                js_images = js_result.get("images", []) if isinstance(js_result, dict) else []
+                                if js_images and js_images[0].get("mediaName"):
+                                    generator.driver.execute_script(
+                                        f"VE3.setMediaName('{pid}', '{js_images[0]['mediaName']}', {js_images[0].get('seed', 'null')});"
+                                    )
                         else:
                             failed += 1
-                            self._log(f"[{thread_name}] ❌ FAIL: {pid}", "error")
+                            self._log(f"[{thread_name}] ❌ Không tìm thấy file: {pid}", "error")
+                    else:
+                        failed += 1
+                        self._log(f"[{thread_name}] ❌ FAIL: {pid}", "error")
 
-                        self._log(f"[{thread_name}] 🔓 Xong download: {pid}")
+                    self._log(f"[{thread_name}] ✓ Done: {pid}")
 
                     # Delay
                     time.sleep(2)
