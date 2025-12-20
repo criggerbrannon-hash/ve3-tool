@@ -248,21 +248,44 @@ class ChromeHeadersExtractor:
 
                                 self._log(f"Found API request: {url[:60]}...")
 
+                                # Case-insensitive header lookup
+                                def get_header(name):
+                                    for k, v in headers.items():
+                                        if k.lower() == name.lower():
+                                            return v
+                                    return ""
+
+                                auth = get_header("Authorization")
+                                x_browser = get_header("x-browser-validation")
+
+                                # Debug: show what we found
+                                if auth:
+                                    self._log(f"   Authorization: {auth[:40]}...")
+                                if x_browser:
+                                    self._log(f"   x-browser-validation: {x_browser[:40]}...")
+
                                 with self._capture_lock:
-                                    self.captured_headers = CapturedHeaders(
-                                        authorization=headers.get("Authorization", ""),
-                                        x_browser_validation=headers.get("x-browser-validation", ""),
-                                        x_browser_channel=headers.get("x-browser-channel", ""),
-                                        x_browser_copyright=headers.get("x-browser-copyright", ""),
-                                        x_browser_year=headers.get("x-browser-year", ""),
-                                        x_client_data=headers.get("x-client-data", ""),
-                                        user_agent=headers.get("User-Agent", ""),
-                                        timestamp=time.time()
-                                    )
+                                    # Only update if we found something new
+                                    if auth and not self.captured_headers.authorization:
+                                        self.captured_headers.authorization = auth
+                                    if x_browser and not self.captured_headers.x_browser_validation:
+                                        self.captured_headers.x_browser_validation = x_browser
+
+                                    # Also capture other headers
+                                    if not self.captured_headers.x_browser_channel:
+                                        self.captured_headers.x_browser_channel = get_header("x-browser-channel")
+                                    if not self.captured_headers.x_browser_copyright:
+                                        self.captured_headers.x_browser_copyright = get_header("x-browser-copyright")
+                                    if not self.captured_headers.x_browser_year:
+                                        self.captured_headers.x_browser_year = get_header("x-browser-year")
+                                    if not self.captured_headers.x_client_data:
+                                        self.captured_headers.x_client_data = get_header("x-client-data")
+                                    if not self.captured_headers.user_agent:
+                                        self.captured_headers.user_agent = get_header("User-Agent")
+                                    self.captured_headers.timestamp = time.time()
 
                                     if self.captured_headers.is_valid():
                                         self._log("✅ Captured valid headers!")
-                                        self._log(f"   x-browser-validation: {self.captured_headers.x_browser_validation[:30]}...")
                                         return self.captured_headers
                     except:
                         continue

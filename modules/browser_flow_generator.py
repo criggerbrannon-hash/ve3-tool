@@ -2339,12 +2339,27 @@ class BrowserFlowGenerator:
 
                 if extractor.start_browser():
                     if extractor.navigate_to_flow():
-                        headers = extractor.capture_headers_from_network(timeout=30)
+                        # Thử capture từ network logs
+                        headers = extractor.capture_headers_from_network(timeout=15)
+
+                        # Nếu chưa đủ, thử trigger API call
+                        if not headers.is_valid():
+                            self._log("Headers chưa đủ, thử trigger API call...")
+                            headers = extractor.trigger_api_and_capture()
+
                         if headers.is_valid():
                             bearer_token = headers.authorization.replace("Bearer ", "")
                             self._log(f"✅ Đã lấy được token từ Chrome: {bearer_token[:30]}...")
+
+                            # Lưu x-browser-validation để dùng sau
+                            self._chrome_headers = headers
                         else:
-                            self._log("❌ Không capture được headers", "warn")
+                            # Vẫn có thể có authorization nhưng không có x-browser-validation
+                            if headers.authorization:
+                                bearer_token = headers.authorization.replace("Bearer ", "")
+                                self._log(f"⚠️ Chỉ có token, thiếu x-browser-validation: {bearer_token[:30]}...")
+                            else:
+                                self._log("❌ Không capture được headers", "warn")
                     extractor.stop_browser()
                 else:
                     self._log("❌ Không khởi động được Chrome", "warn")
