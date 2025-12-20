@@ -2385,6 +2385,12 @@ class BrowserFlowGenerator:
             verbose=self.verbose
         )
 
+        # Pass Chrome headers (bao gồm x-browser-validation) nếu có
+        if hasattr(self, '_chrome_headers') and self._chrome_headers:
+            api._chrome_headers = self._chrome_headers
+            api._update_session_with_chrome_headers()
+            self._log(f"Đã set Chrome headers cho API (x-browser-validation: có)")
+
         # Map aspect ratio
         ar_setting = self.config.get('flow_aspect_ratio', 'landscape')
         ar_map = {
