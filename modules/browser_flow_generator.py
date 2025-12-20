@@ -2360,6 +2360,12 @@ class BrowserFlowGenerator:
         first_pid = str(first_prompt.get('id', 'test'))
         first_prompt_text = first_prompt.get('prompt', 'a red apple')
 
+        # Clear old performance logs trước khi tạo ảnh
+        try:
+            self.driver.get_log("performance")  # Clear existing logs
+        except:
+            pass
+
         # Gọi VE3.run() cho 1 ảnh đầu tiên
         test_js = f"""
             const callback = arguments[arguments.length - 1];
@@ -2396,14 +2402,61 @@ class BrowserFlowGenerator:
             self._log("Không tìm thấy file ảnh test đã download!", "error")
             return {"success": False, "error": "Không download được ảnh test"}
 
-        # === CAPTURE HEADERS TỪ NETWORK LOGS ===
-        self._log(">>> Capture x-browser-validation từ network logs...")
+        # === CAPTURE HEADERS TỪ PERFORMANCE LOGS ===
+        self._log(">>> Capture x-browser-validation từ performance logs...")
 
-        from modules.chrome_headers_extractor import ChromeHeadersExtractor
-        extractor = ChromeHeadersExtractor(verbose=False)
-        extractor.driver = self.driver  # Dùng driver hiện tại
+        from modules.chrome_headers_extractor import CapturedHeaders
+        import json as json_module
 
-        captured = extractor.capture_headers_from_network(timeout=5)
+        captured = CapturedHeaders()
+        API_PATTERN = "aisandbox-pa.googleapis.com"
+
+        try:
+            logs = self.driver.get_log("performance")
+            self._log(f"   Có {len(logs)} log entries")
+
+            for log in logs:
+                try:
+                    message = json_module.loads(log["message"])
+                    method = message.get("message", {}).get("method", "")
+                    params = message.get("message", {}).get("params", {})
+
+                    # Check Network.requestWillBeSent
+                    if method == "Network.requestWillBeSent":
+                        request = params.get("request", {})
+                        url = request.get("url", "")
+                        headers = request.get("headers", {})
+
+                        if API_PATTERN in url and "batchGenerateImages" in url:
+                            self._log(f"   Found API request: {url[:80]}...")
+
+                            # Case-insensitive header lookup
+                            for k, v in headers.items():
+                                if k.lower() == "authorization" and not captured.authorization:
+                                    captured.authorization = v
+                                    self._log(f"   Authorization: {v[:50]}...")
+                                if k.lower() == "x-browser-validation" and not captured.x_browser_validation:
+                                    captured.x_browser_validation = v
+                                    self._log(f"   x-browser-validation: {v[:50]}...")
+
+                    # Check Network.requestWillBeSentExtraInfo (có headers thực tế Chrome thêm)
+                    elif method == "Network.requestWillBeSentExtraInfo":
+                        headers = params.get("headers", {})
+
+                        # ExtraInfo không có URL, check bằng headers
+                        for k, v in headers.items():
+                            if k.lower() == "authorization" and not captured.authorization:
+                                captured.authorization = v
+                                self._log(f"   Authorization (ExtraInfo): {v[:50]}...")
+                            if k.lower() == "x-browser-validation" and not captured.x_browser_validation:
+                                captured.x_browser_validation = v
+                                self._log(f"   x-browser-validation (ExtraInfo): {v[:50]}...")
+
+                except:
+                    continue
+
+        except Exception as e:
+            self._log(f"   Lỗi đọc logs: {e}", "error")
 
         if not captured.is_valid():
             self._log("Không capture được headers đầy đủ!", "error")
