@@ -86,29 +86,89 @@ class ChromeHeadersExtractor:
             print(f"[HeadersExtractor] {msg}")
 
     def start_browser(self) -> bool:
-        """Khởi động Chrome với CDP enabled."""
+        """
+        Khởi động Chrome với CDP enabled.
+        Copy từ browser_flow_generator._create_driver() để đảm bảo tương thích.
+        """
+        import os
+        import random
+        import shutil
+
         try:
             from selenium import webdriver
             from selenium.webdriver.chrome.options import Options
 
             options = Options()
 
+            # Tim Chrome binary (giong browser_flow_generator)
+            chrome_paths = [
+                r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+                "/usr/bin/google-chrome",
+                "/usr/bin/chromium-browser",
+            ]
+            for chrome_path in chrome_paths:
+                if os.path.exists(chrome_path):
+                    options.binary_location = chrome_path
+                    self._log(f"Chrome binary: {chrome_path}")
+                    break
+
+            # Tao working profile (giong browser_flow_generator)
+            if self.chrome_profile_path:
+                profile_dir = Path(self.chrome_profile_path)
+                profile_name = profile_dir.name
+
+                # Working profile rieng cho headers extractor
+                working_profile_base = Path.home() / ".ve3_chrome_profiles"
+                working_profile_base.mkdir(parents=True, exist_ok=True)
+                working_profile = working_profile_base / f"{profile_name}_headers"
+
+                self._log(f"Profile goc: {profile_dir}")
+                self._log(f"Working profile: {working_profile}")
+
+                # Copy profile neu chua co
+                if not working_profile.exists():
+                    working_profile.mkdir(parents=True, exist_ok=True)
+                    if profile_dir.exists() and any(profile_dir.iterdir()):
+                        for item in profile_dir.iterdir():
+                            try:
+                                dest = working_profile / item.name
+                                if item.is_dir():
+                                    shutil.copytree(item, dest, dirs_exist_ok=True)
+                                else:
+                                    shutil.copy2(item, dest)
+                            except Exception:
+                                pass  # Skip locked files
+                        self._log("Da copy profile data")
+                else:
+                    self._log("Su dung working profile da co")
+
+                options.add_argument(f"--user-data-dir={working_profile}")
+
+            # Random debug port (tranh xung dot)
+            debug_port = random.randint(9222, 9999)
+            options.add_argument(f"--remote-debugging-port={debug_port}")
+            self._log(f"Debug port: {debug_port}")
+
             if self.headless:
                 options.add_argument("--headless=new")
+                options.add_argument("--disable-gpu")
 
+            # Cac options giong browser_flow_generator
             options.add_argument("--no-sandbox")
             options.add_argument("--disable-dev-shm-usage")
             options.add_argument("--disable-blink-features=AutomationControlled")
+            options.add_argument("--disable-extensions")
+            options.add_argument("--disable-infobars")
             options.add_argument("--window-size=1920,1080")
 
-            # Enable CDP
+            # Enable CDP logging
             options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
 
-            if self.chrome_profile_path:
-                options.add_argument(f"--user-data-dir={self.chrome_profile_path}")
+            options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
+            options.add_experimental_option("useAutomationExtension", False)
 
-            options.add_experimental_option("excludeSwitches", ["enable-automation"])
-
+            self._log(f"Dang khoi dong Chrome...")
             self.driver = webdriver.Chrome(options=options)
 
             # Hide webdriver
@@ -121,6 +181,8 @@ class ChromeHeadersExtractor:
 
         except Exception as e:
             self._log(f"Error starting browser: {e}")
+            import traceback
+            traceback.print_exc()
             return False
 
     def navigate_to_flow(self) -> bool:
