@@ -302,33 +302,75 @@ class ChromeHeadersExtractor:
     def trigger_api_and_capture(self) -> CapturedHeaders:
         """
         Trigger 1 API call và capture headers.
+        Nhập prompt test và click Generate để trigger POST request có x-browser-validation.
         """
         if not self.driver:
             return CapturedHeaders()
 
-        self._log("Triggering API call to capture headers...")
+        self._log("Triggering generate request to capture x-browser-validation...")
 
         # Enable network
         self.driver.execute_cdp_cmd("Network.enable", {})
 
-        # Inject và trigger API call
+        # Inject prompt và click Generate
         result = self.driver.execute_script("""
-            return new Promise((resolve) => {
-                // Tìm và click nút tạo ảnh hoặc trigger API
-                const buttons = document.querySelectorAll('button');
-                for (const btn of buttons) {
-                    if (btn.textContent.includes('Tạo') || btn.textContent.includes('Generate')) {
-                        btn.click();
-                        setTimeout(() => resolve('clicked'), 1000);
-                        return;
+            return (async () => {
+                // Tìm textarea để nhập prompt
+                const textareas = document.querySelectorAll('textarea');
+                let promptInput = null;
+                for (const ta of textareas) {
+                    if (ta.placeholder && (ta.placeholder.includes('prompt') || ta.placeholder.includes('Mô tả'))) {
+                        promptInput = ta;
+                        break;
                     }
                 }
-                resolve('no_button');
-            });
+
+                // Fallback: tìm bất kỳ textarea nào
+                if (!promptInput && textareas.length > 0) {
+                    promptInput = textareas[0];
+                }
+
+                if (promptInput) {
+                    // Nhập prompt test
+                    promptInput.value = 'test image for header capture';
+                    promptInput.dispatchEvent(new Event('input', { bubbles: true }));
+                    await new Promise(r => setTimeout(r, 500));
+                }
+
+                // Tìm và click nút Generate
+                const buttons = document.querySelectorAll('button');
+                for (const btn of buttons) {
+                    const text = btn.textContent || '';
+                    if (text.includes('Tạo') || text.includes('Generate') || text.includes('Create')) {
+                        if (!btn.disabled) {
+                            btn.click();
+                            return 'clicked';
+                        }
+                    }
+                }
+
+                // Thử tìm button bằng aria-label
+                for (const btn of buttons) {
+                    const label = btn.getAttribute('aria-label') || '';
+                    if (label.includes('generate') || label.includes('create')) {
+                        if (!btn.disabled) {
+                            btn.click();
+                            return 'clicked_aria';
+                        }
+                    }
+                }
+
+                return 'no_button';
+            })();
         """)
 
-        # Capture headers
-        return self.capture_headers_from_network(timeout=10)
+        self._log(f"Trigger result: {result}")
+
+        # Wait longer for the POST request
+        time.sleep(2)
+
+        # Capture headers - focus on POST requests
+        return self.capture_headers_from_network(timeout=15)
 
     def get_headers(self) -> CapturedHeaders:
         """Get current captured headers."""
