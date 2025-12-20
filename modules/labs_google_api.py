@@ -298,23 +298,14 @@ class LabsGoogleAPI:
         }
         aspect = ar_map.get(aspect_ratio.lower(), ar_map["landscape"])
 
-        # Solve CAPTCHA
-        captcha_token = ""
-        if self.captcha_api_key:
-            captcha_token = self.solve_captcha()
-            if not captcha_token:
-                return False, [], "Failed to solve CAPTCHA"
-        else:
-            self._log("WARNING: No CAPTCHA API key - request may fail")
+        # Note: CAPTCHA not needed for this endpoint with Bearer auth
+        # The browser uses x-browser-validation header which we can't generate
 
-        # Generate seed and sessionId
+        # Generate seed
         import random
-        import time as time_module
 
         if seed is None:
             seed = random.randint(1, 999999)
-
-        session_id = f";{int(time_module.time() * 1000)}"
 
         # Build requests array (like browser)
         requests_list = []
@@ -329,11 +320,9 @@ class LabsGoogleAPI:
             }
             requests_list.append(request)
 
-        # Full payload matching browser format
+        # Try simpler payload format without recaptchaToken/sessionId
+        # These fields may only work with x-browser-validation header
         payload = {
-            "clientContext": {},
-            "recaptchaToken": captcha_token,
-            "sessionId": session_id,
             "requests": requests_list
         }
 
@@ -343,38 +332,26 @@ class LabsGoogleAPI:
         try:
             import json as json_module
 
-            # Headers matching browser EXACTLY
+            # Headers - use application/json instead of text/plain
             headers = {
-                "Accept": "*/*",
-                "Accept-Encoding": "gzip, deflate, br, zstd",
+                "Accept": "application/json",
+                "Accept-Encoding": "gzip, deflate, br",
                 "Accept-Language": "en-US,en;q=0.9",
                 "Authorization": f"Bearer {self.bearer_token}",
-                "Content-Type": "text/plain;charset=UTF-8",
+                "Content-Type": "application/json",
                 "Origin": "https://labs.google",
                 "Referer": "https://labs.google/",
-                "Sec-Ch-Ua": '"Google Chrome";v="143", "Chromium";v="143", "Not A(Brand";v="24"',
-                "Sec-Ch-Ua-Mobile": "?0",
-                "Sec-Ch-Ua-Platform": '"Windows"',
-                "Sec-Fetch-Dest": "empty",
-                "Sec-Fetch-Mode": "cors",
-                "Sec-Fetch-Site": "cross-site",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
-                "X-Browser-Channel": "stable",
-                "X-Browser-Copyright": "Copyright 2025 Google LLC. All Rights reserved.",
-                "X-Browser-Year": "2025"
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36"
             }
 
             self._log(f"Calling API: {url}")
             self._log(f"Bearer: {self.bearer_token[:30]}...")
-            self._log(f"CAPTCHA token: {captcha_token[:50] if captcha_token else 'NONE'}...")
-
-            # Send as text/plain (like browser)
-            payload_str = json_module.dumps(payload)
+            self._log(f"Payload: {json_module.dumps(payload)[:200]}...")
 
             response = requests.post(
                 url,
                 headers=headers,
-                data=payload_str,
+                json=payload,  # Use json= for proper Content-Type
                 timeout=120
             )
 
