@@ -1236,6 +1236,27 @@ class BrowserFlowGenerator:
             "stats": self.stats.copy()
         }
 
+    def _build_prompt_json(self, prompt: str, reference_files: List[str] = None) -> str:
+        """
+        Tạo prompt_json đầy đủ trước khi gửi API.
+        prompt_json là nguồn dữ liệu chính - prompt gửi đi sẽ lấy từ đây.
+
+        Args:
+            prompt: Nội dung prompt
+            reference_files: Danh sách file reference (optional)
+
+        Returns:
+            JSON string chứa prompt hoàn chỉnh
+        """
+        payload = {
+            "prompt": prompt
+        }
+        # Có thể thêm các field khác nếu cần (seed, imageInputs, etc.)
+        if reference_files:
+            payload["reference_files"] = reference_files
+
+        return json.dumps(payload, ensure_ascii=False)
+
     def _process_single_prompt(self, prompt_data: Dict, index: int, total: int) -> Tuple[bool, Optional[Path], float, str]:
         """
         Xu ly mot prompt don le.
@@ -1266,9 +1287,20 @@ class BrowserFlowGenerator:
 
         if not prompt:
             self._log("Skip - prompt rong", "warn")
-            return False, None, 0.0
+            return False, None, 0.0, ""
 
-        # NOTE: Không cần simplify nữa - AI đã được hướng dẫn không mô tả ngoại hình
+        # =====================================================
+        # BƯỚC 1: Lấy hoặc tạo prompt_json
+        # Nếu caller đã pre-save, dùng prompt_json đã có
+        # =====================================================
+        if 'prompt_json' in prompt_data and prompt_data['prompt_json']:
+            prompt_json = prompt_data['prompt_json']
+            self._log(f"[PROMPT_JSON] Sử dụng từ Excel: {prompt_json[:100]}...")
+        else:
+            # Fallback: tạo mới nếu chưa có
+            prompt_json = self._build_prompt_json(prompt, reference_files)
+            prompt_data['prompt_json'] = prompt_json
+            self._log(f"[PROMPT_JSON] Đã tạo mới: {prompt_json[:100]}...")
 
         try:
             # UPLOAD REFERENCE IMAGES TRUOC KHI TAO ANH
@@ -1278,7 +1310,10 @@ class BrowserFlowGenerator:
                 if not upload_success:
                     self._log("[UPLOAD] Upload that bai, tiep tuc khong co reference", "warn")
 
-            # Goi VE3.run() cho 1 prompt (voi reference_files)
+            # =====================================================
+            # BƯỚC 2: Gửi prompt_json tới JS (thay vì gửi prompt riêng)
+            # JS sẽ extract prompt từ prompt_json
+            # =====================================================
             ref_files_json = json.dumps(reference_files)
             result = self.driver.execute_async_script(f"""
                 const callback = arguments[arguments.length - 1];
@@ -1289,7 +1324,8 @@ class BrowserFlowGenerator:
                 VE3.run([{{
                     sceneId: "{pid}",
                     prompt: `{self._escape_js_string(prompt)}`,
-                    referenceFiles: {ref_files_json}
+                    referenceFiles: {ref_files_json},
+                    promptJson: {prompt_json}
                 }}]).then(r => {{
                     clearTimeout(timeout);
                     callback({{ success: true, result: r }});
@@ -1520,6 +1556,44 @@ class BrowserFlowGenerator:
         # Track failed prompts de retry sau
         failed_prompts = []  # List of (prompt_data, original_index)
 
+        # =====================================================
+        # HELPER: Pre-save prompt_json to Excel BEFORE API call
+        # =====================================================
+        def pre_save_prompt_json(prompt_data: Dict, workbook):
+            """Tạo và lưu prompt_json vào Excel TRƯỚC khi gọi API."""
+            pid = str(prompt_data.get('id', ''))
+            prompt = prompt_data.get('prompt', '')
+            if not prompt or not pid.isdigit():
+                return
+
+            # Parse reference_files
+            reference_files = []
+            ref_str = prompt_data.get('reference_files', '')
+            if ref_str:
+                try:
+                    parsed = json.loads(ref_str) if isinstance(ref_str, str) else ref_str
+                    reference_files = parsed if isinstance(parsed, list) else [parsed]
+                except:
+                    reference_files = [f.strip() for f in str(ref_str).split(',') if f.strip()]
+
+            # Build prompt_json
+            prompt_json = self._build_prompt_json(prompt, reference_files)
+            prompt_data['prompt_json'] = prompt_json
+
+            # Save to Excel BEFORE API call
+            if workbook:
+                try:
+                    scene_id = int(pid)
+                    workbook.update_scene(
+                        scene_id,
+                        prompt_json=prompt_json,
+                        status_img="generating"  # Mark as generating
+                    )
+                    workbook.save()
+                    self._log(f"[Excel] Pre-saved prompt_json for scene {scene_id}")
+                except Exception as e:
+                    self._log(f"[Excel] Pre-save warning: {e}", "warn")
+
         # === XU LY PROMPT DAU TIEN VOI SETUP RETRY ===
         first_prompt_success = False
         setup_attempts = 0
@@ -1533,6 +1607,9 @@ class BrowserFlowGenerator:
                     self._log(f"Khong the khoi dong lai browser", "error")
                     continue
 
+            # Pre-save prompt_json to Excel BEFORE calling API
+            pre_save_prompt_json(prompts[0], workbook)
+
             # Thu prompt dau tien
             success, img_file, score, prompt_json = self._process_single_prompt(prompts[0], 0, len(prompts))
 
@@ -1541,25 +1618,20 @@ class BrowserFlowGenerator:
                 self.stats["success"] += 1
                 if score < 50.0:
                     self.stats["low_quality"] += 1
-                # Luu prompt_json vao prompt_data
-                if prompt_json:
-                    prompts[0]['prompt_json'] = prompt_json
-                # Cap nhat Excel (prompt_json, img_path)
+                # Cap nhat Excel (img_path, status) - prompt_json da luu truoc do
                 if workbook:
                     try:
                         pid = prompts[0].get('id', '1')
-                        # Chi cap nhat cho scenes (so), khong phai nv/loc
                         if pid.isdigit():
                             scene_id = int(pid)
                             relative_path = f"img/{pid}.png" if img_file else ""
                             workbook.update_scene(
                                 scene_id,
                                 img_path=relative_path,
-                                status_img="done" if score >= 50.0 else "low_quality",
-                                prompt_json=prompt_json
+                                status_img="done" if score >= 50.0 else "low_quality"
                             )
                             workbook.save()
-                            self._log(f"[Excel] Updated scene {scene_id}: prompt_json saved")
+                            self._log(f"[Excel] Updated scene {scene_id}: status=done")
                     except Exception as e:
                         self._log(f"[Excel] Warning: {e}", "warn")
             else:
@@ -1581,35 +1653,40 @@ class BrowserFlowGenerator:
                 self.stats["skipped"] += 1
                 continue
 
+            # Pre-save prompt_json to Excel BEFORE calling API
+            pre_save_prompt_json(prompt_data, workbook)
+
             success, img_file, score, prompt_json = self._process_single_prompt(prompt_data, i, len(prompts))
 
             if success:
                 self.stats["success"] += 1
                 if score < 50.0:
                     self.stats["low_quality"] += 1
-                # Luu prompt_json vao prompt_data
-                if prompt_json:
-                    prompt_data['prompt_json'] = prompt_json
-                # Cap nhat Excel (prompt_json, img_path)
+                # Cap nhat Excel (img_path, status) - prompt_json da luu truoc do
                 if workbook:
                     try:
-                        # Chi cap nhat cho scenes (so), khong phai nv/loc
                         if pid.isdigit():
                             scene_id = int(pid)
                             relative_path = f"img/{pid}.png" if img_file else ""
                             workbook.update_scene(
                                 scene_id,
                                 img_path=relative_path,
-                                status_img="done" if score >= 50.0 else "low_quality",
-                                prompt_json=prompt_json
+                                status_img="done" if score >= 50.0 else "low_quality"
                             )
                             workbook.save()
-                            self._log(f"[Excel] Updated scene {scene_id}: prompt_json saved")
+                            self._log(f"[Excel] Updated scene {scene_id}: status=done")
                     except Exception as e:
                         self._log(f"[Excel] Warning: {e}", "warn")
             else:
                 failed_prompts.append((prompt_data, i))
                 self.stats["failed"] += 1
+                # Update Excel status to error (prompt_json was already saved)
+                if workbook and pid.isdigit():
+                    try:
+                        workbook.update_scene(int(pid), status_img="error")
+                        workbook.save()
+                    except:
+                        pass
 
             # Delay giua cac prompt
             if i < len(prompts) - 1:
@@ -1626,6 +1703,7 @@ class BrowserFlowGenerator:
                 pid = str(prompt_data.get('id', original_index + 1))
                 self._log(f"\nRetry ID: {pid}")
 
+                # prompt_json already exists from pre-save, no need to create again
                 success, img_file, score, prompt_json = self._process_single_prompt(
                     prompt_data, original_index, len(prompts)
                 )
@@ -1636,24 +1714,19 @@ class BrowserFlowGenerator:
                     self.stats["failed"] -= 1  # Giam failed vi da thanh cong
                     if score < 50.0:
                         self.stats["low_quality"] += 1
-                    # Luu prompt_json vao prompt_data
-                    if prompt_json:
-                        prompt_data['prompt_json'] = prompt_json
-                    # Cap nhat Excel (prompt_json, img_path)
+                    # Cap nhat Excel (img_path, status) - prompt_json da luu truoc do
                     if workbook:
                         try:
-                            # Chi cap nhat cho scenes (so), khong phai nv/loc
                             if pid.isdigit():
                                 scene_id = int(pid)
                                 relative_path = f"img/{pid}.png" if img_file else ""
                                 workbook.update_scene(
                                     scene_id,
                                     img_path=relative_path,
-                                    status_img="done" if score >= 50.0 else "low_quality",
-                                    prompt_json=prompt_json
+                                    status_img="done" if score >= 50.0 else "low_quality"
                                 )
                                 workbook.save()
-                                self._log(f"[Excel] Updated scene {scene_id}: prompt_json saved (retry)")
+                                self._log(f"[Excel] Updated scene {scene_id}: status=done (retry)")
                         except Exception as e:
                             self._log(f"[Excel] Warning: {e}", "warn")
 
