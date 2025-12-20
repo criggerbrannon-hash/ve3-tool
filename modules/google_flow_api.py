@@ -436,6 +436,8 @@ class GoogleFlowAPI:
                 return False, [], "Authentication failed - Bearer token may be expired"
             
             if response.status_code == 403:
+                self._log(f"403 Response: {response.text[:500]}")
+                self._log(f"Request headers: x-browser-validation={self.session.headers.get('x-browser-validation', 'MISSING')[:50]}")
                 return False, [], "Access forbidden - check permissions"
             
             if response.status_code != 200:

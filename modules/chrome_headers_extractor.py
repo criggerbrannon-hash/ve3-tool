@@ -43,20 +43,23 @@ class CapturedHeaders:
         return time.time() - self.timestamp if self.timestamp else 999999
 
     def to_dict(self) -> Dict[str, str]:
-        """Convert to dict for requests."""
-        return {
-            "authorization": self.authorization,
-            "content-type": "text/plain;charset=UTF-8",
-            "accept": "*/*",
-            "origin": "https://labs.google",
-            "referer": "https://labs.google/",
+        """Convert to dict for requests - dùng đúng case như Chrome."""
+        headers = {
+            "Authorization": self.authorization,
+            "Content-Type": "text/plain;charset=UTF-8",
+            "Accept": "*/*",
+            "Origin": "https://labs.google",
+            "Referer": "https://labs.google/",
             "x-browser-channel": self.x_browser_channel or "stable",
             "x-browser-copyright": self.x_browser_copyright or "Copyright 2025 Google LLC. All Rights reserved.",
             "x-browser-validation": self.x_browser_validation,
             "x-browser-year": self.x_browser_year or "2025",
-            "x-client-data": self.x_client_data,
-            "user-agent": self.user_agent or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0",
+            "User-Agent": self.user_agent or "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         }
+        # Chỉ thêm x-client-data nếu có
+        if self.x_client_data:
+            headers["x-client-data"] = self.x_client_data
+        return headers
 
 
 class ChromeHeadersExtractor:
