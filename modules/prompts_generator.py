@@ -1243,17 +1243,15 @@ class PromptGenerator:
                     video_prompt, ref_files, characters, locations
                 )
 
-            # Lấy srt_start/srt_end với fallback sang start_time/end_time
+            # Lấy srt_start/srt_end (chỉ dùng 2 cột này, không còn start_time/end_time)
             srt_start_val = scene_data.get("srt_start") or start_time or ""
             srt_end_val = scene_data.get("srt_end") or end_time or ""
 
             scene = Scene(
                 scene_id=scene_data["scene_id"],
-                start_time=start_time,          # Thời gian bắt đầu (HH:MM:SS,mmm)
-                end_time=end_time,              # Thời gian kết thúc (HH:MM:SS,mmm)
+                srt_start=srt_start_val,        # Thời gian bắt đầu (HH:MM:SS,mmm)
+                srt_end=srt_end_val,            # Thời gian kết thúc (HH:MM:SS,mmm)
                 duration=round(duration, 2),    # Độ dài (giây)
-                srt_start=srt_start_val,        # Timestamp từ SRT
-                srt_end=srt_end_val,            # Timestamp từ SRT
                 srt_text=scene_data.get("text", "")[:500],  # Truncate nếu quá dài
                 img_prompt=img_prompt,
                 video_prompt=video_prompt,

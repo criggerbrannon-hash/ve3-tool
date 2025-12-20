@@ -34,8 +34,9 @@ CHARACTERS_COLUMNS = [
 # Cột cho sheet Scenes
 SCENES_COLUMNS = [
     "scene_id",         # ID scene (1, 2, 3, ...)
-    "srt_start",        # Index bắt đầu trong SRT (HH:MM:SS,mmm)
-    "srt_end",          # Index kết thúc trong SRT (HH:MM:SS,mmm)
+    "srt_start",        # Thời gian bắt đầu (HH:MM:SS,mmm)
+    "srt_end",          # Thời gian kết thúc (HH:MM:SS,mmm)
+    "duration",         # Độ dài (giây)
     "srt_text",         # Nội dung text của scene
     "img_prompt",       # Prompt tạo ảnh (text)
     "prompt_json",      # JSON prompt đầy đủ (có seed, imageInputs) - dùng khi tạo ảnh
@@ -44,10 +45,6 @@ SCENES_COLUMNS = [
     "video_path",       # Path đến video đã tạo
     "status_img",       # Trạng thái ảnh (pending/done/error)
     "status_vid",       # Trạng thái video (pending/done/error)
-    # Thông tin thời gian
-    "start_time",       # Thời gian bắt đầu (HH:MM:SS,mmm)
-    "end_time",         # Thời gian kết thúc (HH:MM:SS,mmm)
-    "duration",         # Độ dài (giây)
     # Thông tin reference
     "characters_used",  # JSON list nhân vật trong scene
     "location_used",    # Location ID
@@ -179,8 +176,9 @@ class Scene:
     def __init__(
         self,
         scene_id: int,
-        srt_start: str = "",            # Timestamp bắt đầu từ SRT (HH:MM:SS,mmm)
-        srt_end: str = "",              # Timestamp kết thúc từ SRT (HH:MM:SS,mmm)
+        srt_start: str = "",            # Thời gian bắt đầu (HH:MM:SS,mmm)
+        srt_end: str = "",              # Thời gian kết thúc (HH:MM:SS,mmm)
+        duration: float = 0.0,          # Độ dài (giây)
         srt_text: str = "",
         img_prompt: str = "",
         prompt_json: str = "",          # JSON prompt đầy đủ (seed, imageInputs)
@@ -189,18 +187,19 @@ class Scene:
         video_path: str = "",
         status_img: str = "pending",
         status_vid: str = "pending",
-        # Time tracking (alias of srt_start/srt_end for compatibility)
-        start_time: str = "",           # Thời gian bắt đầu (HH:MM:SS,mmm)
-        end_time: str = "",             # Thời gian kết thúc (HH:MM:SS,mmm)
-        duration: float = 0.0,          # Độ dài (giây)
         # Reference info
         characters_used: str = "",      # JSON list of character IDs used
         location_used: str = "",        # Location ID used
-        reference_files: str = ""       # JSON list of reference files
+        reference_files: str = "",      # JSON list of reference files
+        # Backward compatibility - map to srt_start/srt_end
+        start_time: str = None,         # DEPRECATED: use srt_start
+        end_time: str = None,           # DEPRECATED: use srt_end
     ):
         self.scene_id = scene_id
-        self.srt_start = str(srt_start) if srt_start else ""
-        self.srt_end = str(srt_end) if srt_end else ""
+        # Use start_time/end_time as fallback if srt_start/srt_end not provided
+        self.srt_start = str(srt_start) if srt_start else (str(start_time) if start_time else "")
+        self.srt_end = str(srt_end) if srt_end else (str(end_time) if end_time else "")
+        self.duration = duration
         self.srt_text = srt_text
         self.img_prompt = img_prompt
         self.prompt_json = prompt_json
@@ -209,10 +208,6 @@ class Scene:
         self.video_path = video_path
         self.status_img = status_img
         self.status_vid = status_vid
-        # Time
-        self.start_time = start_time
-        self.end_time = end_time
-        self.duration = duration
         # References
         self.characters_used = characters_used
         self.location_used = location_used
@@ -224,6 +219,7 @@ class Scene:
             "scene_id": self.scene_id,
             "srt_start": self.srt_start,
             "srt_end": self.srt_end,
+            "duration": self.duration,
             "srt_text": self.srt_text,
             "img_prompt": self.img_prompt,
             "prompt_json": self.prompt_json,
@@ -232,9 +228,6 @@ class Scene:
             "video_path": self.video_path,
             "status_img": self.status_img,
             "status_vid": self.status_vid,
-            "start_time": self.start_time,
-            "end_time": self.end_time,
-            "duration": self.duration,
             "characters_used": self.characters_used,
             "location_used": self.location_used,
             "reference_files": self.reference_files,
@@ -270,10 +263,15 @@ class Scene:
             except (ValueError, TypeError):
                 return default
 
+        # Get srt_start/srt_end with fallback to start_time/end_time for backward compat
+        srt_start = str(data.get("srt_start", "") or data.get("start_time", "") or "")
+        srt_end = str(data.get("srt_end", "") or data.get("end_time", "") or "")
+
         return cls(
             scene_id=safe_int(data.get("scene_id", 0)),
-            srt_start=str(data.get("srt_start", "") or ""),  # Timestamp string
-            srt_end=str(data.get("srt_end", "") or ""),      # Timestamp string
+            srt_start=srt_start,
+            srt_end=srt_end,
+            duration=safe_float(data.get("duration", 0.0)),
             srt_text=str(data.get("srt_text", "") or ""),
             img_prompt=str(data.get("img_prompt", "") or ""),
             prompt_json=str(data.get("prompt_json", "") or ""),
@@ -282,9 +280,6 @@ class Scene:
             video_path=str(data.get("video_path", "") or ""),
             status_img=str(data.get("status_img", "pending") or "pending"),
             status_vid=str(data.get("status_vid", "pending") or "pending"),
-            start_time=str(data.get("start_time", "") or ""),
-            end_time=str(data.get("end_time", "") or ""),
-            duration=safe_float(data.get("duration", 0.0)),
             characters_used=str(data.get("characters_used", "") or ""),
             location_used=str(data.get("location_used", "") or ""),
             reference_files=str(data.get("reference_files", "") or ""),
@@ -406,8 +401,9 @@ class PromptWorkbook:
         # Điều chỉnh độ rộng cột
         column_widths = {
             "scene_id": 10,
-            "srt_start": 10,
-            "srt_end": 10,
+            "srt_start": 15,
+            "srt_end": 15,
+            "duration": 10,
             "srt_text": 50,
             "img_prompt": 70,
             "video_prompt": 70,
