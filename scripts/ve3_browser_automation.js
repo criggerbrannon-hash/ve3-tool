@@ -408,58 +408,36 @@
                 this.resolveWait = resolve;
 
                 // Check for error notification
-                // Khi lỗi sẽ xuất hiện div với buttons "Gửi ý kiến phản hồi" + "Đóng"
+                // Khi lỗi xuất hiện: <div class="sc-f6076f05-1"><button>Đóng</button></div>
                 const checkErrorNotification = () => {
-                    // Cách 1: Tìm button "Đóng" trong toast (chỉ xuất hiện khi lỗi)
-                    const buttons = document.querySelectorAll('button');
-                    for (const btn of buttons) {
+                    // Tìm tất cả button có text "Đóng"
+                    const allButtons = document.querySelectorAll('button');
+                    for (const btn of allButtons) {
                         const text = btn.textContent?.trim() || '';
-                        // Khi có lỗi sẽ có button "Đóng" hoặc "Gửi ý kiến phản hồi"
-                        if (text === 'Đóng' || text.includes('Gửi ý kiến phản hồi')) {
-                            // Kiểm tra xem button này có trong toast notification không
-                            const parent = btn.closest('li[data-sonner-toast]') ||
-                                          btn.closest('.sc-f6076f05-1') ||
-                                          btn.closest('[aria-label*="Notification"]');
-                            if (parent) {
+                        if (text === 'Đóng') {
+                            // Kiểm tra parent có class sc-f6076f05-1
+                            const parent = btn.parentElement;
+                            if (parent && parent.className && parent.className.includes('sc-f6076f05')) {
                                 return true;
                             }
                         }
                     }
-
-                    // Cách 2: Tìm div class chứa buttons lỗi
-                    const errorDivs = document.querySelectorAll('.sc-f6076f05-1');
-                    for (const div of errorDivs) {
-                        if (div.textContent?.includes('Đóng')) {
-                            return true;
-                        }
-                    }
-
-                    // Cách 3: Tìm toast với text lỗi
-                    const toasts = document.querySelectorAll('li[data-sonner-toast]');
-                    for (const toast of toasts) {
-                        const text = toast.textContent || '';
-                        if (text.includes('Something went wrong') ||
-                            text.includes('went wrong') ||
-                            text.includes('Đã xảy ra lỗi')) {
-                            return true;
-                        }
-                    }
-
                     return false;
                 };
 
-                // Poll for error every 2 seconds
+                // Poll for error every 1 second
                 self.errorCheckIntervalId = setInterval(() => {
-                    if (checkErrorNotification()) {
+                    const hasError = checkErrorNotification();
+                    if (hasError) {
                         clearInterval(self.errorCheckIntervalId);
                         self.errorCheckIntervalId = null;
                         if (self.resolveWait === resolve) {
-                            Utils.log('⚠️ Phát hiện thông báo lỗi - bỏ qua ảnh này', 'error');
+                            Utils.log('⚠️ Phát hiện nút "Đóng" - có lỗi tạo ảnh!', 'error');
                             self.resolveWait = null;
                             resolve({ success: false, error: 'UI Error: Generation failed' });
                         }
                     }
-                }, 2000);
+                }, 1000);
 
                 // Timeout
                 setTimeout(() => {
