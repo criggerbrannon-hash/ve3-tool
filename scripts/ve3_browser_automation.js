@@ -408,31 +408,55 @@
                 this.resolveWait = resolve;
 
                 // Check for error notification
-                // Khi lỗi xuất hiện: <div class="sc-f6076f05-1"><button>Đóng</button></div>
+                // Khi lỗi xuất hiện: <div class="sc-f6076f05-1 dGzeli"><button>Đóng</button></div>
+                // Button "Đóng" + "Gửi ý kiến phản hồi" chỉ xuất hiện khi có lỗi
                 const checkErrorNotification = () => {
-                    // Tìm tất cả button có text "Đóng"
+                    // Method 1: Tìm div có class chứa "sc-f6076f05" với button "Đóng" bên trong
+                    const toastDivs = document.querySelectorAll('div[class*="sc-f6076f05"]');
+                    for (const div of toastDivs) {
+                        const buttons = div.querySelectorAll('button');
+                        for (const btn of buttons) {
+                            const text = btn.textContent?.trim() || '';
+                            if (text === 'Đóng') {
+                                return { found: true, divClass: div.className };
+                            }
+                        }
+                    }
+
+                    // Method 2: Tìm button "Đóng" và check parent có class sc-f6076f05
                     const allButtons = document.querySelectorAll('button');
                     for (const btn of allButtons) {
                         const text = btn.textContent?.trim() || '';
                         if (text === 'Đóng') {
-                            // Kiểm tra parent có class sc-f6076f05-1
                             const parent = btn.parentElement;
                             if (parent && parent.className && parent.className.includes('sc-f6076f05')) {
-                                return true;
+                                return { found: true, divClass: parent.className };
                             }
                         }
                     }
-                    return false;
+
+                    return { found: false };
                 };
+
+                // Start error check polling
+                Utils.log('[ERROR-CHECK] Bắt đầu theo dõi lỗi (mỗi 1 giây)...', 'info');
+                let errorCheckCount = 0;
 
                 // Poll for error every 1 second
                 self.errorCheckIntervalId = setInterval(() => {
-                    const hasError = checkErrorNotification();
-                    if (hasError) {
+                    errorCheckCount++;
+                    const result = checkErrorNotification();
+
+                    // Log every 10 seconds to show it's still running
+                    if (errorCheckCount % 10 === 0) {
+                        Utils.log(`[ERROR-CHECK] Đã check ${errorCheckCount} lần...`, 'info');
+                    }
+
+                    if (result.found) {
+                        Utils.log(`⚠️ Phát hiện toast lỗi! Class: ${result.divClass}`, 'error');
                         clearInterval(self.errorCheckIntervalId);
                         self.errorCheckIntervalId = null;
                         if (self.resolveWait === resolve) {
-                            Utils.log('⚠️ Phát hiện nút "Đóng" - có lỗi tạo ảnh!', 'error');
                             self.resolveWait = null;
                             resolve({ success: false, error: 'UI Error: Generation failed' });
                         }
