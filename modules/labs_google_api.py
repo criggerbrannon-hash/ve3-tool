@@ -341,7 +341,11 @@ class LabsGoogleAPI:
             self._log(f"Calling API: {url}")
             self._log(f"Bearer token: {self.bearer_token[:20]}...")
 
-            response = self.session.post(url, json=payload, timeout=120)
+            # Send as text/plain (like browser does) not application/json
+            import json as json_module
+            payload_str = json_module.dumps(payload)
+
+            response = self.session.post(url, data=payload_str, timeout=120)
 
             self._log(f"Response status: {response.status_code}")
 
