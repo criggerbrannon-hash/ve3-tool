@@ -1161,23 +1161,57 @@ class BrowserFlowGenerator:
                         self._log("[UPLOAD] Upload that bai, tiep tuc khong co reference", "warn")
 
                 # Goi VE3.run() cho 1 prompt (voi reference_files)
+                # Có error detection inline để phát hiện toast lỗi
                 ref_files_json = json.dumps(reference_files)
                 result = self.driver.execute_async_script(f"""
                     const callback = arguments[arguments.length - 1];
-                    const timeout = setTimeout(() => {{
-                        callback({{ success: false, error: 'Timeout 120s' }});
+                    let resolved = false;
+
+                    const timeoutId = setTimeout(() => {{
+                        if (!resolved) {{
+                            resolved = true;
+                            callback({{ success: false, error: 'Timeout 120s' }});
+                        }}
                     }}, 120000);
+
+                    // ERROR DETECTION: Poll cho error toast
+                    const errorCheckId = setInterval(() => {{
+                        const toastDivs = document.querySelectorAll('div[class*="sc-f6076f05"]');
+                        for (const div of toastDivs) {{
+                            const buttons = div.querySelectorAll('button');
+                            for (const btn of buttons) {{
+                                const text = btn.textContent?.trim() || '';
+                                if (text === 'Đóng' || text.includes('Đóng')) {{
+                                    clearInterval(errorCheckId);
+                                    clearTimeout(timeoutId);
+                                    if (!resolved) {{
+                                        resolved = true;
+                                        callback({{ success: false, error: 'UI Error: Generation failed (toast)' }});
+                                    }}
+                                    return;
+                                }}
+                            }}
+                        }}
+                    }}, 1000);
 
                     VE3.run([{{
                         sceneId: "{scene_id}",
                         prompt: `{self._escape_js_string(prompt)}`,
                         referenceFiles: {ref_files_json}
                     }}]).then(r => {{
-                        clearTimeout(timeout);
-                        callback({{ success: true, result: r }});
+                        clearInterval(errorCheckId);
+                        clearTimeout(timeoutId);
+                        if (!resolved) {{
+                            resolved = true;
+                            callback({{ success: true, result: r }});
+                        }}
                     }}).catch(e => {{
-                        clearTimeout(timeout);
-                        callback({{ success: false, error: e.message }});
+                        clearInterval(errorCheckId);
+                        clearTimeout(timeoutId);
+                        if (!resolved) {{
+                            resolved = true;
+                            callback({{ success: false, error: e.message }});
+                        }}
                     }});
                 """)
 
@@ -1313,13 +1347,45 @@ class BrowserFlowGenerator:
             # =====================================================
             # BƯỚC 2: Gửi prompt_json tới JS (thay vì gửi prompt riêng)
             # JS sẽ extract prompt từ prompt_json
+            # Có 2 cơ chế phát hiện lỗi:
+            #   1. JS-side: FetchHook.waitForImages() poll cho error toast
+            #   2. JS-side (inline): Poll cho error toast trong async script
             # =====================================================
             ref_files_json = json.dumps(reference_files)
             result = self.driver.execute_async_script(f"""
                 const callback = arguments[arguments.length - 1];
-                const timeout = setTimeout(() => {{
-                    callback({{ success: false, error: 'Timeout 120s' }});
+                let resolved = false;
+
+                // Timeout sau 120 giây
+                const timeoutId = setTimeout(() => {{
+                    if (!resolved) {{
+                        resolved = true;
+                        callback({{ success: false, error: 'Timeout 120s' }});
+                    }}
                 }}, 120000);
+
+                // ERROR DETECTION: Poll cho error toast mỗi 1 giây
+                // Khi lỗi: <div class="sc-f6076f05-1"><button>Đóng</button></div>
+                const errorCheckId = setInterval(() => {{
+                    // Tìm div có class chứa "sc-f6076f05" với button "Đóng"
+                    const toastDivs = document.querySelectorAll('div[class*="sc-f6076f05"]');
+                    for (const div of toastDivs) {{
+                        const buttons = div.querySelectorAll('button');
+                        for (const btn of buttons) {{
+                            const text = btn.textContent?.trim() || '';
+                            if (text === 'Đóng' || text.includes('Đóng')) {{
+                                console.log('[ERROR-DETECT] Found error toast!');
+                                clearInterval(errorCheckId);
+                                clearTimeout(timeoutId);
+                                if (!resolved) {{
+                                    resolved = true;
+                                    callback({{ success: false, error: 'UI Error: Generation failed (toast detected)' }});
+                                }}
+                                return;
+                            }}
+                        }}
+                    }}
+                }}, 1000);
 
                 VE3.run([{{
                     sceneId: "{pid}",
@@ -1327,11 +1393,19 @@ class BrowserFlowGenerator:
                     referenceFiles: {ref_files_json},
                     promptJson: {prompt_json}
                 }}]).then(r => {{
-                    clearTimeout(timeout);
-                    callback({{ success: true, result: r }});
+                    clearInterval(errorCheckId);
+                    clearTimeout(timeoutId);
+                    if (!resolved) {{
+                        resolved = true;
+                        callback({{ success: true, result: r }});
+                    }}
                 }}).catch(e => {{
-                    clearTimeout(timeout);
-                    callback({{ success: false, error: e.message }});
+                    clearInterval(errorCheckId);
+                    clearTimeout(timeoutId);
+                    if (!resolved) {{
+                        resolved = true;
+                        callback({{ success: false, error: e.message }});
+                    }}
                 }});
             """)
 
@@ -1849,13 +1923,52 @@ class BrowserFlowGenerator:
             try:
                 result = self.driver.execute_async_script(f"""
                     const callback = arguments[arguments.length - 1];
+                    let resolved = false;
+
+                    const timeoutId = setTimeout(() => {{
+                        if (!resolved) {{
+                            resolved = true;
+                            callback({{ success: false, error: 'Timeout 120s' }});
+                        }}
+                    }}, 120000);
+
+                    // ERROR DETECTION: Poll cho error toast
+                    const errorCheckId = setInterval(() => {{
+                        const toastDivs = document.querySelectorAll('div[class*="sc-f6076f05"]');
+                        for (const div of toastDivs) {{
+                            const buttons = div.querySelectorAll('button');
+                            for (const btn of buttons) {{
+                                const text = btn.textContent?.trim() || '';
+                                if (text === 'Đóng' || text.includes('Đóng')) {{
+                                    clearInterval(errorCheckId);
+                                    clearTimeout(timeoutId);
+                                    if (!resolved) {{
+                                        resolved = true;
+                                        callback({{ success: false, error: 'UI Error: Generation failed (toast)' }});
+                                    }}
+                                    return;
+                                }}
+                            }}
+                        }}
+                    }}, 1000);
+
                     VE3.run([{{
                         sceneId: "{char_id}",
                         prompt: `{self._escape_js_string(prompt)}`
                     }}]).then(r => {{
-                        callback({{ success: true, result: r }});
+                        clearInterval(errorCheckId);
+                        clearTimeout(timeoutId);
+                        if (!resolved) {{
+                            resolved = true;
+                            callback({{ success: true, result: r }});
+                        }}
                     }}).catch(e => {{
-                        callback({{ success: false, error: e.message }});
+                        clearInterval(errorCheckId);
+                        clearTimeout(timeoutId);
+                        if (!resolved) {{
+                            resolved = true;
+                            callback({{ success: false, error: e.message }});
+                        }}
                     }});
                 """)
 
