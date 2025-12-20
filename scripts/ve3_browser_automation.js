@@ -1513,6 +1513,12 @@
                     successCount++;
                     Utils.log(`[UPLOAD] ✓ ${img.filename} thanh cong`, 'success');
 
+                    // Wait for UI to settle before next file (ADD button reappear)
+                    if (i < images.length - 1) {
+                        Utils.log('[UPLOAD] Cho UI san sang cho file tiep theo...', 'info');
+                        await Utils.sleep(2000);
+                    }
+
                 } catch (e) {
                     errors.push({ file: img.filename, error: e.message });
                     Utils.log(`[UPLOAD] ✗ ${img.filename}: ${e.message}`, 'error');
