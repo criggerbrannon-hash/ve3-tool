@@ -407,32 +407,56 @@
                 this.imageBuffer = [];
                 this.resolveWait = resolve;
 
-                // Check for error toast notification periodically
-                const checkErrorToast = () => {
-                    // Find toast notifications
-                    const toasts = document.querySelectorAll('li[data-sonner-toast]');
-                    for (const toast of toasts) {
-                        const text = toast.textContent || '';
-                        // Check for error messages
-                        if (text.includes('Something went wrong') ||
-                            text.includes('went wrong') ||
-                            text.includes('Đã xảy ra lỗi') ||
-                            (text.includes('error') && toast.querySelector('i.google-symbols'))) {
+                // Check for error notification
+                // Khi lỗi sẽ xuất hiện div với buttons "Gửi ý kiến phản hồi" + "Đóng"
+                const checkErrorNotification = () => {
+                    // Cách 1: Tìm button "Đóng" trong toast (chỉ xuất hiện khi lỗi)
+                    const buttons = document.querySelectorAll('button');
+                    for (const btn of buttons) {
+                        const text = btn.textContent?.trim() || '';
+                        // Khi có lỗi sẽ có button "Đóng" hoặc "Gửi ý kiến phản hồi"
+                        if (text === 'Đóng' || text.includes('Gửi ý kiến phản hồi')) {
+                            // Kiểm tra xem button này có trong toast notification không
+                            const parent = btn.closest('li[data-sonner-toast]') ||
+                                          btn.closest('.sc-f6076f05-1') ||
+                                          btn.closest('[aria-label*="Notification"]');
+                            if (parent) {
+                                return true;
+                            }
+                        }
+                    }
+
+                    // Cách 2: Tìm div class chứa buttons lỗi
+                    const errorDivs = document.querySelectorAll('.sc-f6076f05-1');
+                    for (const div of errorDivs) {
+                        if (div.textContent?.includes('Đóng')) {
                             return true;
                         }
                     }
+
+                    // Cách 3: Tìm toast với text lỗi
+                    const toasts = document.querySelectorAll('li[data-sonner-toast]');
+                    for (const toast of toasts) {
+                        const text = toast.textContent || '';
+                        if (text.includes('Something went wrong') ||
+                            text.includes('went wrong') ||
+                            text.includes('Đã xảy ra lỗi')) {
+                            return true;
+                        }
+                    }
+
                     return false;
                 };
 
-                // Poll for error toasts every 2 seconds
+                // Poll for error every 2 seconds
                 self.errorCheckIntervalId = setInterval(() => {
-                    if (checkErrorToast()) {
+                    if (checkErrorNotification()) {
                         clearInterval(self.errorCheckIntervalId);
                         self.errorCheckIntervalId = null;
                         if (self.resolveWait === resolve) {
-                            Utils.log('⚠️ Phát hiện lỗi "Something went wrong" - bỏ qua ảnh này', 'error');
+                            Utils.log('⚠️ Phát hiện thông báo lỗi - bỏ qua ảnh này', 'error');
                             self.resolveWait = null;
-                            resolve({ success: false, error: 'UI Error: Something went wrong' });
+                            resolve({ success: false, error: 'UI Error: Generation failed' });
                         }
                     }
                 }, 2000);
