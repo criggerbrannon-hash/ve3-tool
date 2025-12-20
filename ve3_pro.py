@@ -87,7 +87,7 @@ def auto_update_from_git():
         return False, "Not a git repo"
 
     # FIXED: Always pull from the correct branch
-    TARGET_BRANCH = "claude/ve3-image-generation-vmOC4"
+    TARGET_BRANCH = "claude/test-recaptcha-enterprise-wVCQo"
 
     try:
         # Fetch and reset to target branch
