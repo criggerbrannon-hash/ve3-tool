@@ -980,102 +980,68 @@ class UnixVoiceToVideo:
         ttk.Label(prof_tab, text="Moi voice se dung 1 profile khac nhau khi chay song song",
                   foreground='#666', font=('Segoe UI', 9)).pack(anchor=tk.W, pady=(10, 0))
 
-        # Tab 2: Labs API (NEW - Session Token + CAPTCHA)
+        # Tab 2: Labs API (Session Cookie)
         labs_tab = ttk.Frame(notebook, padding=15)
         notebook.add(labs_tab, text="  🔑 Labs API  ")
 
-        ttk.Label(labs_tab, text="Labs API (Bearer Token + CAPTCHA)",
+        ttk.Label(labs_tab, text="Labs API (Session Cookie)",
                   font=('Segoe UI', 12, 'bold')).pack(anchor=tk.W, pady=(0, 5))
-        ttk.Label(labs_tab, text="Can Bearer token tu Network tab + Capsolver API key",
+        ttk.Label(labs_tab, text="Chi can session cookie tu Cookie Editor - KHONG can Bearer token!",
                   foreground='gray', font=('Segoe UI', 9)).pack(anchor=tk.W, pady=(0, 15))
 
         # Instructions
         instructions = """Huong dan:
-1. Vao labs.google, dang nhap Google, tao 1 anh thu
-2. F12 > Network tab > tim "batchGenerateImages"
-3. Copy "Authorization: Bearer ya29.xxx..." vao o Bearer Token
-4. Dang ky Capsolver.com, lay API key
-5. Paste API key vao o Capsolver API Key
-6. Nhan "Luu Labs Settings"
+1. Cai extension "Cookie Editor" (Chrome/Edge)
+2. Vao labs.google va dang nhap Google
+3. Click icon Cookie Editor > Export > Header String
+4. Paste TOAN BO cookie string vao o ben duoi
+5. Nhan "Luu Labs Settings"
 
-Luu y: Bearer token het han sau ~1 gio, can lay lai!
+Cookie co dang: __Host-next-auth.csrf-token=...;__Secure-next-auth.session-token=eyJ...
 """
         ttk.Label(labs_tab, text=instructions, font=('Segoe UI', 9),
                   foreground='#555', justify=tk.LEFT).pack(anchor=tk.W, pady=(0, 15))
 
-        # Bearer Token input
-        ttk.Label(labs_tab, text="Bearer Token (tu Network tab):",
+        # Session Cookie input
+        ttk.Label(labs_tab, text="Session Cookie (tu Cookie Editor):",
                   font=('Segoe UI', 10, 'bold')).pack(anchor=tk.W)
-        bearer_frame = ttk.Frame(labs_tab)
-        bearer_frame.pack(fill=tk.X, pady=(5, 10))
-        bearer_entry = ttk.Entry(bearer_frame, font=('Consolas', 9))
-        bearer_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        cookie_frame = ttk.Frame(labs_tab)
+        cookie_frame.pack(fill=tk.X, pady=(5, 10))
+        cookie_entry = ttk.Entry(cookie_frame, font=('Consolas', 9))
+        cookie_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
 
-        # Load current bearer token to show status
-        current_bearer = self._get_labs_bearer_token()
-        if current_bearer:
-            bearer_entry.insert(0, current_bearer[:50] + "..." if len(current_bearer) > 50 else current_bearer)
-            bearer_status = ttk.Label(bearer_frame, text="[Da co]", foreground='green',
+        # Load current session token to show status
+        current_session = self._get_labs_session_token()
+        if current_session:
+            cookie_entry.insert(0, current_session[:50] + "..." if len(current_session) > 50 else current_session)
+            cookie_status = ttk.Label(cookie_frame, text="[Da co]", foreground='green',
                                       font=('Segoe UI', 9, 'bold'))
         else:
-            bearer_status = ttk.Label(bearer_frame, text="[Chua co]", foreground='orange',
+            cookie_status = ttk.Label(cookie_frame, text="[Chua co]", foreground='orange',
                                       font=('Segoe UI', 9))
-        bearer_status.pack(side=tk.LEFT)
-
-        # CAPTCHA API Key input
-        ttk.Label(labs_tab, text="Capsolver API Key:",
-                  font=('Segoe UI', 10, 'bold')).pack(anchor=tk.W, pady=(10, 0))
-
-        # Link to Capsolver
-        capsolver_link = ttk.Label(labs_tab, text="Dang ky tai: capsolver.com",
-                                   foreground='blue', cursor='hand2', font=('Segoe UI', 9))
-        capsolver_link.pack(anchor=tk.W, pady=(2, 5))
-        capsolver_link.bind('<Button-1>', lambda e: webbrowser.open("https://www.capsolver.com/"))
-
-        captcha_frame = ttk.Frame(labs_tab)
-        captcha_frame.pack(fill=tk.X, pady=(5, 10))
-        captcha_entry = ttk.Entry(captcha_frame, font=('Consolas', 9))
-        captcha_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
-
-        # Load current captcha key
-        current_captcha = self._get_captcha_api_key()
-        if current_captcha:
-            captcha_entry.insert(0, current_captcha)
-            captcha_status = ttk.Label(captcha_frame, text="[OK]", foreground='green',
-                                       font=('Segoe UI', 9, 'bold'))
-        else:
-            captcha_status = ttk.Label(captcha_frame, text="[Chua co]", foreground='orange',
-                                       font=('Segoe UI', 9))
-        captcha_status.pack(side=tk.LEFT)
+        cookie_status.pack(side=tk.LEFT)
 
         def save_labs_settings():
-            """Save Bearer token and CAPTCHA key."""
-            bearer_token = bearer_entry.get().strip()
-            captcha_key = captcha_entry.get().strip()
+            """Save session cookie."""
+            cookie_str = cookie_entry.get().strip()
 
-            # Clean bearer token - remove "Bearer " prefix if present
-            if bearer_token.lower().startswith("bearer "):
-                bearer_token = bearer_token[7:].strip()
-
-            # Validate bearer token format
-            if bearer_token and not bearer_token.startswith("ya29."):
+            # Validate cookie format
+            if cookie_str and "__Secure-next-auth.session-token" not in cookie_str and not cookie_str.startswith("eyJ"):
                 messagebox.showwarning("Loi",
-                    "Bearer token khong dung dinh dang!\n\n"
-                    "Token phai bat dau bang 'ya29.'\n\n"
+                    "Cookie khong dung dinh dang!\n\n"
+                    "Phai chua '__Secure-next-auth.session-token'\n\n"
                     "Cach lay:\n"
-                    "1. F12 > Network tab\n"
-                    "2. Tao anh tren labs.google\n"
-                    "3. Tim request 'batchGenerateImages'\n"
-                    "4. Copy gia tri 'Authorization: Bearer ya29.xxx'")
+                    "1. Vao labs.google, dang nhap\n"
+                    "2. Mo Cookie Editor extension\n"
+                    "3. Nhan Export > Header String\n"
+                    "4. Paste TOAN BO cookie vao day")
                 return
 
             # Save to config
-            self._save_labs_settings(bearer_token, captcha_key)
+            self._save_labs_settings(cookie_str)
 
-            if bearer_token:
-                bearer_status.config(text="[OK - Da luu]", foreground='green')
-            if captcha_key:
-                captcha_status.config(text="[OK]", foreground='green')
+            if cookie_str:
+                cookie_status.config(text="[OK - Da luu]", foreground='green')
 
             messagebox.showinfo("Thanh cong", "Da luu Labs API settings!\n\nBay gio ban co the dung mode 'Labs' de tao anh.")
 
@@ -1508,7 +1474,7 @@ Luu y: Bearer token het han sau ~1 gio, can lay lai!
             pass
         return ''
 
-    def _save_labs_settings(self, bearer_token: str, captcha_api_key: str):
+    def _save_labs_settings(self, session_cookie: str):
         """Save Labs API settings to config."""
         try:
             import yaml
@@ -1518,10 +1484,8 @@ Luu y: Bearer token het han sau ~1 gio, can lay lai!
                 with open(config_path, 'r', encoding='utf-8') as f:
                     config = yaml.safe_load(f) or {}
 
-            if bearer_token:
-                config['labs_bearer_token'] = bearer_token
-            if captcha_api_key:
-                config['captcha_api_key'] = captcha_api_key
+            if session_cookie:
+                config['labs_session_token'] = session_cookie
 
             with open(config_path, 'w', encoding='utf-8') as f:
                 yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
