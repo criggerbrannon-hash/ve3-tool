@@ -816,10 +816,11 @@ def auto_get_session_token(
 ) -> Tuple[bool, str, str]:
     """
     Tự động lấy session token từ Chrome profile đã đăng nhập Google.
+    Tự động đọc chrome_path và chrome_profile từ settings.yaml nếu không truyền.
 
     Args:
-        chrome_profile_path: Đường dẫn đến Chrome profile (User Data directory)
-        chrome_exe_path: Đường dẫn đến chrome.exe
+        chrome_profile_path: Đường dẫn đến Chrome profile (tự động từ settings.yaml nếu None)
+        chrome_exe_path: Đường dẫn đến chrome.exe (tự động từ settings.yaml nếu None)
         timeout: Thời gian chờ tối đa (giây)
         verbose: In log
 
@@ -831,6 +832,27 @@ def auto_get_session_token(
             print(f"[AutoToken] {msg}")
 
     log("Đang tự động lấy session token...")
+
+    # Tự động đọc từ settings.yaml nếu không truyền tham số
+    if not chrome_profile_path or not chrome_exe_path:
+        try:
+            import yaml
+            settings_paths = [
+                Path("config/settings.yaml"),
+                Path(__file__).parent.parent / "config" / "settings.yaml"
+            ]
+            for sp in settings_paths:
+                if sp.exists():
+                    with open(sp, 'r', encoding='utf-8') as f:
+                        config = yaml.safe_load(f) or {}
+                    if not chrome_profile_path:
+                        chrome_profile_path = config.get('chrome_profile', '')
+                    if not chrome_exe_path:
+                        chrome_exe_path = config.get('chrome_path', '')
+                    log(f"Đọc config từ settings.yaml")
+                    break
+        except Exception as e:
+            log(f"Không đọc được settings.yaml: {e}")
 
     # Try undetected-chromedriver first
     try:
@@ -930,11 +952,12 @@ def capture_tokens_from_browser(
 ) -> Tuple[bool, Dict[str, str], str]:
     """
     Capture Bearer token và reCAPTCHA token từ browser bằng Selenium Wire.
+    Tự động đọc chrome_path và chrome_profile từ settings.yaml nếu không truyền.
     User cần click Generate trên labs.google để tool capture được token.
 
     Args:
-        chrome_profile_path: Đường dẫn đến Chrome profile
-        chrome_exe_path: Đường dẫn đến chrome.exe
+        chrome_profile_path: Đường dẫn đến Chrome profile (tự động từ settings.yaml nếu None)
+        chrome_exe_path: Đường dẫn đến chrome.exe (tự động từ settings.yaml nếu None)
         timeout: Thời gian chờ tối đa (giây)
         verbose: In log
 
@@ -946,6 +969,29 @@ def capture_tokens_from_browser(
             print(f"[TokenCapture] {msg}")
 
     log("Khởi động trình capture token...")
+
+    # Tự động đọc từ settings.yaml nếu không truyền tham số
+    if not chrome_profile_path or not chrome_exe_path:
+        try:
+            import yaml
+            settings_paths = [
+                Path("config/settings.yaml"),
+                Path(__file__).parent.parent / "config" / "settings.yaml"
+            ]
+            for sp in settings_paths:
+                if sp.exists():
+                    with open(sp, 'r', encoding='utf-8') as f:
+                        config = yaml.safe_load(f) or {}
+                    if not chrome_profile_path:
+                        chrome_profile_path = config.get('chrome_profile', '')
+                    if not chrome_exe_path:
+                        chrome_exe_path = config.get('chrome_path', '')
+                    log(f"Đọc config từ settings.yaml:")
+                    log(f"  chrome_path: {chrome_exe_path}")
+                    log(f"  chrome_profile: {chrome_profile_path}")
+                    break
+        except Exception as e:
+            log(f"Không đọc được settings.yaml: {e}")
 
     # Try seleniumwire first
     try:
