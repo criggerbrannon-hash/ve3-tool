@@ -2414,6 +2414,7 @@ class BrowserFlowGenerator:
         captured = CapturedHeaders()
         API_PATTERN = "aisandbox-pa.googleapis.com"
         flow_project_id = None  # UUID từ Flow, không phải folder name
+        recaptcha_token = None  # Token từ request body
 
         try:
             logs = self.driver.get_log("performance")
@@ -2440,6 +2441,17 @@ class BrowserFlowGenerator:
                             if match and not flow_project_id:
                                 flow_project_id = match.group(1)
                                 self._log(f"   Flow project_id: {flow_project_id}")
+
+                            # Extract recaptchaToken từ postData
+                            post_data = request.get("postData", "")
+                            if post_data and not recaptcha_token:
+                                try:
+                                    body = json_module.loads(post_data)
+                                    if "recaptchaToken" in body:
+                                        recaptcha_token = body["recaptchaToken"]
+                                        self._log(f"   recaptchaToken: {recaptcha_token[:50]}...")
+                                except:
+                                    pass
 
                             # Case-insensitive header lookup
                             for k, v in headers.items():
@@ -2480,7 +2492,12 @@ class BrowserFlowGenerator:
             self._log("Không capture được Flow project_id!", "error")
             return {"success": False, "error": "Không capture được project_id từ URL"}
 
+        if not recaptcha_token:
+            self._log("Không capture được recaptchaToken!", "error")
+            return {"success": False, "error": "Không capture được recaptchaToken từ request body"}
+
         self._log(f"✅ Flow project_id: {flow_project_id}")
+        self._log(f"✅ recaptchaToken: {recaptcha_token[:50]}...")
 
         # Đóng Chrome
         self._log("Đóng Chrome, dùng Python API từ giờ...")
@@ -2503,6 +2520,9 @@ class BrowserFlowGenerator:
         # Set Chrome headers (bao gồm x-browser-validation)
         api._chrome_headers = captured
         api._update_session_with_chrome_headers()
+
+        # Set recaptchaToken đã capture từ Chrome
+        api.recaptcha_token = recaptcha_token
 
         # Map aspect ratio
         ar_setting = self.config.get('flow_aspect_ratio', 'landscape')
