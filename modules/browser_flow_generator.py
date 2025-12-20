@@ -2337,28 +2337,20 @@ class BrowserFlowGenerator:
             if not self.start_browser():
                 return {"success": False, "error": "Không khởi động được Chrome"}
 
-        # Navigate đến Flow
-        self._log("Navigate đến Flow...")
-        self.driver.get("https://labs.google/fx/vi/tools/flow")
-        time.sleep(3)
+        # Đợi login
+        self._log("Đợi login...")
+        if not self.wait_for_login(timeout=120):
+            return {"success": False, "error": "Không đăng nhập được"}
 
-        # Inject VE3 script
-        self._log("Inject VE3 script...")
-        if not self._inject_ve3_script():
-            return {"success": False, "error": "Không inject được VE3 script"}
+        # Inject JS + Setup (Click "Dự án mới" + "Tạo hình ảnh")
+        # Dùng _inject_js() giống Chrome mode
+        self._log("Inject JS + Setup project...")
+        if not self._inject_js():
+            return {"success": False, "error": "Không inject/setup được"}
 
-        # Lấy project ID từ URL
-        self._log("Lấy project ID...")
-        project_id = self.driver.execute_script("return typeof VE3 !== 'undefined' && VE3.API ? VE3.API.getProjectId() : null")
-
-        if not project_id:
-            self._log("Chưa có project, tạo project mới...")
-            # Click nút tạo project mới
-            if not self._setup_project():
-                return {"success": False, "error": "Không tạo được project"}
-            project_id = self.driver.execute_script("return VE3.API.getProjectId()")
-
-        self._log(f"Project ID: {project_id}")
+        # Lấy project URL
+        project_url = self.driver.execute_script("return typeof VE3 !== 'undefined' ? VE3.getProjectUrl() : null")
+        self._log(f"Project URL: {project_url}")
 
         # Reset stats
         self.stats = {"total": len(prompts), "success": 0, "failed": 0, "skipped": 0}
