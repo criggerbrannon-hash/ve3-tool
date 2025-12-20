@@ -2363,6 +2363,13 @@ class BrowserFlowGenerator:
         first_pid = str(first_prompt.get('id', 'test'))
         first_prompt_text = first_prompt.get('prompt', 'a red apple')
 
+        # Enable Network CDP với maxPostDataSize để capture request body
+        try:
+            self.driver.execute_cdp_cmd("Network.enable", {"maxPostDataSize": 65536})
+            self._log("   Enabled Network CDP với maxPostDataSize=65536")
+        except Exception as e:
+            self._log(f"   Warning: Cannot enable Network CDP: {e}")
+
         # Clear old performance logs trước khi tạo ảnh
         try:
             self.driver.get_log("performance")  # Clear existing logs
