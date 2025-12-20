@@ -106,7 +106,7 @@ class LabsGoogleAPI:
     # =========================================================================
 
     def _solve_captcha_capsolver(self) -> Optional[str]:
-        """Giải reCAPTCHA v3 bằng Capsolver."""
+        """Giải reCAPTCHA v3 bằng Capsolver với task type đặc biệt cho Veo3."""
         if not self.captcha_api_key:
             self._log("ERROR: Thiếu captcha_api_key! Vui lòng cấu hình trong Settings > Labs API")
             return None
@@ -116,15 +116,16 @@ class LabsGoogleAPI:
         self._log(f"Đang giải CAPTCHA với Capsolver (key: {key_masked})...")
 
         try:
-            # Tạo task
+            # Tạo task - dùng task type đặc biệt cho labs.google/Veo3
             create_task_url = "https://api.capsolver.com/createTask"
             task_data = {
                 "clientKey": self.captcha_api_key,
                 "task": {
-                    "type": "ReCaptchaV3EnterpriseTaskProxyLess",
+                    "type": "RecaptchaV3TokenTaskVeo3",  # Task type đặc biệt cho Veo3
                     "websiteURL": "https://labs.google",
                     "websiteKey": self.RECAPTCHA_SITE_KEY,
-                    "pageAction": self.RECAPTCHA_ACTION
+                    "pageAction": self.RECAPTCHA_ACTION,
+                    "isEnterprise": True  # QUAN TRỌNG: Captcha Enterprise
                 }
             }
 
@@ -266,19 +267,19 @@ class LabsGoogleAPI:
         prompt: str,
         count: int = 1,
         aspect_ratio: str = "landscape",
-        model: str = "IMAGEN_3",
+        model: str = "GEM_PIX_2",
         seed: int = None,
         image_inputs: list = None
     ) -> Tuple[bool, List[Dict], str]:
         """
-        Tạo ảnh qua labs.google internal API với session cookie.
-        Các tool khác dùng cách này - chỉ cần cookie, không cần Bearer token.
+        Tạo ảnh qua aisandbox-pa.googleapis.com với Bearer token + CAPTCHA.
+        Sử dụng task type RecaptchaV3TokenTaskVeo3 đặc biệt cho labs.google.
 
         Args:
             prompt: Text mô tả ảnh
             count: Số lượng ảnh (1-4)
             aspect_ratio: "landscape", "portrait", "square"
-            model: Model tạo ảnh
+            model: Model tạo ảnh (GEM_PIX_2)
             seed: Seed cho random (optional)
             image_inputs: List ảnh reference (optional)
 
@@ -287,9 +288,9 @@ class LabsGoogleAPI:
         """
         self._log(f"Generating: {prompt[:50]}...")
 
-        # Check session token (cookie string)
-        if not self.session_token:
-            return False, [], "Thiếu session cookie! Lấy từ Cookie Editor (labs.google)"
+        # Check Bearer token
+        if not self.bearer_token:
+            return False, [], "Thiếu Bearer token! Lấy từ Network tab (Authorization header)"
 
         # Map aspect ratio
         ar_map = {
@@ -299,117 +300,112 @@ class LabsGoogleAPI:
         }
         aspect = ar_map.get(aspect_ratio.lower(), ar_map["landscape"])
 
-        # Generate seed
+        # Solve CAPTCHA - PHẢI DÙNG NGAY SAU KHI GIẢI (token có TTL rất ngắn)
+        captcha_token = ""
+        if self.captcha_api_key:
+            captcha_token = self.solve_captcha()
+            if not captcha_token:
+                return False, [], "Failed to solve CAPTCHA"
+        else:
+            self._log("WARNING: No CAPTCHA API key - request may fail")
+
+        # Generate seed and sessionId
         import random
+        import time as time_module
+
         if seed is None:
             seed = random.randint(1, 999999)
 
-        # Build payload for labs.google internal API
+        session_id = f";{int(time_module.time() * 1000)}"
+
+        # Build requests array (like browser)
+        requests_list = []
+        for i in range(count):
+            request = {
+                "clientContext": {},
+                "seed": seed + random.randint(0, 999999),
+                "imageModelName": model,
+                "imageAspectRatio": aspect,
+                "imageInputs": image_inputs or [],
+                "prompt": prompt
+            }
+            requests_list.append(request)
+
+        # Full payload matching browser format
         payload = {
-            "prompt": prompt,
-            "generationCount": count,
-            "seed": seed,
-            "aspectRatio": aspect,
-            "modelInput": model
+            "clientContext": {},
+            "recaptchaToken": captcha_token,
+            "sessionId": session_id,
+            "requests": requests_list
         }
 
-        # Try multiple possible endpoints
-        endpoints = [
-            f"{self.BASE_URL}/api/generate",
-            f"{self.BASE_URL}/api/imageFx/generate",
-            f"{self.BASE_URL}/api/fx/generate",
-            f"{self.BASE_URL}/fx/api/generate"
-        ]
+        # API endpoint
+        url = f"{self.API_URL}/v1/projects/{self.project_id}/flowMedia:batchGenerateImages"
 
         try:
             import json as json_module
 
-            # Headers with session cookie
+            # Headers matching browser - QUAN TRỌNG: text/plain
             headers = {
-                "Accept": "application/json",
+                "Accept": "*/*",
+                "Accept-Encoding": "gzip, deflate, br, zstd",
                 "Accept-Language": "en-US,en;q=0.9",
-                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.bearer_token}",
+                "Content-Type": "text/plain;charset=UTF-8",
                 "Origin": "https://labs.google",
-                "Referer": "https://labs.google/fx/tools/flow",
-                "Cookie": self.session_token,
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+                "Referer": "https://labs.google/",
+                "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+                "Sec-Ch-Ua-Mobile": "?0",
+                "Sec-Ch-Ua-Platform": '"Windows"',
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "cross-site",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                "X-Browser-Channel": "stable",
+                "X-Browser-Copyright": "Copyright 2025 Google LLC. All Rights reserved.",
+                "X-Browser-Year": "2025"
             }
 
-            for url in endpoints:
-                self._log(f"Trying endpoint: {url}")
+            self._log(f"Calling API: {url}")
+            self._log(f"Bearer: {self.bearer_token[:30]}...")
+            self._log(f"CAPTCHA token: {captcha_token[:50] if captcha_token else 'NONE'}...")
 
-                response = requests.post(
-                    url,
-                    headers=headers,
-                    json=payload,
-                    timeout=120,
-                    allow_redirects=False
-                )
+            # Send as text/plain (like browser)
+            payload_str = json_module.dumps(payload)
 
-                self._log(f"Response status: {response.status_code}")
+            response = requests.post(
+                url,
+                headers=headers,
+                data=payload_str,
+                timeout=120
+            )
 
-                if response.status_code == 200:
-                    try:
-                        data = response.json()
-                        self._log(f"Response: {str(data)[:200]}...")
-                        images = self._parse_response(data)
-                        if images:
-                            self._log(f"Got {len(images)} images!")
-                            return True, images, ""
-                    except:
-                        pass
+            self._log(f"Response status: {response.status_code}")
 
-                elif response.status_code == 404:
-                    continue  # Try next endpoint
+            if response.status_code == 200:
+                data = response.json()
+                self._log(f"Response keys: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+                images = self._parse_batch_response(data)
+                if images:
+                    self._log(f"Got {len(images)} images!")
+                    return True, images, ""
+                return False, [], f"No images in response: {str(data)[:300]}"
 
-                elif response.status_code == 401:
-                    return False, [], "Session expired - lấy cookie mới từ Cookie Editor"
+            elif response.status_code == 401:
+                return False, [], "Bearer token expired - lấy token mới từ Network tab"
 
-            # If all endpoints fail, try the _next/data route
-            self._log("Trying Next.js data route...")
-            return self._try_nextjs_route(prompt, count, aspect, seed, model, headers)
+            elif response.status_code == 403:
+                return False, [], "Access denied - kiểm tra Bearer token"
+
+            else:
+                error_text = response.text[:500]
+                self._log(f"Error response: {error_text}")
+                return False, [], f"API error: {response.status_code} - {error_text}"
 
         except Exception as e:
             import traceback
             self._log(f"Request error: {traceback.format_exc()}")
             return False, [], f"Request error: {e}"
-
-    def _try_nextjs_route(self, prompt, count, aspect, seed, model, headers):
-        """Try Next.js server action or data route."""
-        import json as json_module
-
-        # Server action format
-        payload = {
-            "prompt": prompt,
-            "generationCount": count,
-            "seed": seed,
-            "aspectRatio": aspect,
-            "modelInput": model
-        }
-
-        # Try Next.js API route
-        url = f"{self.BASE_URL}/_next/data/generate"
-
-        try:
-            response = requests.post(
-                url,
-                headers=headers,
-                json=payload,
-                timeout=120
-            )
-
-            self._log(f"Next.js route response: {response.status_code}")
-
-            if response.status_code == 200:
-                data = response.json()
-                images = self._parse_response(data)
-                if images:
-                    return True, images, ""
-
-        except Exception as e:
-            self._log(f"Next.js route error: {e}")
-
-        return False, [], "Không tìm được endpoint phù hợp. Cần tìm hiểu thêm API của tool khác."
 
     def _parse_batch_response(self, data: Dict) -> List[Dict]:
         """Parse response từ batchGenerateImages API."""

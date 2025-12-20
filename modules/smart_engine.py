@@ -244,24 +244,33 @@ class SmartEngine:
         return {}
 
     def generate_images_labs(self, prompts: List[Dict], proj_dir: Path) -> Dict:
-        """Generate images using Labs API (Session Cookie from Cookie Editor)."""
+        """Generate images using Labs API (Bearer token + CAPTCHA with RecaptchaV3TokenTaskVeo3)."""
         self.log("=== TAO ANH BANG LABS API ===")
 
         labs_config = self._get_labs_config()
 
-        # Check session token (cookie string from Cookie Editor)
-        session_token = labs_config.get('session_token', '')
-        if not session_token:
-            self.log("KHONG CO session cookie! Lay tu Cookie Editor (labs.google)", "ERROR")
-            self.log("Huong dan: Cookie Editor > labs.google > Export > Header String", "INFO")
-            return {"success": 0, "failed": len(prompts), "error": "missing_session_token"}
+        # Check Bearer token (ya29.xxx from Network tab)
+        bearer_token = labs_config.get('bearer_token', '')
+        if not bearer_token:
+            self.log("KHONG CO Bearer token! Lay tu Network tab", "ERROR")
+            self.log("Huong dan: F12 > Network > batchGenerateImages > Authorization: Bearer ya29.xxx", "INFO")
+            return {"success": 0, "failed": len(prompts), "error": "missing_bearer_token"}
+
+        # Check CAPTCHA API key
+        captcha_key = labs_config.get('captcha_api_key', '')
+        if not captcha_key:
+            self.log("KHONG CO CAPTCHA API key! Can de giai RecaptchaV3TokenTaskVeo3", "ERROR")
+            return {"success": 0, "failed": len(prompts), "error": "missing_captcha_key"}
 
         try:
             from .labs_google_api import LabsGoogleAPI
 
-            # Create Labs API client with session cookie
+            # Create Labs API client with Bearer token + CAPTCHA
             labs_client = LabsGoogleAPI(
-                session_token=session_token,
+                bearer_token=bearer_token,
+                captcha_api_key=captcha_key,
+                captcha_service=labs_config.get('captcha_service', 'capsolver'),
+                project_id=labs_config.get('project_id', ''),
                 verbose=True
             )
 
@@ -1537,8 +1546,9 @@ class SmartEngine:
         # Show mode info
         if gen_mode == "labs":
             labs_cfg = self._get_labs_config()
-            has_token = "OK" if labs_cfg.get('session_token') else "THIEU"
-            self.log(f"  MODE: Labs API (Session cookie: {has_token})")
+            has_token = "OK" if labs_cfg.get('bearer_token') else "THIEU"
+            has_captcha = "OK" if labs_cfg.get('captcha_api_key') else "THIEU"
+            self.log(f"  MODE: Labs API (Bearer: {has_token}, CAPTCHA: {has_captcha})")
         else:
             self.log(f"  MODE: {mode_names.get(gen_mode, gen_mode)}")
         self.log(f"  AI keys: DeepSeek={len(self.deepseek_keys)}, Groq={len(self.groq_keys)}, Gemini={len(self.gemini_keys)}")
