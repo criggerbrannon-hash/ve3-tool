@@ -221,9 +221,18 @@ class SmartEngine:
                 if settings_path.exists():
                     with open(settings_path, 'r', encoding='utf-8') as f:
                         config = yaml.safe_load(f) or {}
+
+                    # Get bearer token - check both fields
+                    bearer_token = config.get('labs_bearer_token', '')
+                    session_token = config.get('labs_session_token', '')
+
+                    # Auto-detect: if session_token starts with "ya29." it's actually a Bearer token
+                    if not bearer_token and session_token.startswith('ya29.'):
+                        bearer_token = session_token
+
                     return {
-                        'bearer_token': config.get('labs_bearer_token', ''),
-                        'session_token': config.get('labs_session_token', ''),  # legacy
+                        'bearer_token': bearer_token,
+                        'session_token': session_token,  # legacy
                         'captcha_api_key': config.get('captcha_api_key', ''),
                         'captcha_service': config.get('captcha_service', 'capsolver'),
                         'aspect_ratio': config.get('flow_aspect_ratio', 'landscape'),
