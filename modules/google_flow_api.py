@@ -152,6 +152,11 @@ class GoogleFlowAPI:
         self.recaptcha_token = None
         self._captcha_solver = None
 
+        # Chrome headers config (for x-browser-validation)
+        self.chrome_profile_path = None
+        self._chrome_headers = None
+        self._headers_extractor = None
+
         # Validate token format
         if not self.bearer_token.startswith("ya29."):
             print("⚠️  Warning: Bearer token should start with 'ya29.'")
@@ -255,6 +260,85 @@ class GoogleFlowAPI:
             headers["X-Recaptcha-Token"] = self.recaptcha_token
             headers["X-Recaptcha-Enterprise-Token"] = self.recaptcha_token
         return headers
+
+    # =========================================================================
+    # CHROME HEADERS (x-browser-validation)
+    # =========================================================================
+
+    def set_chrome_profile(self, profile_path: str) -> None:
+        """Set Chrome profile path để extract headers."""
+        self.chrome_profile_path = profile_path
+        self._log(f"Set Chrome profile: {profile_path}")
+
+    def extract_chrome_headers(self, force: bool = False) -> bool:
+        """
+        Extract headers từ Chrome (bao gồm x-browser-validation).
+
+        Args:
+            force: Force refresh headers
+
+        Returns:
+            True nếu thành công
+        """
+        if self._chrome_headers and not force:
+            # Check if headers still valid (< 5 minutes old)
+            age = self._chrome_headers.age_seconds() if hasattr(self._chrome_headers, 'age_seconds') else 999999
+            if age < 300:
+                self._log(f"Using cached Chrome headers (age: {age:.0f}s)")
+                return True
+
+        self._log("Extracting headers from Chrome...")
+
+        try:
+            from .chrome_headers_extractor import ChromeHeadersExtractor
+
+            extractor = ChromeHeadersExtractor(
+                chrome_profile_path=self.chrome_profile_path,
+                headless=False,
+                verbose=self.verbose
+            )
+
+            if not extractor.start_browser():
+                self._log("Failed to start Chrome")
+                return False
+
+            if not extractor.navigate_to_flow():
+                extractor.stop_browser()
+                self._log("Failed to navigate to Flow")
+                return False
+
+            # Capture headers
+            headers = extractor.capture_headers_from_network(timeout=30)
+            extractor.stop_browser()
+
+            if headers.is_valid():
+                self._chrome_headers = headers
+                self._update_session_with_chrome_headers()
+                self._log("✅ Chrome headers extracted successfully!")
+                return True
+            else:
+                self._log("❌ Failed to extract valid headers")
+                return False
+
+        except ImportError:
+            self._log("chrome_headers_extractor module not found")
+            return False
+        except Exception as e:
+            self._log(f"Error extracting headers: {e}")
+            return False
+
+    def _update_session_with_chrome_headers(self) -> None:
+        """Update session với Chrome headers."""
+        if not self._chrome_headers:
+            return
+
+        chrome_headers = self._chrome_headers.to_dict()
+        self.session.headers.update(chrome_headers)
+        self._log(f"Updated session with Chrome headers (x-browser-validation: {chrome_headers.get('x-browser-validation', '')[:30]}...)")
+
+    def has_chrome_headers(self) -> bool:
+        """Check if Chrome headers are available."""
+        return self._chrome_headers is not None and self._chrome_headers.is_valid()
 
     # =========================================================================
     # IMAGE GENERATION
