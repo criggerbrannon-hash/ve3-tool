@@ -285,53 +285,65 @@ class ParallelFlowGenerator:
                     # NOTE: Không cần simplify - AI đã được hướng dẫn không mô tả ngoại hình
 
                     # =========================================================
-                    # SONG SONG: Mỗi browser generate scene khác nhau
-                    # File name dựa trên scene_id nên không conflict
+                    # RETRY LOGIC: Thử tối đa 3 lần nếu fail
                     # =========================================================
-                    self._log(f"[{thread_name}] 🚀 Generate: {pid}")
+                    max_retries = 3
+                    retry_success = False
 
-                    # Gọi VE3.run()
-                    ref_json = json.dumps(ref_files if ref_files else [])
-                    result = generator.driver.execute_async_script(f"""
-                        const callback = arguments[arguments.length - 1];
-                        const timeout = setTimeout(() => {{
-                            callback({{ success: false, error: 'Timeout 120s' }});
-                        }}, 120000);
+                    for attempt in range(max_retries):
+                        if attempt > 0:
+                            self._log(f"[{thread_name}] 🔄 Retry {attempt}/{max_retries-1}: {pid}")
+                            time.sleep(3)  # Wait before retry
 
-                        VE3.run([{{
-                            sceneId: "{pid}",
-                            prompt: `{generator._escape_js_string(prompt_text)}`,
-                            referenceFiles: {ref_json}
-                        }}]).then(r => {{
-                            clearTimeout(timeout);
-                            callback({{ success: true, result: r }});
-                        }}).catch(e => {{
-                            clearTimeout(timeout);
-                            callback({{ success: false, error: e.message }});
-                        }});
-                    """)
+                        self._log(f"[{thread_name}] 🚀 Generate: {pid}")
 
-                    if result and result.get("success"):
-                        # Di chuyển file - dùng scene_id làm pattern nên không nhầm
-                        img_file, score, _ = generator._move_downloaded_images(pid)
-                        if img_file:
-                            success += 1
-                            self._log(f"[{thread_name}] ✅ OK: {pid} -> {img_file.name}", "success")
+                        # Gọi VE3.run()
+                        ref_json = json.dumps(ref_files if ref_files else [])
+                        result = generator.driver.execute_async_script(f"""
+                            const callback = arguments[arguments.length - 1];
+                            const timeout = setTimeout(() => {{
+                                callback({{ success: false, error: 'Timeout 120s' }});
+                            }}, 120000);
 
-                            # Save media name (cho ref)
-                            if phase == "ref":
-                                js_result = result.get("result", {})
-                                js_images = js_result.get("images", []) if isinstance(js_result, dict) else []
-                                if js_images and js_images[0].get("mediaName"):
-                                    generator.driver.execute_script(
-                                        f"VE3.setMediaName('{pid}', '{js_images[0]['mediaName']}', {js_images[0].get('seed', 'null')});"
-                                    )
+                            VE3.run([{{
+                                sceneId: "{pid}",
+                                prompt: `{generator._escape_js_string(prompt_text)}`,
+                                referenceFiles: {ref_json}
+                            }}]).then(r => {{
+                                clearTimeout(timeout);
+                                callback({{ success: true, result: r }});
+                            }}).catch(e => {{
+                                clearTimeout(timeout);
+                                callback({{ success: false, error: e.message }});
+                            }});
+                        """)
+
+                        if result and result.get("success"):
+                            # Di chuyển file - dùng scene_id làm pattern nên không nhầm
+                            img_file, score, _ = generator._move_downloaded_images(pid)
+                            if img_file:
+                                success += 1
+                                self._log(f"[{thread_name}] ✅ OK: {pid} -> {img_file.name}", "success")
+
+                                # Save media name (cho ref)
+                                if phase == "ref":
+                                    js_result = result.get("result", {})
+                                    js_images = js_result.get("images", []) if isinstance(js_result, dict) else []
+                                    if js_images and js_images[0].get("mediaName"):
+                                        generator.driver.execute_script(
+                                            f"VE3.setMediaName('{pid}', '{js_images[0]['mediaName']}', {js_images[0].get('seed', 'null')});"
+                                        )
+                                retry_success = True
+                                break  # Success, exit retry loop
+                            else:
+                                self._log(f"[{thread_name}] ⚠️ Không tìm thấy file: {pid} (attempt {attempt+1})", "warn")
                         else:
-                            failed += 1
-                            self._log(f"[{thread_name}] ❌ Không tìm thấy file: {pid}", "error")
-                    else:
+                            error_msg = result.get("error", "Unknown") if result else "No response"
+                            self._log(f"[{thread_name}] ⚠️ Generate fail: {pid} - {error_msg} (attempt {attempt+1})", "warn")
+
+                    if not retry_success:
                         failed += 1
-                        self._log(f"[{thread_name}] ❌ FAIL: {pid}", "error")
+                        self._log(f"[{thread_name}] ❌ FAILED after {max_retries} attempts: {pid}", "error")
 
                     self._log(f"[{thread_name}] ✓ Done: {pid}")
 
@@ -524,6 +536,23 @@ class ParallelFlowGenerator:
 
             self.stats.step1_time = time.time() - step1_start
             self._log(f"\nBước 1 hoàn thành: {self.stats.step1_time:.1f}s")
+
+            # Kiểm tra ảnh reference đã có đủ chưa
+            nv_files = list(self.nv_path.glob("*.png"))
+            expected_refs = len(ref_prompts)
+            actual_refs = len(nv_files)
+            self._log(f"\n📊 Reference images: {actual_refs}/{expected_refs}")
+
+            if actual_refs < expected_refs:
+                missing = expected_refs - actual_refs
+                self._log(f"⚠️ THIẾU {missing} ảnh reference!", "warn")
+                # List missing files
+                existing_ids = {f.stem for f in nv_files}
+                for p in ref_prompts:
+                    if p.get('id') not in existing_ids:
+                        self._log(f"  - Missing: {p.get('id')}", "warn")
+            else:
+                self._log(f"✅ Đủ ảnh reference cho bước 2", "success")
 
         # =====================================================================
         # BƯỚC 2: Tạo ảnh phân cảnh song song
