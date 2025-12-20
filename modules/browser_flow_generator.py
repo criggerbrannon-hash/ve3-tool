@@ -325,6 +325,9 @@ class BrowserFlowGenerator:
             options.add_experimental_option("useAutomationExtension", False)
             options.add_experimental_option("prefs", prefs)
 
+            # Enable performance logging để capture network headers
+            options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
+
             self._log(f"Dang khoi dong Chrome (port {debug_port})...")
             driver = webdriver.Chrome(options=options)
 
