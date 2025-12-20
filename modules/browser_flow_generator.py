@@ -2314,91 +2314,51 @@ class BrowserFlowGenerator:
             Dict voi ket qua
         """
         self._log("=" * 60)
-        self._log("API MODE - TAO ANH TU PROMPTS")
+        self._log("API MODE - DÙNG CHROME JS ĐỂ GỌI API")
         self._log("=" * 60)
 
-        try:
-            from modules.google_flow_api import GoogleFlowAPI, AspectRatio
-        except ImportError as e:
-            return {"success": False, "error": f"Khong import duoc GoogleFlowAPI: {e}"}
+        # API MODE MỚI: Dùng Chrome's JavaScript để gọi API
+        # Vì x-browser-validation chỉ Chrome mới thêm được
+        return self._generate_via_chrome_js(prompts, excel_path)
 
-        if not bearer_token:
-            bearer_token = self.config.get('flow_bearer_token', '')
+    def _generate_via_chrome_js(
+        self,
+        prompts: List[Dict],
+        excel_path: Optional[Path] = None
+    ) -> Dict[str, Any]:
+        """
+        Tạo ảnh bằng Chrome JavaScript - gọi API.generateImages() trực tiếp.
+        Chrome tự thêm x-browser-validation.
+        """
+        self._log("Khởi động Chrome để gọi API...")
 
-        if not bearer_token:
-            # AUTO-EXTRACT: Mở Chrome để lấy bearer token và headers
-            self._log("Không có bearer token, thử extract từ Chrome...")
-            try:
-                from modules.chrome_headers_extractor import ChromeHeadersExtractor
+        # Khởi động browser nếu chưa có
+        if not self.driver:
+            if not self.start_browser():
+                return {"success": False, "error": "Không khởi động được Chrome"}
 
-                extractor = ChromeHeadersExtractor(
-                    chrome_profile_path=str(self.profile_dir),
-                    headless=False,
-                    verbose=self.verbose
-                )
+        # Navigate đến Flow
+        self._log("Navigate đến Flow...")
+        self.driver.get("https://labs.google/fx/vi/tools/flow")
+        time.sleep(3)
 
-                if extractor.start_browser():
-                    if extractor.navigate_to_flow():
-                        # Thử capture từ network logs
-                        headers = extractor.capture_headers_from_network(timeout=15)
+        # Inject VE3 script
+        self._log("Inject VE3 script...")
+        if not self._inject_ve3_script():
+            return {"success": False, "error": "Không inject được VE3 script"}
 
-                        # Nếu chưa đủ, thử trigger API call
-                        if not headers.is_valid():
-                            self._log("Headers chưa đủ, thử trigger API call...")
-                            headers = extractor.trigger_api_and_capture()
+        # Lấy project ID từ URL
+        self._log("Lấy project ID...")
+        project_id = self.driver.execute_script("return typeof VE3 !== 'undefined' && VE3.API ? VE3.API.getProjectId() : null")
 
-                        if headers.is_valid():
-                            bearer_token = headers.authorization.replace("Bearer ", "")
-                            self._log(f"✅ Đã lấy được token từ Chrome: {bearer_token[:30]}...")
+        if not project_id:
+            self._log("Chưa có project, tạo project mới...")
+            # Click nút tạo project mới
+            if not self._setup_project():
+                return {"success": False, "error": "Không tạo được project"}
+            project_id = self.driver.execute_script("return VE3.API.getProjectId()")
 
-                            # Lưu x-browser-validation để dùng sau
-                            self._chrome_headers = headers
-                        else:
-                            # Vẫn có thể có authorization nhưng không có x-browser-validation
-                            if headers.authorization:
-                                bearer_token = headers.authorization.replace("Bearer ", "")
-                                self._log(f"⚠️ Chỉ có token, thiếu x-browser-validation: {bearer_token[:30]}...")
-                            else:
-                                self._log("❌ Không capture được headers", "warn")
-                    extractor.stop_browser()
-                else:
-                    self._log("❌ Không khởi động được Chrome", "warn")
-            except ImportError:
-                self._log("Module chrome_headers_extractor không có sẵn", "warn")
-            except Exception as e:
-                self._log(f"Lỗi extract headers: {e}", "warn")
-
-        if not bearer_token:
-            return {"success": False, "error": "Can bearer token cho API mode. Chua extract duoc tu Chrome."}
-
-        if not prompts:
-            return {"success": False, "error": "Khong co prompts"}
-
-        self._log(f"Tong: {len(prompts)} prompts")
-        self._log(f"Token: {bearer_token[:20]}...{bearer_token[-10:]}")
-
-        # Create API client
-        api = GoogleFlowAPI(
-            bearer_token=bearer_token,
-            project_id=self.project_code,
-            timeout=self.config.get('flow_timeout', 120),
-            verbose=self.verbose
-        )
-
-        # Pass Chrome headers (bao gồm x-browser-validation) nếu có
-        if hasattr(self, '_chrome_headers') and self._chrome_headers:
-            api._chrome_headers = self._chrome_headers
-            api._update_session_with_chrome_headers()
-            self._log(f"Đã set Chrome headers cho API (x-browser-validation: có)")
-
-        # Map aspect ratio
-        ar_setting = self.config.get('flow_aspect_ratio', 'landscape')
-        ar_map = {
-            'landscape': AspectRatio.LANDSCAPE,
-            'portrait': AspectRatio.PORTRAIT,
-            'square': AspectRatio.SQUARE,
-        }
-        aspect_ratio = ar_map.get(ar_setting, AspectRatio.LANDSCAPE)
+        self._log(f"Project ID: {project_id}")
 
         # Reset stats
         self.stats = {"total": len(prompts), "success": 0, "failed": 0, "skipped": 0}
@@ -2411,9 +2371,6 @@ class BrowserFlowGenerator:
                 workbook.load_or_create()
             except Exception as e:
                 self._log(f"Warning: Khong load duoc Excel: {e}", "warn")
-
-        # Load media cache
-        cached_media_names = self._load_media_cache()
 
         for i, prompt_data in enumerate(prompts):
             pid = str(prompt_data.get('id', i + 1))
@@ -2428,42 +2385,39 @@ class BrowserFlowGenerator:
             self._log(f"Prompt ({len(prompt)} chars): {prompt[:100]}...")
 
             try:
-                # Generate
-                success, images, error = api.generate_images(
-                    prompt=prompt,
-                    count=self.config.get('flow_image_count', 2),
-                    aspect_ratio=aspect_ratio
-                )
+                # Gọi API qua Chrome JS
+                result = self._call_api_via_js(prompt, pid)
 
-                if success and images:
-                    # Determine output dir
-                    is_character = pid.startswith('nv') or pid.startswith('loc')
-                    out_dir = self.nv_path if is_character else self.img_path
+                if result.get('success'):
+                    images = result.get('images', [])
+                    if images:
+                        # Download ảnh
+                        is_character = pid.startswith('nv') or pid.startswith('loc')
+                        out_dir = self.nv_path if is_character else self.img_path
 
-                    downloaded = api.download_image(images[0], out_dir, pid)
+                        # Lấy URL ảnh đầu tiên và download
+                        img_url = images[0].get('url')
+                        if img_url:
+                            out_file = out_dir / f"{pid}.png"
+                            self._download_image(img_url, out_file)
+                            self._log(f"✅ Đã tạo: {out_file.name}", "success")
+                            self.stats["success"] += 1
 
-                    if downloaded:
-                        # Update Excel
-                        if workbook and pid.isdigit():
-                            scene_id = int(pid)
-                            relative_path = f"img/{pid}.png"
-                            workbook.update_scene(scene_id, img_path=relative_path, status_img="done")
-                            workbook.save()
-
-                        # Save media cache
-                        if images[0].media_name:
-                            cached_media_names[pid] = {
-                                'mediaName': images[0].media_name,
-                                'seed': images[0].seed
-                            }
-
-                        self._log(f"OK - Da tao: {downloaded}", "success")
-                        self.stats["success"] += 1
+                            # Update Excel
+                            if workbook and pid.isdigit():
+                                scene_id = int(pid)
+                                relative_path = f"img/{pid}.png"
+                                workbook.update_scene(scene_id, img_path=relative_path, status_img="done")
+                                workbook.save()
+                        else:
+                            self._log("Không có URL ảnh", "error")
+                            self.stats["failed"] += 1
                     else:
-                        self._log("Loi download", "error")
+                        self._log("Không có ảnh trong response", "error")
                         self.stats["failed"] += 1
                 else:
-                    self._log(f"Loi: {error}", "error")
+                    error = result.get('error', 'Unknown')
+                    self._log(f"Lỗi: {error}", "error")
                     self.stats["failed"] += 1
 
                 # Delay
@@ -2475,23 +2429,77 @@ class BrowserFlowGenerator:
                 self._log(f"Exception: {e}", "error")
                 self.stats["failed"] += 1
 
-        # Save media cache
-        if cached_media_names:
-            self._save_media_cache(cached_media_names)
-
         # Summary
         self._log("\n" + "=" * 60)
-        self._log("HOAN THANH (API MODE)")
+        self._log("HOÀN THÀNH (API MODE - CHROME JS)")
         self._log("=" * 60)
-        self._log(f"Tong: {self.stats['total']}")
-        self._log(f"Thanh cong: {self.stats['success']}")
-        self._log(f"That bai: {self.stats['failed']}")
-        self._log(f"Bo qua: {self.stats['skipped']}")
+        self._log(f"Tổng: {self.stats['total']}")
+        self._log(f"Thành công: {self.stats['success']}")
+        self._log(f"Thất bại: {self.stats['failed']}")
+        self._log(f"Bỏ qua: {self.stats['skipped']}")
 
         return {
             "success": True,
             "stats": self.stats.copy()
         }
+
+    def _call_api_via_js(self, prompt: str, pid: str) -> Dict[str, Any]:
+        """Gọi API.generateImages() qua Chrome JavaScript."""
+        # Escape prompt cho JS
+        prompt_escaped = prompt.replace('\\', '\\\\').replace("'", "\\'").replace('\n', '\\n')
+
+        js_code = f"""
+        return (async () => {{
+            try {{
+                if (typeof VE3 === 'undefined' || !VE3.API) {{
+                    return {{ success: false, error: 'VE3 not loaded' }};
+                }}
+
+                const response = await VE3.API.generateImages('{prompt_escaped}', [], 2);
+
+                // Parse response để lấy image URLs
+                const images = [];
+                if (response && response.responses) {{
+                    for (const resp of response.responses) {{
+                        if (resp.mediaItems) {{
+                            for (const item of resp.mediaItems) {{
+                                if (item.image && item.image.generatedImage) {{
+                                    images.push({{
+                                        url: item.image.generatedImage.url,
+                                        mediaName: item.name
+                                    }});
+                                }}
+                            }}
+                        }}
+                    }}
+                }}
+
+                return {{ success: true, images: images, raw: response }};
+            }} catch (e) {{
+                return {{ success: false, error: e.message }};
+            }}
+        }})();
+        """
+
+        try:
+            result = self.driver.execute_script(js_code)
+            return result or {"success": False, "error": "No response"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def _download_image(self, url: str, out_path: Path) -> bool:
+        """Download ảnh từ URL."""
+        import requests
+        try:
+            response = requests.get(url, timeout=30)
+            if response.status_code == 200:
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(out_path, 'wb') as f:
+                    f.write(response.content)
+                return True
+        except Exception as e:
+            self._log(f"Download error: {e}", "error")
+        return False
 
     def __enter__(self):
         """Context manager entry."""
