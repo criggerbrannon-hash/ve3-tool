@@ -298,41 +298,33 @@ class LabsGoogleAPI:
         }
         aspect = ar_map.get(aspect_ratio.lower(), ar_map["landscape"])
 
-        # Solve CAPTCHA
-        captcha_token = ""
-        if self.captcha_api_key:
-            captcha_token = self.solve_captcha()
-            if not captcha_token:
-                return False, [], "Failed to solve CAPTCHA"
+        # Note: CAPTCHA may not be needed with Bearer token auth
+        # Skip for now - will add back if API requires it
 
-        # Generate seed and sessionId
+        # Generate seed
         import random
         import time as time_module
 
         if seed is None:
             seed = random.randint(1, 999999)
 
-        session_id = f";{int(time_module.time() * 1000)}"
-
-        # Build payload theo format thật
-        payload = {
-            "clientContext": {},
-            "recaptchaToken": captcha_token,
-            "sessionId": session_id,
-            "requests": []
-        }
-
-        # Add requests (1 request per image)
+        # Build requests array
+        requests_list = []
         for i in range(count):
             request = {
-                "clientContext": {},
                 "seed": seed + i,
                 "imageModelName": model,
                 "imageAspectRatio": aspect,
                 "imageInputs": image_inputs or [],
                 "prompt": prompt
             }
-            payload["requests"].append(request)
+            requests_list.append(request)
+
+        # Try simple payload first (just requests)
+        # Some Google APIs don't need recaptchaToken when using Bearer auth
+        payload = {
+            "requests": requests_list
+        }
 
         # API endpoint
         url = f"{self.API_URL}/v1/projects/{self.project_id}/flowMedia:batchGenerateImages"
