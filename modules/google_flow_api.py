@@ -108,41 +108,54 @@ class GeneratedImage:
 class GoogleFlowAPI:
     """
     Client để tương tác với Google Flow API.
-    
+
     Sử dụng Bearer Token authentication từ browser session.
+    Hỗ trợ reCAPTCHA Enterprise qua các dịch vụ: 2Captcha, Anti-Captcha, CapSolver.
     """
-    
+
     BASE_URL = "https://aisandbox-pa.googleapis.com"
     TOOL_NAME = "PINHOLE"  # Internal name for Flow
-    
+    RECAPTCHA_SITE_KEY = "6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV"
+    FLOW_URL = "https://labs.google/fx/vi/tools/flow"
+
     def __init__(
         self,
         bearer_token: str,
         project_id: Optional[str] = None,
         session_id: Optional[str] = None,
         timeout: int = 120,
-        verbose: bool = False
+        verbose: bool = False,
+        captcha_api_key: Optional[str] = None,
+        captcha_service: str = "2captcha"
     ):
         """
         Khởi tạo Google Flow API client.
-        
+
         Args:
             bearer_token: OAuth Bearer token (bắt đầu bằng "ya29.")
             project_id: Project ID (nếu không có sẽ tự tạo UUID)
             session_id: Session ID (nếu không có sẽ tự tạo)
             timeout: Request timeout in seconds
             verbose: Print debug info
+            captcha_api_key: API key cho dịch vụ CAPTCHA (2Captcha, Anti-Captcha, CapSolver)
+            captcha_service: Tên dịch vụ CAPTCHA ("2captcha", "anticaptcha", "capsolver")
         """
         self.bearer_token = bearer_token.strip()
         self.project_id = project_id or str(uuid.uuid4())
         self.session_id = session_id or f";{int(time.time() * 1000)}"
         self.timeout = timeout
         self.verbose = verbose
-        
+
+        # CAPTCHA solver config
+        self.captcha_api_key = captcha_api_key
+        self.captcha_service = captcha_service
+        self.recaptcha_token = None
+        self._captcha_solver = None
+
         # Validate token format
         if not self.bearer_token.startswith("ya29."):
             print("⚠️  Warning: Bearer token should start with 'ya29.'")
-        
+
         self.session = self._create_session()
     
     def _create_session(self) -> requests.Session:
@@ -172,7 +185,77 @@ class GoogleFlowAPI:
     def _generate_seed(self) -> int:
         """Tạo random seed cho image generation."""
         return random.randint(1, 999999)
-    
+
+    # =========================================================================
+    # reCAPTCHA ENTERPRISE
+    # =========================================================================
+
+    def _get_captcha_solver(self):
+        """Lazy init CAPTCHA solver."""
+        if self._captcha_solver is None and self.captcha_api_key:
+            try:
+                from .captcha_solver import CaptchaSolver, CaptchaService
+                service_map = {
+                    "2captcha": CaptchaService.TWOCAPTCHA,
+                    "anticaptcha": CaptchaService.ANTICAPTCHA,
+                    "capsolver": CaptchaService.CAPSOLVER
+                }
+                service = service_map.get(self.captcha_service.lower(), CaptchaService.TWOCAPTCHA)
+                self._captcha_solver = CaptchaSolver(self.captcha_api_key, service)
+            except ImportError:
+                self._log("Warning: captcha_solver module not found")
+        return self._captcha_solver
+
+    def solve_recaptcha(self, action: str = "pageview") -> bool:
+        """
+        Giải reCAPTCHA Enterprise để lấy token.
+
+        Args:
+            action: Action name cho reCAPTCHA
+
+        Returns:
+            True nếu thành công và có token
+        """
+        solver = self._get_captcha_solver()
+        if not solver:
+            self._log("No CAPTCHA solver configured")
+            return False
+
+        self._log(f"Solving reCAPTCHA Enterprise (action={action})...")
+
+        try:
+            result = solver.solve_flow_recaptcha(action=action)
+            if result.success and result.token:
+                self.recaptcha_token = result.token
+                self._log(f"Got reCAPTCHA token: {result.token[:50]}...")
+                return True
+            else:
+                self._log(f"CAPTCHA solve failed: {result.error}")
+                return False
+        except Exception as e:
+            self._log(f"CAPTCHA solve error: {e}")
+            return False
+
+    def get_captcha_balance(self) -> float:
+        """Kiểm tra số dư tài khoản CAPTCHA service."""
+        solver = self._get_captcha_solver()
+        if solver:
+            return solver.get_balance()
+        return 0.0
+
+    def set_recaptcha_token(self, token: str) -> None:
+        """Set reCAPTCHA token thủ công (từ browser hoặc nguồn khác)."""
+        self.recaptcha_token = token
+        self._log(f"Set reCAPTCHA token: {token[:50]}...")
+
+    def _add_recaptcha_header(self, headers: Dict[str, str] = None) -> Dict[str, str]:
+        """Thêm reCAPTCHA token vào headers nếu có."""
+        headers = headers or {}
+        if self.recaptcha_token:
+            headers["X-Recaptcha-Token"] = self.recaptcha_token
+            headers["X-Recaptcha-Enterprise-Token"] = self.recaptcha_token
+        return headers
+
     # =========================================================================
     # IMAGE GENERATION
     # =========================================================================
