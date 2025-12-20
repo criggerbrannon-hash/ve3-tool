@@ -79,6 +79,24 @@ whisper_language: "vi"
 log_level: "INFO"
 
 # ============================================================================
+# CAPTCHA SOLVER Settings (Cho bypass reCAPTCHA Enterprise)
+# ============================================================================
+# Dich vu giai CAPTCHA tu dong khi can
+# Ho tro: 2captcha, anticaptcha, capsolver
+
+# Chon dich vu: "2captcha", "anticaptcha", "capsolver"
+captcha_service: "capsolver"
+
+# API Key cua dich vu CAPTCHA
+# CapSolver: https://capsolver.com (re nhat, $0.8/1000)
+# 2Captcha: https://2captcha.com ($2.99/1000)
+# Anti-Captcha: https://anti-captcha.com ($2/1000)
+captcha_api_key: ""
+
+# reCAPTCHA Enterprise Site Key (Google Labs Flow)
+recaptcha_site_key: "6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV"
+
+# ============================================================================
 # BROWSER AUTOMATION Settings
 # ============================================================================
 # Su dung browser automation thay cho API (khong can bearer token)
