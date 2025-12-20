@@ -2326,7 +2326,35 @@ class BrowserFlowGenerator:
             bearer_token = self.config.get('flow_bearer_token', '')
 
         if not bearer_token:
-            return {"success": False, "error": "Can bearer token cho API mode"}
+            # AUTO-EXTRACT: Mở Chrome để lấy bearer token và headers
+            self._log("Không có bearer token, thử extract từ Chrome...")
+            try:
+                from modules.chrome_headers_extractor import ChromeHeadersExtractor
+
+                extractor = ChromeHeadersExtractor(
+                    chrome_profile_path=str(self.profile_dir),
+                    headless=False,
+                    verbose=self.verbose
+                )
+
+                if extractor.start_browser():
+                    if extractor.navigate_to_flow():
+                        headers = extractor.capture_headers_from_network(timeout=30)
+                        if headers.is_valid():
+                            bearer_token = headers.authorization.replace("Bearer ", "")
+                            self._log(f"✅ Đã lấy được token từ Chrome: {bearer_token[:30]}...")
+                        else:
+                            self._log("❌ Không capture được headers", "warn")
+                    extractor.stop_browser()
+                else:
+                    self._log("❌ Không khởi động được Chrome", "warn")
+            except ImportError:
+                self._log("Module chrome_headers_extractor không có sẵn", "warn")
+            except Exception as e:
+                self._log(f"Lỗi extract headers: {e}", "warn")
+
+        if not bearer_token:
+            return {"success": False, "error": "Can bearer token cho API mode. Chua extract duoc tu Chrome."}
 
         if not prompts:
             return {"success": False, "error": "Khong co prompts"}
