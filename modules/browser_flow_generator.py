@@ -2499,12 +2499,7 @@ class BrowserFlowGenerator:
             self._log("Không capture được Flow project_id!", "error")
             return {"success": False, "error": "Không capture được project_id từ URL"}
 
-        if not recaptcha_token:
-            self._log("Không capture được recaptchaToken!", "error")
-            return {"success": False, "error": "Không capture được recaptchaToken từ request body"}
-
         self._log(f"✅ Flow project_id: {flow_project_id}")
-        self._log(f"✅ recaptchaToken: {recaptcha_token[:50]}...")
 
         # Đóng Chrome
         self._log("Đóng Chrome, dùng Python API từ giờ...")
@@ -2517,19 +2512,34 @@ class BrowserFlowGenerator:
         from modules.google_flow_api import GoogleFlowAPI, AspectRatio
 
         bearer_token = captured.authorization.replace("Bearer ", "")
+
+        # Lấy CapSolver API key từ config
+        capsolver_key = self.config.get('capsolver_api_key', 'CAP-0F2D4A374AB3E24FFD576CBBC9C114804A32E4BD5D82C162A2044D18A4E46977')
+
         api = GoogleFlowAPI(
             bearer_token=bearer_token,
             project_id=flow_project_id,  # Dùng UUID từ Flow, không phải folder name
             timeout=self.config.get('flow_timeout', 120),
-            verbose=self.verbose
+            verbose=self.verbose,
+            captcha_api_key=capsolver_key,
+            captcha_service="capsolver"
         )
 
         # Set Chrome headers (bao gồm x-browser-validation)
         api._chrome_headers = captured
         api._update_session_with_chrome_headers()
 
-        # Set recaptchaToken đã capture từ Chrome
-        api.recaptcha_token = recaptcha_token
+        # Nếu capture được recaptchaToken thì dùng, không thì dùng CapSolver
+        if recaptcha_token:
+            self._log(f"✅ recaptchaToken (captured): {recaptcha_token[:50]}...")
+            api.recaptcha_token = recaptcha_token
+        else:
+            self._log(">>> Không capture được recaptchaToken, dùng CapSolver...")
+            if api.solve_recaptcha(action="generate"):
+                self._log(f"✅ recaptchaToken (CapSolver): {api.recaptcha_token[:50]}...")
+            else:
+                self._log("Không lấy được recaptchaToken từ CapSolver!", "error")
+                return {"success": False, "error": "Không lấy được recaptchaToken"}
 
         # Map aspect ratio
         ar_setting = self.config.get('flow_aspect_ratio', 'landscape')
