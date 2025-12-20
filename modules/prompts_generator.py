@@ -1208,9 +1208,27 @@ class PromptGenerator:
             refs_str = json.dumps(ref_files) if isinstance(ref_files, list) else str(ref_files)
 
             # Lấy thời gian thực từ scene_data (đã được tính trong _validate_and_split_scenes)
-            start_time = scene_data.get("start_time", "")
-            end_time = scene_data.get("end_time", "")
+            start_time = scene_data.get("start_time", "") or scene_data.get("srt_start", "")
+            end_time = scene_data.get("end_time", "") or scene_data.get("srt_end", "")
             duration = scene_data.get("duration_seconds", 0)
+
+            # Fallback: Tính duration từ timestamps nếu chưa có
+            if duration == 0 and start_time and end_time:
+                try:
+                    def parse_ts(ts):
+                        if not ts:
+                            return 0
+                        ts = ts.replace(",", ".")
+                        parts = ts.split(":")
+                        if len(parts) == 3:
+                            h, m, s = parts
+                            return int(h) * 3600 + int(m) * 60 + float(s)
+                        return 0
+                    duration = parse_ts(end_time) - parse_ts(start_time)
+                    if duration < 0:
+                        duration = 0
+                except:
+                    duration = 0
 
             # === QUAN TRỌNG: Thêm filename annotations vào prompt ===
             # Format: "A 30-year-old man (nvc.png) walking in the park (loc_park.png)"
