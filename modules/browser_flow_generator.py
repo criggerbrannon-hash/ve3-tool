@@ -2413,6 +2413,7 @@ class BrowserFlowGenerator:
 
         captured = CapturedHeaders()
         API_PATTERN = "aisandbox-pa.googleapis.com"
+        flow_project_id = None  # UUID từ Flow, không phải folder name
 
         try:
             logs = self.driver.get_log("performance")
@@ -2432,6 +2433,13 @@ class BrowserFlowGenerator:
 
                         if API_PATTERN in url and "batchGenerateImages" in url:
                             self._log(f"   Found API request: {url[:80]}...")
+
+                            # Extract project_id từ URL: /projects/{uuid}/flowMedia:...
+                            import re
+                            match = re.search(r'/projects/([^/]+)/flowMedia', url)
+                            if match and not flow_project_id:
+                                flow_project_id = match.group(1)
+                                self._log(f"   Flow project_id: {flow_project_id}")
 
                             # Case-insensitive header lookup
                             for k, v in headers.items():
@@ -2468,6 +2476,12 @@ class BrowserFlowGenerator:
         self._log(f"✅ x-browser-validation: {captured.x_browser_validation[:40]}...")
         self._log(f"✅ Authorization: {captured.authorization[:50]}...")
 
+        if not flow_project_id:
+            self._log("Không capture được Flow project_id!", "error")
+            return {"success": False, "error": "Không capture được project_id từ URL"}
+
+        self._log(f"✅ Flow project_id: {flow_project_id}")
+
         # Đóng Chrome
         self._log("Đóng Chrome, dùng Python API từ giờ...")
         self.stop_browser()
@@ -2481,7 +2495,7 @@ class BrowserFlowGenerator:
         bearer_token = captured.authorization.replace("Bearer ", "")
         api = GoogleFlowAPI(
             bearer_token=bearer_token,
-            project_id=self.project_code,
+            project_id=flow_project_id,  # Dùng UUID từ Flow, không phải folder name
             timeout=self.config.get('flow_timeout', 120),
             verbose=self.verbose
         )
