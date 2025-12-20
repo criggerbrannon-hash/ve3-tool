@@ -2501,11 +2501,20 @@ class BrowserFlowGenerator:
 
         self._log(f"✅ Flow project_id: {flow_project_id}")
 
+        # === EXTRACT COOKIES TRƯỚC KHI ĐÓNG CHROME ===
+        self._log(">>> Extract cookies từ Chrome...")
+        chrome_cookies = []
+        try:
+            chrome_cookies = self.driver.get_cookies()
+            self._log(f"   Extracted {len(chrome_cookies)} cookies")
+        except Exception as e:
+            self._log(f"   Warning: Cannot extract cookies: {e}")
+
         # Đóng Chrome
         self._log("Đóng Chrome, dùng Python API từ giờ...")
         self.stop_browser()
 
-        # === DÙNG PYTHON API VỚI HEADERS ĐÃ CAPTURE ===
+        # === DÙNG PYTHON API VỚI HEADERS + COOKIES ===
         self._log("")
         self._log(">>> GỌI API BẰNG PYTHON (NHANH HƠN)...")
 
@@ -2528,6 +2537,16 @@ class BrowserFlowGenerator:
         # Set Chrome headers (bao gồm x-browser-validation)
         api._chrome_headers = captured
         api._update_session_with_chrome_headers()
+
+        # Set cookies từ Chrome
+        if chrome_cookies:
+            self._log(f">>> Thêm {len(chrome_cookies)} cookies vào API session...")
+            for cookie in chrome_cookies:
+                name = cookie.get('name', '')
+                value = cookie.get('value', '')
+                domain = cookie.get('domain', '.google')
+                if name and value:
+                    api.session.cookies.set(name, value, domain=domain)
 
         # Nếu capture được recaptchaToken thì dùng, không thì dùng CapSolver
         if recaptcha_token:

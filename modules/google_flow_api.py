@@ -166,7 +166,7 @@ class GoogleFlowAPI:
     def _create_session(self) -> requests.Session:
         """Tạo HTTP session với headers chuẩn."""
         session = requests.Session()
-        
+
         session.headers.update({
             "Authorization": f"Bearer {self.bearer_token}",
             "Content-Type": "text/plain;charset=UTF-8",
@@ -178,8 +178,35 @@ class GoogleFlowAPI:
             "Sec-Fetch-Mode": "cors",
             "Sec-Fetch-Site": "cross-site",
         })
-        
+
         return session
+
+    def set_cookies(self, cookies_str: str) -> None:
+        """
+        Set cookies từ string (format Cookie Editor).
+
+        Args:
+            cookies_str: Cookie string dạng "name1=value1; name2=value2"
+        """
+        self._log(f"Setting cookies...")
+        for cookie_pair in cookies_str.split(';'):
+            cookie_pair = cookie_pair.strip()
+            if '=' in cookie_pair:
+                name, value = cookie_pair.split('=', 1)
+                self.session.cookies.set(name.strip(), value.strip(), domain='.google')
+                self._log(f"  Cookie: {name.strip()[:30]}...")
+
+    def set_cookies_from_driver(self, driver) -> None:
+        """Extract và set cookies từ Selenium WebDriver."""
+        self._log("Extracting cookies from Chrome...")
+        cookies = driver.get_cookies()
+        for cookie in cookies:
+            name = cookie.get('name', '')
+            value = cookie.get('value', '')
+            domain = cookie.get('domain', '.google')
+            if name and value:
+                self.session.cookies.set(name, value, domain=domain)
+        self._log(f"  Extracted {len(cookies)} cookies")
     
     def _log(self, message: str) -> None:
         """Print log message if verbose."""
