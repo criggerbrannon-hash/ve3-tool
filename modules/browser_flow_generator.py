@@ -2434,34 +2434,28 @@ class BrowserFlowGenerator:
         Gọi VE3.run() để tạo ảnh - giống Chrome mode.
         Chrome tự thêm x-browser-validation.
         """
-        # Escape prompt cho JS
-        prompt_escaped = prompt.replace('\\', '\\\\').replace('`', '\\`').replace('${', '\\${')
+        # Escape prompt cho JS - giống Chrome mode
+        prompt_escaped = self._escape_js_string(prompt)
 
-        # Dùng VE3.run() giống Chrome mode
+        # Dùng execute_async_script giống Chrome mode
+        # QUAN TRỌNG: Phải dùng callback = arguments[arguments.length - 1]
         js_code = f"""
-        return new Promise((resolve) => {{
+            const callback = arguments[arguments.length - 1];
             const timeout = setTimeout(() => {{
-                resolve({{ success: false, error: 'Timeout 120s' }});
+                callback({{ success: false, error: 'Timeout 120s' }});
             }}, 120000);
-
-            if (typeof VE3 === 'undefined') {{
-                clearTimeout(timeout);
-                resolve({{ success: false, error: 'VE3 not loaded' }});
-                return;
-            }}
 
             VE3.run([{{
                 sceneId: "{pid}",
                 prompt: `{prompt_escaped}`,
                 referenceFiles: []
-            }}]).then(result => {{
+            }}]).then(r => {{
                 clearTimeout(timeout);
-                resolve({{ success: true, result: result }});
+                callback({{ success: true, result: r }});
             }}).catch(e => {{
                 clearTimeout(timeout);
-                resolve({{ success: false, error: e.message }});
+                callback({{ success: false, error: e.message }});
             }});
-        }});
         """
 
         try:
@@ -2470,7 +2464,7 @@ class BrowserFlowGenerator:
             result = self.driver.execute_async_script(js_code)
 
             if result and result.get('success'):
-                # VE3.run() tự download ảnh, kiểm tra file đã tồn tại
+                # VE3.run() tự download ảnh
                 return {"success": True, "downloaded": True}
             else:
                 error = result.get('error', 'Unknown') if result else 'No response'
