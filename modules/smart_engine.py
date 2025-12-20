@@ -237,7 +237,8 @@ class SmartEngine:
                         'captcha_service': config.get('captcha_service', 'capsolver'),
                         'aspect_ratio': config.get('flow_aspect_ratio', 'landscape'),
                         'delay': config.get('labs_delay', 2.0),
-                        'project_id': config.get('labs_project_id', '')
+                        'project_id': config.get('labs_project_id', ''),
+                        'captured_captcha_token': config.get('captured_captcha_token', '')  # Token du phong
                     }
         except Exception as e:
             self.log(f"Get labs config error: {e}", "WARN")
@@ -256,21 +257,26 @@ class SmartEngine:
             self.log("Huong dan: F12 > Network > batchGenerateImages > Authorization: Bearer ya29.xxx", "INFO")
             return {"success": 0, "failed": len(prompts), "error": "missing_bearer_token"}
 
-        # Check CAPTCHA API key
+        # Check CAPTCHA - có thể dùng API key HOẶC captured token
         captcha_key = labs_config.get('captcha_api_key', '')
-        if not captcha_key:
-            self.log("KHONG CO CAPTCHA API key! Can de giai RecaptchaV3TokenTaskVeo3", "ERROR")
-            return {"success": 0, "failed": len(prompts), "error": "missing_captcha_key"}
+        captured_captcha = labs_config.get('captured_captcha_token', '')
+
+        if not captcha_key and not captured_captcha:
+            self.log("KHONG CO CAPTCHA! Can API key hoac Capture Token tu browser", "ERROR")
+            self.log("Cach 1: Dien Capsolver/2Captcha API key", "INFO")
+            self.log("Cach 2: Dung 'Capture Token' button trong Settings", "INFO")
+            return {"success": 0, "failed": len(prompts), "error": "missing_captcha"}
 
         try:
             from .labs_google_api import LabsGoogleAPI
 
-            # Create Labs API client with Bearer token + CAPTCHA
+            # Create Labs API client with Bearer token + CAPTCHA (or captured token)
             labs_client = LabsGoogleAPI(
                 bearer_token=bearer_token,
                 captcha_api_key=captcha_key,
                 captcha_service=labs_config.get('captcha_service', 'capsolver'),
                 project_id=labs_config.get('project_id', ''),
+                captured_captcha_token=captured_captcha,  # Token du phong tu browser
                 verbose=True
             )
 

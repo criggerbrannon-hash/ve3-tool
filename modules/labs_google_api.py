@@ -45,6 +45,7 @@ class LabsGoogleAPI:
         captcha_api_key: str = None,
         captcha_service: str = "capsolver",
         project_id: str = None,
+        captured_captcha_token: str = None,
         verbose: bool = True
     ):
         """
@@ -56,6 +57,7 @@ class LabsGoogleAPI:
             captcha_api_key: API key của dịch vụ CAPTCHA solver
             captcha_service: Tên dịch vụ ("capsolver", "2captcha", etc.)
             project_id: Project ID từ URL (default sử dụng chung)
+            captured_captcha_token: Token CAPTCHA đã capture từ browser (dự phòng)
             verbose: In log chi tiết
         """
         self.session_token = session_token
@@ -63,6 +65,7 @@ class LabsGoogleAPI:
         self.captcha_api_key = captcha_api_key
         self.captcha_service = captcha_service.lower()
         self.project_id = project_id or self.DEFAULT_PROJECT_ID
+        self.captured_captcha_token = captured_captcha_token  # Token dự phòng
         self.verbose = verbose
 
         self.session = self._create_session()
@@ -100,6 +103,76 @@ class LabsGoogleAPI:
             session.headers["Authorization"] = f"Bearer {self.bearer_token}"
 
         return session
+
+    def set_captured_tokens(self, bearer_token: str = None, captcha_token: str = None, project_id: str = None):
+        """
+        Set tokens đã capture từ browser.
+
+        Args:
+            bearer_token: OAuth Bearer token
+            captcha_token: reCAPTCHA token
+            project_id: Project ID
+        """
+        if bearer_token:
+            self.bearer_token = bearer_token
+            self.session.headers["Authorization"] = f"Bearer {bearer_token}"
+            self._log(f"Set Bearer token: {bearer_token[:30]}...")
+
+        if captcha_token:
+            self.captured_captcha_token = captcha_token
+            self._log(f"Set CAPTCHA token: {captcha_token[:50]}...")
+
+        if project_id:
+            self.project_id = project_id
+            self._log(f"Set Project ID: {project_id}")
+
+    def capture_and_generate(
+        self,
+        prompt: str,
+        count: int = 1,
+        aspect_ratio: str = "landscape",
+        chrome_profile_path: str = None,
+        timeout: int = 120
+    ) -> Tuple[bool, List[Dict], str]:
+        """
+        Capture tokens từ browser và generate image ngay lập tức.
+        Phương thức tiện lợi kết hợp capture + generate.
+
+        Args:
+            prompt: Text mô tả ảnh
+            count: Số lượng ảnh
+            aspect_ratio: Tỉ lệ ảnh
+            chrome_profile_path: Đường dẫn Chrome profile
+            timeout: Thời gian chờ capture (giây)
+
+        Returns:
+            Tuple[success, images, error_message]
+        """
+        self._log("Bắt đầu Capture + Generate workflow...")
+
+        # Capture tokens từ browser
+        success, tokens, error = capture_tokens_from_browser(
+            chrome_profile_path=chrome_profile_path,
+            timeout=timeout,
+            verbose=self.verbose
+        )
+
+        if not success:
+            return False, [], f"Capture failed: {error}"
+
+        # Set captured tokens
+        self.set_captured_tokens(
+            bearer_token=tokens.get("bearer_token"),
+            captcha_token=tokens.get("captcha_token"),
+            project_id=tokens.get("project_id")
+        )
+
+        # Generate image với captured tokens
+        return self.generate_image(
+            prompt=prompt,
+            count=count,
+            aspect_ratio=aspect_ratio
+        )
 
     # =========================================================================
     # CAPTCHA SOLVER
@@ -311,14 +384,27 @@ class LabsGoogleAPI:
         }
         aspect = ar_map.get(aspect_ratio.lower(), ar_map["landscape"])
 
-        # Solve CAPTCHA - PHẢI DÙNG NGAY SAU KHI GIẢI (token có TTL rất ngắn)
+        # Solve CAPTCHA với fallback mechanism
+        # Ưu tiên: 1. Captured token (nếu có) -> 2. Capsolver/2Captcha -> 3. Fail
         captcha_token = ""
-        if self.captcha_api_key:
+
+        # Option 1: Dùng captured token (từ browser)
+        if self.captured_captcha_token:
+            self._log("Sử dụng captured CAPTCHA token (từ browser)...")
+            captcha_token = self.captured_captcha_token
+            # Clear sau khi dùng (token chỉ dùng 1 lần)
+            self.captured_captcha_token = None
+
+        # Option 2: Dùng CAPTCHA solver (Capsolver/2Captcha)
+        elif self.captcha_api_key:
+            self._log("Đang giải CAPTCHA bằng service...")
             captcha_token = self.solve_captcha()
             if not captcha_token:
-                return False, [], "Failed to solve CAPTCHA"
+                self._log("CAPTCHA solver failed!")
+                # Không có fallback nữa -> return error
+                return False, [], "Failed to solve CAPTCHA. Thử dùng 'Capture Token' từ browser."
         else:
-            self._log("WARNING: No CAPTCHA API key - request may fail")
+            self._log("WARNING: Không có CAPTCHA token - request sẽ fail!")
 
         # Generate seed and sessionId
         import random
@@ -834,6 +920,138 @@ def auto_get_session_token(
             except:
                 pass
         return False, "", f"Lỗi: {str(e)}"
+
+
+def capture_tokens_from_browser(
+    chrome_profile_path: str = None,
+    chrome_exe_path: str = None,
+    timeout: int = 120,
+    verbose: bool = True
+) -> Tuple[bool, Dict[str, str], str]:
+    """
+    Capture Bearer token và reCAPTCHA token từ browser bằng Selenium Wire.
+    User cần click Generate trên labs.google để tool capture được token.
+
+    Args:
+        chrome_profile_path: Đường dẫn đến Chrome profile
+        chrome_exe_path: Đường dẫn đến chrome.exe
+        timeout: Thời gian chờ tối đa (giây)
+        verbose: In log
+
+    Returns:
+        Tuple[success, {"bearer_token": ..., "captcha_token": ..., "project_id": ...}, error_message]
+    """
+    def log(msg):
+        if verbose:
+            print(f"[TokenCapture] {msg}")
+
+    log("Khởi động trình capture token...")
+
+    # Try seleniumwire first
+    try:
+        from seleniumwire import webdriver as sw_webdriver
+        from seleniumwire.utils import decode
+        driver_type = "seleniumwire"
+        log("Sử dụng Selenium Wire")
+    except ImportError:
+        return False, {}, "Cần cài selenium-wire: pip install selenium-wire"
+
+    driver = None
+    try:
+        # Selenium Wire options
+        seleniumwire_options = {
+            'disable_encoding': True,
+            'suppress_connection_errors': True
+        }
+
+        chrome_options = sw_webdriver.ChromeOptions()
+
+        if chrome_profile_path:
+            profile_path = Path(chrome_profile_path)
+            if profile_path.name.startswith("Profile"):
+                user_data_dir = str(profile_path.parent)
+                profile_name = profile_path.name
+                chrome_options.add_argument(f"--user-data-dir={user_data_dir}")
+                chrome_options.add_argument(f"--profile-directory={profile_name}")
+            else:
+                chrome_options.add_argument(f"--user-data-dir={chrome_profile_path}")
+
+        if chrome_exe_path:
+            chrome_options.binary_location = chrome_exe_path
+
+        log("Khởi động Chrome với Selenium Wire...")
+        driver = sw_webdriver.Chrome(
+            options=chrome_options,
+            seleniumwire_options=seleniumwire_options
+        )
+
+        # Navigate to labs.google
+        log("Đang mở labs.google/fx/tools/flow...")
+        driver.get("https://labs.google/fx/tools/flow")
+
+        log("=" * 50)
+        log("HƯỚNG DẪN:")
+        log("1. Đăng nhập Google (nếu cần)")
+        log("2. Nhập prompt bất kỳ")
+        log("3. Click 'Generate'")
+        log("4. Token sẽ tự động được capture!")
+        log("=" * 50)
+
+        # Wait and monitor requests
+        captured_tokens = {}
+        start_time = time.time()
+
+        while time.time() - start_time < timeout:
+            # Check all requests
+            for request in driver.requests:
+                if "flowMedia:batchGenerateImages" in request.url:
+                    log(f"Captured request to: {request.url}")
+
+                    # Extract Bearer token from Authorization header
+                    auth_header = request.headers.get("Authorization", "")
+                    if auth_header.startswith("Bearer "):
+                        captured_tokens["bearer_token"] = auth_header[7:]
+                        log(f"  -> Bearer token: {captured_tokens['bearer_token'][:30]}...")
+
+                    # Extract project ID from URL
+                    import re
+                    project_match = re.search(r'/projects/([^/]+)/', request.url)
+                    if project_match:
+                        captured_tokens["project_id"] = project_match.group(1)
+                        log(f"  -> Project ID: {captured_tokens['project_id']}")
+
+                    # Extract reCAPTCHA token from body
+                    if request.body:
+                        try:
+                            body_str = request.body.decode('utf-8') if isinstance(request.body, bytes) else request.body
+                            body_json = json.loads(body_str)
+                            if "recaptchaToken" in body_json:
+                                captured_tokens["captcha_token"] = body_json["recaptchaToken"]
+                                log(f"  -> reCAPTCHA token: {captured_tokens['captcha_token'][:50]}...")
+                        except:
+                            pass
+
+                    # If we have both tokens, we're done!
+                    if captured_tokens.get("bearer_token") and captured_tokens.get("captcha_token"):
+                        log("=" * 50)
+                        log("ĐÃ CAPTURE THÀNH CÔNG!")
+                        log("=" * 50)
+                        driver.quit()
+                        return True, captured_tokens, ""
+
+            time.sleep(1)
+
+        driver.quit()
+        return False, captured_tokens, f"Timeout sau {timeout}s. Đã capture: {list(captured_tokens.keys())}"
+
+    except Exception as e:
+        if driver:
+            try:
+                driver.quit()
+            except:
+                pass
+        import traceback
+        return False, {}, f"Lỗi: {str(e)}\n{traceback.format_exc()}"
 
 
 def auto_get_token_from_config(config_path: str = "config/accounts.json", verbose: bool = True) -> Tuple[bool, str, str]:
