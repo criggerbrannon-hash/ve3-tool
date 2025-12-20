@@ -416,21 +416,9 @@ class GoogleFlowAPI:
             }
             requests_data.append(request_item)
 
-        # Build payload với recaptchaToken nếu có
-        payload = {
-            "clientContext": {
-                "sessionId": self.session_id,
-                "projectId": self.project_id,
-                "tool": self.TOOL_NAME
-            },
-            "sessionId": self.session_id,
-            "requests": requests_data
-        }
-
-        # Thêm recaptchaToken nếu có (bắt buộc cho API)
-        if hasattr(self, 'recaptcha_token') and self.recaptcha_token:
-            payload["recaptchaToken"] = self.recaptcha_token
-            self._log(f"Using captured recaptchaToken: {self.recaptcha_token[:50]}...")
+        # Build payload - chỉ requests, không có root-level sessionId/recaptchaToken
+        # API không nhận các field này ở root
+        payload = {"requests": requests_data}
         
         # Build URL
         url = f"{self.BASE_URL}/v1/projects/{self.project_id}/flowMedia:batchGenerateImages"
