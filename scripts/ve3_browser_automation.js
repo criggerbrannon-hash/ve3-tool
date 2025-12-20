@@ -293,6 +293,7 @@
                                 Utils.log(`API Error: ${data.error.message || JSON.stringify(data.error)}`, 'error');
                                 STATE.errors.push(data.error);
                                 if (self.resolveWait) {
+                                    self.clearErrorCheck();
                                     self.resolveWait({ success: false, error: data.error });
                                 }
                                 return;
@@ -354,6 +355,7 @@
 
                                 // Resolve promise dang cho
                                 if (self.resolveWait) {
+                                    self.clearErrorCheck();  // Clear error toast checking
                                     self.resolveWait({
                                         success: true,
                                         images: [...self.imageBuffer]
@@ -365,6 +367,7 @@
                                 Utils.log(`[DEBUG] No media in response. Full data: ${JSON.stringify(data).slice(0, 500)}`, 'warn');
                                 // Van resolve voi empty images de khong bi hang
                                 if (self.resolveWait) {
+                                    self.clearErrorCheck();  // Clear error toast checking
                                     self.resolveWait({
                                         success: true,
                                         images: []
@@ -374,12 +377,14 @@
                         } catch (e) {
                             Utils.log(`Parse error: ${e.message}`, 'error');
                             if (self.resolveWait) {
+                                self.clearErrorCheck();
                                 self.resolveWait({ success: false, error: e.message });
                             }
                         }
                     }).catch(e => {
                         Utils.log(`Fetch error: ${e.message}`, 'error');
                         if (self.resolveWait) {
+                            self.clearErrorCheck();
                             self.resolveWait({ success: false, error: e.message });
                         }
                     });
@@ -393,19 +398,65 @@
         },
 
         // Doi cho den khi nhan duoc anh
+        // Store error check interval ID for cleanup
+        errorCheckIntervalId: null,
+
         waitForImages: function(timeout = CONFIG.generateTimeout) {
+            const self = this;
             return new Promise((resolve) => {
                 this.imageBuffer = [];
                 this.resolveWait = resolve;
 
+                // Check for error toast notification periodically
+                const checkErrorToast = () => {
+                    // Find toast notifications
+                    const toasts = document.querySelectorAll('li[data-sonner-toast]');
+                    for (const toast of toasts) {
+                        const text = toast.textContent || '';
+                        // Check for error messages
+                        if (text.includes('Something went wrong') ||
+                            text.includes('went wrong') ||
+                            text.includes('Đã xảy ra lỗi') ||
+                            (text.includes('error') && toast.querySelector('i.google-symbols'))) {
+                            return true;
+                        }
+                    }
+                    return false;
+                };
+
+                // Poll for error toasts every 2 seconds
+                self.errorCheckIntervalId = setInterval(() => {
+                    if (checkErrorToast()) {
+                        clearInterval(self.errorCheckIntervalId);
+                        self.errorCheckIntervalId = null;
+                        if (self.resolveWait === resolve) {
+                            Utils.log('⚠️ Phát hiện lỗi "Something went wrong" - bỏ qua ảnh này', 'error');
+                            self.resolveWait = null;
+                            resolve({ success: false, error: 'UI Error: Something went wrong' });
+                        }
+                    }
+                }, 2000);
+
                 // Timeout
                 setTimeout(() => {
-                    if (this.resolveWait === resolve) {
-                        this.resolveWait = null;
+                    if (self.errorCheckIntervalId) {
+                        clearInterval(self.errorCheckIntervalId);
+                        self.errorCheckIntervalId = null;
+                    }
+                    if (self.resolveWait === resolve) {
+                        self.resolveWait = null;
                         resolve({ success: false, error: 'Timeout' });
                     }
                 }, timeout);
             });
+        },
+
+        // Clear error check interval (called when images received successfully)
+        clearErrorCheck: function() {
+            if (this.errorCheckIntervalId) {
+                clearInterval(this.errorCheckIntervalId);
+                this.errorCheckIntervalId = null;
+            }
         },
 
         // Cleanup
