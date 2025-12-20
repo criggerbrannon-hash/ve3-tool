@@ -238,13 +238,21 @@ class ChromeHeadersExtractor:
                         message = json.loads(log["message"])
                         method = message.get("message", {}).get("method", "")
 
-                        if method == "Network.requestWillBeSent":
+                        # Check both requestWillBeSent và requestWillBeSentExtraInfo
+                        # ExtraInfo chứa headers thực tế Chrome gửi (bao gồm x-browser-validation)
+                        if method in ["Network.requestWillBeSent", "Network.requestWillBeSentExtraInfo"]:
                             params = message.get("message", {}).get("params", {})
-                            request = params.get("request", {})
-                            url = request.get("url", "")
+
+                            # requestWillBeSent có request.url, ExtraInfo có headers trực tiếp
+                            if method == "Network.requestWillBeSent":
+                                request = params.get("request", {})
+                                url = request.get("url", "")
+                                headers = request.get("headers", {})
+                            else:  # ExtraInfo - headers thực tế được gửi
+                                url = "aisandbox-pa.googleapis.com"  # ExtraInfo không có URL, dùng pattern
+                                headers = params.get("headers", {})
 
                             if self.API_PATTERN in url:
-                                headers = request.get("headers", {})
 
                                 self._log(f"Found API request: {url[:60]}...")
 
