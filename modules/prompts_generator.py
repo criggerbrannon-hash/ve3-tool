@@ -793,31 +793,54 @@ class PromptGenerator:
 
     def _generate_content_large(self, prompt: str, temperature: float = 0.7, max_tokens: int = 16000) -> str:
         """
-        Generate content với ưu tiên Ollama cho response dài (Director's Shooting Plan).
+        Generate content cho response dài (Director's Shooting Plan).
 
-        DeepSeek có giới hạn max_tokens=8192, không đủ cho Director's Shooting Plan.
-        Ollama không có giới hạn tokens và qwen2.5:7b là model mạnh.
+        Ưu tiên: DeepSeek (primary) > Ollama (fallback khi lỗi hoặc truncate)
 
-        Priority cho QUALITY:
-        1. Ollama (qwen2.5:7b) - Model mạnh, không giới hạn tokens, chất lượng cao
-        2. DeepSeek - Nếu không có Ollama, dùng với JSON repair
+        DeepSeek có giới hạn max_tokens=8192, nếu response bị truncate sẽ
+        fallback sang Ollama để có response đầy đủ.
         """
-        # Ưu tiên Ollama cho chất lượng tốt nhất
+        # 1. Thử DeepSeek trước (primary)
+        try:
+            print("[Director] Dùng DeepSeek (ưu tiên, max 8192 tokens)...")
+            result = self.ai_client.generate_content(prompt, temperature, min(max_tokens, 8192))
+
+            if result:
+                print(f"[Director] DeepSeek trả về {len(result)} ký tự")
+
+                # Check xem JSON có bị truncate không
+                if result.strip().startswith('{') or result.strip().startswith('['):
+                    # Đếm braces để check truncation
+                    open_braces = result.count('{') - result.count('}')
+                    open_brackets = result.count('[') - result.count(']')
+
+                    if open_braces != 0 or open_brackets != 0:
+                        print(f"[Director] ⚠️ JSON có thể bị truncate (unclosed: {open_braces} braces, {open_brackets} brackets)")
+                        # Fall through to Ollama
+                    else:
+                        return result
+                else:
+                    return result
+
+        except Exception as e:
+            self.logger.warning(f"[Director] DeepSeek failed: {e}")
+            print(f"[Director] DeepSeek lỗi: {e}")
+
+        # 2. Fallback: Ollama (không giới hạn tokens)
         if hasattr(self.ai_client, 'ollama_available') and self.ai_client.ollama_available:
-            print(f"[Director] Dùng Ollama {self.ai_client.ollama_model} (chất lượng cao, không giới hạn tokens)")
+            print(f"[Director] Fallback sang Ollama {self.ai_client.ollama_model} (không giới hạn tokens)...")
             try:
-                # Gọi Ollama với max_tokens cao
                 result = self.ai_client._call_ollama(prompt, temperature, max_tokens)
                 if result:
                     print(f"[Director] Ollama trả về {len(result)} ký tự")
                     return result
             except Exception as e:
-                self.logger.warning(f"[Director] Ollama failed: {e}, falling back to DeepSeek...")
-                print(f"[Director] Ollama thất bại: {e}, chuyển sang DeepSeek...")
+                self.logger.warning(f"[Director] Ollama cũng failed: {e}")
+                print(f"[Director] Ollama thất bại: {e}")
 
-        # Fallback: dùng DeepSeek (sẽ bị cap ở 8192 tokens)
-        print("[Director] Dùng DeepSeek (giới hạn 8192 tokens, có thể bị truncate)")
-        return self.ai_client.generate_content(prompt, temperature, max_tokens)
+        # 3. Last resort: return DeepSeek result even if truncated
+        print("[Director] Không có kết quả hoàn chỉnh, sử dụng smart_divide_scenes thay thế...")
+        return ""
 
     def generate_for_project(
         self,
