@@ -984,41 +984,43 @@ class UnixVoiceToVideo:
         labs_tab = ttk.Frame(notebook, padding=15)
         notebook.add(labs_tab, text="  🔑 Labs API  ")
 
-        ttk.Label(labs_tab, text="Labs API (Cookie + CAPTCHA Solver)",
+        ttk.Label(labs_tab, text="Labs API (Bearer Token + CAPTCHA)",
                   font=('Segoe UI', 12, 'bold')).pack(anchor=tk.W, pady=(0, 5))
-        ttk.Label(labs_tab, text="Mode de su dung nhat - chi can cookie tu Cookie Editor + Capsolver API key",
+        ttk.Label(labs_tab, text="Can Bearer token tu Network tab + Capsolver API key",
                   foreground='gray', font=('Segoe UI', 9)).pack(anchor=tk.W, pady=(0, 15))
 
         # Instructions
         instructions = """Huong dan:
-1. Cai extension Cookie Editor (Chrome/Firefox)
-2. Vao labs.google va dang nhap Google
-3. Mo Cookie Editor, nhan Export -> Header String
-4. Paste vao o Cookie ben duoi
-5. Dang ky Capsolver.com, lay API key
-6. Paste API key vao o Capsolver API Key
-7. Nhan "Luu Labs Settings"
+1. Vao labs.google, dang nhap Google, tao 1 anh thu
+2. F12 > Network tab > tim "batchGenerateImages"
+3. Copy "Authorization: Bearer ya29.xxx..." vao o Bearer Token
+4. Dang ky Capsolver.com, lay API key
+5. Paste API key vao o Capsolver API Key
+6. Nhan "Luu Labs Settings"
+
+Luu y: Bearer token het han sau ~1 gio, can lay lai!
 """
         ttk.Label(labs_tab, text=instructions, font=('Segoe UI', 9),
                   foreground='#555', justify=tk.LEFT).pack(anchor=tk.W, pady=(0, 15))
 
-        # Cookie input
-        ttk.Label(labs_tab, text="Cookie (tu Cookie Editor):",
+        # Bearer Token input
+        ttk.Label(labs_tab, text="Bearer Token (tu Network tab):",
                   font=('Segoe UI', 10, 'bold')).pack(anchor=tk.W)
-        cookie_frame = ttk.Frame(labs_tab)
-        cookie_frame.pack(fill=tk.X, pady=(5, 10))
-        cookie_entry = ttk.Entry(cookie_frame, font=('Consolas', 9))
-        cookie_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        bearer_frame = ttk.Frame(labs_tab)
+        bearer_frame.pack(fill=tk.X, pady=(5, 10))
+        bearer_entry = ttk.Entry(bearer_frame, font=('Consolas', 9))
+        bearer_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
 
-        # Load current session token to show status
-        current_session = self._get_labs_session_token()
-        if current_session:
-            cookie_status = ttk.Label(cookie_frame, text="[Da co token]", foreground='green',
+        # Load current bearer token to show status
+        current_bearer = self._get_labs_bearer_token()
+        if current_bearer:
+            bearer_entry.insert(0, current_bearer[:50] + "..." if len(current_bearer) > 50 else current_bearer)
+            bearer_status = ttk.Label(bearer_frame, text="[Da co]", foreground='green',
                                       font=('Segoe UI', 9, 'bold'))
         else:
-            cookie_status = ttk.Label(cookie_frame, text="[Chua co]", foreground='orange',
+            bearer_status = ttk.Label(bearer_frame, text="[Chua co]", foreground='orange',
                                       font=('Segoe UI', 9))
-        cookie_status.pack(side=tk.LEFT)
+        bearer_status.pack(side=tk.LEFT)
 
         # CAPTCHA API Key input
         ttk.Label(labs_tab, text="Capsolver API Key:",
@@ -1047,39 +1049,31 @@ class UnixVoiceToVideo:
         captcha_status.pack(side=tk.LEFT)
 
         def save_labs_settings():
-            """Parse cookie string and save Labs settings."""
-            cookie_str = cookie_entry.get().strip()
+            """Save Bearer token and CAPTCHA key."""
+            bearer_token = bearer_entry.get().strip()
             captcha_key = captcha_entry.get().strip()
 
-            # Parse session token from cookie string
-            session_token = ""
-            if cookie_str:
-                # Find __Secure-next-auth.session-token in cookie string
-                import re
-                match = re.search(r'__Secure-next-auth\.session-token=([^;]+)', cookie_str)
-                if match:
-                    session_token = match.group(1)
-                    cookie_status.config(text="[OK - Da luu]", foreground='green')
-                    self.log(f"Extracted session token: {session_token[:30]}...", "OK")
-                else:
-                    # Maybe they pasted just the token value
-                    if cookie_str.startswith("eyJ"):
-                        session_token = cookie_str
-                        cookie_status.config(text="[OK - Da luu]", foreground='green')
-                    else:
-                        cookie_status.config(text="[LOI - Khong tim thay token]", foreground='red')
-                        messagebox.showwarning("Loi",
-                            "Khong tim thay session token trong cookie!\n\n"
-                            "Cach lay cookie:\n"
-                            "1. Vao labs.google, dang nhap\n"
-                            "2. Mo Cookie Editor\n"
-                            "3. Nhan Export -> Header String\n"
-                            "4. Paste vao day")
-                        return
+            # Clean bearer token - remove "Bearer " prefix if present
+            if bearer_token.lower().startswith("bearer "):
+                bearer_token = bearer_token[7:].strip()
+
+            # Validate bearer token format
+            if bearer_token and not bearer_token.startswith("ya29."):
+                messagebox.showwarning("Loi",
+                    "Bearer token khong dung dinh dang!\n\n"
+                    "Token phai bat dau bang 'ya29.'\n\n"
+                    "Cach lay:\n"
+                    "1. F12 > Network tab\n"
+                    "2. Tao anh tren labs.google\n"
+                    "3. Tim request 'batchGenerateImages'\n"
+                    "4. Copy gia tri 'Authorization: Bearer ya29.xxx'")
+                return
 
             # Save to config
-            self._save_labs_settings(session_token, captcha_key)
+            self._save_labs_settings(bearer_token, captcha_key)
 
+            if bearer_token:
+                bearer_status.config(text="[OK - Da luu]", foreground='green')
             if captcha_key:
                 captcha_status.config(text="[OK]", foreground='green')
 
@@ -1488,6 +1482,19 @@ class UnixVoiceToVideo:
             pass
         return ''
 
+    def _get_labs_bearer_token(self) -> str:
+        """Get Labs Bearer token from config."""
+        try:
+            import yaml
+            config_path = CONFIG_DIR / "settings.yaml"
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+                return config.get('labs_bearer_token', '')
+        except:
+            pass
+        return ''
+
     def _get_captcha_api_key(self) -> str:
         """Get CAPTCHA API key from config."""
         try:
@@ -1501,7 +1508,7 @@ class UnixVoiceToVideo:
             pass
         return ''
 
-    def _save_labs_settings(self, session_token: str, captcha_api_key: str):
+    def _save_labs_settings(self, bearer_token: str, captcha_api_key: str):
         """Save Labs API settings to config."""
         try:
             import yaml
@@ -1511,8 +1518,8 @@ class UnixVoiceToVideo:
                 with open(config_path, 'r', encoding='utf-8') as f:
                     config = yaml.safe_load(f) or {}
 
-            if session_token:
-                config['labs_session_token'] = session_token
+            if bearer_token:
+                config['labs_bearer_token'] = bearer_token
             if captcha_api_key:
                 config['captcha_api_key'] = captcha_api_key
 
