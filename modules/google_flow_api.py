@@ -121,24 +121,32 @@ class GoogleFlowAPI:
         project_id: Optional[str] = None,
         session_id: Optional[str] = None,
         timeout: int = 120,
-        verbose: bool = False
+        verbose: bool = False,
+        browser_validation: Optional[str] = None,
+        x_client_data: Optional[str] = None
     ):
         """
         Khởi tạo Google Flow API client.
-        
+
         Args:
             bearer_token: OAuth Bearer token (bắt đầu bằng "ya29.")
             project_id: Project ID (nếu không có sẽ tự tạo UUID)
             session_id: Session ID (nếu không có sẽ tự tạo)
             timeout: Request timeout in seconds
             verbose: Print debug info
+            browser_validation: x-browser-validation header value (from browser)
+            x_client_data: x-client-data header value (from browser)
         """
         self.bearer_token = bearer_token.strip()
         self.project_id = project_id or str(uuid.uuid4())
         self.session_id = session_id or f";{int(time.time() * 1000)}"
         self.timeout = timeout
         self.verbose = verbose
-        
+
+        # Browser validation headers (QUAN TRỌNG - API cần headers này)
+        self.browser_validation = browser_validation
+        self.x_client_data = x_client_data
+
         # Validate token format
         if not self.bearer_token.startswith("ya29."):
             print("⚠️  Warning: Bearer token should start with 'ya29.'")
@@ -148,19 +156,38 @@ class GoogleFlowAPI:
     def _create_session(self) -> requests.Session:
         """Tạo HTTP session với headers chuẩn."""
         session = requests.Session()
-        
-        session.headers.update({
+
+        headers = {
             "Authorization": f"Bearer {self.bearer_token}",
             "Content-Type": "text/plain;charset=UTF-8",
             "Accept": "*/*",
             "Accept-Language": "en-US,en;q=0.9",
+            "Accept-Encoding": "gzip, deflate, br, zstd",
             "Origin": "https://labs.google",
             "Referer": "https://labs.google/",
             "Sec-Fetch-Dest": "empty",
             "Sec-Fetch-Mode": "cors",
             "Sec-Fetch-Site": "cross-site",
-        })
-        
+            "Sec-Ch-Ua": '"Google Chrome";v="143", "Chromium";v="143", "Not A(Brand";v="24"',
+            "Sec-Ch-Ua-Mobile": "?0",
+            "Sec-Ch-Ua-Platform": '"Windows"',
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
+            # Browser validation headers (QUAN TRỌNG!)
+            "x-browser-channel": "stable",
+            "x-browser-copyright": "Copyright 2025 Google LLC. All Rights reserved.",
+            "x-browser-year": "2025",
+        }
+
+        # Thêm browser validation nếu có
+        if self.browser_validation:
+            headers["x-browser-validation"] = self.browser_validation
+
+        # Thêm x-client-data nếu có
+        if self.x_client_data:
+            headers["x-client-data"] = self.x_client_data
+
+        session.headers.update(headers)
+
         return session
     
     def _log(self, message: str) -> None:
@@ -184,7 +211,8 @@ class GoogleFlowAPI:
         aspect_ratio: AspectRatio = AspectRatio.LANDSCAPE,
         model: ImageModel = ImageModel.GEM_PIX_2,
         image_inputs: Optional[List[ImageInput]] = None,
-        reference_images: Optional[List[GeneratedImage]] = None
+        reference_images: Optional[List[GeneratedImage]] = None,
+        recaptcha_token: Optional[str] = None
     ) -> Tuple[bool, List[GeneratedImage], str]:
         """
         Tạo ảnh từ prompt sử dụng Flow API.
@@ -197,6 +225,7 @@ class GoogleFlowAPI:
             image_inputs: List ImageInput objects cho reference images
             reference_images: List GeneratedImage objects để dùng làm reference
                             (sẽ tự động convert sang ImageInput)
+            recaptcha_token: reCAPTCHA token từ browser (QUAN TRỌNG cho API mới!)
 
         Returns:
             Tuple[success, list_of_images, error_message]
@@ -248,8 +277,18 @@ class GoogleFlowAPI:
                 "imageInputs": image_inputs_data
             }
             requests_data.append(request_item)
-        
+
+        # Build payload với root-level clientContext (QUAN TRỌNG cho API mới!)
+        # Browser gửi recaptchaToken ở root level
         payload = {"requests": requests_data}
+
+        # Thêm root clientContext với recaptchaToken nếu có
+        if recaptcha_token:
+            payload["clientContext"] = {
+                "recaptchaToken": recaptcha_token,
+                "sessionId": self.session_id
+            }
+            self._log(f"Using recaptchaToken: {recaptcha_token[:50]}...")
         
         # Build URL
         url = f"{self.BASE_URL}/v1/projects/{self.project_id}/flowMedia:batchGenerateImages"
