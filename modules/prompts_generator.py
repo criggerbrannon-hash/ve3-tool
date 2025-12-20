@@ -1426,7 +1426,10 @@ class PromptGenerator:
     ) -> Optional[Dict]:
         """
         Tạo Director's Shooting Plan - Kế hoạch quay phim chi tiết.
-        ĐÂY LÀ BƯỚC QUAN TRỌNG NHẤT - Đạo diễn quyết định tạo bao nhiêu ảnh và ảnh gì!
+
+        Sử dụng Two-Phase Approach để xử lý kịch bản dài với DeepSeek:
+        - Phase 1: Phân tích cấu trúc câu chuyện (output nhỏ)
+        - Phase 2: Generate shots cho từng part (nhiều query nhỏ)
 
         Args:
             story_text: Toàn bộ nội dung câu chuyện
@@ -1437,6 +1440,31 @@ class PromptGenerator:
 
         Returns:
             Dict với shooting_plan chứa tất cả shots đã lên kế hoạch
+        """
+        # Determine if we need chunked approach (many SRT entries)
+        USE_CHUNKED_THRESHOLD = 20  # Use chunked if > 20 SRT entries
+
+        if len(srt_entries) > USE_CHUNKED_THRESHOLD:
+            self.logger.info(f"[Director] Sử dụng Two-Phase Approach ({len(srt_entries)} SRT entries)")
+            return self._create_directors_shooting_plan_chunked(
+                story_text, srt_entries, characters, locations, global_style
+            )
+
+        # Original single-query approach for short scripts
+        return self._create_directors_shooting_plan_single(
+            story_text, srt_entries, characters, locations, global_style
+        )
+
+    def _create_directors_shooting_plan_single(
+        self,
+        story_text: str,
+        srt_entries: List,
+        characters: List,
+        locations: List,
+        global_style: str
+    ) -> Optional[Dict]:
+        """
+        Original single-query approach for short scripts.
         """
         try:
             # Load prompt template
@@ -1519,6 +1547,322 @@ class PromptGenerator:
             self.logger.error(f"[Director's Shooting Plan] Failed: {e}")
             import traceback
             traceback.print_exc()
+            return None
+
+    def _create_directors_shooting_plan_chunked(
+        self,
+        story_text: str,
+        srt_entries: List,
+        characters: List,
+        locations: List,
+        global_style: str
+    ) -> Optional[Dict]:
+        """
+        Two-Phase Approach cho kịch bản dài.
+
+        Phase 1: Phân tích story structure → xác định story parts
+        Phase 2: Generate shots cho từng part → merge kết quả
+        """
+        try:
+            self.logger.info("=" * 50)
+            self.logger.info("[Director Chunked] Bắt đầu Two-Phase Approach")
+            self.logger.info("=" * 50)
+
+            # Format common data
+            chars_info = "NHÂN VẬT:\n" + "\n".join([
+                f"- {c.id}: {c.name} - {c.character_lock or ''}"
+                for c in characters
+            ]) if characters else "Không có thông tin nhân vật"
+
+            locs_info = "BỐI CẢNH:\n" + "\n".join([
+                f"- {loc.id}: {loc.name} - {loc.location_lock or ''}"
+                for loc in locations
+            ]) if locations else "Không có thông tin bối cảnh"
+
+            # Calculate total duration
+            if srt_entries:
+                last_entry = srt_entries[-1]
+                total_seconds = int(last_entry.end_time.total_seconds()) if hasattr(last_entry.end_time, 'total_seconds') else 0
+                total_duration = f"{total_seconds // 60}:{total_seconds % 60:02d}"
+            else:
+                total_duration = "0:00"
+
+            # ============================================
+            # PHASE 1: Analyze Story Structure
+            # ============================================
+            self.logger.info("[Director Chunked] Phase 1: Phân tích cấu trúc câu chuyện...")
+
+            story_structure = self._analyze_story_structure_phase1(
+                story_text, srt_entries, total_duration
+            )
+
+            if not story_structure or "story_structure" not in story_structure:
+                self.logger.warning("[Director Chunked] Phase 1 failed, fallback to single query")
+                return self._create_directors_shooting_plan_single(
+                    story_text, srt_entries, characters, locations, global_style
+                )
+
+            parts = story_structure["story_structure"].get("parts", [])
+            self.logger.info(f"[Director Chunked] Phase 1 xong: {len(parts)} parts")
+            for part in parts:
+                self.logger.info(f"  - Part {part.get('part_number')}: {part.get('part_name')} ({part.get('estimated_shots')} shots)")
+
+            # ============================================
+            # PHASE 2: Generate Shots for Each Part
+            # ============================================
+            self.logger.info("[Director Chunked] Phase 2: Generate shots cho từng part...")
+
+            all_story_parts = []
+            cumulative_context = []  # Track all parts for rich context
+            current_shot_number = 1
+
+            # Build initial context from story structure
+            story_info = story_structure.get("story_structure", {})
+            story_overview = f"""
+TỔNG QUAN CÂU CHUYỆN:
+- Chủ đề: {story_info.get('main_theme', 'N/A')}
+- Hành trình nhân vật: {story_info.get('character_journey', 'N/A')}
+- Dòng cảm xúc: {story_info.get('emotional_arc', 'N/A')}
+"""
+
+            for i, part in enumerate(parts):
+                self.logger.info(f"[Director Chunked] Đang xử lý Part {part.get('part_number')}/{len(parts)}: {part.get('part_name')}...")
+
+                # Get SRT entries for this part
+                srt_indices = part.get("srt_indices", [])
+                if srt_indices:
+                    # Convert to 0-based indices
+                    start_idx = max(0, min(srt_indices) - 1)
+                    end_idx = min(len(srt_entries), max(srt_indices))
+                    part_srt_entries = srt_entries[start_idx:end_idx]
+                else:
+                    # Fallback: divide evenly
+                    chunk_size = len(srt_entries) // len(parts)
+                    start_idx = i * chunk_size
+                    end_idx = start_idx + chunk_size if i < len(parts) - 1 else len(srt_entries)
+                    part_srt_entries = srt_entries[start_idx:end_idx]
+
+                # Build rich context from previous parts
+                if i == 0:
+                    previous_context = f"{story_overview}\nĐây là phần đầu tiên - HOOK. Cần tạo ấn tượng mạnh ngay từ đầu!"
+                else:
+                    # Include last 2-3 parts for continuity
+                    recent_parts = cumulative_context[-3:]
+                    context_parts = []
+                    for ctx in recent_parts:
+                        context_parts.append(f"Part {ctx['part_number']} ({ctx['part_name']}): {ctx['summary']}")
+
+                    previous_context = f"""{story_overview}
+
+CÁC PARTS ĐÃ HOÀN THÀNH:
+{chr(10).join(context_parts)}
+
+Shot cuối cùng: {cumulative_context[-1].get('last_shot_type', 'N/A')}
+Cảm xúc đang build: {cumulative_context[-1].get('emotional_state', 'N/A')}
+"""
+
+                # Generate shots for this part
+                part_shots = self._generate_part_shots_phase2(
+                    part_info=part,
+                    part_srt_entries=part_srt_entries,
+                    total_parts=len(parts),
+                    previous_context=previous_context,
+                    starting_shot_number=current_shot_number,
+                    characters_info=chars_info,
+                    locations_info=locs_info,
+                    global_style=global_style or get_global_style()
+                )
+
+                if part_shots and "part_shots" in part_shots:
+                    shots_data = part_shots["part_shots"]
+                    shots = shots_data.get("shots", [])
+
+                    # Build story_part structure
+                    story_part = {
+                        "part_number": part.get("part_number"),
+                        "part_name": part.get("part_name"),
+                        "goal": part.get("goal"),
+                        "audience_feeling": part.get("audience_feeling"),
+                        "time_range": part.get("time_range"),
+                        "duration_seconds": part.get("duration_seconds"),
+                        "shots_needed": len(shots),
+                        "shots": shots
+                    }
+                    all_story_parts.append(story_part)
+
+                    # Update cumulative context for next parts
+                    last_shot = shots[-1] if shots else {}
+                    cumulative_context.append({
+                        "part_number": part.get("part_number"),
+                        "part_name": part.get("part_name"),
+                        "summary": shots_data.get("part_summary", f"Part {part.get('part_number')} completed"),
+                        "emotional_state": shots_data.get("emotional_summary", part.get("goal", "")),
+                        "last_shot_type": last_shot.get("shot_type", "MEDIUM SHOT"),
+                        "shots_count": len(shots)
+                    })
+
+                    current_shot_number += len(shots)
+
+                    self.logger.info(f"[Director Chunked] Part {part.get('part_number')} xong: {len(shots)} shots")
+                else:
+                    self.logger.warning(f"[Director Chunked] Part {part.get('part_number')} failed")
+
+            # ============================================
+            # Build Final Shooting Plan
+            # ============================================
+            total_shots = sum(len(p.get("shots", [])) for p in all_story_parts)
+
+            final_result = {
+                "story_analysis": story_structure.get("story_structure", {}),
+                "shooting_plan": {
+                    "total_duration": total_duration,
+                    "total_shots": total_shots,
+                    "total_images": total_shots,
+                    "story_parts": all_story_parts
+                }
+            }
+
+            self.logger.info("=" * 50)
+            self.logger.info(f"[Director Chunked] Hoàn thành! Tổng: {total_shots} shots từ {len(all_story_parts)} parts")
+            self.logger.info("=" * 50)
+
+            return final_result
+
+        except Exception as e:
+            self.logger.error(f"[Director Chunked] Failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def _analyze_story_structure_phase1(
+        self,
+        story_text: str,
+        srt_entries: List,
+        total_duration: str
+    ) -> Optional[Dict]:
+        """
+        Phase 1: Phân tích cấu trúc câu chuyện.
+        Output nhỏ (~500 tokens), DeepSeek xử lý tốt.
+        """
+        try:
+            prompt_template = self._load_prompt_template("directors_story_structure")
+            if not prompt_template:
+                self.logger.warning("[Phase 1] Không tìm thấy prompt template")
+                return None
+
+            # Format SRT segments với index
+            srt_segments = "\n".join([
+                f"[{i+1}] [{self._format_timedelta(e.start_time)} - {self._format_timedelta(e.end_time)}] \"{e.text[:150]}\""
+                for i, e in enumerate(srt_entries)
+            ])
+
+            prompt = prompt_template.format(
+                story_text=story_text[:8000],
+                srt_segments=srt_segments[:12000],
+                total_duration=total_duration
+            )
+
+            # Phase 1 output nhỏ, dùng DeepSeek trực tiếp
+            print("[Phase 1] Phân tích cấu trúc câu chuyện...")
+            response = self.ai_client.generate_content(prompt, 0.3, 2000)
+
+            if not response:
+                return None
+
+            print(f"[Phase 1] Response: {len(response)} chars")
+            json_data = self._extract_json(response)
+
+            if json_data and "story_structure" in json_data:
+                return json_data
+
+            return None
+
+        except Exception as e:
+            self.logger.error(f"[Phase 1] Failed: {e}")
+            return None
+
+    def _generate_part_shots_phase2(
+        self,
+        part_info: Dict,
+        part_srt_entries: List,
+        total_parts: int,
+        previous_context: str,
+        starting_shot_number: int,
+        characters_info: str,
+        locations_info: str,
+        global_style: str
+    ) -> Optional[Dict]:
+        """
+        Phase 2: Generate shots cho một story part.
+        Output vừa phải (~5-15 shots), DeepSeek xử lý được.
+        """
+        try:
+            prompt_template = self._load_prompt_template("directors_part_shots")
+            if not prompt_template:
+                self.logger.warning("[Phase 2] Không tìm thấy prompt template")
+                return None
+
+            # Format SRT segments for this part
+            part_srt_segments = "\n".join([
+                f"[{self._format_timedelta(e.start_time)} - {self._format_timedelta(e.end_time)}] \"{e.text[:200]}\""
+                for e in part_srt_entries
+            ])
+
+            # Determine visual strategy based on goal
+            goal = part_info.get("goal", "").upper()
+            visual_map = {
+                "SHOCK": ("Dark, overcast, ominous", "Desaturated, cold", "Lonely, overwhelming"),
+                "SYMPATHY": ("Golden hour, warm", "Warm, nostalgic", "Intimate, loving"),
+                "SACRIFICE": ("Harsh sunlight", "High contrast", "Exhaustion, determination"),
+                "HAPPINESS": ("Radiant, bright", "Warm, vibrant", "Joy, celebration"),
+                "BETRAYAL": ("Cold, harsh", "Desaturated", "Anger, hurt"),
+                "TENSION": ("Low-key, shadows", "Muted", "Suspense, anxiety"),
+                "RESOLUTION": ("Soft, diffused", "Balanced", "Peace, acceptance"),
+            }
+
+            # Find matching visual strategy
+            visual_lighting, visual_colors, visual_mood = "Natural", "Natural", "Neutral"
+            for key, (lighting, colors, mood) in visual_map.items():
+                if key in goal:
+                    visual_lighting, visual_colors, visual_mood = lighting, colors, mood
+                    break
+
+            prompt = prompt_template.format(
+                previous_context=previous_context,
+                part_number=part_info.get("part_number", 1),
+                total_parts=total_parts,
+                part_name=part_info.get("part_name", ""),
+                time_range=part_info.get("time_range", ""),
+                part_goal=part_info.get("goal", ""),
+                audience_feeling=part_info.get("audience_feeling", ""),
+                starting_shot_number=starting_shot_number,
+                estimated_shots=part_info.get("estimated_shots", 3),
+                part_srt_segments=part_srt_segments,
+                characters_info=characters_info,
+                locations_info=locations_info,
+                global_style=global_style,
+                visual_lighting=visual_lighting,
+                visual_colors=visual_colors,
+                visual_mood=visual_mood
+            )
+
+            # Phase 2 output vừa phải, dùng DeepSeek
+            print(f"[Phase 2] Part {part_info.get('part_number')}: Generating shots...")
+            response = self.ai_client.generate_content(prompt, 0.4, 4000)
+
+            if not response:
+                return None
+
+            print(f"[Phase 2] Part {part_info.get('part_number')}: {len(response)} chars")
+            json_data = self._extract_json(response)
+
+            if json_data and "part_shots" in json_data:
+                return json_data
+
+            return None
+
+        except Exception as e:
+            self.logger.error(f"[Phase 2] Part {part_info.get('part_number')} failed: {e}")
             return None
 
     def _format_timedelta(self, td) -> str:

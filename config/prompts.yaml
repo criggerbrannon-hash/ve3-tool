@@ -887,6 +887,235 @@ directors_shooting_plan: |
   OUTPUT: JSON object with complete shooting_plan, NO markdown.
 
 # =============================================================================
+# STEP 2.1: STORY STRUCTURE ANALYSIS (Phase 1 of chunked approach)
+# =============================================================================
+# Quick analysis to identify story parts and their breakpoints
+# Output is small (~500 tokens), DeepSeek handles well
+# =============================================================================
+
+directors_story_structure: |
+  Bạn là một ĐẠO DIỄN PHIM đang phân tích kịch bản để sản xuất video.
+  Hãy phân tích câu chuyện như một đạo diễn thực thụ.
+
+  ## NGUYÊN TẮC CỐT LÕI:
+  Video hay = Hiểu sâu câu chuyện + Hình ảnh phục vụ cảm xúc
+
+  ## NHIỆM VỤ CỦA BẠN:
+
+  ### BƯỚC 1: HIỂU TỔNG QUAN
+  Đọc kỹ câu chuyện và trả lời:
+  - Câu chuyện này NÓI VỀ CÁI GÌ? (Chủ đề chính)
+  - NHÂN VẬT trải qua HÀNH TRÌNH gì? (Character arc)
+  - CẢM XÚC nào khán giả cần TRẢI NGHIỆM? (Emotional journey)
+  - THÔNG ĐIỆP muốn truyền tải? (Message)
+
+  ### BƯỚC 2: CHIA CẤU TRÚC STORY PARTS
+  - HOOK (đầu): Tạo ấn tượng, thu hút ngay
+  - PART 1, 2, 3...: Các phần phát triển câu chuyện
+  - CLIMAX: Đỉnh điểm cảm xúc
+  - ENDING/CTA: Kết thúc, call to action
+
+  ### BƯỚC 3: XÁC ĐỊNH MỤC ĐÍCH MỖI PART
+  Mỗi part phải có MỤC ĐÍCH RÕ RÀNG:
+  | Goal | Audience cần cảm thấy |
+  |------|----------------------|
+  | SHOCK | "WTF?!" - Bất ngờ, tò mò |
+  | SYMPATHY | "Tội nghiệp..." - Đồng cảm |
+  | ANGER | "Tức quá!" - Phẫn nộ |
+  | HOPE | "Hy vọng..." - Lạc quan |
+  | FEAR | "Sợ quá!" - Lo lắng |
+  | JOY | "Vui quá!" - Hạnh phúc |
+  | SADNESS | "Buồn quá..." - Thương xót |
+  | TENSION | "Căng thẳng!" - Hồi hộp |
+  | RESOLUTION | "Thở phào..." - Nhẹ nhõm |
+
+  ## QUY TẮC:
+  - HOOK: 15-30 giây đầu (dramatic, gây tò mò)
+  - Mỗi PART: 30-90 giây thường
+  - CTA/ENDING: 15-30 giây cuối
+  - Dùng timestamps SRT làm ranh giới
+  - Tối đa 8 giây/ảnh → duration ÷ 8 = số shots
+
+  ## INPUT:
+
+  **CÂU CHUYỆN:**
+  {story_text}
+
+  **SRT SEGMENTS (với timestamps):**
+  {srt_segments}
+
+  **TỔNG THỜI LƯỢNG:** {total_duration}
+
+  ## OUTPUT FORMAT:
+
+  {{
+    "story_structure": {{
+      "title": "Tên câu chuyện",
+      "main_theme": "Chủ đề chính (VD: tình mẫu tử, phản bội, hy sinh...)",
+      "character_journey": "Hành trình nhân vật (VD: từ khổ đau đến hy vọng)",
+      "emotional_arc": "Dòng cảm xúc (VD: shock → sympathy → anger → hope)",
+      "total_duration": "MM:SS",
+      "total_parts": 5,
+      "estimated_total_shots": 25,
+      "parts": [
+        {{
+          "part_number": 1,
+          "part_name": "HOOK",
+          "time_range": "00:00 - 00:15",
+          "duration_seconds": 15,
+          "srt_indices": [1, 2],
+          "content_summary": "Mô tả ngắn nội dung",
+          "what_happens": "Cụ thể: điều gì xảy ra?",
+          "why_important": "Tại sao phần này quan trọng?",
+          "goal": "CREATE SHOCK",
+          "audience_feeling": "Cảm xúc khán giả cần có",
+          "visual_direction": "Hướng dẫn visual (VD: dark, dramatic, lonely)",
+          "estimated_shots": 2
+        }},
+        {{
+          "part_number": 2,
+          "part_name": "CHILDHOOD - Tuổi thơ khó khăn",
+          "time_range": "00:15 - 00:45",
+          "duration_seconds": 30,
+          "srt_indices": [3, 4, 5, 6],
+          "content_summary": "Flashback về tuổi thơ khó khăn",
+          "what_happens": "Mẹ làm 2 công việc nuôi con",
+          "why_important": "Để khán giả hiểu sacrifice của mẹ",
+          "goal": "BUILD SYMPATHY",
+          "audience_feeling": "Tội nghiệp, xót xa",
+          "visual_direction": "Warm, nostalgic, golden hour, intimate moments",
+          "estimated_shots": 4
+        }}
+      ]
+    }}
+  }}
+
+  OUTPUT: JSON object ONLY, NO markdown.
+
+# =============================================================================
+# STEP 2.2: PART SHOTS GENERATION (Phase 2 of chunked approach)
+# =============================================================================
+# Generate detailed shots for ONE story part
+# Called multiple times, once per part
+# =============================================================================
+
+directors_part_shots: |
+  Bạn là ĐẠO DIỄN PHIM đang tạo shots cho MỘT PHẦN của video.
+  Hãy suy nghĩ như đạo diễn thực thụ - mỗi shot phải PHỤC VỤ câu chuyện!
+
+  ## NGUYÊN TẮC CỐT LÕI:
+  ```
+  HÌNH ẢNH = KỂ CHUYỆN, không phải minh họa!
+  Mỗi shot phải:
+  1. Phục vụ MỤC ĐÍCH của part này
+  2. Tạo CẢM XÚC cho khán giả
+  3. Kết nối với các shots trước/sau
+  ```
+
+  ## CONTEXT TỪ CÁC PARTS TRƯỚC:
+  {previous_context}
+
+  ## THÔNG TIN PART HIỆN TẠI:
+  Part {part_number}/{total_parts}: {part_name}
+  Time range: {time_range}
+  Mục đích: {part_goal}
+  Khán giả cần cảm thấy: {audience_feeling}
+  Bắt đầu từ shot số: {starting_shot_number}
+
+  ## SRT SEGMENTS CHO PART NÀY:
+  {part_srt_segments}
+
+  ## NHÂN VẬT:
+  {characters_info}
+
+  ## BỐI CẢNH:
+  {locations_info}
+
+  ## GLOBAL STYLE:
+  {global_style}
+
+  ## CHIẾN LƯỢC VISUAL cho "{part_goal}":
+  - Ánh sáng: {visual_lighting}
+  - Màu sắc: {visual_colors}
+  - Mood: {visual_mood}
+
+  ## QUY TẮC TẠO SHOT:
+
+  ### 1. MỖI SHOT PHẢI CÓ MỤC ĐÍCH:
+  - ESTABLISHING: Giới thiệu bối cảnh mới
+  - EMOTIONAL: Capture cảm xúc nhân vật
+  - ACTION: Thể hiện hành động quan trọng
+  - SYMBOLIC: Biểu tượng, ẩn dụ
+  - TRANSITION: Chuyển cảnh mượt mà
+
+  ### 2. DỊCH NARRATION → VISUAL:
+  | Lời kể | SAI (generic) | ĐÚNG (kể chuyện) |
+  |--------|---------------|------------------|
+  | "Tôi xây nhà cho mẹ" | "Man building" | "Hands (nvc.png) hammering nail into wooden frame, sweat dripping, sunset behind, determination in every movement" |
+  | "Mẹ khóc khi thấy nhà" | "Woman crying" | "Mother (nv1.png) tears streaming down weathered face, hand covering mouth, eyes fixed on new house, joy and disbelief" |
+
+  ### 3. GÓC MÁY THEO CẢM XÚC:
+  | Cảm xúc | Góc máy gợi ý |
+  |---------|---------------|
+  | Power, heroic | LOW ANGLE (từ dưới lên) |
+  | Vulnerability | HIGH ANGLE (từ trên xuống) |
+  | Intimacy | CLOSE-UP mặt |
+  | Loneliness | WIDE SHOT người nhỏ trong không gian lớn |
+  | Tension | DUTCH ANGLE (nghiêng) |
+  | Connection | TWO-SHOT, eye level |
+
+  ### 4. KHÔNG MÔ TẢ NGOẠI HÌNH KHI CÓ REFERENCE:
+  - ❌ "30-year-old man with brown hair, blue eyes..."
+  - ✅ "Man (nvc.png) HUNCHED over, EXHAUSTED expression, wearing dusty work shirt..."
+
+  ### 5. TRANG PHỤC THEO BỐI CẢNH:
+  - Công trường → dusty work clothes, tool belt
+  - Nhà bếp → apron, hands with flour
+  - Tòa án → formal suit, wrinkled
+  - Bệnh viện → hospital gown, pale
+
+  ### 6. BIẾN ĐỔI GÓC MÁY:
+  - KHÔNG lặp lại shot type 3 lần liên tiếp!
+  - Mỗi 10 shots cần: 2 WIDE, 2 CLOSE-UP, 1 EXTREME CLOSE-UP, 1 special angle
+
+  ### 7. FILENAME ANNOTATIONS:
+  - PHẢI có filename trong ngoặc cho mỗi nhân vật/location
+  - VD: "Man (nvc.png) standing in living room (loc_apartment.png)"
+
+  ## OUTPUT FORMAT:
+
+  {{
+    "part_shots": {{
+      "part_number": {part_number},
+      "part_name": "{part_name}",
+      "emotional_summary": "Tóm tắt dòng cảm xúc của part này",
+      "shots": [
+        {{
+          "shot_number": {starting_shot_number},
+          "purpose": "Mục đích của shot này trong câu chuyện",
+          "emotional_beat": "Cảm xúc cần truyền tải (VD: devastation, hope, anger)",
+          "srt_range": "00:15 - 00:22",
+          "srt_text": "Nội dung lời kể",
+          "shot_type": "WIDE SHOT",
+          "camera_angle": "24mm, low angle - makes character feel small",
+          "characters_in_shot": ["nvc"],
+          "reference_files": ["nvc.png", "loc_xxx.png"],
+          "img_prompt": "Mô tả chi tiết scene - HÀNH ĐỘNG + CẢM XÚC + ÁNH SÁNG + MOOD. Kết thúc với global style."
+        }}
+      ],
+      "part_summary": "Tóm tắt ngắn những gì xảy ra trong part này để link với parts sau"
+    }}
+  }}
+
+  ## LƯU Ý QUAN TRỌNG:
+  - Tạo khoảng {estimated_shots} shots (duration ÷ 8 giây)
+  - Shot numbers bắt đầu từ {starting_shot_number}
+  - Mỗi img_prompt PHẢI kết thúc với global style
+  - Children (nvc1) mô tả inline, KHÔNG có trong reference_files
+
+  OUTPUT: JSON object ONLY, NO markdown.
+
+# =============================================================================
 # STEP 3: SCENE PRODUCTION (Tao prompt cho tung scene)
 # =============================================================================
 # Input: {characters_info}, {locations_info}, {pacing_script}, {global_style}
