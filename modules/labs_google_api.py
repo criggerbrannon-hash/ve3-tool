@@ -266,18 +266,18 @@ class LabsGoogleAPI:
         prompt: str,
         count: int = 1,
         aspect_ratio: str = "landscape",
-        model: str = "GEM_PIX_2",
+        model: str = "IMAGEN_3",
         seed: int = None,
         image_inputs: list = None
     ) -> Tuple[bool, List[Dict], str]:
         """
-        Tạo ảnh với aisandbox-pa.googleapis.com API.
+        Tạo ảnh qua labs.google tRPC API với session cookie.
 
         Args:
             prompt: Text mô tả ảnh
             count: Số lượng ảnh (1-4)
             aspect_ratio: "landscape", "portrait", "square"
-            model: Model tạo ảnh (GEM_PIX_2, IMAGEN_4)
+            model: Model tạo ảnh (IMAGEN_3, IMAGEN_3_5)
             seed: Seed cho random (optional)
             image_inputs: List ảnh reference (optional)
 
@@ -286,11 +286,11 @@ class LabsGoogleAPI:
         """
         self._log(f"Generating: {prompt[:50]}...")
 
-        # Check Bearer token
-        if not self.bearer_token:
-            return False, [], "Thiếu Bearer token! Lấy từ Network tab (Authorization header)"
+        # Check session token
+        if not self.session_token:
+            return False, [], "Thiếu session token! Lấy từ Cookie Editor (labs.google)"
 
-        # Map aspect ratio
+        # Map aspect ratio for tRPC
         ar_map = {
             "landscape": "IMAGE_ASPECT_RATIO_LANDSCAPE",
             "portrait": "IMAGE_ASPECT_RATIO_PORTRAIT",
@@ -298,66 +298,78 @@ class LabsGoogleAPI:
         }
         aspect = ar_map.get(aspect_ratio.lower(), ar_map["landscape"])
 
-        # Note: CAPTCHA may not be needed with Bearer token auth
-        # Skip for now - will add back if API requires it
-
         # Generate seed
         import random
-        import time as time_module
-
         if seed is None:
             seed = random.randint(1, 999999)
 
-        # Build requests array
-        requests_list = []
-        for i in range(count):
-            request = {
-                "seed": seed + i,
-                "imageModelName": model,
-                "imageAspectRatio": aspect,
-                "imageInputs": image_inputs or [],
-                "prompt": prompt
-            }
-            requests_list.append(request)
-
-        # Try simple payload first (just requests)
-        # Some Google APIs don't need recaptchaToken when using Bearer auth
-        payload = {
-            "requests": requests_list
+        # Build tRPC input - format cho imageFx.generateImage
+        trpc_input = {
+            "generationCount": count,
+            "imageAspectRatio": aspect,
+            "seed": seed,
+            "prompt": prompt,
+            "modelInput": model
         }
 
-        # API endpoint
-        url = f"{self.API_URL}/v1/projects/{self.project_id}/flowMedia:batchGenerateImages"
+        # tRPC endpoint
+        url = f"{self.BASE_URL}/api/trpc/imageFx.generateImage"
 
         try:
-            self._log(f"Calling API: {url}")
-            self._log(f"Bearer token: {self.bearer_token[:20]}...")
-
-            # Send as text/plain (like browser does) not application/json
+            # Create session with cookies
             import json as json_module
-            payload_str = json_module.dumps(payload)
 
-            response = self.session.post(url, data=payload_str, timeout=120)
+            # Headers cho tRPC
+            headers = {
+                "Accept": "*/*",
+                "Accept-Language": "en-US,en;q=0.9,vi;q=0.8",
+                "Content-Type": "application/json",
+                "Origin": "https://labs.google",
+                "Referer": "https://labs.google/fx/vi/tools/flow",
+                "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+                "Sec-Ch-Ua-Mobile": "?0",
+                "Sec-Ch-Ua-Platform": '"Windows"',
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "same-origin",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                "Cookie": self.session_token  # Full cookie string
+            }
+
+            # tRPC mutation format
+            payload = {
+                "json": trpc_input
+            }
+
+            self._log(f"Calling tRPC: {url}")
+            self._log(f"Cookie length: {len(self.session_token)}")
+
+            response = requests.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=120
+            )
 
             self._log(f"Response status: {response.status_code}")
 
             if response.status_code == 200:
                 data = response.json()
-                self._log(f"Response keys: {data.keys() if isinstance(data, dict) else type(data)}")
-                images = self._parse_batch_response(data)
+                self._log(f"Response: {str(data)[:200]}...")
+                images = self._parse_trpc_response(data)
                 if images:
                     self._log(f"Got {len(images)} images!")
                     return True, images, ""
                 return False, [], f"No images in response: {str(data)[:300]}"
 
             elif response.status_code == 401:
-                return False, [], "Bearer token expired - lấy token mới từ Network tab"
+                return False, [], "Session expired - lấy cookie mới từ Cookie Editor"
 
             elif response.status_code == 403:
-                return False, [], "Access denied - kiểm tra Bearer token"
+                return False, [], "Access denied - kiểm tra cookie"
 
             else:
-                return False, [], f"API error: {response.status_code} - {response.text[:300]}"
+                return False, [], f"API error: {response.status_code} - {response.text[:500]}"
 
         except Exception as e:
             import traceback
