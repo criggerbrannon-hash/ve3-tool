@@ -332,12 +332,104 @@ class LabsGoogleAPI:
             self._log(f"2Captcha error: {e}")
             return None
 
+    def _solve_captcha_zero2launch(self) -> Optional[str]:
+        """
+        Giải reCAPTCHA v3 bằng Zero2launch - service chuyên cho labs.google/Veo3.
+        Sử dụng task type RecaptchaV3TokenTaskVeo3 đặc biệt.
+        """
+        if not self.captcha_api_key:
+            self._log("ERROR: Thiếu Zero2launch API key!")
+            return None
+
+        key_masked = self.captcha_api_key[:8] + "..." if len(self.captcha_api_key) > 8 else "***"
+        self._log(f"Đang giải CAPTCHA với Zero2launch (key: {key_masked})...")
+
+        # Zero2launch API - tương tự Capsolver nhưng có task type đặc biệt
+        # Thử nhiều endpoint có thể
+        possible_endpoints = [
+            "https://api.zero2launch.com/createTask",
+            "https://zero2launch.com/api/createTask",
+            "https://api.capsolver.com/createTask",  # Có thể dùng chung infrastructure
+        ]
+
+        task_data = {
+            "clientKey": self.captcha_api_key,
+            "task": {
+                "type": "RecaptchaV3TokenTaskVeo3",  # Task type đặc biệt cho Veo3
+                "websiteURL": "https://labs.google",
+                "websiteKey": self.RECAPTCHA_SITE_KEY,
+                "pageAction": self.RECAPTCHA_ACTION,
+                "isEnterprise": True
+            }
+        }
+
+        for api_url in possible_endpoints:
+            try:
+                self._log(f"Trying endpoint: {api_url}")
+                response = requests.post(api_url, json=task_data, timeout=30)
+
+                if response.status_code != 200:
+                    self._log(f"  -> HTTP {response.status_code}")
+                    continue
+
+                result = response.json()
+                self._log(f"Response: errorId={result.get('errorId')}, taskId={result.get('taskId')}")
+
+                if result.get("errorId") != 0:
+                    error_code = result.get('errorCode', 'UNKNOWN')
+                    self._log(f"  -> ERROR: {error_code}")
+                    continue
+
+                # Task created - poll for result
+                task_id = result.get("taskId")
+                if not task_id:
+                    continue
+
+                self._log(f"Task created: {task_id}")
+
+                # Determine result endpoint
+                result_url = api_url.replace("createTask", "getTaskResult")
+
+                for _ in range(60):
+                    time.sleep(2)
+
+                    result_data = {
+                        "clientKey": self.captcha_api_key,
+                        "taskId": task_id
+                    }
+
+                    response = requests.post(result_url, json=result_data, timeout=30)
+                    result = response.json()
+
+                    if result.get("status") == "ready":
+                        token = result.get("solution", {}).get("gRecaptchaResponse")
+                        if token:
+                            self._log("CAPTCHA solved với Zero2launch!")
+                            return token
+                    elif result.get("status") == "failed":
+                        self._log(f"CAPTCHA failed: {result.get('errorDescription')}")
+                        break
+
+                self._log("Timeout, trying next endpoint...")
+
+            except requests.exceptions.RequestException as e:
+                self._log(f"Network error: {e}")
+                continue
+            except Exception as e:
+                self._log(f"Error: {e}")
+                continue
+
+        self._log("Zero2launch failed - tất cả endpoint đều không hoạt động!")
+        return None
+
     def solve_captcha(self) -> Optional[str]:
         """Giải reCAPTCHA tùy theo service được cấu hình."""
         if self.captcha_service == "capsolver":
             return self._solve_captcha_capsolver()
         elif self.captcha_service == "2captcha":
             return self._solve_captcha_2captcha()
+        elif self.captcha_service == "zero2launch":
+            return self._solve_captcha_zero2launch()
         else:
             self._log(f"Unknown captcha service: {self.captcha_service}")
             return None

@@ -1093,6 +1093,45 @@ Cookie co dang: __Host-next-auth.csrf-token=...;__Secure-next-auth.session-token
             import threading
             threading.Thread(target=do_auto_get, daemon=True).start()
 
+        # CAPTCHA API Configuration
+        ttk.Separator(labs_tab, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(15, 10))
+        ttk.Label(labs_tab, text="CAPTCHA API (Capsolver / Zero2launch):",
+                  font=('Segoe UI', 10, 'bold')).pack(anchor=tk.W)
+        ttk.Label(labs_tab, text="Dung de giai reCAPTCHA khi tao anh. Zero2launch API key: bffaee4b...",
+                  foreground='gray', font=('Segoe UI', 9)).pack(anchor=tk.W, pady=(0, 5))
+
+        # CAPTCHA Service selector
+        captcha_service_frame = ttk.Frame(labs_tab)
+        captcha_service_frame.pack(fill=tk.X, pady=(5, 5))
+        ttk.Label(captcha_service_frame, text="Service:", width=10).pack(side=tk.LEFT)
+
+        current_captcha_service = self._get_captcha_service()
+        captcha_service_var = tk.StringVar(value=current_captcha_service)
+        captcha_service_combo = ttk.Combobox(captcha_service_frame, textvariable=captcha_service_var,
+                                             values=["capsolver", "zero2launch", "2captcha"],
+                                             state="readonly", width=15)
+        captcha_service_combo.pack(side=tk.LEFT, padx=(0, 10))
+
+        # CAPTCHA API Key input
+        captcha_key_frame = ttk.Frame(labs_tab)
+        captcha_key_frame.pack(fill=tk.X, pady=(5, 10))
+        ttk.Label(captcha_key_frame, text="API Key:", width=10).pack(side=tk.LEFT)
+
+        current_captcha = self._get_captcha_api_key()
+        captcha_key_entry = ttk.Entry(captcha_key_frame, font=('Consolas', 9), show="*")
+        captcha_key_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+        if current_captcha:
+            captcha_key_entry.insert(0, current_captcha)
+
+        def save_captcha_settings():
+            """Save CAPTCHA API settings."""
+            service = captcha_service_var.get()
+            api_key = captcha_key_entry.get().strip()
+            self._save_captcha_settings(service, api_key)
+            messagebox.showinfo("OK", f"Da luu CAPTCHA settings!\nService: {service}")
+
+        ttk.Button(captcha_key_frame, text="💾 Luu", command=save_captcha_settings, width=8).pack(side=tk.LEFT)
+
         # Button frame
         btn_frame = ttk.Frame(labs_tab)
         btn_frame.pack(anchor=tk.W, pady=(15, 10))
@@ -1111,7 +1150,7 @@ Cookie co dang: __Host-next-auth.csrf-token=...;__Secure-next-auth.session-token
             status_text += "San sang su dung!"
             status_color = 'green'
         elif current_session:
-            status_text += "Thieu Capsolver API key"
+            status_text += "Thieu CAPTCHA API key"
             status_color = 'orange'
         elif current_captcha:
             status_text += "Thieu Cookie/Session token"
@@ -1473,6 +1512,40 @@ Cookie co dang: __Host-next-auth.csrf-token=...;__Secure-next-auth.session-token
         except:
             pass
         return ''
+
+    def _get_captcha_service(self) -> str:
+        """Get CAPTCHA service name from config."""
+        try:
+            import yaml
+            config_path = CONFIG_DIR / "settings.yaml"
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+                return config.get('captcha_service', 'capsolver')
+        except:
+            pass
+        return 'capsolver'
+
+    def _save_captcha_settings(self, service: str, api_key: str):
+        """Save CAPTCHA API settings to config."""
+        try:
+            import yaml
+            config_path = CONFIG_DIR / "settings.yaml"
+            config = {}
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+
+            config['captcha_service'] = service
+            if api_key:
+                config['captcha_api_key'] = api_key
+
+            with open(config_path, 'w', encoding='utf-8') as f:
+                yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+
+            self.log(f"CAPTCHA settings saved! Service: {service}", "OK")
+        except Exception as e:
+            print(f"Save captcha settings error: {e}")
 
     def _save_labs_settings(self, session_cookie: str):
         """Save Labs API settings to config."""
