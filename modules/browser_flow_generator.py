@@ -2385,35 +2385,29 @@ class BrowserFlowGenerator:
             self._log(f"Prompt ({len(prompt)} chars): {prompt[:100]}...")
 
             try:
-                # Gọi API qua Chrome JS
+                # Gọi VE3.run() qua Chrome JS - tự động download ảnh
                 result = self._call_api_via_js(prompt, pid)
 
                 if result.get('success'):
-                    images = result.get('images', [])
-                    if images:
-                        # Download ảnh
-                        is_character = pid.startswith('nv') or pid.startswith('loc')
-                        out_dir = self.nv_path if is_character else self.img_path
+                    # VE3.run() đã download ảnh, di chuyển từ downloads folder
+                    is_character = pid.startswith('nv') or pid.startswith('loc')
+                    out_dir = self.nv_path if is_character else self.img_path
 
-                        # Lấy URL ảnh đầu tiên và download
-                        img_url = images[0].get('url')
-                        if img_url:
-                            out_file = out_dir / f"{pid}.png"
-                            self._download_image(img_url, out_file)
-                            self._log(f"✅ Đã tạo: {out_file.name}", "success")
-                            self.stats["success"] += 1
+                    # Tìm và di chuyển file đã download
+                    img_file, score, needs_regen = self._move_downloaded_images(pid)
 
-                            # Update Excel
-                            if workbook and pid.isdigit():
-                                scene_id = int(pid)
-                                relative_path = f"img/{pid}.png"
-                                workbook.update_scene(scene_id, img_path=relative_path, status_img="done")
-                                workbook.save()
-                        else:
-                            self._log("Không có URL ảnh", "error")
-                            self.stats["failed"] += 1
+                    if img_file:
+                        self._log(f"✅ Đã tạo: {img_file.name} (score={score:.1f})", "success")
+                        self.stats["success"] += 1
+
+                        # Update Excel
+                        if workbook and pid.isdigit():
+                            scene_id = int(pid)
+                            relative_path = f"img/{pid}.png"
+                            workbook.update_scene(scene_id, img_path=relative_path, status_img="done")
+                            workbook.save()
                     else:
-                        self._log("Không có ảnh trong response", "error")
+                        self._log("Không tìm thấy file đã download", "error")
                         self.stats["failed"] += 1
                 else:
                     error = result.get('error', 'Unknown')
@@ -2444,46 +2438,52 @@ class BrowserFlowGenerator:
         }
 
     def _call_api_via_js(self, prompt: str, pid: str) -> Dict[str, Any]:
-        """Gọi API.generateImages() qua Chrome JavaScript."""
+        """
+        Gọi VE3.run() để tạo ảnh - giống Chrome mode.
+        Chrome tự thêm x-browser-validation.
+        """
         # Escape prompt cho JS
-        prompt_escaped = prompt.replace('\\', '\\\\').replace("'", "\\'").replace('\n', '\\n')
+        prompt_escaped = prompt.replace('\\', '\\\\').replace('`', '\\`').replace('${', '\\${')
 
+        # Dùng VE3.run() giống Chrome mode
         js_code = f"""
-        return (async () => {{
-            try {{
-                if (typeof VE3 === 'undefined' || !VE3.API) {{
-                    return {{ success: false, error: 'VE3 not loaded' }};
-                }}
+        return new Promise((resolve) => {{
+            const timeout = setTimeout(() => {{
+                resolve({{ success: false, error: 'Timeout 120s' }});
+            }}, 120000);
 
-                const response = await VE3.API.generateImages('{prompt_escaped}', [], 2);
-
-                // Parse response để lấy image URLs
-                const images = [];
-                if (response && response.responses) {{
-                    for (const resp of response.responses) {{
-                        if (resp.mediaItems) {{
-                            for (const item of resp.mediaItems) {{
-                                if (item.image && item.image.generatedImage) {{
-                                    images.push({{
-                                        url: item.image.generatedImage.url,
-                                        mediaName: item.name
-                                    }});
-                                }}
-                            }}
-                        }}
-                    }}
-                }}
-
-                return {{ success: true, images: images, raw: response }};
-            }} catch (e) {{
-                return {{ success: false, error: e.message }};
+            if (typeof VE3 === 'undefined') {{
+                clearTimeout(timeout);
+                resolve({{ success: false, error: 'VE3 not loaded' }});
+                return;
             }}
-        }})();
+
+            VE3.run([{{
+                sceneId: "{pid}",
+                prompt: `{prompt_escaped}`,
+                referenceFiles: []
+            }}]).then(result => {{
+                clearTimeout(timeout);
+                resolve({{ success: true, result: result }});
+            }}).catch(e => {{
+                clearTimeout(timeout);
+                resolve({{ success: false, error: e.message }});
+            }});
+        }});
         """
 
         try:
-            result = self.driver.execute_script(js_code)
-            return result or {"success": False, "error": "No response"}
+            # Timeout dài hơn vì tạo ảnh mất thời gian
+            self.driver.set_script_timeout(150)
+            result = self.driver.execute_async_script(js_code)
+
+            if result and result.get('success'):
+                # VE3.run() tự download ảnh, kiểm tra file đã tồn tại
+                return {"success": True, "downloaded": True}
+            else:
+                error = result.get('error', 'Unknown') if result else 'No response'
+                return {"success": False, "error": error}
+
         except Exception as e:
             return {"success": False, "error": str(e)}
 
