@@ -266,18 +266,18 @@ class LabsGoogleAPI:
         prompt: str,
         count: int = 1,
         aspect_ratio: str = "landscape",
-        model: str = "IMAGEN_3",
+        model: str = "GEM_PIX_2",
         seed: int = None,
         image_inputs: list = None
     ) -> Tuple[bool, List[Dict], str]:
         """
-        Tạo ảnh qua labs.google tRPC API với session cookie.
+        Tạo ảnh qua aisandbox-pa.googleapis.com với Bearer token + CAPTCHA.
 
         Args:
             prompt: Text mô tả ảnh
             count: Số lượng ảnh (1-4)
             aspect_ratio: "landscape", "portrait", "square"
-            model: Model tạo ảnh (IMAGEN_3, IMAGEN_3_5)
+            model: Model tạo ảnh (GEM_PIX_2)
             seed: Seed cho random (optional)
             image_inputs: List ảnh reference (optional)
 
@@ -286,11 +286,11 @@ class LabsGoogleAPI:
         """
         self._log(f"Generating: {prompt[:50]}...")
 
-        # Check session token
-        if not self.session_token:
-            return False, [], "Thiếu session token! Lấy từ Cookie Editor (labs.google)"
+        # Check Bearer token
+        if not self.bearer_token:
+            return False, [], "Thiếu Bearer token! Lấy từ Network tab (Authorization header)"
 
-        # Map aspect ratio for tRPC
+        # Map aspect ratio
         ar_map = {
             "landscape": "IMAGE_ASPECT_RATIO_LANDSCAPE",
             "portrait": "IMAGE_ASPECT_RATIO_PORTRAIT",
@@ -298,56 +298,83 @@ class LabsGoogleAPI:
         }
         aspect = ar_map.get(aspect_ratio.lower(), ar_map["landscape"])
 
-        # Generate seed
+        # Solve CAPTCHA
+        captcha_token = ""
+        if self.captcha_api_key:
+            captcha_token = self.solve_captcha()
+            if not captcha_token:
+                return False, [], "Failed to solve CAPTCHA"
+        else:
+            self._log("WARNING: No CAPTCHA API key - request may fail")
+
+        # Generate seed and sessionId
         import random
+        import time as time_module
+
         if seed is None:
             seed = random.randint(1, 999999)
 
-        # Build tRPC input - format cho imageFx.generateImage
-        trpc_input = {
-            "generationCount": count,
-            "imageAspectRatio": aspect,
-            "seed": seed,
-            "prompt": prompt,
-            "modelInput": model
+        session_id = f";{int(time_module.time() * 1000)}"
+
+        # Build requests array (like browser)
+        requests_list = []
+        for i in range(count):
+            request = {
+                "clientContext": {},
+                "seed": seed + random.randint(0, 999999),
+                "imageModelName": model,
+                "imageAspectRatio": aspect,
+                "imageInputs": image_inputs or [],
+                "prompt": prompt
+            }
+            requests_list.append(request)
+
+        # Full payload matching browser format
+        payload = {
+            "clientContext": {},
+            "recaptchaToken": captcha_token,
+            "sessionId": session_id,
+            "requests": requests_list
         }
 
-        # tRPC endpoint
-        url = f"{self.BASE_URL}/api/trpc/imageFx.generateImage"
+        # API endpoint
+        url = f"{self.API_URL}/v1/projects/{self.project_id}/flowMedia:batchGenerateImages"
 
         try:
-            # Create session with cookies
             import json as json_module
 
-            # Headers cho tRPC
+            # Headers matching browser EXACTLY
             headers = {
                 "Accept": "*/*",
-                "Accept-Language": "en-US,en;q=0.9,vi;q=0.8",
-                "Content-Type": "application/json",
+                "Accept-Encoding": "gzip, deflate, br, zstd",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Authorization": f"Bearer {self.bearer_token}",
+                "Content-Type": "text/plain;charset=UTF-8",
                 "Origin": "https://labs.google",
-                "Referer": "https://labs.google/fx/vi/tools/flow",
-                "Sec-Ch-Ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+                "Referer": "https://labs.google/",
+                "Sec-Ch-Ua": '"Google Chrome";v="143", "Chromium";v="143", "Not A(Brand";v="24"',
                 "Sec-Ch-Ua-Mobile": "?0",
                 "Sec-Ch-Ua-Platform": '"Windows"',
                 "Sec-Fetch-Dest": "empty",
                 "Sec-Fetch-Mode": "cors",
-                "Sec-Fetch-Site": "same-origin",
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-                "Cookie": self.session_token  # Full cookie string
+                "Sec-Fetch-Site": "cross-site",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
+                "X-Browser-Channel": "stable",
+                "X-Browser-Copyright": "Copyright 2025 Google LLC. All Rights reserved.",
+                "X-Browser-Year": "2025"
             }
 
-            # tRPC mutation format
-            payload = {
-                "json": trpc_input
-            }
+            self._log(f"Calling API: {url}")
+            self._log(f"Bearer: {self.bearer_token[:30]}...")
+            self._log(f"CAPTCHA token: {captcha_token[:50] if captcha_token else 'NONE'}...")
 
-            self._log(f"Calling tRPC: {url}")
-            self._log(f"Cookie length: {len(self.session_token)}")
+            # Send as text/plain (like browser)
+            payload_str = json_module.dumps(payload)
 
             response = requests.post(
                 url,
                 headers=headers,
-                json=payload,
+                data=payload_str,
                 timeout=120
             )
 
@@ -355,21 +382,23 @@ class LabsGoogleAPI:
 
             if response.status_code == 200:
                 data = response.json()
-                self._log(f"Response: {str(data)[:200]}...")
-                images = self._parse_trpc_response(data)
+                self._log(f"Response keys: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+                images = self._parse_batch_response(data)
                 if images:
                     self._log(f"Got {len(images)} images!")
                     return True, images, ""
                 return False, [], f"No images in response: {str(data)[:300]}"
 
             elif response.status_code == 401:
-                return False, [], "Session expired - lấy cookie mới từ Cookie Editor"
+                return False, [], "Bearer token expired - lấy token mới từ Network tab"
 
             elif response.status_code == 403:
-                return False, [], "Access denied - kiểm tra cookie"
+                return False, [], "Access denied - kiểm tra Bearer token"
 
             else:
-                return False, [], f"API error: {response.status_code} - {response.text[:500]}"
+                error_text = response.text[:500]
+                self._log(f"Error response: {error_text}")
+                return False, [], f"API error: {response.status_code} - {error_text}"
 
         except Exception as e:
             import traceback
