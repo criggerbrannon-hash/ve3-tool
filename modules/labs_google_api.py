@@ -596,6 +596,145 @@ class LabsGoogleAPI:
             self._log(f"Request error: {traceback.format_exc()}")
             return False, [], f"Request error: {e}"
 
+    def generate_image_with_cookies(
+        self,
+        prompt: str,
+        cookies_json: str = None,
+        count: int = 1,
+        aspect_ratio: str = "landscape",
+        model: str = "GEM_PIX_2"
+    ) -> Tuple[bool, List[Dict], str]:
+        """
+        Tạo ảnh qua labs.google internal API với Session Cookies + CAPTCHA.
+        Đây là cách mà các tool như Nano Banana Pro hoạt động.
+
+        Args:
+            prompt: Text mô tả ảnh
+            cookies_json: JSON string chứa cookies từ Cookie Editor
+            count: Số lượng ảnh
+            aspect_ratio: Tỉ lệ ảnh
+            model: Model tạo ảnh
+
+        Returns:
+            Tuple[success, list_of_images, error_message]
+        """
+        self._log(f"Generating with cookies: {prompt[:50]}...")
+
+        # Parse cookies
+        cookies_dict = {}
+        if cookies_json:
+            try:
+                cookies_list = json.loads(cookies_json) if isinstance(cookies_json, str) else cookies_json
+                for c in cookies_list:
+                    cookies_dict[c.get('name', '')] = c.get('value', '')
+            except:
+                pass
+
+        # Check required cookies
+        session_token = cookies_dict.get('__Secure-next-auth.session-token', '') or self.session_token
+        csrf_token = cookies_dict.get('__Host-next-auth.csrf-token', '')
+
+        if not session_token:
+            return False, [], "Thiếu session cookie! Export cookies từ Cookie Editor (JSON format)"
+
+        # Solve CAPTCHA
+        captcha_token = ""
+        if self.captured_captcha_token:
+            captcha_token = self.captured_captcha_token
+            self.captured_captcha_token = None
+        elif self.captcha_api_key:
+            captcha_token = self.solve_captcha()
+            if not captcha_token:
+                return False, [], "CAPTCHA solving failed"
+
+        # Map aspect ratio
+        ar_map = {
+            "landscape": "IMAGE_ASPECT_RATIO_LANDSCAPE",
+            "portrait": "IMAGE_ASPECT_RATIO_PORTRAIT",
+            "square": "IMAGE_ASPECT_RATIO_SQUARE"
+        }
+        aspect = ar_map.get(aspect_ratio.lower(), ar_map["landscape"])
+
+        # Build cookie header
+        cookie_header = "; ".join([f"{k}={v}" for k, v in cookies_dict.items()])
+        if not cookie_header and session_token:
+            cookie_header = f"__Secure-next-auth.session-token={session_token}"
+
+        # Try different labs.google internal endpoints
+        endpoints_to_try = [
+            # Next.js API route
+            ("POST", "https://labs.google/api/flow/generate", {
+                "prompt": prompt,
+                "recaptchaToken": captcha_token,
+                "aspectRatio": aspect,
+                "model": model,
+                "count": count
+            }),
+            # tRPC-style endpoint
+            ("POST", "https://labs.google/api/imageFx/generate", {
+                "json": {
+                    "prompt": prompt,
+                    "recaptchaToken": captcha_token,
+                    "aspectRatio": aspect,
+                    "imageCount": count
+                }
+            }),
+            # Server action style
+            ("POST", "https://labs.google/fx/api/generate", {
+                "prompt": prompt,
+                "captcha": captcha_token,
+                "aspect": aspect_ratio
+            }),
+        ]
+
+        headers_base = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "Cookie": cookie_header,
+            "Origin": "https://labs.google",
+            "Referer": "https://labs.google/fx/tools/flow",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+
+        if csrf_token:
+            headers_base["X-CSRF-Token"] = csrf_token.split("%7C")[0] if "%7C" in csrf_token else csrf_token
+
+        for method, url, payload in endpoints_to_try:
+            try:
+                self._log(f"Trying: {url}")
+
+                response = requests.request(
+                    method,
+                    url,
+                    headers=headers_base,
+                    json=payload,
+                    timeout=120
+                )
+
+                self._log(f"Response: {response.status_code}")
+
+                if response.status_code == 200:
+                    try:
+                        data = response.json()
+                        images = self._parse_batch_response(data)
+                        if images:
+                            self._log(f"Success! Got {len(images)} images")
+                            return True, images, ""
+                    except:
+                        pass
+
+                elif response.status_code == 404:
+                    continue  # Try next endpoint
+
+                else:
+                    self._log(f"Error: {response.text[:200]}")
+
+            except Exception as e:
+                self._log(f"Request error: {e}")
+                continue
+
+        return False, [], "All internal endpoints failed. Tool này có thể cần reverse-engineer thêm."
+
     def _parse_batch_response(self, data: Dict) -> List[Dict]:
         """Parse response từ batchGenerateImages API."""
         images = []
