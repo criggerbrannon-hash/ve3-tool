@@ -106,7 +106,7 @@ class LabsGoogleAPI:
     # =========================================================================
 
     def _solve_captcha_capsolver(self) -> Optional[str]:
-        """Giải reCAPTCHA v3 bằng Capsolver với task type đặc biệt cho Veo3."""
+        """Giải reCAPTCHA v3 bằng Capsolver - thử nhiều task type."""
         if not self.captcha_api_key:
             self._log("ERROR: Thiếu captcha_api_key! Vui lòng cấu hình trong Settings > Labs API")
             return None
@@ -115,79 +115,90 @@ class LabsGoogleAPI:
         key_masked = self.captcha_api_key[:8] + "..." if len(self.captcha_api_key) > 8 else "***"
         self._log(f"Đang giải CAPTCHA với Capsolver (key: {key_masked})...")
 
-        try:
-            # Tạo task - dùng task type đặc biệt cho labs.google/Veo3
-            create_task_url = "https://api.capsolver.com/createTask"
-            task_data = {
-                "clientKey": self.captcha_api_key,
-                "task": {
-                    "type": "RecaptchaV3TokenTaskVeo3",  # Task type đặc biệt cho Veo3
-                    "websiteURL": "https://labs.google",
-                    "websiteKey": self.RECAPTCHA_SITE_KEY,
-                    "pageAction": self.RECAPTCHA_ACTION,
-                    "isEnterprise": True  # QUAN TRỌNG: Captcha Enterprise
-                }
-            }
+        # Thử nhiều task type - ưu tiên Veo3 đặc biệt, sau đó fallback
+        task_types = [
+            "RecaptchaV3TokenTaskVeo3",           # Task type đặc biệt cho Veo3 (nếu có)
+            "ReCaptchaV3EnterpriseTaskProxyLess", # Capsolver chuẩn Enterprise
+            "ReCaptchaV3TaskProxyLess"            # Capsolver chuẩn
+        ]
 
-            self._log(f"Creating task: {task_data['task']['type']}")
-            response = requests.post(create_task_url, json=task_data, timeout=30)
-            result = response.json()
+        create_task_url = "https://api.capsolver.com/createTask"
 
-            self._log(f"Capsolver response: errorId={result.get('errorId')}, errorCode={result.get('errorCode')}")
-
-            if result.get("errorId") != 0:
-                error_code = result.get('errorCode', 'UNKNOWN')
-                error_desc = result.get('errorDescription', 'No description')
-                self._log(f"Capsolver ERROR: [{error_code}] {error_desc}")
-
-                # Common errors
-                if error_code == "ERROR_INVALID_TASK_DATA":
-                    self._log("  -> Kiểm tra lại cấu hình task (websiteKey, pageAction)")
-                elif error_code == "ERROR_KEY_DOES_NOT_EXIST":
-                    self._log("  -> API key không hợp lệ! Kiểm tra lại Capsolver API key")
-                elif error_code == "ERROR_ZERO_BALANCE":
-                    self._log("  -> Hết tiền trong tài khoản Capsolver! Nạp thêm credit")
-                elif error_code == "ERROR_RECAPTCHA_INVALID_SITEKEY":
-                    self._log("  -> Website key không đúng")
-
-                return None
-
-            task_id = result.get("taskId")
-            self._log(f"Task created: {task_id}")
-
-            # Poll for result
-            get_result_url = "https://api.capsolver.com/getTaskResult"
-            for _ in range(60):  # Max 60 attempts
-                time.sleep(2)
-
-                result_data = {
+        for task_type in task_types:
+            try:
+                task_data = {
                     "clientKey": self.captcha_api_key,
-                    "taskId": task_id
+                    "task": {
+                        "type": task_type,
+                        "websiteURL": "https://labs.google",
+                        "websiteKey": self.RECAPTCHA_SITE_KEY,
+                        "pageAction": self.RECAPTCHA_ACTION,
+                        "isEnterprise": True
+                    }
                 }
 
-                response = requests.post(get_result_url, json=result_data, timeout=30)
+                self._log(f"Trying task type: {task_type}")
+                response = requests.post(create_task_url, json=task_data, timeout=30)
                 result = response.json()
 
-                if result.get("status") == "ready":
-                    token = result.get("solution", {}).get("gRecaptchaResponse")
-                    self._log("CAPTCHA solved!")
-                    return token
-                elif result.get("status") == "failed":
-                    self._log(f"CAPTCHA failed: {result.get('errorDescription')}")
-                    return None
+                self._log(f"Response: errorId={result.get('errorId')}, errorCode={result.get('errorCode')}")
 
-            self._log("CAPTCHA timeout!")
-            return None
+                if result.get("errorId") != 0:
+                    error_code = result.get('errorCode', 'UNKNOWN')
+                    error_desc = result.get('errorDescription', 'No description')
+                    self._log(f"  -> ERROR: [{error_code}] {error_desc}")
 
-        except requests.exceptions.RequestException as e:
-            self._log(f"CAPTCHA network error: {e}")
-            self._log("  -> Kiểm tra kết nối internet")
-            return None
-        except Exception as e:
-            self._log(f"CAPTCHA error: {type(e).__name__}: {e}")
-            import traceback
-            self._log(f"Traceback: {traceback.format_exc()}")
-            return None
+                    # Nếu task type không hợp lệ, thử type tiếp theo
+                    if error_code in ["ERROR_INVALID_TASK_DATA", "ERROR_TASK_NOT_SUPPORTED"]:
+                        self._log("  -> Task type không được hỗ trợ, thử type khác...")
+                        continue
+
+                    # Các lỗi khác (balance, key) thì dừng
+                    if error_code == "ERROR_KEY_DOES_NOT_EXIST":
+                        self._log("  -> API key không hợp lệ!")
+                        return None
+                    elif error_code == "ERROR_ZERO_BALANCE":
+                        self._log("  -> Hết tiền trong tài khoản!")
+                        return None
+
+                    continue
+
+                # Task created successfully
+                task_id = result.get("taskId")
+                self._log(f"Task created: {task_id} (type: {task_type})")
+
+                # Poll for result
+                get_result_url = "https://api.capsolver.com/getTaskResult"
+                for _ in range(60):  # Max 60 attempts
+                    time.sleep(2)
+
+                    result_data = {
+                        "clientKey": self.captcha_api_key,
+                        "taskId": task_id
+                    }
+
+                    response = requests.post(get_result_url, json=result_data, timeout=30)
+                    result = response.json()
+
+                    if result.get("status") == "ready":
+                        token = result.get("solution", {}).get("gRecaptchaResponse")
+                        self._log(f"CAPTCHA solved! (using {task_type})")
+                        return token
+                    elif result.get("status") == "failed":
+                        self._log(f"CAPTCHA failed: {result.get('errorDescription')}")
+                        break  # Try next task type
+
+                self._log("CAPTCHA timeout or failed, trying next type...")
+
+            except requests.exceptions.RequestException as e:
+                self._log(f"Network error: {e}")
+                continue
+            except Exception as e:
+                self._log(f"Error: {e}")
+                continue
+
+        self._log("All CAPTCHA task types failed!")
+        return None
 
     def _solve_captcha_2captcha(self) -> Optional[str]:
         """Giải reCAPTCHA v3 bằng 2Captcha."""
