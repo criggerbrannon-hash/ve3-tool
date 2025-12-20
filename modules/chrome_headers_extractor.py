@@ -310,75 +310,108 @@ class ChromeHeadersExtractor:
     def trigger_api_and_capture(self) -> CapturedHeaders:
         """
         Trigger 1 API call và capture headers.
-        Nhập prompt test và click Generate để trigger POST request có x-browser-validation.
+        Dùng Fetch intercept để bắt headers thực tế Chrome gửi.
         """
         if not self.driver:
             return CapturedHeaders()
 
-        self._log("Triggering generate request to capture x-browser-validation...")
+        self._log("Setting up Fetch intercept for x-browser-validation...")
 
-        # Enable network
-        self.driver.execute_cdp_cmd("Network.enable", {})
+        try:
+            # Enable Fetch domain để intercept requests
+            self.driver.execute_cdp_cmd("Fetch.enable", {
+                "patterns": [{"urlPattern": "*aisandbox-pa.googleapis.com*"}]
+            })
+        except Exception as e:
+            self._log(f"Fetch.enable error: {e}")
 
         # Inject prompt và click Generate
+        self._log("Injecting prompt and clicking generate...")
         result = self.driver.execute_script("""
             return (async () => {
-                // Tìm textarea để nhập prompt
+                // Tìm textarea
                 const textareas = document.querySelectorAll('textarea');
-                let promptInput = null;
-                for (const ta of textareas) {
-                    if (ta.placeholder && (ta.placeholder.includes('prompt') || ta.placeholder.includes('Mô tả'))) {
-                        promptInput = ta;
-                        break;
+                if (textareas.length > 0) {
+                    const ta = textareas[0];
+                    ta.focus();
+                    ta.value = 'a simple red apple on white background';
+                    ta.dispatchEvent(new Event('input', { bubbles: true }));
+                    ta.dispatchEvent(new Event('change', { bubbles: true }));
+                    await new Promise(r => setTimeout(r, 1000));
+                }
+
+                // Click generate button
+                const allButtons = Array.from(document.querySelectorAll('button'));
+                for (const btn of allButtons) {
+                    const text = (btn.textContent || '').toLowerCase();
+                    const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase();
+                    if ((text.includes('tạo') || text.includes('generate') || ariaLabel.includes('generate')) && !btn.disabled) {
+                        console.log('Clicking button:', btn.textContent);
+                        btn.click();
+                        return 'clicked: ' + btn.textContent;
                     }
                 }
-
-                // Fallback: tìm bất kỳ textarea nào
-                if (!promptInput && textareas.length > 0) {
-                    promptInput = textareas[0];
-                }
-
-                if (promptInput) {
-                    // Nhập prompt test
-                    promptInput.value = 'test image for header capture';
-                    promptInput.dispatchEvent(new Event('input', { bubbles: true }));
-                    await new Promise(r => setTimeout(r, 500));
-                }
-
-                // Tìm và click nút Generate
-                const buttons = document.querySelectorAll('button');
-                for (const btn of buttons) {
-                    const text = btn.textContent || '';
-                    if (text.includes('Tạo') || text.includes('Generate') || text.includes('Create')) {
-                        if (!btn.disabled) {
-                            btn.click();
-                            return 'clicked';
-                        }
-                    }
-                }
-
-                // Thử tìm button bằng aria-label
-                for (const btn of buttons) {
-                    const label = btn.getAttribute('aria-label') || '';
-                    if (label.includes('generate') || label.includes('create')) {
-                        if (!btn.disabled) {
-                            btn.click();
-                            return 'clicked_aria';
-                        }
-                    }
-                }
-
-                return 'no_button';
+                return 'no_button_found';
             })();
         """)
-
         self._log(f"Trigger result: {result}")
 
-        # Wait longer for the POST request
-        time.sleep(2)
+        # Đợi và capture từ Fetch events
+        self._log("Waiting for Fetch request...")
+        time.sleep(3)
 
-        # Capture headers - focus on POST requests
-        return self.capture_headers_from_network(timeout=15)
+        # Lấy headers từ paused request
+        try:
+            # Get CDP events - look for Fetch.requestPaused
+            logs = self.driver.get_log("performance")
+            for log in logs:
+                try:
+                    msg = json.loads(log["message"])
+                    method = msg.get("message", {}).get("method", "")
+                    if method == "Fetch.requestPaused":
+                        params = msg.get("message", {}).get("params", {})
+                        request = params.get("request", {})
+                        headers = request.get("headers", {})
+                        url = request.get("url", "")
+
+                        self._log(f"[Fetch] Intercepted: {url[:50]}...")
+                        self._log(f"[Fetch] Headers count: {len(headers)}")
+
+                        # Show all headers
+                        for k, v in headers.items():
+                            if 'browser' in k.lower() or 'auth' in k.lower():
+                                self._log(f"   {k}: {str(v)[:40]}...")
+
+                        # Continue the request
+                        request_id = params.get("requestId")
+                        if request_id:
+                            self.driver.execute_cdp_cmd("Fetch.continueRequest", {"requestId": request_id})
+
+                        # Extract headers
+                        def get_h(name):
+                            for k, v in headers.items():
+                                if k.lower() == name.lower():
+                                    return v
+                            return ""
+
+                        auth = get_h("Authorization")
+                        x_browser = get_h("x-browser-validation")
+
+                        if auth or x_browser:
+                            self.captured_headers.authorization = auth
+                            self.captured_headers.x_browser_validation = x_browser
+                            self.captured_headers.timestamp = time.time()
+
+                            if self.captured_headers.is_valid():
+                                self._log("✅ Captured from Fetch intercept!")
+                                return self.captured_headers
+                except:
+                    continue
+        except Exception as e:
+            self._log(f"Fetch capture error: {e}")
+
+        # Fallback to network logs
+        return self.capture_headers_from_network(timeout=10)
 
     def get_headers(self) -> CapturedHeaders:
         """Get current captured headers."""
