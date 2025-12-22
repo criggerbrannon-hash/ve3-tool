@@ -359,62 +359,74 @@ class ChromeHeadersExtractor:
         """)
         self._log(f"Trigger result: {result}")
 
-        # Đợi và capture từ Fetch events
-        self._log("Waiting for Fetch request...")
-        time.sleep(3)
+        # Đợi ảnh được tạo - TỐI THIỂU 20 giây để đảm bảo API request được gửi
+        self._log("Waiting for image generation (min 20s)...")
 
-        # Lấy headers từ paused request
-        try:
-            # Get CDP events - look for Fetch.requestPaused
-            logs = self.driver.get_log("performance")
-            for log in logs:
-                try:
-                    msg = json.loads(log["message"])
-                    method = msg.get("message", {}).get("method", "")
-                    if method == "Fetch.requestPaused":
-                        params = msg.get("message", {}).get("params", {})
-                        request = params.get("request", {})
-                        headers = request.get("headers", {})
-                        url = request.get("url", "")
+        # Poll nhiều lần để capture headers (10 attempts x 3s = 30s max)
+        for attempt in range(10):
+            time.sleep(3)
+            self._log(f"Checking for headers... attempt {attempt + 1}/10")
 
-                        self._log(f"[Fetch] Intercepted: {url[:50]}...")
-                        self._log(f"[Fetch] Headers count: {len(headers)}")
+            try:
+                # Get CDP events - look for Fetch.requestPaused
+                logs = self.driver.get_log("performance")
+                for log in logs:
+                    try:
+                        msg = json.loads(log["message"])
+                        method = msg.get("message", {}).get("method", "")
+                        if method == "Fetch.requestPaused":
+                            params = msg.get("message", {}).get("params", {})
+                            request = params.get("request", {})
+                            headers = request.get("headers", {})
+                            url = request.get("url", "")
 
-                        # Show all headers
-                        for k, v in headers.items():
-                            if 'browser' in k.lower() or 'auth' in k.lower():
-                                self._log(f"   {k}: {str(v)[:40]}...")
+                            self._log(f"[Fetch] Intercepted: {url[:50]}...")
+                            self._log(f"[Fetch] Headers count: {len(headers)}")
 
-                        # Continue the request
-                        request_id = params.get("requestId")
-                        if request_id:
-                            self.driver.execute_cdp_cmd("Fetch.continueRequest", {"requestId": request_id})
-
-                        # Extract headers
-                        def get_h(name):
+                            # Show all headers
                             for k, v in headers.items():
-                                if k.lower() == name.lower():
-                                    return v
-                            return ""
+                                if 'browser' in k.lower() or 'auth' in k.lower():
+                                    self._log(f"   {k}: {str(v)[:40]}...")
 
-                        auth = get_h("Authorization")
-                        x_browser = get_h("x-browser-validation")
+                            # Continue the request
+                            request_id = params.get("requestId")
+                            if request_id:
+                                try:
+                                    self.driver.execute_cdp_cmd("Fetch.continueRequest", {"requestId": request_id})
+                                except:
+                                    pass
 
-                        if auth or x_browser:
-                            self.captured_headers.authorization = auth
-                            self.captured_headers.x_browser_validation = x_browser
-                            self.captured_headers.timestamp = time.time()
+                            # Extract headers
+                            def get_h(name):
+                                for k, v in headers.items():
+                                    if k.lower() == name.lower():
+                                        return v
+                                return ""
 
-                            if self.captured_headers.is_valid():
-                                self._log("✅ Captured from Fetch intercept!")
-                                return self.captured_headers
-                except:
-                    continue
-        except Exception as e:
-            self._log(f"Fetch capture error: {e}")
+                            auth = get_h("Authorization")
+                            x_browser = get_h("x-browser-validation")
 
-        # Fallback to network logs
-        return self.capture_headers_from_network(timeout=10)
+                            if auth or x_browser:
+                                self.captured_headers.authorization = auth
+                                self.captured_headers.x_browser_validation = x_browser
+                                self.captured_headers.timestamp = time.time()
+
+                                if self.captured_headers.is_valid():
+                                    self._log("✅ Captured from Fetch intercept!")
+                                    return self.captured_headers
+                    except:
+                        continue
+            except Exception as e:
+                self._log(f"Fetch capture error: {e}")
+
+            # Check if we already have valid headers from network logs
+            if self.captured_headers.is_valid():
+                self._log("✅ Headers already captured!")
+                return self.captured_headers
+
+        # Fallback to network logs with longer timeout
+        self._log("Fallback: trying network logs capture...")
+        return self.capture_headers_from_network(timeout=30)
 
     def get_headers(self) -> CapturedHeaders:
         """Get current captured headers."""
