@@ -25,6 +25,36 @@ flow_timeout: 120
 flow_delay: 3.0
 
 # ============================================================================
+# VIDEO GENERATION (VEO 3) Settings
+# ============================================================================
+# Tạo video bằng Veo 3 qua Google Flow API
+# Endpoint: aisandbox-pa.googleapis.com/v1/video:batchAsyncGenerateVideoText
+
+# Video aspect ratio: "landscape" (16:9), "portrait" (9:16), "square" (1:1)
+video_aspect_ratio: "landscape"
+
+# Video model: "fast" (veo_3_1_t2v_fast_ultra) hoặc "quality" (veo_3_1_t2v)
+video_model: "fast"
+
+# User paygate tier: "TIER_ONE" hoặc "TIER_TWO"
+video_paygate_tier: "PAYGATE_TIER_TWO"
+
+# ============================================================================
+# PROXY API Configuration (Bypass Captcha)
+# ============================================================================
+# Sử dụng proxy API để bypass reCAPTCHA khi gọi trực tiếp Google API
+# Proxy endpoint: flow-api.nanoai.pics
+
+# Bật/tắt proxy mode
+use_proxy: false
+
+# Token cho proxy API (lấy từ nanoai.pics)
+proxy_api_token: ""
+
+# Proxy API endpoint (có thể thay đổi nếu cần)
+proxy_api_url: "https://flow-api.nanoai.pics/api/fix/create-video-veo3"
+
+# ============================================================================
 # AI API Configuration (Cho tạo prompts từ SRT)
 # ============================================================================
 # Thứ tự ưu tiên: DeepSeek > Gemini > Groq > Ollama (local fallback)
