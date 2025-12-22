@@ -5,6 +5,10 @@ Tích hợp trực tiếp với Google Flow API để tạo ảnh và video.
 
 Sử dụng Bearer Token authentication.
 API Endpoint: aisandbox-pa.googleapis.com
+
+Video Generation:
+- Endpoint: /v1/video:batchAsyncGenerateVideoText
+- Proxy API support: flow-api.nanoai.pics (bypass captcha)
 """
 
 import json
@@ -16,8 +20,53 @@ import requests
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
 from datetime import datetime
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
+
+
+# =============================================================================
+# VIDEO ENUMS AND DATA CLASSES
+# =============================================================================
+
+class VideoAspectRatio(Enum):
+    """Tỷ lệ khung hình cho video."""
+    LANDSCAPE = "VIDEO_ASPECT_RATIO_LANDSCAPE"    # 16:9
+    PORTRAIT = "VIDEO_ASPECT_RATIO_PORTRAIT"      # 9:16
+    SQUARE = "VIDEO_ASPECT_RATIO_SQUARE"          # 1:1
+
+
+class VideoModel(Enum):
+    """Model tạo video Veo 3."""
+    VEO3_FAST = "veo_3_1_t2v_fast_ultra"  # Fast generation
+    VEO3_QUALITY = "veo_3_1_t2v"           # Quality generation
+
+
+class PaygateTier(Enum):
+    """User paygate tier - ảnh hưởng đến quyền sử dụng."""
+    TIER_ONE = "PAYGATE_TIER_ONE"
+    TIER_TWO = "PAYGATE_TIER_TWO"
+
+
+@dataclass
+class VideoGenerationResult:
+    """Kết quả video được tạo."""
+    video_url: Optional[str] = None
+    video_id: Optional[str] = None
+    scene_id: Optional[str] = None
+    operation_id: Optional[str] = None
+    status: str = "pending"  # pending, processing, completed, failed
+    prompt: str = ""
+    seed: Optional[int] = None
+    local_path: Optional[Path] = None
+    error: Optional[str] = None
+
+    @property
+    def is_completed(self) -> bool:
+        return self.status == "completed" and bool(self.video_url)
+
+    @property
+    def is_failed(self) -> bool:
+        return self.status == "failed"
 
 
 class AspectRatio(Enum):
@@ -108,48 +157,70 @@ class GeneratedImage:
 class GoogleFlowAPI:
     """
     Client để tương tác với Google Flow API.
-    
+
     Sử dụng Bearer Token authentication từ browser session.
+
+    Features:
+    - Image generation: batchGenerateImages
+    - Video generation: batchAsyncGenerateVideoText (Veo 3)
+    - Proxy API support: bypass captcha via nanoai.pics
     """
-    
+
     BASE_URL = "https://aisandbox-pa.googleapis.com"
     TOOL_NAME = "PINHOLE"  # Internal name for Flow
-    
+
+    # Proxy API for bypassing captcha
+    PROXY_VIDEO_API_URL = "https://flow-api.nanoai.pics/api/fix/create-video-veo3"
+    PROXY_IMAGE_API_URL = "https://flow-api.nanoai.pics/api/fix/create-image-veo3"
+
     def __init__(
         self,
         bearer_token: str,
         project_id: Optional[str] = None,
         session_id: Optional[str] = None,
         timeout: int = 120,
-        verbose: bool = False
+        verbose: bool = False,
+        proxy_api_token: Optional[str] = None,
+        use_proxy: bool = False,
+        paygate_tier: PaygateTier = PaygateTier.TIER_TWO,
+        extra_headers: Optional[Dict[str, str]] = None
     ):
         """
         Khởi tạo Google Flow API client.
-        
+
         Args:
             bearer_token: OAuth Bearer token (bắt đầu bằng "ya29.")
             project_id: Project ID (nếu không có sẽ tự tạo UUID)
             session_id: Session ID (nếu không có sẽ tự tạo)
             timeout: Request timeout in seconds
             verbose: Print debug info
+            proxy_api_token: Token cho proxy API (nanoai.pics) - bypass captcha
+            extra_headers: Extra headers (x-browser-validation, etc.) from Chrome capture
+            use_proxy: Sử dụng proxy API thay vì gọi trực tiếp
+            paygate_tier: User paygate tier (TIER_ONE hoặc TIER_TWO)
         """
         self.bearer_token = bearer_token.strip()
         self.project_id = project_id or str(uuid.uuid4())
         self.session_id = session_id or f";{int(time.time() * 1000)}"
         self.timeout = timeout
         self.verbose = verbose
-        
+        self.proxy_api_token = proxy_api_token
+        self.use_proxy = use_proxy
+        self.paygate_tier = paygate_tier
+        self.extra_headers = extra_headers or {}
+
         # Validate token format
         if not self.bearer_token.startswith("ya29."):
             print("⚠️  Warning: Bearer token should start with 'ya29.'")
-        
+
         self.session = self._create_session()
     
     def _create_session(self) -> requests.Session:
         """Tạo HTTP session với headers chuẩn."""
         session = requests.Session()
-        
-        session.headers.update({
+
+        # Base headers
+        headers = {
             "Authorization": f"Bearer {self.bearer_token}",
             "Content-Type": "text/plain;charset=UTF-8",
             "Accept": "*/*",
@@ -159,8 +230,15 @@ class GoogleFlowAPI:
             "Sec-Fetch-Dest": "empty",
             "Sec-Fetch-Mode": "cors",
             "Sec-Fetch-Site": "cross-site",
-        })
-        
+        }
+
+        # Add extra headers (x-browser-validation, etc.) if provided
+        if self.extra_headers:
+            for key, value in self.extra_headers.items():
+                if value:  # Only add non-empty values
+                    headers[key] = value
+
+        session.headers.update(headers)
         return session
     
     def _log(self, message: str) -> None:
@@ -249,13 +327,24 @@ class GoogleFlowAPI:
             }
             requests_data.append(request_item)
         
-        payload = {"requests": requests_data}
-        
-        # Build URL
+        payload = {
+            "clientContext": {
+                "sessionId": self.session_id,
+                "projectId": self.project_id,
+                "tool": self.TOOL_NAME
+            },
+            "requests": requests_data
+        }
+
+        # Route to proxy if enabled
+        if self.use_proxy and self.proxy_api_token:
+            return self._generate_images_via_proxy(payload, prompt, aspect_ratio.value)
+
+        # Direct API call
         url = f"{self.BASE_URL}/v1/projects/{self.project_id}/flowMedia:batchGenerateImages"
-        
-        self._log(f"POST {url}")
-        
+
+        self._log(f"POST {url} (direct)")
+
         try:
             response = self.session.post(
                 url,
@@ -320,7 +409,187 @@ class GoogleFlowAPI:
             return False, [], f"Invalid JSON response: {str(e)}"
         except Exception as e:
             return False, [], f"Unexpected error: {str(e)}"
-    
+
+    # Proxy task status endpoint
+    PROXY_TASK_STATUS_URL = "https://flow-api.nanoai.pics/api/fix/task-status"
+
+    def _generate_images_via_proxy(
+        self,
+        payload: Dict[str, Any],
+        prompt: str,
+        aspect_ratio: str
+    ) -> Tuple[bool, List[GeneratedImage], str]:
+        """
+        Gọi qua proxy API để bypass captcha/recaptcha cho image generation.
+        Proxy API là async:
+        1. POST /create-image-veo3 → {"success": true, "taskId": "xxx"}
+        2. GET /task-status?taskId=xxx → Poll cho đến khi có kết quả
+        """
+        if not self.proxy_api_token:
+            return False, [], "Proxy API token required - set proxy_api_token"
+
+        self._log(f"POST {self.PROXY_IMAGE_API_URL} (via proxy)")
+
+        # Build proxy request - format giống direct Google API
+        # Google API cần: imageAspectRatio, prompt, imageModelName (không phải aspectRatio, textInput, imageModelKey)
+        proxy_body = {
+            "clientContext": {
+                "sessionId": self.session_id,
+                "projectId": self.project_id,
+                "tool": self.TOOL_NAME
+            },
+            "requests": [
+                {
+                    "clientContext": {
+                        "sessionId": self.session_id,
+                        "projectId": self.project_id,
+                        "tool": self.TOOL_NAME
+                    },
+                    "seed": self._generate_seed(),
+                    "imageModelName": "GEM_PIX_2",
+                    "imageAspectRatio": aspect_ratio,
+                    "prompt": prompt,
+                    "imageInputs": []
+                }
+            ]
+        }
+
+        proxy_payload = {
+            "body_json": proxy_body,
+            "flow_auth_token": self.bearer_token,
+            "flow_url": f"{self.BASE_URL}/v1/projects/{self.project_id}/flowMedia:batchGenerateImages"
+        }
+
+        # Debug: log the full request
+        self._log(f"=== PROXY REQUEST ===")
+        self._log(f"URL: {self.PROXY_IMAGE_API_URL}")
+        self._log(f"flow_url: {proxy_payload['flow_url']}")
+        self._log(f"body_json: {json.dumps(proxy_body)[:500]}")
+
+        try:
+            proxy_headers = {
+                "Authorization": f"Bearer {self.proxy_api_token}",
+                "Content-Type": "application/json"
+            }
+
+            # Step 1: Create task
+            response = requests.post(
+                self.PROXY_IMAGE_API_URL,
+                headers=proxy_headers,
+                json=proxy_payload,
+                timeout=30
+            )
+
+            self._log(f"Proxy response status: {response.status_code}")
+
+            if response.status_code == 401:
+                return False, [], "Proxy API authentication failed - check proxy_api_token"
+
+            if response.status_code != 200:
+                error_text = response.text[:200]
+                return False, [], f"Proxy API error: {response.status_code} - {error_text}"
+
+            result = response.json()
+            self._log(f"Create task response: {json.dumps(result)[:500]}")
+
+            if not result.get("success"):
+                return False, [], f"Proxy create task failed: {result.get('error', 'Unknown')}"
+
+            task_id = result.get("taskId")
+            if not task_id:
+                return False, [], "No taskId in proxy response"
+
+            self._log(f"Task created: {task_id}")
+
+            # Step 2: Poll for result
+            return self._poll_proxy_task(task_id, prompt, aspect_ratio, proxy_headers)
+
+        except requests.exceptions.Timeout:
+            return False, [], f"Proxy request timeout"
+        except requests.exceptions.RequestException as e:
+            return False, [], f"Proxy network error: {str(e)}"
+        except Exception as e:
+            return False, [], f"Proxy error: {str(e)}"
+
+    def _poll_proxy_task(
+        self,
+        task_id: str,
+        prompt: str,
+        aspect_ratio: str,
+        headers: Dict[str, str],
+        max_attempts: int = 60,
+        poll_interval: float = 2.0
+    ) -> Tuple[bool, List[GeneratedImage], str]:
+        """Poll proxy task status until complete."""
+        self._log(f"Polling task {task_id}...")
+
+        for attempt in range(max_attempts):
+            try:
+                response = requests.get(
+                    f"{self.PROXY_TASK_STATUS_URL}?taskId={task_id}",
+                    headers=headers,
+                    timeout=30
+                )
+
+                if response.status_code != 200:
+                    self._log(f"Poll attempt {attempt+1}: status {response.status_code}")
+                    time.sleep(poll_interval)
+                    continue
+
+                result = response.json()
+                self._log(f"Poll {attempt+1}: {json.dumps(result)[:300]}")
+
+                if not result.get("success"):
+                    time.sleep(poll_interval)
+                    continue
+
+                # Check if task completed
+                task_result = result.get("result", {})
+
+                # Check for error response from Google API
+                if "error" in task_result:
+                    error_info = task_result.get("error", {})
+                    if isinstance(error_info, dict):
+                        error_msg = error_info.get("message", str(error_info))
+                    else:
+                        error_msg = str(error_info)
+                    self._log(f"=== GOOGLE API ERROR ===")
+                    self._log(f"Error: {error_msg[:500]}")
+                    return False, [], f"Google API error: {error_msg[:200]}"
+
+                if task_result.get("success") == True:
+                    # Task completed successfully - extract images
+                    self._log(f"Task completed! Extracting images...")
+                    images = self._parse_image_response(task_result, prompt, aspect_ratio)
+                    if images:
+                        return True, images, ""
+                    else:
+                        # Try parsing from different locations
+                        self._log(f"Full task result: {json.dumps(task_result)[:1000]}")
+                        return False, [], "Task completed but no images found"
+
+                elif task_result.get("success") == False:
+                    error = task_result.get("error", "Unknown error")
+                    self._log(f"=== TASK FAILED ===")
+                    self._log(f"Full result: {json.dumps(result)}")
+                    return False, [], f"Task failed: {error}"
+
+                # Check if we have media/images in result (success without explicit flag)
+                if "media" in task_result or "images" in task_result:
+                    self._log(f"Task completed (implicit)! Extracting images...")
+                    images = self._parse_image_response(task_result, prompt, aspect_ratio)
+                    if images:
+                        return True, images, ""
+
+                # Still processing
+                time.sleep(poll_interval)
+
+            except Exception as e:
+                self._log(f"Poll error: {e}")
+                time.sleep(poll_interval)
+
+        return False, [], f"Polling timeout after {max_attempts} attempts"
+
     def _parse_image_response(
         self,
         response: Dict[str, Any],
@@ -873,7 +1142,496 @@ class GoogleFlowAPI:
             prefix=prefix,
             image_inputs=uploaded_refs
         )
-    
+
+    # =========================================================================
+    # VIDEO GENERATION (VEO 3)
+    # =========================================================================
+
+    def generate_video(
+        self,
+        prompt: str,
+        aspect_ratio: VideoAspectRatio = VideoAspectRatio.LANDSCAPE,
+        model: VideoModel = VideoModel.VEO3_FAST,
+        seed: Optional[int] = None,
+        scene_id: Optional[str] = None,
+        recaptcha_token: str = ""
+    ) -> Tuple[bool, VideoGenerationResult, str]:
+        """
+        Tạo video từ prompt sử dụng Veo 3.
+
+        Args:
+            prompt: Text prompt mô tả video
+            aspect_ratio: Tỷ lệ khung hình (LANDSCAPE, PORTRAIT, SQUARE)
+            model: Model video (VEO3_FAST hoặc VEO3_QUALITY)
+            seed: Seed cho reproducible results
+            scene_id: Scene ID (tự tạo UUID nếu không có)
+            recaptcha_token: reCAPTCHA token (để trống nếu dùng proxy)
+
+        Returns:
+            Tuple[success, VideoGenerationResult, error_message]
+        """
+        self._log(f"Generating video with prompt: {prompt[:50]}...")
+
+        # Auto-generate seed and scene_id if not provided
+        if seed is None:
+            seed = self._generate_seed()
+        if scene_id is None:
+            scene_id = str(uuid.uuid4())
+
+        # Build request payload theo format mới
+        payload = {
+            "clientContext": {
+                "recaptchaToken": recaptcha_token,
+                "sessionId": self.session_id,
+                "projectId": self.project_id,
+                "tool": self.TOOL_NAME,
+                "userPaygateTier": self.paygate_tier.value
+            },
+            "requests": [
+                {
+                    "aspectRatio": aspect_ratio.value,
+                    "seed": seed,
+                    "textInput": {
+                        "prompt": prompt
+                    },
+                    "videoModelKey": model.value,
+                    "metadata": {
+                        "sceneId": scene_id
+                    }
+                }
+            ]
+        }
+
+        # Chọn endpoint: proxy hoặc direct
+        if self.use_proxy and self.proxy_api_token:
+            return self._generate_video_via_proxy(payload, prompt, seed, scene_id)
+        else:
+            return self._generate_video_direct(payload, prompt, seed, scene_id)
+
+    def _generate_video_direct(
+        self,
+        payload: Dict[str, Any],
+        prompt: str,
+        seed: int,
+        scene_id: str
+    ) -> Tuple[bool, VideoGenerationResult, str]:
+        """
+        Gọi trực tiếp Google API để tạo video.
+        Có thể bị captcha nếu không có recaptchaToken hợp lệ.
+        """
+        url = f"{self.BASE_URL}/v1/video:batchAsyncGenerateVideoText"
+
+        self._log(f"POST {url} (direct)")
+
+        try:
+            response = self.session.post(
+                url,
+                data=json.dumps(payload),
+                timeout=self.timeout
+            )
+
+            self._log(f"Response status: {response.status_code}")
+
+            if response.status_code == 401:
+                return False, VideoGenerationResult(
+                    status="failed",
+                    prompt=prompt,
+                    seed=seed,
+                    scene_id=scene_id,
+                    error="Authentication failed - Bearer token may be expired"
+                ), "Authentication failed - Bearer token may be expired"
+
+            if response.status_code == 403:
+                error_text = response.text[:200]
+                # Check if captcha required
+                if "captcha" in error_text.lower() or "recaptcha" in error_text.lower():
+                    return False, VideoGenerationResult(
+                        status="failed",
+                        prompt=prompt,
+                        seed=seed,
+                        scene_id=scene_id,
+                        error="Captcha required - use proxy API"
+                    ), "Captcha required - enable use_proxy=True"
+                return False, VideoGenerationResult(
+                    status="failed",
+                    prompt=prompt,
+                    seed=seed,
+                    scene_id=scene_id,
+                    error=f"Access forbidden: {error_text}"
+                ), f"Access forbidden: {error_text}"
+
+            if response.status_code != 200:
+                error_text = response.text[:200]
+                return False, VideoGenerationResult(
+                    status="failed",
+                    prompt=prompt,
+                    seed=seed,
+                    scene_id=scene_id,
+                    error=f"API error: {response.status_code}"
+                ), f"API error: {response.status_code} - {error_text}"
+
+            # Parse response
+            result = response.json()
+            return self._parse_video_response(result, prompt, seed, scene_id)
+
+        except requests.exceptions.Timeout:
+            return False, VideoGenerationResult(
+                status="failed",
+                prompt=prompt,
+                seed=seed,
+                scene_id=scene_id,
+                error=f"Timeout after {self.timeout}s"
+            ), f"Request timeout after {self.timeout}s"
+        except requests.exceptions.RequestException as e:
+            return False, VideoGenerationResult(
+                status="failed",
+                prompt=prompt,
+                seed=seed,
+                scene_id=scene_id,
+                error=str(e)
+            ), f"Network error: {str(e)}"
+        except Exception as e:
+            return False, VideoGenerationResult(
+                status="failed",
+                prompt=prompt,
+                seed=seed,
+                scene_id=scene_id,
+                error=str(e)
+            ), f"Unexpected error: {str(e)}"
+
+    def _generate_video_via_proxy(
+        self,
+        payload: Dict[str, Any],
+        prompt: str,
+        seed: int,
+        scene_id: str
+    ) -> Tuple[bool, VideoGenerationResult, str]:
+        """
+        Gọi qua proxy API để bypass captcha.
+        Proxy sẽ xử lý recaptcha và forward request đến Google.
+        """
+        if not self.proxy_api_token:
+            return False, VideoGenerationResult(
+                status="failed",
+                prompt=prompt,
+                seed=seed,
+                scene_id=scene_id,
+                error="Proxy API token required"
+            ), "Proxy API token required"
+
+        self._log(f"POST {self.PROXY_VIDEO_API_URL} (via proxy)")
+
+        # Build proxy request
+        proxy_payload = {
+            "body_json": payload,
+            "flow_auth_token": self.bearer_token,
+            "flow_url": f"{self.BASE_URL}/v1/video:batchAsyncGenerateVideoText",
+            "is_proxy": False
+        }
+
+        try:
+            # Create separate session for proxy (different headers)
+            proxy_headers = {
+                "Authorization": f"Bearer {self.proxy_api_token}",
+                "Content-Type": "application/json"
+            }
+
+            response = requests.post(
+                self.PROXY_VIDEO_API_URL,
+                headers=proxy_headers,
+                json=proxy_payload,
+                timeout=self.timeout
+            )
+
+            self._log(f"Proxy response status: {response.status_code}")
+
+            if response.status_code == 401:
+                return False, VideoGenerationResult(
+                    status="failed",
+                    prompt=prompt,
+                    seed=seed,
+                    scene_id=scene_id,
+                    error="Proxy API authentication failed"
+                ), "Proxy API authentication failed - check proxy_api_token"
+
+            if response.status_code != 200:
+                error_text = response.text[:200]
+                return False, VideoGenerationResult(
+                    status="failed",
+                    prompt=prompt,
+                    seed=seed,
+                    scene_id=scene_id,
+                    error=f"Proxy error: {response.status_code}"
+                ), f"Proxy API error: {response.status_code} - {error_text}"
+
+            # Parse response
+            result = response.json()
+            return self._parse_video_response(result, prompt, seed, scene_id)
+
+        except requests.exceptions.Timeout:
+            return False, VideoGenerationResult(
+                status="failed",
+                prompt=prompt,
+                seed=seed,
+                scene_id=scene_id,
+                error=f"Proxy timeout after {self.timeout}s"
+            ), f"Proxy request timeout after {self.timeout}s"
+        except Exception as e:
+            return False, VideoGenerationResult(
+                status="failed",
+                prompt=prompt,
+                seed=seed,
+                scene_id=scene_id,
+                error=str(e)
+            ), f"Proxy error: {str(e)}"
+
+    def _parse_video_response(
+        self,
+        response: Dict[str, Any],
+        prompt: str,
+        seed: int,
+        scene_id: str
+    ) -> Tuple[bool, VideoGenerationResult, str]:
+        """
+        Parse response từ video generation API.
+        Video generation là async nên response sẽ chứa operation ID.
+        """
+        self._log(f"Parsing video response: {json.dumps(response)[:300]}...")
+
+        # Check for errors in response
+        if "error" in response:
+            error_msg = response.get("error", {}).get("message", str(response["error"]))
+            return False, VideoGenerationResult(
+                status="failed",
+                prompt=prompt,
+                seed=seed,
+                scene_id=scene_id,
+                error=error_msg
+            ), error_msg
+
+        # Video generation is async - look for operation/task info
+        operation_id = (
+            response.get("operationId") or
+            response.get("name") or
+            response.get("taskId") or
+            response.get("jobId")
+        )
+
+        # Check if video URL is already available (rare for async)
+        video_url = None
+        video_id = None
+
+        # Try to find video info in response
+        if "videos" in response and response["videos"]:
+            video_data = response["videos"][0]
+            video_url = video_data.get("url") or video_data.get("videoUrl")
+            video_id = video_data.get("id") or video_data.get("videoId")
+        elif "media" in response and response["media"]:
+            media_data = response["media"][0]
+            video_info = media_data.get("video", {})
+            video_url = video_info.get("url") or video_info.get("videoUrl")
+            video_id = media_data.get("name") or media_data.get("id")
+
+        # Determine status
+        status = "pending"
+        if video_url:
+            status = "completed"
+        elif response.get("status") == "PROCESSING":
+            status = "processing"
+        elif response.get("done") is True:
+            status = "completed"
+
+        result = VideoGenerationResult(
+            video_url=video_url,
+            video_id=video_id,
+            scene_id=scene_id,
+            operation_id=operation_id,
+            status=status,
+            prompt=prompt,
+            seed=seed
+        )
+
+        if status == "completed" and video_url:
+            self._log(f"✓ Video generated: {video_url[:60]}...")
+            return True, result, ""
+        elif operation_id:
+            self._log(f"Video generation started, operation: {operation_id[:40]}...")
+            return True, result, ""
+        else:
+            return False, result, "Unknown response format"
+
+    def poll_video_status(
+        self,
+        operation_id: str,
+        max_attempts: int = 60,
+        poll_interval: float = 5.0
+    ) -> Tuple[bool, VideoGenerationResult, str]:
+        """
+        Poll để kiểm tra trạng thái video generation.
+
+        Args:
+            operation_id: Operation ID từ generate_video response
+            max_attempts: Số lần poll tối đa
+            poll_interval: Thời gian chờ giữa các lần poll (giây)
+
+        Returns:
+            Tuple[success, VideoGenerationResult, error_message]
+        """
+        self._log(f"Polling video status for: {operation_id[:40]}...")
+
+        for attempt in range(max_attempts):
+            self._log(f"Poll attempt {attempt + 1}/{max_attempts}")
+
+            try:
+                # TODO: Implement actual polling endpoint
+                # Endpoint có thể là:
+                # - GET /v1/operations/{operation_id}
+                # - GET /v1/video/status/{operation_id}
+                # Cần xác định endpoint chính xác từ API docs
+
+                poll_url = f"{self.BASE_URL}/v1/operations/{operation_id}"
+
+                response = self.session.get(poll_url, timeout=30)
+
+                if response.status_code == 200:
+                    result = response.json()
+
+                    # Check if done
+                    if result.get("done") is True:
+                        # Extract video info
+                        video_url = None
+                        if "response" in result:
+                            resp = result["response"]
+                            if "videos" in resp:
+                                video_url = resp["videos"][0].get("url")
+
+                        return True, VideoGenerationResult(
+                            video_url=video_url,
+                            operation_id=operation_id,
+                            status="completed"
+                        ), ""
+
+                    # Still processing
+                    if result.get("metadata", {}).get("state") == "PROCESSING":
+                        time.sleep(poll_interval)
+                        continue
+
+                time.sleep(poll_interval)
+
+            except Exception as e:
+                self._log(f"Poll error: {e}")
+                time.sleep(poll_interval)
+                continue
+
+        return False, VideoGenerationResult(
+            operation_id=operation_id,
+            status="failed",
+            error="Polling timeout"
+        ), f"Polling timeout after {max_attempts} attempts"
+
+    def generate_videos_batch(
+        self,
+        prompts: List[Dict[str, Any]],
+        aspect_ratio: VideoAspectRatio = VideoAspectRatio.LANDSCAPE,
+        model: VideoModel = VideoModel.VEO3_FAST
+    ) -> Tuple[int, int, List[VideoGenerationResult]]:
+        """
+        Tạo nhiều video cùng lúc.
+
+        Args:
+            prompts: List of dicts với keys: prompt, seed (optional), scene_id (optional)
+            aspect_ratio: Tỷ lệ khung hình
+            model: Model video
+
+        Returns:
+            Tuple[success_count, failed_count, results]
+        """
+        results = []
+        success_count = 0
+        failed_count = 0
+
+        for item in prompts:
+            prompt = item.get("prompt", "")
+            seed = item.get("seed")
+            scene_id = item.get("scene_id") or item.get("sceneId")
+
+            if not prompt:
+                continue
+
+            success, result, error = self.generate_video(
+                prompt=prompt,
+                aspect_ratio=aspect_ratio,
+                model=model,
+                seed=seed,
+                scene_id=scene_id
+            )
+
+            results.append(result)
+
+            if success:
+                success_count += 1
+            else:
+                failed_count += 1
+                self._log(f"Failed: {error}")
+
+            # Small delay between requests
+            time.sleep(1)
+
+        return success_count, failed_count, results
+
+    def download_video(
+        self,
+        video_result: VideoGenerationResult,
+        output_dir: Path,
+        filename: Optional[str] = None
+    ) -> Optional[Path]:
+        """
+        Download video về local.
+
+        Args:
+            video_result: VideoGenerationResult object
+            output_dir: Thư mục lưu video
+            filename: Tên file (không có extension)
+
+        Returns:
+            Path đến file đã download hoặc None
+        """
+        if not video_result.video_url:
+            self._log("No video URL available")
+            return None
+
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Generate filename
+        if not filename:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            seed_str = f"_{video_result.seed}" if video_result.seed else ""
+            filename = f"veo3_{timestamp}{seed_str}"
+
+        output_path = output_dir / f"{filename}.mp4"
+
+        try:
+            self._log(f"Downloading video from: {video_result.video_url[:60]}...")
+
+            response = requests.get(video_result.video_url, timeout=120, stream=True)
+
+            if response.status_code == 200:
+                with open(output_path, "wb") as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+
+                video_result.local_path = output_path
+                self._log(f"✓ Saved to {output_path}")
+                return output_path
+            else:
+                self._log(f"Download failed: {response.status_code}")
+                return None
+
+        except Exception as e:
+            self._log(f"Download error: {e}")
+            return None
+
     # =========================================================================
     # TOKEN MANAGEMENT
     # =========================================================================
@@ -989,14 +1747,14 @@ def quick_generate(
 ) -> List[str]:
     """
     Quick function để tạo ảnh với minimal setup.
-    
+
     Args:
         prompt: Text prompt
         token: Bearer token
         output_dir: Output directory
         count: Number of images
         aspect_ratio: "landscape", "portrait", or "square"
-        
+
     Returns:
         List of output file paths
     """
@@ -1010,7 +1768,7 @@ def quick_generate(
         "1:1": AspectRatio.SQUARE,
     }
     ar = ar_map.get(aspect_ratio.lower(), AspectRatio.LANDSCAPE)
-    
+
     client = GoogleFlowAPI(bearer_token=token, verbose=True)
     success, paths, error = client.generate_and_download(
         prompt=prompt,
@@ -1018,12 +1776,129 @@ def quick_generate(
         count=count,
         aspect_ratio=ar
     )
-    
+
     if success:
         return [str(p) for p in paths]
     else:
         print(f"❌ Error: {error}")
         return []
+
+
+def quick_generate_video(
+    prompt: str,
+    token: str,
+    output_dir: str = "./output",
+    aspect_ratio: str = "landscape",
+    model: str = "fast",
+    proxy_token: Optional[str] = None,
+    use_proxy: bool = False
+) -> Optional[str]:
+    """
+    Quick function để tạo video với Veo 3.
+
+    Args:
+        prompt: Text prompt mô tả video
+        token: Bearer token (ya29.xxx)
+        output_dir: Output directory
+        aspect_ratio: "landscape", "portrait", or "square"
+        model: "fast" hoặc "quality"
+        proxy_token: Token cho proxy API (nanoai.pics)
+        use_proxy: Sử dụng proxy để bypass captcha
+
+    Returns:
+        Path đến video đã download hoặc None
+    """
+    # Map aspect ratio
+    ar_map = {
+        "landscape": VideoAspectRatio.LANDSCAPE,
+        "portrait": VideoAspectRatio.PORTRAIT,
+        "square": VideoAspectRatio.SQUARE,
+        "16:9": VideoAspectRatio.LANDSCAPE,
+        "9:16": VideoAspectRatio.PORTRAIT,
+        "1:1": VideoAspectRatio.SQUARE,
+    }
+    ar = ar_map.get(aspect_ratio.lower(), VideoAspectRatio.LANDSCAPE)
+
+    # Map model
+    model_map = {
+        "fast": VideoModel.VEO3_FAST,
+        "quality": VideoModel.VEO3_QUALITY,
+    }
+    vm = model_map.get(model.lower(), VideoModel.VEO3_FAST)
+
+    # Create client
+    client = GoogleFlowAPI(
+        bearer_token=token,
+        verbose=True,
+        proxy_api_token=proxy_token,
+        use_proxy=use_proxy
+    )
+
+    # Generate video
+    success, result, error = client.generate_video(
+        prompt=prompt,
+        aspect_ratio=ar,
+        model=vm
+    )
+
+    if not success:
+        print(f"❌ Error: {error}")
+        return None
+
+    # If video URL available, download it
+    if result.video_url:
+        path = client.download_video(result, Path(output_dir))
+        if path:
+            return str(path)
+
+    # If async, need to poll
+    if result.operation_id:
+        print(f"⏳ Video generation started, operation: {result.operation_id}")
+        print("   Đang đợi... (video generation có thể mất vài phút)")
+
+        poll_success, poll_result, poll_error = client.poll_video_status(
+            result.operation_id,
+            max_attempts=60,
+            poll_interval=5.0
+        )
+
+        if poll_success and poll_result.video_url:
+            path = client.download_video(poll_result, Path(output_dir))
+            if path:
+                return str(path)
+        else:
+            print(f"❌ Polling failed: {poll_error}")
+
+    return None
+
+
+def create_video_client(
+    token: str,
+    project_id: Optional[str] = None,
+    proxy_token: Optional[str] = None,
+    use_proxy: bool = False,
+    verbose: bool = False
+) -> GoogleFlowAPI:
+    """
+    Factory function để tạo GoogleFlowAPI client cho video generation.
+
+    Args:
+        token: Bearer token (ya29.xxx)
+        project_id: Project ID (optional)
+        proxy_token: Token cho proxy API
+        use_proxy: Sử dụng proxy để bypass captcha
+        verbose: Enable verbose logging
+
+    Returns:
+        GoogleFlowAPI instance configured for video
+    """
+    return GoogleFlowAPI(
+        bearer_token=token,
+        project_id=project_id,
+        verbose=verbose,
+        proxy_api_token=proxy_token,
+        use_proxy=use_proxy
+    )
 
 
 # =============================================================================
@@ -1032,23 +1907,76 @@ def quick_generate(
 
 if __name__ == "__main__":
     import sys
-    
+
     print(GoogleFlowAPI.get_token_guide())
-    
+
+    print("\n" + "=" * 70)
+    print("VE3 Tool - Google Flow API CLI")
+    print("=" * 70)
+
     if len(sys.argv) < 3:
-        print("\nUsage: python google_flow_api.py <token> <prompt>")
-        print("Example: python google_flow_api.py 'ya29.xxx' 'a cute cat'")
+        print("\nUsage:")
+        print("  Image: python google_flow_api.py image <token> <prompt>")
+        print("  Video: python google_flow_api.py video <token> <prompt> [--proxy <proxy_token>]")
+        print("\nExamples:")
+        print("  python google_flow_api.py image 'ya29.xxx' 'a cute cat'")
+        print("  python google_flow_api.py video 'ya29.xxx' 'a cat walking'")
+        print("  python google_flow_api.py video 'ya29.xxx' 'a cat walking' --proxy 'proxy_token'")
         sys.exit(1)
-    
-    token = sys.argv[1]
-    prompt = sys.argv[2]
-    
-    print(f"\n🎨 Generating images for: {prompt}")
-    paths = quick_generate(prompt, token)
-    
-    if paths:
-        print(f"\n✅ Generated {len(paths)} images:")
-        for p in paths:
-            print(f"   📁 {p}")
+
+    mode = sys.argv[1].lower()
+
+    if mode == "image":
+        if len(sys.argv) < 4:
+            print("❌ Missing token or prompt for image mode")
+            sys.exit(1)
+
+        token = sys.argv[2]
+        prompt = sys.argv[3]
+
+        print(f"\n🎨 Generating images for: {prompt}")
+        paths = quick_generate(prompt, token)
+
+        if paths:
+            print(f"\n✅ Generated {len(paths)} images:")
+            for p in paths:
+                print(f"   📁 {p}")
+        else:
+            print("\n❌ Image generation failed")
+
+    elif mode == "video":
+        if len(sys.argv) < 4:
+            print("❌ Missing token or prompt for video mode")
+            sys.exit(1)
+
+        token = sys.argv[2]
+        prompt = sys.argv[3]
+
+        # Check for --proxy flag
+        proxy_token = None
+        use_proxy = False
+        if "--proxy" in sys.argv:
+            proxy_idx = sys.argv.index("--proxy")
+            if proxy_idx + 1 < len(sys.argv):
+                proxy_token = sys.argv[proxy_idx + 1]
+                use_proxy = True
+
+        print(f"\n🎬 Generating video for: {prompt}")
+        if use_proxy:
+            print("   (Using proxy API to bypass captcha)")
+
+        path = quick_generate_video(
+            prompt=prompt,
+            token=token,
+            proxy_token=proxy_token,
+            use_proxy=use_proxy
+        )
+
+        if path:
+            print(f"\n✅ Video saved to: {path}")
+        else:
+            print("\n❌ Video generation failed")
+
     else:
-        print("\n❌ Generation failed")
+        print(f"❌ Unknown mode: {mode}")
+        print("   Use 'image' or 'video'")

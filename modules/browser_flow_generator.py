@@ -1671,6 +1671,161 @@ class BrowserFlowGenerator:
         """
         return self.config.get('generation_mode', 'chrome')
 
+    def _auto_extract_token(self) -> Optional[str]:
+        """
+        Tu dong lay bearer token tu Chrome bang profile hien tai.
+        Su dung ChromeAutoToken de mo Chrome, navigate den Flow va capture token.
+
+        Returns:
+            Bearer token (ya29.xxx) hoac None neu that bai
+        """
+        self._log("=== TU DONG LAY BEARER TOKEN ===")
+
+        try:
+            from modules.auto_token import ChromeAutoToken
+        except ImportError:
+            self._log("Khong import duoc ChromeAutoToken", "error")
+            return None
+
+        # Lay chrome_path tu config
+        chrome_path = self.config.get('chrome_path', '')
+        if not chrome_path:
+            # Default paths
+            import platform
+            if platform.system() == 'Windows':
+                chrome_path = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+            else:
+                chrome_path = "/usr/bin/google-chrome"
+
+        # Lay profile path
+        # Profile name tu self.profile_name, profile dir tu config hoac mac dinh
+        profiles_dir = self.config.get('browser_profiles_dir', './chrome_profiles')
+        profile_path = str(Path(profiles_dir) / self.profile_name)
+
+        self._log(f"Chrome: {chrome_path}")
+        self._log(f"Profile: {profile_path}")
+
+        try:
+            extractor = ChromeAutoToken(
+                chrome_path=chrome_path,
+                profile_path=profile_path
+            )
+
+            # Callback de log
+            def log_callback(msg, level="info"):
+                self._log(f"[TokenExtract] {msg}", level)
+
+            token, proj_id, error = extractor.extract_token(callback=log_callback)
+
+            if token:
+                self._log(f"OK - Da lay duoc token: {token[:20]}...{token[-10:]}", "success")
+                # Luu project_id neu co
+                if proj_id:
+                    self.config['flow_project_id'] = proj_id
+                return token
+            else:
+                self._log(f"FAIL - Khong lay duoc token: {error}", "error")
+                return None
+
+        except Exception as e:
+            self._log(f"Exception khi lay token: {e}", "error")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def _capture_headers_via_chrome(self) -> Optional[Dict[str, str]]:
+        """
+        Capture headers (x-browser-validation, authorization, etc) tu Chrome bang Selenium + CDP.
+        TAO 1 ANH TEST de trigger API request va capture headers.
+
+        Returns:
+            Dict chua headers hoac None neu that bai
+        """
+        self._log("=== CAPTURE HEADERS TU CHROME (SELENIUM) ===")
+
+        try:
+            from modules.chrome_headers_extractor import ChromeHeadersExtractor
+        except ImportError as e:
+            self._log(f"Khong import duoc ChromeHeadersExtractor: {e}", "error")
+            return None
+
+        # Lay profile path
+        profiles_dir = self.config.get('browser_profiles_dir', './chrome_profiles')
+        profile_path = str(Path(profiles_dir) / self.profile_name)
+
+        self._log(f"Profile: {profile_path}")
+
+        try:
+            extractor = ChromeHeadersExtractor(
+                chrome_profile_path=profile_path,
+                headless=False,
+                verbose=True
+            )
+
+            # Start browser
+            if not extractor.start_browser():
+                self._log("Khong khoi dong duoc Chrome", "error")
+                return None
+
+            # Navigate to Flow
+            if not extractor.navigate_to_flow():
+                self._log("Khong navigate duoc den Flow", "error")
+                extractor.stop_browser()
+                return None
+
+            # Wait for page load (12s like auto_token.py)
+            self._log("Doi trang load (12s)...")
+            import time
+            time.sleep(12)
+
+            # Trigger API request and capture headers
+            self._log("Trigger API request de capture headers...")
+            captured = extractor.trigger_api_and_capture()
+
+            if captured.is_valid():
+                self._log(f"✅ x-browser-validation: {captured.x_browser_validation[:40]}...", "success")
+                self._log(f"✅ Authorization: {captured.authorization[:50]}...", "success")
+
+                # Extract token and project_id
+                if captured.authorization.startswith("Bearer "):
+                    token = captured.authorization[7:]
+                    self.config['flow_bearer_token'] = token
+
+                    # Extract project_id from URL if available
+                    # (will be captured in next request)
+
+                # Convert to dict for API use
+                headers_dict = captured.to_dict()
+
+                # Store for later use
+                self.config['captured_headers'] = headers_dict
+
+                extractor.stop_browser()
+                return headers_dict
+            else:
+                self._log("Khong capture duoc headers day du", "error")
+                self._log(f"  authorization: {bool(captured.authorization)}")
+                self._log(f"  x-browser-validation: {bool(captured.x_browser_validation)}")
+
+                # Fallback: try capture from network logs
+                self._log("Thu capture tu network logs...")
+                captured = extractor.capture_headers_from_network(timeout=30)
+
+                if captured.is_valid():
+                    headers_dict = captured.to_dict()
+                    self.config['captured_headers'] = headers_dict
+                    extractor.stop_browser()
+                    return headers_dict
+
+                extractor.stop_browser()
+                return None
+
+        except Exception as e:
+            self._log(f"Exception khi capture headers: {e}", "error")
+            import traceback
+            traceback.print_exc()
+            return None
+
     def generate_images_auto(
         self,
         excel_path: Optional[Path] = None,
@@ -1697,23 +1852,28 @@ class BrowserFlowGenerator:
         mode = self._get_generation_mode()
         self._log(f"[AUTO] Generation mode: {mode.upper()}")
 
+        # Check proxy support for API mode
+        proxy_api_token = self.config.get('proxy_api_token', '')
+
         if mode == 'api':
-            # API mode - goi truc tiep API
-            return self.generate_scene_images_api(
-                excel_path=excel_path,
-                start_scene=start_scene,
-                end_scene=end_scene,
-                overwrite=overwrite,
-                bearer_token=bearer_token
-            )
-        else:
-            # Chrome mode (default) - browser automation
-            return self.generate_scene_images(
-                excel_path=excel_path,
-                start_scene=start_scene,
-                end_scene=end_scene,
-                overwrite=overwrite
-            )
+            if proxy_api_token:
+                self._log("[AUTO] API mode voi proxy support - su dung proxy de bypass captcha")
+                return self.generate_scene_images_api(
+                    excel_path=excel_path,
+                    start_scene=start_scene,
+                    end_scene=end_scene,
+                    overwrite=overwrite
+                )
+            else:
+                self._log("[AUTO] API mode khong co proxy token, chuyen sang Chrome mode...")
+
+        # Fall back to Chrome mode
+        return self.generate_scene_images(
+            excel_path=excel_path,
+            start_scene=start_scene,
+            end_scene=end_scene,
+            overwrite=overwrite
+        )
 
     def generate_from_prompts_auto(
         self,
@@ -1737,18 +1897,27 @@ class BrowserFlowGenerator:
         mode = self._get_generation_mode()
         self._log(f"[AUTO] Generation mode: {mode.upper()}")
 
+        # Check proxy support for API mode
+        proxy_api_token = self.config.get('proxy_api_token', '')
+
         if mode == 'api':
-            return self.generate_from_prompts_api(
-                prompts=prompts,
-                excel_path=excel_path,
-                bearer_token=bearer_token
-            )
-        else:
-            return self.generate_from_prompts(
-                prompts=prompts,
-                excel_path=excel_path,
-                max_setup_retries=max_setup_retries
-            )
+            if proxy_api_token:
+                self._log("[AUTO] API mode voi proxy support - su dung proxy de bypass captcha")
+                # Use API mode with proxy for prompts
+                return self.generate_from_prompts_api(
+                    prompts=prompts,
+                    excel_path=excel_path,
+                    bearer_token=bearer_token
+                )
+            else:
+                self._log("[AUTO] API mode khong co proxy token, chuyen sang Chrome mode...")
+
+        # Fall back to Chrome mode
+        return self.generate_from_prompts(
+            prompts=prompts,
+            excel_path=excel_path,
+            max_setup_retries=max_setup_retries
+        )
 
     def generate_all(
         self,
@@ -1873,15 +2042,27 @@ class BrowserFlowGenerator:
         except ImportError as e:
             return {"success": False, "error": f"Khong import duoc GoogleFlowAPI: {e}"}
 
+        # Check proxy support
+        proxy_api_token = self.config.get('proxy_api_token', '')
+        use_proxy = bool(proxy_api_token)
+
+        if use_proxy:
+            self._log("Proxy API token co san - se su dung proxy de bypass captcha")
+
         # Check bearer token
         if not bearer_token:
             # Thu lay tu config
             bearer_token = self.config.get('flow_bearer_token', '')
 
+        # Neu van chua co token, capture tu Chrome (PyAutoGUI)
+        if not bearer_token:
+            self._log("Khong co bearer token, thu tu dong lay...")
+            bearer_token = self._auto_extract_token()
+
         if not bearer_token:
             return {
                 "success": False,
-                "error": "Can bearer token cho API mode. Lay token tu Settings > Token"
+                "error": "Can bearer token cho API mode. Chua co token va khong the tu dong lay."
             }
 
         # Tim file Excel
@@ -1892,15 +2073,24 @@ class BrowserFlowGenerator:
             return {"success": False, "error": "Khong tim thay file Excel"}
 
         self._log(f"Excel: {excel_path}")
-        self._log(f"Project: {self.project_code}")
-        self._log(f"Token: {bearer_token[:20]}...{bearer_token[-10:]}")
 
-        # Create API client
+        # Use extracted flow_project_id if available, otherwise fallback to project_code
+        flow_project_id = self.config.get('flow_project_id', self.project_code)
+        self._log(f"Project ID: {flow_project_id}")
+        self._log(f"Token: {bearer_token[:20]}...{bearer_token[-10:]}")
+        if use_proxy:
+            self._log(f"Proxy mode: ENABLED (nanoai.pics)")
+        else:
+            self._log(f"Proxy mode: DISABLED (direct API call)")
+
+        # Create API client with proxy support
         api = GoogleFlowAPI(
             bearer_token=bearer_token,
-            project_id=self.project_code,
+            project_id=flow_project_id,
             timeout=self.config.get('flow_timeout', 120),
-            verbose=self.verbose
+            verbose=self.verbose,
+            proxy_api_token=proxy_api_token,
+            use_proxy=use_proxy
         )
 
         # Map aspect ratio
@@ -2081,24 +2271,47 @@ class BrowserFlowGenerator:
         except ImportError as e:
             return {"success": False, "error": f"Khong import duoc GoogleFlowAPI: {e}"}
 
+        # Check proxy support
+        proxy_api_token = self.config.get('proxy_api_token', '')
+        use_proxy = bool(proxy_api_token)
+
+        if use_proxy:
+            self._log("Proxy API token co san - se su dung proxy de bypass captcha")
+
+        # Check bearer token
         if not bearer_token:
             bearer_token = self.config.get('flow_bearer_token', '')
 
+        # Neu van chua co token, capture tu Chrome (PyAutoGUI)
         if not bearer_token:
-            return {"success": False, "error": "Can bearer token cho API mode"}
+            self._log("Khong co bearer token, thu tu dong lay...")
+            bearer_token = self._auto_extract_token()
+
+        if not bearer_token:
+            return {"success": False, "error": "Can bearer token cho API mode. Chua co token va khong the tu dong lay."}
 
         if not prompts:
             return {"success": False, "error": "Khong co prompts"}
 
-        self._log(f"Tong: {len(prompts)} prompts")
-        self._log(f"Token: {bearer_token[:20]}...{bearer_token[-10:]}")
+        # Use extracted flow_project_id if available
+        flow_project_id = self.config.get('flow_project_id', self.project_code)
 
-        # Create API client
+        self._log(f"Tong: {len(prompts)} prompts")
+        self._log(f"Project ID: {flow_project_id}")
+        self._log(f"Token: {bearer_token[:20]}...{bearer_token[-10:]}")
+        if use_proxy:
+            self._log(f"Proxy mode: ENABLED (nanoai.pics)")
+        else:
+            self._log(f"Proxy mode: DISABLED (direct API call)")
+
+        # Create API client with proxy support
         api = GoogleFlowAPI(
             bearer_token=bearer_token,
-            project_id=self.project_code,
+            project_id=flow_project_id,
             timeout=self.config.get('flow_timeout', 120),
-            verbose=self.verbose
+            verbose=self.verbose,
+            proxy_api_token=proxy_api_token,
+            use_proxy=use_proxy
         )
 
         # Map aspect ratio
