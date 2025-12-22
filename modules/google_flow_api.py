@@ -170,7 +170,8 @@ class GoogleFlowAPI:
     TOOL_NAME = "PINHOLE"  # Internal name for Flow
 
     # Proxy API for bypassing captcha
-    PROXY_API_URL = "https://flow-api.nanoai.pics/api/fix/create-video-veo3"
+    PROXY_VIDEO_API_URL = "https://flow-api.nanoai.pics/api/fix/create-video-veo3"
+    PROXY_IMAGE_API_URL = "https://flow-api.nanoai.pics/api/fix/create-image-veo3"
 
     def __init__(
         self,
@@ -326,13 +327,24 @@ class GoogleFlowAPI:
             }
             requests_data.append(request_item)
         
-        payload = {"requests": requests_data}
-        
-        # Build URL
+        payload = {
+            "clientContext": {
+                "sessionId": self.session_id,
+                "projectId": self.project_id,
+                "tool": self.TOOL_NAME
+            },
+            "requests": requests_data
+        }
+
+        # Route to proxy if enabled
+        if self.use_proxy and self.proxy_api_token:
+            return self._generate_images_via_proxy(payload, prompt, aspect_ratio.value)
+
+        # Direct API call
         url = f"{self.BASE_URL}/v1/projects/{self.project_id}/flowMedia:batchGenerateImages"
-        
-        self._log(f"POST {url}")
-        
+
+        self._log(f"POST {url} (direct)")
+
         try:
             response = self.session.post(
                 url,
@@ -397,7 +409,80 @@ class GoogleFlowAPI:
             return False, [], f"Invalid JSON response: {str(e)}"
         except Exception as e:
             return False, [], f"Unexpected error: {str(e)}"
-    
+
+    def _generate_images_via_proxy(
+        self,
+        payload: Dict[str, Any],
+        prompt: str,
+        aspect_ratio: str
+    ) -> Tuple[bool, List[GeneratedImage], str]:
+        """
+        Gọi qua proxy API để bypass captcha/recaptcha cho image generation.
+        Proxy sẽ xử lý recaptchaToken và forward request đến Google.
+        """
+        if not self.proxy_api_token:
+            return False, [], "Proxy API token required - set proxy_api_token"
+
+        self._log(f"POST {self.PROXY_IMAGE_API_URL} (via proxy)")
+
+        # Build proxy request
+        proxy_payload = {
+            "body_json": payload,
+            "flow_auth_token": self.bearer_token,
+            "flow_url": f"{self.BASE_URL}/v1/projects/{self.project_id}/flowMedia:batchGenerateImages"
+        }
+
+        try:
+            # Create separate session for proxy (different headers)
+            proxy_headers = {
+                "Authorization": f"Bearer {self.proxy_api_token}",
+                "Content-Type": "application/json"
+            }
+
+            response = requests.post(
+                self.PROXY_IMAGE_API_URL,
+                headers=proxy_headers,
+                json=proxy_payload,
+                timeout=self.timeout
+            )
+
+            self._log(f"Proxy response status: {response.status_code}")
+
+            if response.status_code == 401:
+                return False, [], "Proxy API authentication failed - check proxy_api_token"
+
+            if response.status_code == 403:
+                error_text = response.text[:200]
+                return False, [], f"Proxy access forbidden: {error_text}"
+
+            if response.status_code != 200:
+                error_text = response.text[:200]
+                return False, [], f"Proxy API error: {response.status_code} - {error_text}"
+
+            # Parse response
+            result = response.json()
+
+            if self.verbose:
+                self._log(f"Proxy response: {json.dumps(result, indent=2)[:500]}")
+
+            # Extract images from response
+            images = self._parse_image_response(result, prompt, aspect_ratio)
+
+            if images:
+                self._log(f"✓ Generated {len(images)} images via proxy successfully")
+                return True, images, ""
+            else:
+                return False, [], "No images in proxy response - check response format"
+
+        except requests.exceptions.Timeout:
+            return False, [], f"Proxy request timeout after {self.timeout}s"
+        except requests.exceptions.RequestException as e:
+            return False, [], f"Proxy network error: {str(e)}"
+        except json.JSONDecodeError as e:
+            return False, [], f"Invalid JSON from proxy: {str(e)}"
+        except Exception as e:
+            return False, [], f"Proxy error: {str(e)}"
+
     def _parse_image_response(
         self,
         response: Dict[str, Any],
@@ -1127,7 +1212,7 @@ class GoogleFlowAPI:
                 error="Proxy API token required"
             ), "Proxy API token required"
 
-        self._log(f"POST {self.PROXY_API_URL} (via proxy)")
+        self._log(f"POST {self.PROXY_VIDEO_API_URL} (via proxy)")
 
         # Build proxy request
         proxy_payload = {
@@ -1145,7 +1230,7 @@ class GoogleFlowAPI:
             }
 
             response = requests.post(
-                self.PROXY_API_URL,
+                self.PROXY_VIDEO_API_URL,
                 headers=proxy_headers,
                 json=proxy_payload,
                 timeout=self.timeout
