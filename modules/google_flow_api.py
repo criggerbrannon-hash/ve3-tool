@@ -37,8 +37,12 @@ class VideoAspectRatio(Enum):
 
 class VideoModel(Enum):
     """Model tạo video Veo 3."""
+    # Text-to-Video models (t2v)
     VEO3_FAST = "veo_3_1_t2v_fast_ultra"  # Fast generation
     VEO3_QUALITY = "veo_3_1_t2v"           # Quality generation
+    # Image-to-Video models (r2v = reference to video)
+    VEO3_I2V_FAST = "veo_3_0_r2v_fast_ultra"  # Fast Image-to-Video
+    VEO3_I2V_QUALITY = "veo_3_0_r2v"           # Quality Image-to-Video
 
 
 class PaygateTier(Enum):
@@ -1154,7 +1158,8 @@ class GoogleFlowAPI:
         model: VideoModel = VideoModel.VEO3_FAST,
         seed: Optional[int] = None,
         scene_id: Optional[str] = None,
-        recaptcha_token: str = ""
+        recaptcha_token: str = "",
+        reference_image_id: Optional[str] = None
     ) -> Tuple[bool, VideoGenerationResult, str]:
         """
         Tạo video từ prompt sử dụng Veo 3.
@@ -1166,11 +1171,15 @@ class GoogleFlowAPI:
             seed: Seed cho reproducible results
             scene_id: Scene ID (tự tạo UUID nếu không có)
             recaptcha_token: reCAPTCHA token (để trống nếu dùng proxy)
+            reference_image_id: Media ID của ảnh để tạo video từ ảnh (Image-to-Video)
 
         Returns:
             Tuple[success, VideoGenerationResult, error_message]
         """
-        self._log(f"Generating video with prompt: {prompt[:50]}...")
+        # Determine mode: Image-to-Video or Text-to-Video
+        is_i2v = reference_image_id is not None
+        mode_str = "Image-to-Video" if is_i2v else "Text-to-Video"
+        self._log(f"Generating video ({mode_str}) with prompt: {prompt[:50]}...")
 
         # Auto-generate seed and scene_id if not provided
         if seed is None:
@@ -1178,7 +1187,32 @@ class GoogleFlowAPI:
         if scene_id is None:
             scene_id = str(uuid.uuid4())
 
+        # For Image-to-Video, use I2V model if not explicitly set
+        if is_i2v and model in [VideoModel.VEO3_FAST, VideoModel.VEO3_QUALITY]:
+            model = VideoModel.VEO3_I2V_FAST
+            self._log(f"Using Image-to-Video model: {model.value}")
+
         # Build request payload theo format mới
+        request_data = {
+            "aspectRatio": aspect_ratio.value,
+            "seed": seed,
+            "textInput": {
+                "prompt": prompt
+            },
+            "videoModelKey": model.value,
+            "metadata": {
+                "sceneId": scene_id
+            }
+        }
+
+        # Add referenceImages for Image-to-Video
+        if reference_image_id:
+            request_data["referenceImages"] = [{
+                "imageUsageType": "IMAGE_USAGE_TYPE_ASSET",
+                "mediaId": reference_image_id
+            }]
+            self._log(f"Added reference image: {reference_image_id[:50]}...")
+
         payload = {
             "clientContext": {
                 "recaptchaToken": recaptcha_token,
@@ -1187,19 +1221,7 @@ class GoogleFlowAPI:
                 "tool": self.TOOL_NAME,
                 "userPaygateTier": self.paygate_tier.value
             },
-            "requests": [
-                {
-                    "aspectRatio": aspect_ratio.value,
-                    "seed": seed,
-                    "textInput": {
-                        "prompt": prompt
-                    },
-                    "videoModelKey": model.value,
-                    "metadata": {
-                        "sceneId": scene_id
-                    }
-                }
-            ]
+            "requests": [request_data]
         }
 
         # Chọn endpoint: proxy hoặc direct
@@ -1324,22 +1346,31 @@ class GoogleFlowAPI:
         self._log(f"POST {self.PROXY_VIDEO_API_URL} (via proxy)")
 
         # Build proxy request - format theo nanoai.pics API
-        # Video proxy cần: aspectRatio, textInput.prompt, videoModelKey
+        # Copy request data from payload (includes referenceImages if Image-to-Video)
+        request_data = payload["requests"][0]
+
+        proxy_request = {
+            "aspectRatio": request_data.get("aspectRatio", "VIDEO_ASPECT_RATIO_LANDSCAPE"),
+            "textInput": {
+                "prompt": prompt
+            },
+            "videoModelKey": request_data.get("videoModelKey", "veo_3_1_t2v_fast_ultra"),
+            "seed": request_data.get("seed"),
+            "metadata": request_data.get("metadata", {})
+        }
+
+        # Add referenceImages for Image-to-Video
+        if "referenceImages" in request_data:
+            proxy_request["referenceImages"] = request_data["referenceImages"]
+            self._log(f"Image-to-Video mode with reference image")
+
         proxy_body = {
             "clientContext": {
                 "sessionId": self.session_id,
                 "projectId": self.project_id,
                 "tool": self.TOOL_NAME
             },
-            "requests": [
-                {
-                    "aspectRatio": payload["requests"][0].get("aspectRatio", "VIDEO_ASPECT_RATIO_LANDSCAPE"),
-                    "textInput": {
-                        "prompt": prompt
-                    },
-                    "videoModelKey": payload["requests"][0].get("videoModelKey", "veo_3_1_t2v_fast_ultra")
-                }
-            ]
+            "requests": [proxy_request]
         }
 
         proxy_payload = {
