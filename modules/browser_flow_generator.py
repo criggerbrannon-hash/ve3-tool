@@ -1733,6 +1733,99 @@ class BrowserFlowGenerator:
             traceback.print_exc()
             return None
 
+    def _capture_headers_via_chrome(self) -> Optional[Dict[str, str]]:
+        """
+        Capture headers (x-browser-validation, authorization, etc) tu Chrome bang Selenium + CDP.
+        TAO 1 ANH TEST de trigger API request va capture headers.
+
+        Returns:
+            Dict chua headers hoac None neu that bai
+        """
+        self._log("=== CAPTURE HEADERS TU CHROME (SELENIUM) ===")
+
+        try:
+            from modules.chrome_headers_extractor import ChromeHeadersExtractor
+        except ImportError as e:
+            self._log(f"Khong import duoc ChromeHeadersExtractor: {e}", "error")
+            return None
+
+        # Lay profile path
+        profiles_dir = self.config.get('browser_profiles_dir', './chrome_profiles')
+        profile_path = str(Path(profiles_dir) / self.profile_name)
+
+        self._log(f"Profile: {profile_path}")
+
+        try:
+            extractor = ChromeHeadersExtractor(
+                chrome_profile_path=profile_path,
+                headless=False,
+                verbose=True
+            )
+
+            # Start browser
+            if not extractor.start_browser():
+                self._log("Khong khoi dong duoc Chrome", "error")
+                return None
+
+            # Navigate to Flow
+            if not extractor.navigate_to_flow():
+                self._log("Khong navigate duoc den Flow", "error")
+                extractor.stop_browser()
+                return None
+
+            # Wait for page load
+            self._log("Doi trang load (5s)...")
+            import time
+            time.sleep(5)
+
+            # Trigger API request and capture headers
+            self._log("Trigger API request de capture headers...")
+            captured = extractor.trigger_api_and_capture()
+
+            if captured.is_valid():
+                self._log(f"✅ x-browser-validation: {captured.x_browser_validation[:40]}...", "success")
+                self._log(f"✅ Authorization: {captured.authorization[:50]}...", "success")
+
+                # Extract token and project_id
+                if captured.authorization.startswith("Bearer "):
+                    token = captured.authorization[7:]
+                    self.config['flow_bearer_token'] = token
+
+                    # Extract project_id from URL if available
+                    # (will be captured in next request)
+
+                # Convert to dict for API use
+                headers_dict = captured.to_dict()
+
+                # Store for later use
+                self.config['captured_headers'] = headers_dict
+
+                extractor.stop_browser()
+                return headers_dict
+            else:
+                self._log("Khong capture duoc headers day du", "error")
+                self._log(f"  authorization: {bool(captured.authorization)}")
+                self._log(f"  x-browser-validation: {bool(captured.x_browser_validation)}")
+
+                # Fallback: try capture from network logs
+                self._log("Thu capture tu network logs...")
+                captured = extractor.capture_headers_from_network(timeout=30)
+
+                if captured.is_valid():
+                    headers_dict = captured.to_dict()
+                    self.config['captured_headers'] = headers_dict
+                    extractor.stop_browser()
+                    return headers_dict
+
+                extractor.stop_browser()
+                return None
+
+        except Exception as e:
+            self._log(f"Exception khi capture headers: {e}", "error")
+            import traceback
+            traceback.print_exc()
+            return None
+
     def generate_images_auto(
         self,
         excel_path: Optional[Path] = None,
@@ -1935,15 +2028,28 @@ class BrowserFlowGenerator:
         except ImportError as e:
             return {"success": False, "error": f"Khong import duoc GoogleFlowAPI: {e}"}
 
-        # Check bearer token
+        # Check bearer token va captured headers
+        extra_headers = self.config.get('captured_headers', {})
+
         if not bearer_token:
             # Thu lay tu config
             bearer_token = self.config.get('flow_bearer_token', '')
 
-        # Neu van chua co token, tu dong lay tu Chrome
-        if not bearer_token:
-            self._log("Khong co bearer token, tu dong lay tu Chrome...")
-            bearer_token = self._auto_extract_token()
+        # Neu van chua co token HOAC chua co x-browser-validation, capture tu Chrome
+        if not bearer_token or not extra_headers.get('x-browser-validation'):
+            self._log("Khong co token/headers day du, capture tu Chrome (Selenium)...")
+            captured_headers = self._capture_headers_via_chrome()
+
+            if captured_headers:
+                extra_headers = captured_headers
+                # Extract token from Authorization header
+                auth = captured_headers.get('Authorization', '')
+                if auth.startswith('Bearer '):
+                    bearer_token = auth[7:]
+            else:
+                # Fallback to auto_extract_token (PyAutoGUI)
+                self._log("Fallback: Thu lay token bang PyAutoGUI...")
+                bearer_token = self._auto_extract_token()
 
         if not bearer_token:
             return {
@@ -1964,13 +2070,16 @@ class BrowserFlowGenerator:
         flow_project_id = self.config.get('flow_project_id', self.project_code)
         self._log(f"Project ID: {flow_project_id}")
         self._log(f"Token: {bearer_token[:20]}...{bearer_token[-10:]}")
+        if extra_headers.get('x-browser-validation'):
+            self._log(f"x-browser-validation: {extra_headers['x-browser-validation'][:40]}...")
 
-        # Create API client
+        # Create API client with extra headers (x-browser-validation, etc)
         api = GoogleFlowAPI(
             bearer_token=bearer_token,
             project_id=flow_project_id,
             timeout=self.config.get('flow_timeout', 120),
-            verbose=self.verbose
+            verbose=self.verbose,
+            extra_headers=extra_headers
         )
 
         # Map aspect ratio
@@ -2151,13 +2260,27 @@ class BrowserFlowGenerator:
         except ImportError as e:
             return {"success": False, "error": f"Khong import duoc GoogleFlowAPI: {e}"}
 
+        # Check bearer token va captured headers
+        extra_headers = self.config.get('captured_headers', {})
+
         if not bearer_token:
             bearer_token = self.config.get('flow_bearer_token', '')
 
-        # Neu van chua co token, tu dong lay tu Chrome
-        if not bearer_token:
-            self._log("Khong co bearer token, tu dong lay tu Chrome...")
-            bearer_token = self._auto_extract_token()
+        # Neu van chua co token HOAC chua co x-browser-validation, capture tu Chrome
+        if not bearer_token or not extra_headers.get('x-browser-validation'):
+            self._log("Khong co token/headers day du, capture tu Chrome (Selenium)...")
+            captured_headers = self._capture_headers_via_chrome()
+
+            if captured_headers:
+                extra_headers = captured_headers
+                # Extract token from Authorization header
+                auth = captured_headers.get('Authorization', '')
+                if auth.startswith('Bearer '):
+                    bearer_token = auth[7:]
+            else:
+                # Fallback to auto_extract_token (PyAutoGUI)
+                self._log("Fallback: Thu lay token bang PyAutoGUI...")
+                bearer_token = self._auto_extract_token()
 
         if not bearer_token:
             return {"success": False, "error": "Can bearer token cho API mode. Chua co token va khong the tu dong lay."}
@@ -2171,13 +2294,16 @@ class BrowserFlowGenerator:
         self._log(f"Tong: {len(prompts)} prompts")
         self._log(f"Project ID: {flow_project_id}")
         self._log(f"Token: {bearer_token[:20]}...{bearer_token[-10:]}")
+        if extra_headers.get('x-browser-validation'):
+            self._log(f"x-browser-validation: {extra_headers['x-browser-validation'][:40]}...")
 
-        # Create API client
+        # Create API client with extra headers
         api = GoogleFlowAPI(
             bearer_token=bearer_token,
             project_id=flow_project_id,
             timeout=self.config.get('flow_timeout', 120),
-            verbose=self.verbose
+            verbose=self.verbose,
+            extra_headers=extra_headers
         )
 
         # Map aspect ratio

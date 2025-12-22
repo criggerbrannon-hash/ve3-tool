@@ -181,7 +181,8 @@ class GoogleFlowAPI:
         verbose: bool = False,
         proxy_api_token: Optional[str] = None,
         use_proxy: bool = False,
-        paygate_tier: PaygateTier = PaygateTier.TIER_TWO
+        paygate_tier: PaygateTier = PaygateTier.TIER_TWO,
+        extra_headers: Optional[Dict[str, str]] = None
     ):
         """
         Khởi tạo Google Flow API client.
@@ -193,6 +194,7 @@ class GoogleFlowAPI:
             timeout: Request timeout in seconds
             verbose: Print debug info
             proxy_api_token: Token cho proxy API (nanoai.pics) - bypass captcha
+            extra_headers: Extra headers (x-browser-validation, etc.) from Chrome capture
             use_proxy: Sử dụng proxy API thay vì gọi trực tiếp
             paygate_tier: User paygate tier (TIER_ONE hoặc TIER_TWO)
         """
@@ -204,6 +206,7 @@ class GoogleFlowAPI:
         self.proxy_api_token = proxy_api_token
         self.use_proxy = use_proxy
         self.paygate_tier = paygate_tier
+        self.extra_headers = extra_headers or {}
 
         # Validate token format
         if not self.bearer_token.startswith("ya29."):
@@ -214,8 +217,9 @@ class GoogleFlowAPI:
     def _create_session(self) -> requests.Session:
         """Tạo HTTP session với headers chuẩn."""
         session = requests.Session()
-        
-        session.headers.update({
+
+        # Base headers
+        headers = {
             "Authorization": f"Bearer {self.bearer_token}",
             "Content-Type": "text/plain;charset=UTF-8",
             "Accept": "*/*",
@@ -225,8 +229,15 @@ class GoogleFlowAPI:
             "Sec-Fetch-Dest": "empty",
             "Sec-Fetch-Mode": "cors",
             "Sec-Fetch-Site": "cross-site",
-        })
-        
+        }
+
+        # Add extra headers (x-browser-validation, etc.) if provided
+        if self.extra_headers:
+            for key, value in self.extra_headers.items():
+                if value:  # Only add non-empty values
+                    headers[key] = value
+
+        session.headers.update(headers)
         return session
     
     def _log(self, message: str) -> None:
