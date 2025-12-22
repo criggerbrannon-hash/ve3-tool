@@ -313,7 +313,7 @@ class ChromeHeadersExtractor:
     def trigger_api_and_capture(self) -> CapturedHeaders:
         """
         Trigger 1 API call và capture headers.
-        Flow: Click Dự án mới → Chọn Tạo hình ảnh → Gửi prompt → Capture headers
+        Dùng VE3 script giống Chrome mode - inject script và gọi VE3.run()
         """
         if not self.driver:
             return CapturedHeaders()
@@ -328,98 +328,58 @@ class ChromeHeadersExtractor:
         except Exception as e:
             self._log(f"Fetch.enable error: {e}")
 
-        # === STEP 1: Click "Dự án mới" ===
-        self._log("Step 1: Click 'Dự án mới'...")
-        result = self.driver.execute_script("""
-            return (function() {
-                const btns = document.querySelectorAll('button');
-                for (const btn of btns) {
-                    const text = btn.textContent || '';
-                    if (text.includes('Dự án mới') || text.includes('New project')) {
-                        btn.click();
-                        return 'clicked: ' + text;
-                    }
-                }
-                return 'no_new_project_button';
-            })();
-        """)
-        self._log(f"  Result: {result}")
-        time.sleep(5)
+        # === STEP 1: Inject VE3 script (giống Chrome mode) ===
+        self._log("Step 1: Inject VE3 automation script...")
+        try:
+            from pathlib import Path
+            script_path = Path(__file__).parent.parent / "scripts" / "ve3_browser_automation.js"
+            if script_path.exists():
+                with open(script_path, "r", encoding="utf-8") as f:
+                    js_code = f.read()
+                self.driver.execute_script(js_code)
+                self._log("  VE3 script injected!")
+            else:
+                self._log(f"  Script not found: {script_path}", "error")
+                return CapturedHeaders()
+        except Exception as e:
+            self._log(f"  Inject error: {e}")
+            return CapturedHeaders()
 
-        # === STEP 2: Click dropdown và chọn "Tạo hình ảnh" ===
-        self._log("Step 2: Select 'Tạo hình ảnh' mode...")
+        time.sleep(2)
+
+        # === STEP 2: Setup VE3 (tạo project mới) ===
+        self._log("Step 2: VE3.setup()...")
         result = self.driver.execute_script("""
             return (async function() {
-                // Click dropdown (combobox)
-                const dropdown = document.querySelector('button[role="combobox"]');
-                if (dropdown) {
-                    dropdown.click();
-                    await new Promise(r => setTimeout(r, 1000));
-
-                    // Find and click "Tạo hình ảnh" option
-                    const allElements = document.querySelectorAll('*');
-                    for (const el of allElements) {
-                        const text = el.textContent || '';
-                        if (text === 'Tạo hình ảnh' || text.includes('Tạo hình ảnh từ văn bản')) {
-                            const rect = el.getBoundingClientRect();
-                            if (rect.height > 10 && rect.height < 80) {
-                                el.click();
-                                return 'selected: ' + text.substring(0, 40);
-                            }
-                        }
-                    }
-                    return 'no_image_mode_option';
+                if (typeof VE3 === 'undefined') return 'VE3_not_found';
+                try {
+                    await VE3.setup('header_capture_test');
+                    return 'setup_done: ' + (VE3.getProjectUrl() || 'no_url');
+                } catch(e) {
+                    return 'setup_error: ' + e.message;
                 }
-                return 'no_dropdown';
             })();
         """)
         self._log(f"  Result: {result}")
         time.sleep(3)
 
-        # === STEP 3: Focus textarea và nhập prompt bằng Selenium send_keys (keyboard thật) ===
-        self._log("Step 3: Input prompt using real keyboard...")
-        try:
-            from selenium.webdriver.common.by import By
-            from selenium.webdriver.common.keys import Keys
-            from selenium.webdriver.support.ui import WebDriverWait
-            from selenium.webdriver.support import expected_conditions as EC
-
-            # Wait for textarea
-            textarea = WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, 'textarea'))
-            )
-            textarea.click()
-            time.sleep(0.5)
-
-            # Clear and type prompt using real keyboard
-            textarea.clear()
-            prompt = "a simple red apple on white background"
-            textarea.send_keys(prompt)
-            self._log(f"  Typed: {prompt[:30]}...")
-            time.sleep(1)
-
-            # Press Enter to submit
-            self._log("Step 4: Press Enter to generate...")
-            textarea.send_keys(Keys.ENTER)
-            self._log("  Sent Enter key")
-
-        except Exception as e:
-            self._log(f"  Error: {e}")
-            # Fallback to JavaScript
-            self._log("  Fallback: using JavaScript...")
-            result = self.driver.execute_script("""
-                return (function() {
-                    const ta = document.querySelector('textarea');
-                    if (ta) {
-                        ta.focus();
-                        ta.value = 'a simple red apple on white background';
-                        ta.dispatchEvent(new Event('input', { bubbles: true }));
-                        return 'js_fallback';
+        # === STEP 3: Gọi VE3.run() để trigger API request ===
+        self._log("Step 3: VE3.run() to trigger API...")
+        self.driver.execute_script("""
+            (async function() {
+                if (typeof VE3 !== 'undefined') {
+                    try {
+                        await VE3.run([{
+                            sceneId: 'test_capture',
+                            prompt: 'a simple red apple on white background'
+                        }]);
+                    } catch(e) {
+                        console.log('VE3.run error:', e);
                     }
-                    return 'no_textarea';
-                })();
-            """)
-            self._log(f"  Result: {result}")
+                }
+            })();
+        """)
+        self._log("  VE3.run() called, waiting for API request...")
 
         # Đợi ảnh được tạo - TỐI THIỂU 20 giây để đảm bảo API request được gửi
         self._log("Waiting for image generation (min 20s)...")
