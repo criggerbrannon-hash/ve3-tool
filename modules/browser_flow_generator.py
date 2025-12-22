@@ -1852,23 +1852,20 @@ class BrowserFlowGenerator:
         mode = self._get_generation_mode()
         self._log(f"[AUTO] Generation mode: {mode.upper()}")
 
+        # NOTE: API mode khong hoat dong cho images vi thieu x-browser-validation
+        # Chrome tu dong them header nay, Python API khong the
+        # => Luon dung Chrome mode cho images
         if mode == 'api':
-            # API mode - goi truc tiep API
-            return self.generate_scene_images_api(
-                excel_path=excel_path,
-                start_scene=start_scene,
-                end_scene=end_scene,
-                overwrite=overwrite,
-                bearer_token=bearer_token
-            )
-        else:
-            # Chrome mode (default) - browser automation
-            return self.generate_scene_images(
-                excel_path=excel_path,
-                start_scene=start_scene,
-                end_scene=end_scene,
-                overwrite=overwrite
-            )
+            self._log("[AUTO] API mode khong kha dung cho images (thieu x-browser-validation)")
+            self._log("[AUTO] Chuyen sang Chrome mode...")
+
+        # Luon dung Chrome mode cho image generation
+        return self.generate_scene_images(
+            excel_path=excel_path,
+            start_scene=start_scene,
+            end_scene=end_scene,
+            overwrite=overwrite
+        )
 
     def generate_from_prompts_auto(
         self,
@@ -1892,18 +1889,17 @@ class BrowserFlowGenerator:
         mode = self._get_generation_mode()
         self._log(f"[AUTO] Generation mode: {mode.upper()}")
 
+        # NOTE: API mode khong hoat dong cho images vi thieu x-browser-validation
         if mode == 'api':
-            return self.generate_from_prompts_api(
-                prompts=prompts,
-                excel_path=excel_path,
-                bearer_token=bearer_token
-            )
-        else:
-            return self.generate_from_prompts(
-                prompts=prompts,
-                excel_path=excel_path,
-                max_setup_retries=max_setup_retries
-            )
+            self._log("[AUTO] API mode khong kha dung cho images (thieu x-browser-validation)")
+            self._log("[AUTO] Chuyen sang Chrome mode...")
+
+        # Luon dung Chrome mode cho image generation
+        return self.generate_from_prompts(
+            prompts=prompts,
+            excel_path=excel_path,
+            max_setup_retries=max_setup_retries
+        )
 
     def generate_all(
         self,
