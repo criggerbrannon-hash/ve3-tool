@@ -410,6 +410,9 @@ class GoogleFlowAPI:
         except Exception as e:
             return False, [], f"Unexpected error: {str(e)}"
 
+    # Proxy task status endpoint
+    PROXY_TASK_STATUS_URL = "https://flow-api.nanoai.pics/api/fix/task-status"
+
     def _generate_images_via_proxy(
         self,
         payload: Dict[str, Any],
@@ -418,32 +421,52 @@ class GoogleFlowAPI:
     ) -> Tuple[bool, List[GeneratedImage], str]:
         """
         Gọi qua proxy API để bypass captcha/recaptcha cho image generation.
-        Proxy sẽ xử lý recaptchaToken và forward request đến Google.
+        Proxy API là async:
+        1. POST /create-image-veo3 → {"success": true, "taskId": "xxx"}
+        2. GET /task-status?taskId=xxx → Poll cho đến khi có kết quả
         """
         if not self.proxy_api_token:
             return False, [], "Proxy API token required - set proxy_api_token"
 
         self._log(f"POST {self.PROXY_IMAGE_API_URL} (via proxy)")
 
-        # Build proxy request
+        # Build proxy request - format theo yêu cầu của proxy API
+        # Proxy cần: aspectRatio, textInput.prompt, imageModelKey
+        proxy_body = {
+            "clientContext": {
+                "sessionId": self.session_id,
+                "projectId": self.project_id,
+                "tool": self.TOOL_NAME
+            },
+            "requests": [
+                {
+                    "aspectRatio": aspect_ratio,
+                    "textInput": {
+                        "prompt": prompt
+                    },
+                    "imageModelKey": "imagen_3"
+                }
+            ]
+        }
+
         proxy_payload = {
-            "body_json": payload,
+            "body_json": proxy_body,
             "flow_auth_token": self.bearer_token,
-            "flow_url": f"{self.BASE_URL}/v1/projects/{self.project_id}/flowMedia:batchGenerateImages"
+            "flow_url": f"{self.BASE_URL}/v1/image"
         }
 
         try:
-            # Create separate session for proxy (different headers)
             proxy_headers = {
                 "Authorization": f"Bearer {self.proxy_api_token}",
                 "Content-Type": "application/json"
             }
 
+            # Step 1: Create task
             response = requests.post(
                 self.PROXY_IMAGE_API_URL,
                 headers=proxy_headers,
                 json=proxy_payload,
-                timeout=self.timeout
+                timeout=30
             )
 
             self._log(f"Proxy response status: {response.status_code}")
@@ -451,40 +474,90 @@ class GoogleFlowAPI:
             if response.status_code == 401:
                 return False, [], "Proxy API authentication failed - check proxy_api_token"
 
-            if response.status_code == 403:
-                error_text = response.text[:200]
-                return False, [], f"Proxy access forbidden: {error_text}"
-
             if response.status_code != 200:
                 error_text = response.text[:200]
                 return False, [], f"Proxy API error: {response.status_code} - {error_text}"
 
-            # Parse response
             result = response.json()
+            self._log(f"Create task response: {json.dumps(result)[:500]}")
 
-            # Debug: Always log proxy response structure
-            self._log(f"=== PROXY RESPONSE ===")
-            self._log(f"Keys: {list(result.keys())}")
-            self._log(f"Full response: {json.dumps(result, indent=2)[:1000]}")
+            if not result.get("success"):
+                return False, [], f"Proxy create task failed: {result.get('error', 'Unknown')}"
 
-            # Extract images from response
-            images = self._parse_image_response(result, prompt, aspect_ratio)
+            task_id = result.get("taskId")
+            if not task_id:
+                return False, [], "No taskId in proxy response"
 
-            if images:
-                self._log(f"✓ Generated {len(images)} images via proxy successfully")
-                return True, images, ""
-            else:
-                self._log(f"=== NO IMAGES FOUND - Full response: {json.dumps(result)[:2000]}")
-                return False, [], "No images in proxy response - check response format"
+            self._log(f"Task created: {task_id}")
+
+            # Step 2: Poll for result
+            return self._poll_proxy_task(task_id, prompt, aspect_ratio, proxy_headers)
 
         except requests.exceptions.Timeout:
-            return False, [], f"Proxy request timeout after {self.timeout}s"
+            return False, [], f"Proxy request timeout"
         except requests.exceptions.RequestException as e:
             return False, [], f"Proxy network error: {str(e)}"
-        except json.JSONDecodeError as e:
-            return False, [], f"Invalid JSON from proxy: {str(e)}"
         except Exception as e:
             return False, [], f"Proxy error: {str(e)}"
+
+    def _poll_proxy_task(
+        self,
+        task_id: str,
+        prompt: str,
+        aspect_ratio: str,
+        headers: Dict[str, str],
+        max_attempts: int = 60,
+        poll_interval: float = 2.0
+    ) -> Tuple[bool, List[GeneratedImage], str]:
+        """Poll proxy task status until complete."""
+        self._log(f"Polling task {task_id}...")
+
+        for attempt in range(max_attempts):
+            try:
+                response = requests.get(
+                    f"{self.PROXY_TASK_STATUS_URL}?taskId={task_id}",
+                    headers=headers,
+                    timeout=30
+                )
+
+                if response.status_code != 200:
+                    self._log(f"Poll attempt {attempt+1}: status {response.status_code}")
+                    time.sleep(poll_interval)
+                    continue
+
+                result = response.json()
+                self._log(f"Poll {attempt+1}: {json.dumps(result)[:300]}")
+
+                if not result.get("success"):
+                    time.sleep(poll_interval)
+                    continue
+
+                # Check if task completed
+                task_result = result.get("result", {})
+
+                if task_result.get("success") == True:
+                    # Task completed successfully - extract images
+                    self._log(f"Task completed! Extracting images...")
+                    images = self._parse_image_response(task_result, prompt, aspect_ratio)
+                    if images:
+                        return True, images, ""
+                    else:
+                        # Try parsing from different locations
+                        self._log(f"Full task result: {json.dumps(task_result)[:1000]}")
+                        return False, [], "Task completed but no images found"
+
+                elif task_result.get("success") == False:
+                    error = task_result.get("error", "Unknown error")
+                    return False, [], f"Task failed: {error}"
+
+                # Still processing
+                time.sleep(poll_interval)
+
+            except Exception as e:
+                self._log(f"Poll error: {e}")
+                time.sleep(poll_interval)
+
+        return False, [], f"Polling timeout after {max_attempts} attempts"
 
     def _parse_image_response(
         self,
