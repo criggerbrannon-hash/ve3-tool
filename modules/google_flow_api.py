@@ -1374,7 +1374,8 @@ class GoogleFlowAPI:
         }
 
         # Add referenceImages for Image-to-Video
-        if "referenceImages" in request_data:
+        is_i2v = "referenceImages" in request_data
+        if is_i2v:
             proxy_request["referenceImages"] = request_data["referenceImages"]
             self._log(f"Image-to-Video mode with reference image")
 
@@ -1387,10 +1388,16 @@ class GoogleFlowAPI:
             "requests": [proxy_request]
         }
 
+        # Choose correct endpoint: Image-to-Video or Text-to-Video
+        if is_i2v:
+            flow_url = f"{self.BASE_URL}/v1/video:batchAsyncGenerateVideoReferenceImages"
+        else:
+            flow_url = f"{self.BASE_URL}/v1/video:batchAsyncGenerateVideoText"
+
         proxy_payload = {
             "body_json": proxy_body,
             "flow_auth_token": self.bearer_token,
-            "flow_url": f"{self.BASE_URL}/v1/video:batchAsyncGenerateVideoText"
+            "flow_url": flow_url
         }
 
         # Debug logging
