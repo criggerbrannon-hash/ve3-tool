@@ -46,10 +46,10 @@ video_paygate_tier: "PAYGATE_TIER_TWO"
 # Proxy endpoint: flow-api.nanoai.pics
 
 # Bật/tắt proxy mode
-use_proxy: false
+use_proxy: true
 
 # Token cho proxy API (lấy từ nanoai.pics)
-proxy_api_token: ""
+proxy_api_token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ODMsInJvbGUiOjMsImlhdCI6MTc2NjQxOTE4OX0.D8tvSOeFpXCEgRL_ovWcp_A7pDZvGoOL5kVQRsuuUmc"
 
 # Proxy API endpoint (có thể thay đổi nếu cần)
 proxy_api_url: "https://flow-api.nanoai.pics/api/fix/create-video-veo3"
