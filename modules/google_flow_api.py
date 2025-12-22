@@ -1497,6 +1497,8 @@ class GoogleFlowAPI:
         """Poll proxy video task status until complete. Video takes longer than images."""
         self._log(f"Polling video task {task_id}...")
 
+        google_operation_name = None  # Will be extracted from first successful response
+
         for attempt in range(max_attempts):
             try:
                 response = requests.get(
@@ -1514,6 +1516,16 @@ class GoogleFlowAPI:
                 self._log(f"Video poll {attempt+1}: {json.dumps(result)[:300]}")
 
                 if not result.get("success"):
+                    # Check for failed status from proxy
+                    if result.get("code") == "failed":
+                        error_msg = result.get("message", "Unknown error")
+                        return False, VideoGenerationResult(
+                            status="failed",
+                            prompt=prompt,
+                            seed=seed,
+                            scene_id=scene_id,
+                            error=error_msg
+                        ), error_msg
                     # Still processing
                     if result.get("code") == "processing":
                         time.sleep(poll_interval)
@@ -1552,8 +1564,19 @@ class GoogleFlowAPI:
                     op_status = op.get("status", "")
                     operation_id = op.get("operation", {}).get("name")
 
-                    # Still pending - continue polling
+                    # Save operation name for direct Google polling
+                    if operation_id and not google_operation_name:
+                        google_operation_name = operation_id
+                        self._log(f"Got Google operation name: {google_operation_name}")
+
+                    # Still pending - after 20 attempts, try direct Google polling
                     if op_status == "MEDIA_GENERATION_STATUS_PENDING":
+                        if attempt >= 20 and google_operation_name:
+                            self._log(f"Switching to direct Google polling after {attempt} attempts...")
+                            return self._poll_google_video_status(
+                                google_operation_name, prompt, seed, scene_id,
+                                max_attempts - attempt, poll_interval
+                            )
                         time.sleep(poll_interval)
                         continue
 
@@ -1633,6 +1656,98 @@ class GoogleFlowAPI:
             scene_id=scene_id,
             error=f"Polling timeout after {max_attempts * poll_interval}s"
         ), f"Polling timeout after {max_attempts} attempts"
+
+    def _poll_google_video_status(
+        self,
+        operation_name: str,
+        prompt: str,
+        seed: int,
+        scene_id: str,
+        max_attempts: int = 100,
+        poll_interval: float = 5.0
+    ) -> Tuple[bool, VideoGenerationResult, str]:
+        """Poll Google's video status endpoint directly using bearer token."""
+        url = f"{self.BASE_URL}/v1/video:batchCheckAsyncVideoGenerationStatus"
+        self._log(f"Direct Google polling: {url}")
+
+        for attempt in range(max_attempts):
+            try:
+                payload = {
+                    "operationNames": [operation_name]
+                }
+
+                response = self.session.post(url, json=payload, timeout=30)
+                self._log(f"Google poll {attempt+1}: status={response.status_code}")
+
+                if response.status_code != 200:
+                    self._log(f"Response: {response.text[:200]}")
+                    time.sleep(poll_interval)
+                    continue
+
+                result = response.json()
+                self._log(f"Google response: {json.dumps(result)[:400]}")
+
+                # Parse operations array
+                operations = result.get("operations", [])
+                if not operations:
+                    time.sleep(poll_interval)
+                    continue
+
+                op = operations[0]
+                op_status = op.get("status", "")
+
+                # Still pending
+                if op_status == "MEDIA_GENERATION_STATUS_PENDING":
+                    time.sleep(poll_interval)
+                    continue
+
+                # Success - extract video URL
+                if op_status in ["MEDIA_GENERATION_STATUS_SUCCEEDED", "MEDIA_GENERATION_STATUS_COMPLETE"]:
+                    video_url = None
+                    media_list = op.get("media", [])
+                    if media_list:
+                        video_info = media_list[0].get("video", {})
+                        video_url = video_info.get("url") or video_info.get("videoUrl")
+
+                    if not video_url:
+                        video_info = op.get("video", {})
+                        video_url = video_info.get("url") or video_info.get("videoUrl")
+
+                    if video_url:
+                        self._log(f"Video completed! URL: {video_url[:80]}...")
+                        return True, VideoGenerationResult(
+                            video_url=video_url,
+                            operation_id=operation_name,
+                            scene_id=scene_id,
+                            status="completed",
+                            prompt=prompt,
+                            seed=seed
+                        ), ""
+
+                # Failed
+                if "FAILED" in op_status or "ERROR" in op_status:
+                    error_msg = op.get("error", op_status)
+                    return False, VideoGenerationResult(
+                        status="failed",
+                        prompt=prompt,
+                        seed=seed,
+                        scene_id=scene_id,
+                        error=f"Video generation failed: {error_msg}"
+                    ), f"Video generation failed: {error_msg}"
+
+                time.sleep(poll_interval)
+
+            except Exception as e:
+                self._log(f"Google poll error: {e}")
+                time.sleep(poll_interval)
+
+        return False, VideoGenerationResult(
+            status="failed",
+            prompt=prompt,
+            seed=seed,
+            scene_id=scene_id,
+            error="Google polling timeout"
+        ), "Google polling timeout"
 
     def _parse_video_response(
         self,
