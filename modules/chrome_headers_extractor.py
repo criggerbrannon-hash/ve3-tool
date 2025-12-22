@@ -313,7 +313,7 @@ class ChromeHeadersExtractor:
     def trigger_api_and_capture(self) -> CapturedHeaders:
         """
         Trigger 1 API call và capture headers.
-        Dùng Fetch intercept để bắt headers thực tế Chrome gửi.
+        Flow: Click Dự án mới → Chọn Tạo hình ảnh → Gửi prompt → Capture headers
         """
         if not self.driver:
             return CapturedHeaders()
@@ -328,36 +328,104 @@ class ChromeHeadersExtractor:
         except Exception as e:
             self._log(f"Fetch.enable error: {e}")
 
-        # Inject prompt và click Generate
-        self._log("Injecting prompt and clicking generate...")
+        # === STEP 1: Click "Dự án mới" ===
+        self._log("Step 1: Click 'Dự án mới'...")
         result = self.driver.execute_script("""
-            return (async () => {
-                // Tìm textarea
-                const textareas = document.querySelectorAll('textarea');
-                if (textareas.length > 0) {
-                    const ta = textareas[0];
+            return (function() {
+                const btns = document.querySelectorAll('button');
+                for (const btn of btns) {
+                    const text = btn.textContent || '';
+                    if (text.includes('Dự án mới') || text.includes('New project')) {
+                        btn.click();
+                        return 'clicked: ' + text;
+                    }
+                }
+                return 'no_new_project_button';
+            })();
+        """)
+        self._log(f"  Result: {result}")
+        time.sleep(5)
+
+        # === STEP 2: Click dropdown và chọn "Tạo hình ảnh" ===
+        self._log("Step 2: Select 'Tạo hình ảnh' mode...")
+        result = self.driver.execute_script("""
+            return (async function() {
+                // Click dropdown (combobox)
+                const dropdown = document.querySelector('button[role="combobox"]');
+                if (dropdown) {
+                    dropdown.click();
+                    await new Promise(r => setTimeout(r, 1000));
+
+                    // Find and click "Tạo hình ảnh" option
+                    const allElements = document.querySelectorAll('*');
+                    for (const el of allElements) {
+                        const text = el.textContent || '';
+                        if (text === 'Tạo hình ảnh' || text.includes('Tạo hình ảnh từ văn bản')) {
+                            const rect = el.getBoundingClientRect();
+                            if (rect.height > 10 && rect.height < 80) {
+                                el.click();
+                                return 'selected: ' + text.substring(0, 40);
+                            }
+                        }
+                    }
+                    return 'no_image_mode_option';
+                }
+                return 'no_dropdown';
+            })();
+        """)
+        self._log(f"  Result: {result}")
+        time.sleep(3)
+
+        # === STEP 3: Focus textarea và nhập prompt ===
+        self._log("Step 3: Input prompt...")
+        result = self.driver.execute_script("""
+            return (async function() {
+                const ta = document.querySelector('textarea');
+                if (ta) {
                     ta.focus();
                     ta.value = 'a simple red apple on white background';
                     ta.dispatchEvent(new Event('input', { bubbles: true }));
                     ta.dispatchEvent(new Event('change', { bubbles: true }));
-                    await new Promise(r => setTimeout(r, 1000));
+                    await new Promise(r => setTimeout(r, 500));
+                    return 'prompt_entered';
                 }
+                return 'no_textarea';
+            })();
+        """)
+        self._log(f"  Result: {result}")
+        time.sleep(1)
 
-                // Click generate button
+        # === STEP 4: Click Generate button ===
+        self._log("Step 4: Click Generate button...")
+        result = self.driver.execute_script("""
+            return (function() {
                 const allButtons = Array.from(document.querySelectorAll('button'));
                 for (const btn of allButtons) {
                     const text = (btn.textContent || '').toLowerCase();
                     const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase();
-                    if ((text.includes('tạo') || text.includes('generate') || ariaLabel.includes('generate')) && !btn.disabled) {
-                        console.log('Clicking button:', btn.textContent);
+                    // Match "Tạo", "Generate", or send button
+                    if (!btn.disabled && (
+                        text === 'tạo' ||
+                        text.includes('generate') ||
+                        ariaLabel.includes('generate') ||
+                        ariaLabel.includes('send') ||
+                        btn.querySelector('svg[data-icon="send"]')
+                    )) {
                         btn.click();
-                        return 'clicked: ' + btn.textContent;
+                        return 'clicked: ' + (text || ariaLabel || 'send_button');
                     }
+                }
+
+                // Fallback: try pressing Enter in textarea
+                const ta = document.querySelector('textarea');
+                if (ta) {
+                    ta.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', keyCode: 13, bubbles: true}));
+                    return 'pressed_enter';
                 }
                 return 'no_button_found';
             })();
         """)
-        self._log(f"Trigger result: {result}")
+        self._log(f"  Result: {result}")
 
         # Đợi ảnh được tạo - TỐI THIỂU 20 giây để đảm bảo API request được gửi
         self._log("Waiting for image generation (min 20s)...")

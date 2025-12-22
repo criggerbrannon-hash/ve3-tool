@@ -1773,10 +1773,10 @@ class BrowserFlowGenerator:
                 extractor.stop_browser()
                 return None
 
-            # Wait for page load
-            self._log("Doi trang load (5s)...")
+            # Wait for page load (12s like auto_token.py)
+            self._log("Doi trang load (12s)...")
             import time
-            time.sleep(5)
+            time.sleep(12)
 
             # Trigger API request and capture headers
             self._log("Trigger API request de capture headers...")
