@@ -452,7 +452,7 @@ class GoogleFlowAPI:
         proxy_payload = {
             "body_json": proxy_body,
             "flow_auth_token": self.bearer_token,
-            "flow_url": f"{self.BASE_URL}/v1/image:batchGenerateImages"
+            "flow_url": f"{self.BASE_URL}/v1/projects/{self.project_id}/flowMedia:batchGenerateImages"
         }
 
         # Debug: log the full request
