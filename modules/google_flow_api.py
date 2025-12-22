@@ -1493,21 +1493,58 @@ class GoogleFlowAPI:
                 video_url = None
                 operation_id = None
 
-                # Try to extract video URL from different response formats
-                if "videos" in task_result and task_result["videos"]:
-                    video_data = task_result["videos"][0]
-                    video_url = video_data.get("url") or video_data.get("videoUrl")
-                elif "media" in task_result and task_result["media"]:
-                    media_data = task_result["media"][0]
-                    video_info = media_data.get("video", {})
-                    video_url = video_info.get("url") or video_info.get("videoUrl")
-                elif "videoUrl" in task_result:
-                    video_url = task_result["videoUrl"]
-                elif "url" in task_result:
-                    video_url = task_result["url"]
+                # Check operations array format (from Google API via proxy)
+                operations = task_result.get("operations", [])
+                if operations:
+                    op = operations[0]
+                    op_status = op.get("status", "")
+                    operation_id = op.get("operation", {}).get("name")
 
-                # Check for operation ID (async)
-                operation_id = task_result.get("operationId") or task_result.get("name")
+                    # Still pending - continue polling
+                    if op_status == "MEDIA_GENERATION_STATUS_PENDING":
+                        time.sleep(poll_interval)
+                        continue
+
+                    # Check for success/completed status
+                    if op_status in ["MEDIA_GENERATION_STATUS_SUCCEEDED", "MEDIA_GENERATION_STATUS_COMPLETE"]:
+                        # Look for video in media array
+                        media_list = op.get("media", [])
+                        if media_list:
+                            video_info = media_list[0].get("video", {})
+                            video_url = video_info.get("url") or video_info.get("videoUrl")
+                        # Also try direct video field
+                        if not video_url:
+                            video_info = op.get("video", {})
+                            video_url = video_info.get("url") or video_info.get("videoUrl")
+
+                    # Check for failed status
+                    if "FAILED" in op_status or "ERROR" in op_status:
+                        error_msg = op.get("error", op_status)
+                        return False, VideoGenerationResult(
+                            status="failed",
+                            prompt=prompt,
+                            seed=seed,
+                            scene_id=scene_id,
+                            error=f"Video generation failed: {error_msg}"
+                        ), f"Video generation failed: {error_msg}"
+
+                # Try other response formats (fallback)
+                if not video_url:
+                    if "videos" in task_result and task_result["videos"]:
+                        video_data = task_result["videos"][0]
+                        video_url = video_data.get("url") or video_data.get("videoUrl")
+                    elif "media" in task_result and task_result["media"]:
+                        media_data = task_result["media"][0]
+                        video_info = media_data.get("video", {})
+                        video_url = video_info.get("url") or video_info.get("videoUrl")
+                    elif "videoUrl" in task_result:
+                        video_url = task_result["videoUrl"]
+                    elif "url" in task_result:
+                        video_url = task_result["url"]
+
+                # Check for operation ID (async) - fallback
+                if not operation_id:
+                    operation_id = task_result.get("operationId") or task_result.get("name")
 
                 if video_url:
                     self._log(f"Video completed! URL: {video_url[:80]}...")
