@@ -376,56 +376,50 @@ class ChromeHeadersExtractor:
         self._log(f"  Result: {result}")
         time.sleep(3)
 
-        # === STEP 3: Focus textarea và nhập prompt ===
-        self._log("Step 3: Input prompt...")
-        result = self.driver.execute_script("""
-            return (async function() {
-                const ta = document.querySelector('textarea');
-                if (ta) {
-                    ta.focus();
-                    ta.value = 'a simple red apple on white background';
-                    ta.dispatchEvent(new Event('input', { bubbles: true }));
-                    ta.dispatchEvent(new Event('change', { bubbles: true }));
-                    await new Promise(r => setTimeout(r, 500));
-                    return 'prompt_entered';
-                }
-                return 'no_textarea';
-            })();
-        """)
-        self._log(f"  Result: {result}")
-        time.sleep(1)
+        # === STEP 3: Focus textarea và nhập prompt bằng Selenium send_keys (keyboard thật) ===
+        self._log("Step 3: Input prompt using real keyboard...")
+        try:
+            from selenium.webdriver.common.by import By
+            from selenium.webdriver.common.keys import Keys
+            from selenium.webdriver.support.ui import WebDriverWait
+            from selenium.webdriver.support import expected_conditions as EC
 
-        # === STEP 4: Click Generate button ===
-        self._log("Step 4: Click Generate button...")
-        result = self.driver.execute_script("""
-            return (function() {
-                const allButtons = Array.from(document.querySelectorAll('button'));
-                for (const btn of allButtons) {
-                    const text = (btn.textContent || '').toLowerCase();
-                    const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase();
-                    // Match "Tạo", "Generate", or send button
-                    if (!btn.disabled && (
-                        text === 'tạo' ||
-                        text.includes('generate') ||
-                        ariaLabel.includes('generate') ||
-                        ariaLabel.includes('send') ||
-                        btn.querySelector('svg[data-icon="send"]')
-                    )) {
-                        btn.click();
-                        return 'clicked: ' + (text || ariaLabel || 'send_button');
+            # Wait for textarea
+            textarea = WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, 'textarea'))
+            )
+            textarea.click()
+            time.sleep(0.5)
+
+            # Clear and type prompt using real keyboard
+            textarea.clear()
+            prompt = "a simple red apple on white background"
+            textarea.send_keys(prompt)
+            self._log(f"  Typed: {prompt[:30]}...")
+            time.sleep(1)
+
+            # Press Enter to submit
+            self._log("Step 4: Press Enter to generate...")
+            textarea.send_keys(Keys.ENTER)
+            self._log("  Sent Enter key")
+
+        except Exception as e:
+            self._log(f"  Error: {e}")
+            # Fallback to JavaScript
+            self._log("  Fallback: using JavaScript...")
+            result = self.driver.execute_script("""
+                return (function() {
+                    const ta = document.querySelector('textarea');
+                    if (ta) {
+                        ta.focus();
+                        ta.value = 'a simple red apple on white background';
+                        ta.dispatchEvent(new Event('input', { bubbles: true }));
+                        return 'js_fallback';
                     }
-                }
-
-                // Fallback: try pressing Enter in textarea
-                const ta = document.querySelector('textarea');
-                if (ta) {
-                    ta.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', keyCode: 13, bubbles: true}));
-                    return 'pressed_enter';
-                }
-                return 'no_button_found';
-            })();
-        """)
-        self._log(f"  Result: {result}")
+                    return 'no_textarea';
+                })();
+            """)
+            self._log(f"  Result: {result}")
 
         # Đợi ảnh được tạo - TỐI THIỂU 20 giây để đảm bảo API request được gửi
         self._log("Waiting for image generation (min 20s)...")
