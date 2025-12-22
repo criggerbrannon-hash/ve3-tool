@@ -462,8 +462,10 @@ class GoogleFlowAPI:
             # Parse response
             result = response.json()
 
-            if self.verbose:
-                self._log(f"Proxy response: {json.dumps(result, indent=2)[:500]}")
+            # Debug: Always log proxy response structure
+            self._log(f"=== PROXY RESPONSE ===")
+            self._log(f"Keys: {list(result.keys())}")
+            self._log(f"Full response: {json.dumps(result, indent=2)[:1000]}")
 
             # Extract images from response
             images = self._parse_image_response(result, prompt, aspect_ratio)
@@ -472,6 +474,7 @@ class GoogleFlowAPI:
                 self._log(f"✓ Generated {len(images)} images via proxy successfully")
                 return True, images, ""
             else:
+                self._log(f"=== NO IMAGES FOUND - Full response: {json.dumps(result)[:2000]}")
                 return False, [], "No images in proxy response - check response format"
 
         except requests.exceptions.Timeout:
