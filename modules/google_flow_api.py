@@ -581,6 +581,18 @@ class GoogleFlowAPI:
                 # Check if we have media/images in result (success without explicit flag)
                 if "media" in task_result or "images" in task_result:
                     self._log(f"Task completed (implicit)! Extracting images...")
+                    # Debug: log first media item structure
+                    if "media" in task_result and task_result["media"]:
+                        first_media = task_result["media"][0]
+                        self._log(f"First media item keys: {list(first_media.keys())}")
+                        if "image" in first_media:
+                            img_wrapper = first_media["image"]
+                            self._log(f"  image keys: {list(img_wrapper.keys())}")
+                            if "generatedImage" in img_wrapper:
+                                gen_img = img_wrapper["generatedImage"]
+                                self._log(f"  generatedImage keys: {list(gen_img.keys())}")
+                                if "name" in gen_img:
+                                    self._log(f"  generatedImage.name: {gen_img['name'][:80]}...")
                     images = self._parse_image_response(task_result, prompt, aspect_ratio)
                     if images:
                         return True, images, ""
