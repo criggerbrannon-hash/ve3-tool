@@ -670,7 +670,9 @@ class GoogleFlowAPI:
                     )
                     if img.has_data:
                         images.append(img)
-                        self._log(f"  ✓ Parsed image: seed={img.seed}, has_url={bool(img.url)}, has_b64={bool(img.base64_data)}, media_name={bool(media_name)}")
+                        self._log(f"  ✓ Parsed image: seed={img.seed}, has_url={bool(img.url)}, has_b64={bool(img.base64_data)}")
+                        if media_name:
+                            self._log(f"  -> media_name (for I2V): {media_name[:80]}..." if len(media_name) > 80 else f"  -> media_name (for I2V): {media_name}")
         
         # =====================================================================
         # FALLBACK FORMATS (for compatibility)
