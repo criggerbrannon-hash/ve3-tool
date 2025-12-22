@@ -293,20 +293,25 @@ class ChromeAutoToken:
             # Chi can Ctrl+V va Enter
             prompt = "beautiful sunset over ocean with golden clouds and birds flying"
             self.send_prompt_manual(prompt)
-            
-            # === 8. Doi token ===
-            self.log("Doi capture token (60s)...")
-            
-            for i in range(20):
+
+            # === 8. CHO ANH TAO XONG (toi thieu 20s) ===
+            # QUAN TRONG: Phai cho anh tao xong moi capture duoc token day du
+            self.log("Doi anh tao xong (toi thieu 20s)...")
+            time.sleep(20)  # Cho toi thieu 20s de anh duoc tao
+
+            # === 9. Doi va capture token ===
+            self.log("Kiem tra token...")
+
+            for i in range(10):  # 10 x 3s = 30s them
                 time.sleep(3)
-                self.log(f"Kiem tra #{i+1}...")
-                
+                self.log(f"Kiem tra #{i+1}/10...")
+
                 token, proj = self.get_token_from_devtools()
-                
+
                 if token:
                     self.log("=== DA LAY DUOC TOKEN! ===")
                     return token, proj or project_id, ""
-            
+
             return None, None, "Khong lay duoc token. Thu lai."
             
         except Exception as e:
