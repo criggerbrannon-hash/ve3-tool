@@ -2245,6 +2245,204 @@ class BrowserFlowGenerator:
             "stats": self.stats.copy()
         }
 
+    def generate_scene_videos_api(
+        self,
+        excel_path: Optional[Path] = None,
+        start_scene: int = 1,
+        end_scene: Optional[int] = None,
+        max_videos: int = 10,
+        bearer_token: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Tao video cho scenes bang API mode (proxy).
+
+        Args:
+            excel_path: Duong dan file Excel
+            start_scene: Scene bat dau (1-indexed)
+            end_scene: Scene ket thuc (None = tat ca)
+            max_videos: So video toi da can tao (default 10)
+            bearer_token: Bearer token (bat buoc)
+
+        Returns:
+            Dict voi ket qua
+        """
+        self._log("=" * 60)
+        self._log("API MODE - TAO VIDEO CHO SCENES")
+        self._log("=" * 60)
+
+        # Import GoogleFlowAPI
+        try:
+            from modules.google_flow_api import GoogleFlowAPI, VideoAspectRatio, VideoModel
+        except ImportError as e:
+            return {"success": False, "error": f"Khong import duoc GoogleFlowAPI: {e}"}
+
+        # Check proxy support
+        proxy_api_token = self.config.get('proxy_api_token', '')
+        use_proxy = bool(proxy_api_token)
+
+        if not use_proxy:
+            return {"success": False, "error": "Can proxy_api_token de tao video"}
+
+        self._log("Proxy API token co san - su dung proxy de tao video")
+
+        # Check bearer token
+        if not bearer_token:
+            bearer_token = self.config.get('flow_bearer_token', '')
+
+        if not bearer_token:
+            self._log("Khong co bearer token, thu tu dong lay...")
+            bearer_token = self._auto_extract_token()
+
+        if not bearer_token:
+            return {
+                "success": False,
+                "error": "Can bearer token cho API mode"
+            }
+
+        # Tim file Excel
+        if excel_path is None:
+            excel_path = self._find_excel_file()
+
+        if excel_path is None or not excel_path.exists():
+            return {"success": False, "error": "Khong tim thay file Excel"}
+
+        self._log(f"Excel: {excel_path}")
+
+        # Use extracted flow_project_id if available
+        flow_project_id = self.config.get('flow_project_id', self.project_code)
+        self._log(f"Project ID: {flow_project_id}")
+        self._log(f"Token: {bearer_token[:20]}...{bearer_token[-10:]}")
+        self._log(f"Max videos: {max_videos}")
+
+        # Create API client with proxy support
+        api = GoogleFlowAPI(
+            bearer_token=bearer_token,
+            project_id=flow_project_id,
+            timeout=self.config.get('flow_timeout', 300),  # Longer timeout for video
+            verbose=self.verbose,
+            proxy_api_token=proxy_api_token,
+            use_proxy=True
+        )
+
+        # Map aspect ratio
+        ar_setting = self.config.get('flow_aspect_ratio', 'landscape')
+        ar_map = {
+            'landscape': VideoAspectRatio.LANDSCAPE,
+            'portrait': VideoAspectRatio.PORTRAIT,
+            'square': VideoAspectRatio.SQUARE,
+        }
+        aspect_ratio = ar_map.get(ar_setting, VideoAspectRatio.LANDSCAPE)
+
+        # Load Excel
+        workbook = PromptWorkbook(excel_path)
+        workbook.load_or_create()
+
+        # Lay cac scene can tao video
+        all_scenes = workbook.get_scenes()
+        scenes_to_process = []
+
+        for scene in all_scenes:
+            if scene.scene_id < start_scene:
+                continue
+            if end_scene is not None and scene.scene_id > end_scene:
+                break
+            # Chi tao video cho scenes da co anh
+            if not scene.img_path:
+                continue
+            # Bo qua scenes da tao video
+            if scene.status_vid == "done":
+                self.stats["skipped"] += 1
+                continue
+            # Lay video_prompt hoac img_prompt
+            video_prompt = scene.video_prompt or scene.img_prompt
+            if not video_prompt:
+                continue
+            scenes_to_process.append((scene, video_prompt))
+            # Gioi han so video
+            if len(scenes_to_process) >= max_videos:
+                break
+
+        if not scenes_to_process:
+            self._log("Khong co scene nao can tao video", "warn")
+            return {"success": True, "message": "No scenes to process"}
+
+        self._log(f"Se tao {len(scenes_to_process)} video bang API")
+        self.stats["total"] = len(scenes_to_process)
+
+        # Output folder
+        output_folder = excel_path.parent / "img"
+        output_folder.mkdir(parents=True, exist_ok=True)
+
+        # Generate videos
+        for i, (scene, video_prompt) in enumerate(scenes_to_process):
+            scene_id = str(scene.scene_id)
+            self._log(f"\n[{i+1}/{len(scenes_to_process)}] Scene: {scene_id}")
+            self._log(f"Prompt ({len(video_prompt)} chars): {video_prompt[:80]}...")
+
+            try:
+                # Generate video
+                success, result, error = api.generate_video(
+                    prompt=video_prompt,
+                    aspect_ratio=aspect_ratio,
+                    model=VideoModel.VEO3_FAST,
+                    scene_id=scene_id
+                )
+
+                if success and result.video_url:
+                    # Download video
+                    video_filename = f"scene_{scene_id}"
+                    downloaded = api.download_video(result, output_folder, video_filename)
+
+                    if downloaded:
+                        # Update Excel - chi luu filename, khong luu full path
+                        relative_path = downloaded.name
+                        workbook.update_scene(
+                            scene.scene_id,
+                            video_path=relative_path,
+                            status_vid="done"
+                        )
+                        workbook.save()
+
+                        self._log(f"OK - Da tao va luu video: {downloaded}", "success")
+                        self.stats["success"] += 1
+                    else:
+                        self._log("Loi download video", "error")
+                        workbook.update_scene(scene.scene_id, status_vid="error")
+                        workbook.save()
+                        self.stats["failed"] += 1
+                else:
+                    self._log(f"Loi: {error}", "error")
+                    workbook.update_scene(scene.scene_id, status_vid="error")
+                    workbook.save()
+                    self.stats["failed"] += 1
+
+                # Delay giua cac video (video mat nhieu thoi gian hon)
+                delay = self.config.get('video_delay', 5.0)
+                if i < len(scenes_to_process) - 1:
+                    time.sleep(delay)
+
+            except Exception as e:
+                self._log(f"Exception: {e}", "error")
+                import traceback
+                traceback.print_exc()
+                workbook.update_scene(scene.scene_id, status_vid="error")
+                workbook.save()
+                self.stats["failed"] += 1
+
+        # Summary
+        self._log("\n" + "=" * 60)
+        self._log("HOAN THANH VIDEO (API MODE)")
+        self._log("=" * 60)
+        self._log(f"Tong: {self.stats['total']}")
+        self._log(f"Thanh cong: {self.stats['success']}")
+        self._log(f"That bai: {self.stats['failed']}")
+        self._log(f"Bo qua: {self.stats['skipped']}")
+
+        return {
+            "success": True,
+            "stats": self.stats.copy()
+        }
+
     def generate_from_prompts_api(
         self,
         prompts: List[Dict],

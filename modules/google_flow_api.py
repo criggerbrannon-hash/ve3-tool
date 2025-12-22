@@ -1308,7 +1308,9 @@ class GoogleFlowAPI:
     ) -> Tuple[bool, VideoGenerationResult, str]:
         """
         Gọi qua proxy API để bypass captcha.
-        Proxy sẽ xử lý recaptcha và forward request đến Google.
+        Proxy API là async:
+        1. POST /create-video-veo3 → {"success": true, "taskId": "xxx"}
+        2. GET /task-status?taskId=xxx → Poll cho đến khi có kết quả
         """
         if not self.proxy_api_token:
             return False, VideoGenerationResult(
@@ -1321,26 +1323,48 @@ class GoogleFlowAPI:
 
         self._log(f"POST {self.PROXY_VIDEO_API_URL} (via proxy)")
 
-        # Build proxy request
-        proxy_payload = {
-            "body_json": payload,
-            "flow_auth_token": self.bearer_token,
-            "flow_url": f"{self.BASE_URL}/v1/video:batchAsyncGenerateVideoText",
-            "is_proxy": False
+        # Build proxy request - format theo nanoai.pics API
+        # Video proxy cần: aspectRatio, textInput.prompt, videoModelKey
+        proxy_body = {
+            "clientContext": {
+                "sessionId": self.session_id,
+                "projectId": self.project_id,
+                "tool": self.TOOL_NAME
+            },
+            "requests": [
+                {
+                    "aspectRatio": payload["requests"][0].get("aspectRatio", "VIDEO_ASPECT_RATIO_LANDSCAPE"),
+                    "textInput": {
+                        "prompt": prompt
+                    },
+                    "videoModelKey": payload["requests"][0].get("videoModelKey", "veo_3_1_t2v_fast_ultra")
+                }
+            ]
         }
 
+        proxy_payload = {
+            "body_json": proxy_body,
+            "flow_auth_token": self.bearer_token,
+            "flow_url": f"{self.BASE_URL}/v1/video:batchAsyncGenerateVideoText"
+        }
+
+        # Debug logging
+        self._log(f"=== VIDEO PROXY REQUEST ===")
+        self._log(f"flow_url: {proxy_payload['flow_url']}")
+        self._log(f"body_json: {json.dumps(proxy_body)[:500]}")
+
         try:
-            # Create separate session for proxy (different headers)
             proxy_headers = {
                 "Authorization": f"Bearer {self.proxy_api_token}",
                 "Content-Type": "application/json"
             }
 
+            # Step 1: Create task
             response = requests.post(
                 self.PROXY_VIDEO_API_URL,
                 headers=proxy_headers,
                 json=proxy_payload,
-                timeout=self.timeout
+                timeout=30
             )
 
             self._log(f"Proxy response status: {response.status_code}")
@@ -1364,9 +1388,32 @@ class GoogleFlowAPI:
                     error=f"Proxy error: {response.status_code}"
                 ), f"Proxy API error: {response.status_code} - {error_text}"
 
-            # Parse response
             result = response.json()
-            return self._parse_video_response(result, prompt, seed, scene_id)
+            self._log(f"Create video task response: {json.dumps(result)[:500]}")
+
+            if not result.get("success"):
+                return False, VideoGenerationResult(
+                    status="failed",
+                    prompt=prompt,
+                    seed=seed,
+                    scene_id=scene_id,
+                    error=f"Proxy create task failed: {result.get('error', 'Unknown')}"
+                ), f"Proxy create task failed: {result.get('error', 'Unknown')}"
+
+            task_id = result.get("taskId")
+            if not task_id:
+                return False, VideoGenerationResult(
+                    status="failed",
+                    prompt=prompt,
+                    seed=seed,
+                    scene_id=scene_id,
+                    error="No taskId in proxy response"
+                ), "No taskId in proxy response"
+
+            self._log(f"Video task created: {task_id}")
+
+            # Step 2: Poll for result
+            return self._poll_proxy_video_task(task_id, prompt, seed, scene_id, proxy_headers)
 
         except requests.exceptions.Timeout:
             return False, VideoGenerationResult(
@@ -1374,8 +1421,8 @@ class GoogleFlowAPI:
                 prompt=prompt,
                 seed=seed,
                 scene_id=scene_id,
-                error=f"Proxy timeout after {self.timeout}s"
-            ), f"Proxy request timeout after {self.timeout}s"
+                error="Proxy request timeout"
+            ), "Proxy request timeout"
         except Exception as e:
             return False, VideoGenerationResult(
                 status="failed",
@@ -1384,6 +1431,119 @@ class GoogleFlowAPI:
                 scene_id=scene_id,
                 error=str(e)
             ), f"Proxy error: {str(e)}"
+
+    def _poll_proxy_video_task(
+        self,
+        task_id: str,
+        prompt: str,
+        seed: int,
+        scene_id: str,
+        headers: Dict[str, str],
+        max_attempts: int = 120,
+        poll_interval: float = 5.0
+    ) -> Tuple[bool, VideoGenerationResult, str]:
+        """Poll proxy video task status until complete. Video takes longer than images."""
+        self._log(f"Polling video task {task_id}...")
+
+        for attempt in range(max_attempts):
+            try:
+                response = requests.get(
+                    f"{self.PROXY_TASK_STATUS_URL}?taskId={task_id}",
+                    headers=headers,
+                    timeout=30
+                )
+
+                if response.status_code != 200:
+                    self._log(f"Poll attempt {attempt+1}: status {response.status_code}")
+                    time.sleep(poll_interval)
+                    continue
+
+                result = response.json()
+                self._log(f"Video poll {attempt+1}: {json.dumps(result)[:300]}")
+
+                if not result.get("success"):
+                    # Still processing
+                    if result.get("code") == "processing":
+                        time.sleep(poll_interval)
+                        continue
+                    time.sleep(poll_interval)
+                    continue
+
+                # Check if task completed
+                task_result = result.get("result", {})
+
+                # Check for error response from Google API
+                if "error" in task_result:
+                    error_info = task_result.get("error", {})
+                    if isinstance(error_info, dict):
+                        error_msg = error_info.get("message", str(error_info))
+                    else:
+                        error_msg = str(error_info)
+                    self._log(f"=== VIDEO API ERROR ===")
+                    self._log(f"Error: {error_msg[:500]}")
+                    return False, VideoGenerationResult(
+                        status="failed",
+                        prompt=prompt,
+                        seed=seed,
+                        scene_id=scene_id,
+                        error=f"Google API error: {error_msg[:200]}"
+                    ), f"Google API error: {error_msg[:200]}"
+
+                # Check for video URL in result
+                video_url = None
+                operation_id = None
+
+                # Try to extract video URL from different response formats
+                if "videos" in task_result and task_result["videos"]:
+                    video_data = task_result["videos"][0]
+                    video_url = video_data.get("url") or video_data.get("videoUrl")
+                elif "media" in task_result and task_result["media"]:
+                    media_data = task_result["media"][0]
+                    video_info = media_data.get("video", {})
+                    video_url = video_info.get("url") or video_info.get("videoUrl")
+                elif "videoUrl" in task_result:
+                    video_url = task_result["videoUrl"]
+                elif "url" in task_result:
+                    video_url = task_result["url"]
+
+                # Check for operation ID (async)
+                operation_id = task_result.get("operationId") or task_result.get("name")
+
+                if video_url:
+                    self._log(f"Video completed! URL: {video_url[:80]}...")
+                    return True, VideoGenerationResult(
+                        video_url=video_url,
+                        operation_id=operation_id,
+                        scene_id=scene_id,
+                        status="completed",
+                        prompt=prompt,
+                        seed=seed
+                    ), ""
+
+                if task_result.get("success") == False:
+                    error = task_result.get("error", "Unknown error")
+                    return False, VideoGenerationResult(
+                        status="failed",
+                        prompt=prompt,
+                        seed=seed,
+                        scene_id=scene_id,
+                        error=str(error)
+                    ), f"Task failed: {error}"
+
+                # Still processing
+                time.sleep(poll_interval)
+
+            except Exception as e:
+                self._log(f"Poll error: {e}")
+                time.sleep(poll_interval)
+
+        return False, VideoGenerationResult(
+            status="failed",
+            prompt=prompt,
+            seed=seed,
+            scene_id=scene_id,
+            error=f"Polling timeout after {max_attempts * poll_interval}s"
+        ), f"Polling timeout after {max_attempts} attempts"
 
     def _parse_video_response(
         self,
