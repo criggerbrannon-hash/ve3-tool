@@ -1708,8 +1708,7 @@ class BrowserFlowGenerator:
         try:
             extractor = ChromeAutoToken(
                 chrome_path=chrome_path,
-                profile_path=profile_path,
-                auto_close=True  # Tu dong dong Chrome sau khi lay token
+                profile_path=profile_path
             )
 
             # Callback de log
