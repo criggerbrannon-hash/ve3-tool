@@ -1671,6 +1671,69 @@ class BrowserFlowGenerator:
         """
         return self.config.get('generation_mode', 'chrome')
 
+    def _auto_extract_token(self) -> Optional[str]:
+        """
+        Tu dong lay bearer token tu Chrome bang profile hien tai.
+        Su dung ChromeAutoToken de mo Chrome, navigate den Flow va capture token.
+
+        Returns:
+            Bearer token (ya29.xxx) hoac None neu that bai
+        """
+        self._log("=== TU DONG LAY BEARER TOKEN ===")
+
+        try:
+            from modules.auto_token import ChromeAutoToken
+        except ImportError:
+            self._log("Khong import duoc ChromeAutoToken", "error")
+            return None
+
+        # Lay chrome_path tu config
+        chrome_path = self.config.get('chrome_path', '')
+        if not chrome_path:
+            # Default paths
+            import platform
+            if platform.system() == 'Windows':
+                chrome_path = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+            else:
+                chrome_path = "/usr/bin/google-chrome"
+
+        # Lay profile path
+        # Profile name tu self.profile_name, profile dir tu config hoac mac dinh
+        profiles_dir = self.config.get('browser_profiles_dir', './chrome_profiles')
+        profile_path = str(Path(profiles_dir) / self.profile_name)
+
+        self._log(f"Chrome: {chrome_path}")
+        self._log(f"Profile: {profile_path}")
+
+        try:
+            extractor = ChromeAutoToken(
+                chrome_path=chrome_path,
+                profile_path=profile_path,
+                auto_close=True  # Tu dong dong Chrome sau khi lay token
+            )
+
+            # Callback de log
+            def log_callback(msg, level="info"):
+                self._log(f"[TokenExtract] {msg}", level)
+
+            token, proj_id, error = extractor.extract_token(callback=log_callback)
+
+            if token:
+                self._log(f"OK - Da lay duoc token: {token[:20]}...{token[-10:]}", "success")
+                # Luu project_id neu co
+                if proj_id:
+                    self.config['flow_project_id'] = proj_id
+                return token
+            else:
+                self._log(f"FAIL - Khong lay duoc token: {error}", "error")
+                return None
+
+        except Exception as e:
+            self._log(f"Exception khi lay token: {e}", "error")
+            import traceback
+            traceback.print_exc()
+            return None
+
     def generate_images_auto(
         self,
         excel_path: Optional[Path] = None,
@@ -1878,10 +1941,15 @@ class BrowserFlowGenerator:
             # Thu lay tu config
             bearer_token = self.config.get('flow_bearer_token', '')
 
+        # Neu van chua co token, tu dong lay tu Chrome
+        if not bearer_token:
+            self._log("Khong co bearer token, tu dong lay tu Chrome...")
+            bearer_token = self._auto_extract_token()
+
         if not bearer_token:
             return {
                 "success": False,
-                "error": "Can bearer token cho API mode. Lay token tu Settings > Token"
+                "error": "Can bearer token cho API mode. Chua co token va khong the tu dong lay."
             }
 
         # Tim file Excel
@@ -2084,8 +2152,13 @@ class BrowserFlowGenerator:
         if not bearer_token:
             bearer_token = self.config.get('flow_bearer_token', '')
 
+        # Neu van chua co token, tu dong lay tu Chrome
         if not bearer_token:
-            return {"success": False, "error": "Can bearer token cho API mode"}
+            self._log("Khong co bearer token, tu dong lay tu Chrome...")
+            bearer_token = self._auto_extract_token()
+
+        if not bearer_token:
+            return {"success": False, "error": "Can bearer token cho API mode. Chua co token va khong the tu dong lay."}
 
         if not prompts:
             return {"success": False, "error": "Khong co prompts"}
