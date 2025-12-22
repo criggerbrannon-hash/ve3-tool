@@ -452,8 +452,14 @@ class GoogleFlowAPI:
         proxy_payload = {
             "body_json": proxy_body,
             "flow_auth_token": self.bearer_token,
-            "flow_url": f"{self.BASE_URL}/v1/image"
+            "flow_url": f"{self.BASE_URL}/v1/image:batchGenerateImages"
         }
+
+        # Debug: log the full request
+        self._log(f"=== PROXY REQUEST ===")
+        self._log(f"URL: {self.PROXY_IMAGE_API_URL}")
+        self._log(f"flow_url: {proxy_payload['flow_url']}")
+        self._log(f"body_json: {json.dumps(proxy_body)[:500]}")
 
         try:
             proxy_headers = {
@@ -548,6 +554,8 @@ class GoogleFlowAPI:
 
                 elif task_result.get("success") == False:
                     error = task_result.get("error", "Unknown error")
+                    self._log(f"=== TASK FAILED ===")
+                    self._log(f"Full result: {json.dumps(result)}")
                     return False, [], f"Task failed: {error}"
 
                 # Still processing
