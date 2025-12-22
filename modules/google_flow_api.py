@@ -430,8 +430,8 @@ class GoogleFlowAPI:
 
         self._log(f"POST {self.PROXY_IMAGE_API_URL} (via proxy)")
 
-        # Build proxy request - format theo yêu cầu của proxy API
-        # Proxy cần: aspectRatio, textInput.prompt, imageModelKey
+        # Build proxy request - format giống direct Google API
+        # Google API cần: imageAspectRatio, prompt, imageModelName (không phải aspectRatio, textInput, imageModelKey)
         proxy_body = {
             "clientContext": {
                 "sessionId": self.session_id,
@@ -440,11 +440,16 @@ class GoogleFlowAPI:
             },
             "requests": [
                 {
-                    "aspectRatio": aspect_ratio,
-                    "textInput": {
-                        "prompt": prompt
+                    "clientContext": {
+                        "sessionId": self.session_id,
+                        "projectId": self.project_id,
+                        "tool": self.TOOL_NAME
                     },
-                    "imageModelKey": "imagen_3"
+                    "seed": self._generate_seed(),
+                    "imageModelName": "GEM_PIX_2",
+                    "imageAspectRatio": aspect_ratio,
+                    "prompt": prompt,
+                    "imageInputs": []
                 }
             ]
         }
@@ -541,6 +546,17 @@ class GoogleFlowAPI:
                 # Check if task completed
                 task_result = result.get("result", {})
 
+                # Check for error response from Google API
+                if "error" in task_result:
+                    error_info = task_result.get("error", {})
+                    if isinstance(error_info, dict):
+                        error_msg = error_info.get("message", str(error_info))
+                    else:
+                        error_msg = str(error_info)
+                    self._log(f"=== GOOGLE API ERROR ===")
+                    self._log(f"Error: {error_msg[:500]}")
+                    return False, [], f"Google API error: {error_msg[:200]}"
+
                 if task_result.get("success") == True:
                     # Task completed successfully - extract images
                     self._log(f"Task completed! Extracting images...")
@@ -557,6 +573,13 @@ class GoogleFlowAPI:
                     self._log(f"=== TASK FAILED ===")
                     self._log(f"Full result: {json.dumps(result)}")
                     return False, [], f"Task failed: {error}"
+
+                # Check if we have media/images in result (success without explicit flag)
+                if "media" in task_result or "images" in task_result:
+                    self._log(f"Task completed (implicit)! Extracting images...")
+                    images = self._parse_image_response(task_result, prompt, aspect_ratio)
+                    if images:
+                        return True, images, ""
 
                 # Still processing
                 time.sleep(poll_interval)
