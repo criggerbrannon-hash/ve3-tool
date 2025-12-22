@@ -1959,13 +1959,16 @@ class BrowserFlowGenerator:
             return {"success": False, "error": "Khong tim thay file Excel"}
 
         self._log(f"Excel: {excel_path}")
-        self._log(f"Project: {self.project_code}")
+
+        # Use extracted flow_project_id if available, otherwise fallback to project_code
+        flow_project_id = self.config.get('flow_project_id', self.project_code)
+        self._log(f"Project ID: {flow_project_id}")
         self._log(f"Token: {bearer_token[:20]}...{bearer_token[-10:]}")
 
         # Create API client
         api = GoogleFlowAPI(
             bearer_token=bearer_token,
-            project_id=self.project_code,
+            project_id=flow_project_id,
             timeout=self.config.get('flow_timeout', 120),
             verbose=self.verbose
         )
@@ -2162,13 +2165,17 @@ class BrowserFlowGenerator:
         if not prompts:
             return {"success": False, "error": "Khong co prompts"}
 
+        # Use extracted flow_project_id if available
+        flow_project_id = self.config.get('flow_project_id', self.project_code)
+
         self._log(f"Tong: {len(prompts)} prompts")
+        self._log(f"Project ID: {flow_project_id}")
         self._log(f"Token: {bearer_token[:20]}...{bearer_token[-10:]}")
 
         # Create API client
         api = GoogleFlowAPI(
             bearer_token=bearer_token,
-            project_id=self.project_code,
+            project_id=flow_project_id,
             timeout=self.config.get('flow_timeout', 120),
             verbose=self.verbose
         )
