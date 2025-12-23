@@ -177,9 +177,14 @@ class FlowImageGenerator:
                 
                 if not prompt:
                     continue
-                
+
+                # Skip children (status="skip" or english_prompt="DO_NOT_GENERATE")
+                if status == "skip" or prompt == "DO_NOT_GENERATE":
+                    self._log(f"  ⏭️  {char_id}: Child character, skipping (will use inline description)")
+                    continue
+
                 self.stats["characters_total"] += 1
-                
+
                 # Check if already done
                 output_file = self.nv_path / image_file
                 if output_file.exists() and not overwrite:
@@ -188,7 +193,7 @@ class FlowImageGenerator:
                         success_count += 1
                         self.stats["characters_success"] += 1
                         continue
-                
+
                 self._log(f"\n🎨 Generating image for character: {char_id}")
                 self._log(f"   Prompt: {prompt[:80]}...")
                 

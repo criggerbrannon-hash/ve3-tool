@@ -1568,6 +1568,11 @@ class BrowserFlowGenerator:
             if not char.english_prompt:
                 continue
 
+            # Skip children (status="skip" or english_prompt="DO_NOT_GENERATE" or is_child=True)
+            if char.status == "skip" or char.english_prompt == "DO_NOT_GENERATE" or getattr(char, 'is_child', False):
+                self._log(f"  ⏭️  {char.id}: Child character, skipping (will use inline description)")
+                continue
+
             if char.status == "done" and not overwrite:
                 continue
 

@@ -642,28 +642,95 @@ class PromptGenerator:
 
         return False
 
-    def _filter_children_from_refs(self, ref_files: list) -> list:
+    def _filter_children_from_refs(self, ref_files: list, return_filtered: bool = False) -> list:
         """
         Filter out child characters from reference_files list.
         Children should be described inline in img_prompt, not referenced.
 
         Args:
             ref_files: List of reference file names (e.g., ["nvc.png", "nvc1.png", "loc.png"])
+            return_filtered: If True, return tuple (filtered_refs, filtered_children)
 
         Returns:
-            Filtered list without child characters
+            Filtered list without child characters, or tuple if return_filtered=True
         """
         if not ref_files:
-            return []
+            return ([], []) if return_filtered else []
 
         filtered = []
+        children = []
         for ref in ref_files:
             if self._is_child_character(ref):
                 self.logger.info(f"  -> Filtered out child character from references: {ref}")
+                children.append(ref)
                 continue
             filtered.append(ref)
 
+        if return_filtered:
+            return filtered, children
         return filtered
+
+    def _get_child_inline_description(self, child_ref: str, characters: list) -> str:
+        """
+        Get inline description for a child character using their character_lock.
+
+        Args:
+            child_ref: Child reference file name (e.g., "nvc1.png")
+            characters: List of Character objects
+
+        Returns:
+            Inline description like "(Child: 8-year-old boy, messy brown hair...)"
+        """
+        if not characters:
+            return ""
+
+        # Extract character ID from filename (remove .png extension)
+        char_id = child_ref.replace(".png", "")
+
+        # Find matching character
+        for char in characters:
+            if char.id == char_id:
+                # Use character_lock for inline description
+                char_lock = getattr(char, 'character_lock', '')
+                if char_lock:
+                    return f"(Child: {char_lock})"
+        return ""
+
+    def _add_children_inline_to_prompt(
+        self,
+        img_prompt: str,
+        filtered_children: list,
+        characters: list
+    ) -> str:
+        """
+        Add inline descriptions for filtered children to the img_prompt.
+
+        Args:
+            img_prompt: Original prompt
+            filtered_children: List of child reference files that were filtered
+            characters: List of Character objects
+
+        Returns:
+            Updated prompt with inline child descriptions
+        """
+        if not img_prompt or not filtered_children or not characters:
+            return img_prompt
+
+        # Collect inline descriptions
+        inline_descs = []
+        for child_ref in filtered_children:
+            desc = self._get_child_inline_description(child_ref, characters)
+            if desc:
+                inline_descs.append(desc)
+                self.logger.info(f"  -> Added inline description for {child_ref}: {desc[:50]}...")
+
+        if inline_descs:
+            # Add at the beginning or end of prompt
+            inline_text = ", ".join(inline_descs)
+            # Add to prompt - prepend to make children visible in the scene
+            img_prompt = f"{inline_text} - {img_prompt}"
+
+        return img_prompt
 
     def _add_filename_annotations_to_prompt(
         self,
@@ -793,31 +860,42 @@ class PromptGenerator:
 
     def _generate_content_large(self, prompt: str, temperature: float = 0.7, max_tokens: int = 16000) -> str:
         """
-        Generate content với ưu tiên Ollama cho response dài (Director's Shooting Plan).
+        Generate content với ưu tiên DeepSeek (primary) > Ollama (fallback).
 
-        DeepSeek có giới hạn max_tokens=8192, không đủ cho Director's Shooting Plan.
-        Ollama không có giới hạn tokens và qwen2.5:7b là model mạnh.
+        DeepSeek có giới hạn max_tokens=8192, có thể bị truncate với Director's Shooting Plan.
+        Ollama không có giới hạn tokens nhưng có thể chậm hoặc timeout.
 
-        Priority cho QUALITY:
-        1. Ollama (qwen2.5:7b) - Model mạnh, không giới hạn tokens, chất lượng cao
-        2. DeepSeek - Nếu không có Ollama, dùng với JSON repair
+        Priority (theo yêu cầu user):
+        1. DeepSeek - Primary, nhanh và ổn định
+        2. Ollama - Fallback nếu DeepSeek thất bại
         """
-        # Ưu tiên Ollama cho chất lượng tốt nhất
+        # Thử DeepSeek trước (primary)
+        print("[Director] Dùng DeepSeek (primary, nhanh, giới hạn 8192 tokens)")
+        try:
+            result = self.ai_client.generate_content(prompt, temperature, min(max_tokens, 8192))
+            if result:
+                print(f"[Director] DeepSeek trả về {len(result)} ký tự")
+                # Check if response might be truncated
+                if len(result) > 30000:
+                    print("[Director] Response dài, có thể bị truncate...")
+                return result
+        except Exception as e:
+            self.logger.warning(f"[Director] DeepSeek failed: {e}, falling back to Ollama...")
+            print(f"[Director] DeepSeek thất bại: {e}, chuyển sang Ollama...")
+
+        # Fallback: dùng Ollama (không giới hạn tokens nhưng có thể chậm)
         if hasattr(self.ai_client, 'ollama_available') and self.ai_client.ollama_available:
-            print(f"[Director] Dùng Ollama {self.ai_client.ollama_model} (chất lượng cao, không giới hạn tokens)")
+            print(f"[Director] Dùng Ollama {self.ai_client.ollama_model} (fallback, không giới hạn tokens)")
             try:
-                # Gọi Ollama với max_tokens cao
                 result = self.ai_client._call_ollama(prompt, temperature, max_tokens)
                 if result:
                     print(f"[Director] Ollama trả về {len(result)} ký tự")
                     return result
             except Exception as e:
-                self.logger.warning(f"[Director] Ollama failed: {e}, falling back to DeepSeek...")
-                print(f"[Director] Ollama thất bại: {e}, chuyển sang DeepSeek...")
+                self.logger.warning(f"[Director] Ollama also failed: {e}")
+                print(f"[Director] Ollama cũng thất bại: {e}")
 
-        # Fallback: dùng DeepSeek (sẽ bị cap ở 8192 tokens)
-        print("[Director] Dùng DeepSeek (giới hạn 8192 tokens, có thể bị truncate)")
-        return self.ai_client.generate_content(prompt, temperature, max_tokens)
+        return ""
 
     def generate_for_project(
         self,
@@ -889,11 +967,22 @@ class PromptGenerator:
 
         self.logger.info(f"Tìm thấy {len(characters)} nhân vật, {len(locations)} bối cảnh")
 
-        # Lưu nhân vật vào Excel
+        # Lưu nhân vật vào Excel (skip children - họ sẽ được mô tả inline trong scene)
+        children_skipped = 0
         for char in characters:
-            char.image_file = f"{char.id}.png"
-            char.status = "pending"
+            # Children don't need reference images - they will be described inline in scene prompts
+            if char.is_child or char.english_prompt == "DO_NOT_GENERATE":
+                char.image_file = "NONE"
+                char.status = "skip"  # Skip image generation
+                children_skipped += 1
+                self.logger.info(f"  -> Skipping child character: {char.id} (will use inline description)")
+            else:
+                char.image_file = f"{char.id}.png"
+                char.status = "pending"
             workbook.add_character(char)
+
+        if children_skipped > 0:
+            self.logger.info(f"  -> {children_skipped} child characters skipped for image generation")
 
         # Lưu locations (as Character with role="location")
         for loc in locations:
@@ -1202,7 +1291,7 @@ class PromptGenerator:
 
             # === QUAN TRỌNG: Filter children từ reference_files (API policy violation) ===
             # Children phải được mô tả trong img_prompt, không dùng reference image
-            ref_files = self._filter_children_from_refs(ref_files)
+            ref_files, filtered_children = self._filter_children_from_refs(ref_files, return_filtered=True)
 
             chars_str = json.dumps(chars_used) if isinstance(chars_used, list) else str(chars_used)
             refs_str = json.dumps(ref_files) if isinstance(ref_files, list) else str(ref_files)
@@ -1217,6 +1306,13 @@ class PromptGenerator:
             # Giúp Flow match uploaded images với prompt
             img_prompt = prompts.get("img_prompt", "")
             video_prompt = prompts.get("video_prompt", "")
+
+            # === ADD INLINE CHILD DESCRIPTIONS ===
+            # Children must be described inline since they can't use reference images
+            if filtered_children:
+                img_prompt = self._add_children_inline_to_prompt(img_prompt, filtered_children, characters)
+                video_prompt = self._add_children_inline_to_prompt(video_prompt, filtered_children, characters)
+
             if ref_files:
                 img_prompt = self._add_filename_annotations_to_prompt(
                     img_prompt, ref_files, characters, locations
@@ -1299,17 +1395,23 @@ class PromptGenerator:
                 portrait_prompt = char_data.get("portrait_prompt", char_data.get("english_prompt", ""))
                 character_lock = char_data.get("character_lock", "")
 
-                # For children (DO_NOT_GENERATE), use character_lock for both
+                # Check if this is a child character
+                is_child = char_data.get("is_child", False)
+
+                # If portrait_prompt is DO_NOT_GENERATE, this is a child (no reference image)
                 if portrait_prompt == "DO_NOT_GENERATE":
-                    portrait_prompt = character_lock
+                    is_child = True
+                    # Keep DO_NOT_GENERATE as marker - don't replace with character_lock
+                    self.logger.info(f"  -> Child character detected: {char_data.get('id', '')} - will use inline description")
 
                 characters.append(Character(
                     id=char_data.get("id", ""),
                     role=char_data.get("role", "supporting"),
                     name=char_data.get("name", ""),
-                    english_prompt=portrait_prompt,  # For reference image generation
+                    english_prompt=portrait_prompt,  # Keep DO_NOT_GENERATE for children
                     character_lock=character_lock,    # For scene prompts (IMPORTANT!)
                     vietnamese_prompt=char_data.get("vietnamese_prompt", char_data.get("vietnamese_description", "")),
+                    is_child=is_child,
                 ))
 
             # Extract locations (v5.0 format)
@@ -2455,7 +2557,11 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
                         if hook_actual_loc:
                             all_refs.append(f"{hook_actual_loc}.png")
 
-                        filtered_refs = self._filter_children_from_refs(all_refs)
+                        filtered_refs, filtered_children = self._filter_children_from_refs(all_refs, return_filtered=True)
+                        # Add inline child descriptions
+                        if filtered_children:
+                            img_prompt = self._add_children_inline_to_prompt(img_prompt, filtered_children, characters)
+
                         result.append({
                             "img_prompt": img_prompt,
                             "video_prompt": img_prompt,
@@ -2532,7 +2638,10 @@ Return JSON: {{"scenes": [{{"scene_id": 1, "img_prompt": "...", "video_prompt": 
             if actual_location_id:
                 all_refs.append(f"{actual_location_id}.png")
 
-            filtered_refs = self._filter_children_from_refs(all_refs)
+            filtered_refs, filtered_children = self._filter_children_from_refs(all_refs, return_filtered=True)
+            # Add inline child descriptions
+            if filtered_children:
+                img_prompt = self._add_children_inline_to_prompt(img_prompt, filtered_children, characters)
 
             result.append({
                 "img_prompt": img_prompt,

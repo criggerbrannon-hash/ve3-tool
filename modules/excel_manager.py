@@ -70,7 +70,8 @@ class Character:
         vietnamese_prompt: str = "",
         character_lock: str = "",
         image_file: str = "",
-        status: str = "pending"
+        status: str = "pending",
+        is_child: bool = False
     ):
         self.id = id
         self.role = role
@@ -80,6 +81,7 @@ class Character:
         self.character_lock = character_lock
         self.image_file = image_file
         self.status = status
+        self.is_child = is_child
     
     def to_dict(self) -> Dict[str, Any]:
         """Chuyển đổi thành dictionary."""
@@ -92,6 +94,7 @@ class Character:
             "character_lock": self.character_lock,
             "image_file": self.image_file,
             "status": self.status,
+            "is_child": self.is_child,
         }
     
     @classmethod
@@ -106,6 +109,7 @@ class Character:
             character_lock=str(data.get("character_lock", "")),
             image_file=str(data.get("image_file", "")),
             status=str(data.get("status", "pending")),
+            is_child=bool(data.get("is_child", False)),
         )
 
 

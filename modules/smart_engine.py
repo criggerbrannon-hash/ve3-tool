@@ -699,6 +699,11 @@ class SmartEngine:
                     continue
 
                 pid_str = str(pid).strip()
+                prompt_str = str(prompt).strip()
+
+                # Skip children (DO_NOT_GENERATE)
+                if prompt_str == "DO_NOT_GENERATE":
+                    continue
 
                 # CHI lay character/location prompts (nv*, loc*)
                 if pid_str.startswith('nv') or pid_str.startswith('loc'):
@@ -706,7 +711,7 @@ class SmartEngine:
                     if not out_path.exists():  # Chi lay chua co anh
                         prompts.append({
                             'id': pid_str,
-                            'prompt': str(prompt).strip(),
+                            'prompt': prompt_str,
                             'output_path': str(out_path),
                             'reference_files': "",
                             'nv_path': str(proj_dir / "nv")
