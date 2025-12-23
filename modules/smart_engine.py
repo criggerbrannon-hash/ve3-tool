@@ -1201,10 +1201,16 @@ class SmartEngine:
         try:
             # REUSE browser generator neu da co (giu nguyen session)
             need_new_generator = False
+            saved_project_id = None  # Luu project_id tu generator cu
 
             if self._browser_generator is None or self._browser_generator.driver is None:
                 need_new_generator = True
                 self.log("Tao browser generator moi...")
+                # Lay project_id tu generator cu neu co
+                if self._browser_generator:
+                    saved_project_id = self._browser_generator.config.get('flow_project_id', '')
+                    if saved_project_id:
+                        self.log(f"  -> Luu project_id tu generator cu: {saved_project_id[:8]}...")
             else:
                 # Check if existing session is still valid
                 try:
@@ -1214,6 +1220,10 @@ class SmartEngine:
                 except Exception as e:
                     self.log(f"Session cu da het han ({type(e).__name__}), tao moi...")
                     need_new_generator = True
+                    # Luu project_id truoc khi cleanup
+                    saved_project_id = self._browser_generator.config.get('flow_project_id', '')
+                    if saved_project_id:
+                        self.log(f"  -> Luu project_id tu session cu: {saved_project_id[:8]}...")
                     # Clean up old generator
                     try:
                         self._browser_generator.stop_browser()
@@ -1229,6 +1239,10 @@ class SmartEngine:
                     verbose=True
                 )
                 self._browser_generator = generator
+                # Restore project_id tu generator cu
+                if saved_project_id:
+                    generator.config['flow_project_id'] = saved_project_id
+                    self.log(f"  -> Restore project_id: {saved_project_id[:8]}...")
             else:
                 generator = self._browser_generator
                 # Update project path neu khac
