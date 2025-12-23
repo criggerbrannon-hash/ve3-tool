@@ -387,6 +387,16 @@ class BrowserFlowGenerator:
                 self._project_url = self._get_project_url_from_js()
                 if self._project_url:
                     self._log(f"Project URL: {self._project_url}", "info")
+                    # === QUAN TRONG: Extract project_id va luu vao config ===
+                    # De API mode co the dung chung project
+                    if '/project/' in self._project_url:
+                        try:
+                            project_id = self._project_url.split('/project/')[1].split('/')[0].split('?')[0]
+                            if project_id:
+                                self.config['flow_project_id'] = project_id
+                                self._log(f"  -> Saved project_id: {project_id[:8]}...", "info")
+                        except Exception as e:
+                            self._log(f"  -> Could not extract project_id: {e}", "warn")
             else:
                 error = setup_result.get('error', 'Unknown') if setup_result else 'No response'
                 self._log(f"Setup UI that bai: {error}", "warn")
