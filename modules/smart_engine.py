@@ -1200,8 +1200,28 @@ class SmartEngine:
 
         try:
             # REUSE browser generator neu da co (giu nguyen session)
+            need_new_generator = False
+
             if self._browser_generator is None or self._browser_generator.driver is None:
+                need_new_generator = True
                 self.log("Tao browser generator moi...")
+            else:
+                # Check if existing session is still valid
+                try:
+                    # Try a simple operation to verify session is alive
+                    _ = self._browser_generator.driver.current_url
+                    self.log("Reuse browser generator (session con valid)...")
+                except Exception as e:
+                    self.log(f"Session cu da het han ({type(e).__name__}), tao moi...")
+                    need_new_generator = True
+                    # Clean up old generator
+                    try:
+                        self._browser_generator.stop_browser()
+                    except:
+                        pass
+                    self._browser_generator = None
+
+            if need_new_generator:
                 generator = BrowserFlowGenerator(
                     project_path=str(proj_dir),
                     profile_name=profile_name,
@@ -1210,7 +1230,6 @@ class SmartEngine:
                 )
                 self._browser_generator = generator
             else:
-                self.log("Reuse browser generator (giu nguyen session)...")
                 generator = self._browser_generator
                 # Update project path neu khac
                 if str(generator.project_path) != str(proj_dir):
