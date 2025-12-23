@@ -157,17 +157,28 @@ class ParallelRunner:
                     chrome_path=self.chrome_path,
                     profile_path=acc.profile_path
                 )
-                
-                token, proj_id, error = extractor.extract_token(callback=callback)
-                
+
+                # Log project_id status
+                if acc.project_id:
+                    self.log(f"  -> Reuse project_id: {acc.project_id[:8]}...")
+
+                # QUAN TRONG: Reuse project_id da co de share media_ids
+                token, proj_id, error = extractor.extract_token(
+                    project_id=acc.project_id,  # Reuse existing project
+                    callback=callback
+                )
+
                 if token:
                     acc.token = token
-                    acc.project_id = proj_id or ""
+                    # Chi update project_id neu co gia tri moi
+                    if proj_id:
+                        acc.project_id = proj_id
                     success += 1
                     self.log(f"  -> OK! Token: {token[:20]}...")
+                    self.log(f"  -> Project ID: {acc.project_id[:8]}..." if acc.project_id else "")
                 else:
                     self.log(f"  -> FAIL: {error}")
-                
+
             except Exception as e:
                 self.log(f"  -> ERROR: {e}")
             

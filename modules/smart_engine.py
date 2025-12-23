@@ -384,6 +384,8 @@ class SmartEngine:
         """
         Lay token bang HEADLESS mode (chay an).
         Khong mo browser window.
+
+        QUAN TRONG: Reuse project_id da co de share media_ids giua nv va img.
         """
         try:
             from modules.headless_token import HeadlessTokenExtractor
@@ -392,6 +394,12 @@ class SmartEngine:
             return False
 
         self.log(f"[Headless] Lay token: {account.value}...")
+
+        # Log project_id status
+        if account.project_id:
+            self.log(f"  -> Reuse project_id: {account.project_id[:8]}...")
+        else:
+            self.log(f"  -> Chua co project_id, se tao moi")
 
         try:
             extractor = HeadlessTokenExtractor(account.value)
@@ -402,15 +410,21 @@ class SmartEngine:
                 self.log(f"  -> Chay: python -m modules.headless_token login {account.value}", "WARN")
                 return False
 
-            # Lay token (headless)
-            token, proj_id, error = extractor.extract_token(headless=True)
+            # Lay token (headless) - truyen project_id de reuse
+            token, proj_id, error = extractor.extract_token(
+                headless=True,
+                project_id=account.project_id  # Reuse existing project
+            )
 
             if token:
                 account.token = token
-                account.project_id = proj_id or ""
+                # Chi update project_id neu co gia tri moi
+                if proj_id:
+                    account.project_id = proj_id
                 account.token_time = time.time()
                 account.status = 'ready'
                 self.log(f"[Headless] OK: {account.value} - Token OK!", "OK")
+                self.log(f"  -> Project ID: {account.project_id[:8]}..." if account.project_id else "  -> No project ID")
                 self.save_cached_tokens()
                 return True
             elif error == "need_login":
@@ -428,10 +442,19 @@ class SmartEngine:
             return False
 
     def get_token_for_profile(self, profile: Resource) -> bool:
-        """Lay token cho 1 profile (Chrome visible)."""
+        """Lay token cho 1 profile (Chrome visible).
+
+        QUAN TRONG: Reuse project_id da co de share media_ids giua nv va img.
+        """
         from modules.auto_token import ChromeAutoToken
 
         self.log(f"[Chrome] Lay token: {Path(profile.value).name}...")
+
+        # Log project_id status
+        if profile.project_id:
+            self.log(f"  -> Reuse project_id: {profile.project_id[:8]}...")
+        else:
+            self.log(f"  -> Chua co project_id, se tao moi")
 
         try:
             extractor = ChromeAutoToken(
@@ -440,14 +463,23 @@ class SmartEngine:
                 auto_close=True  # Tu dong dong Chrome sau khi lay token
             )
 
-            token, proj_id, error = extractor.extract_token(callback=self.callback)
+            # QUAN TRONG: Truyen project_id de reuse project da co
+            # Neu co project_id -> mo project do de lay token moi (khong tao project moi)
+            # Neu chua co -> tao project moi
+            token, proj_id, error = extractor.extract_token(
+                project_id=profile.project_id,  # Reuse existing project
+                callback=self.callback
+            )
 
             if token:
                 profile.token = token
-                profile.project_id = proj_id or ""
+                # Chi update project_id neu co gia tri moi
+                if proj_id:
+                    profile.project_id = proj_id
                 profile.token_time = time.time()  # Luu thoi gian lay token
                 profile.status = 'ready'
                 self.log(f"[Chrome] OK: {Path(profile.value).name} - Token OK!", "OK")
+                self.log(f"  -> Project ID: {profile.project_id[:8]}..." if profile.project_id else "  -> No project ID")
                 self.save_cached_tokens()  # Luu ngay vao file
                 return True
             else:
