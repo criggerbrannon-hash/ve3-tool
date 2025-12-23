@@ -1720,13 +1720,24 @@ class BrowserFlowGenerator:
             def log_callback(msg, level="info"):
                 self._log(f"[TokenExtract] {msg}", level)
 
-            token, proj_id, error = extractor.extract_token(callback=log_callback)
+            # QUAN TRONG: Reuse project_id da co de share media_ids giua nv va img
+            existing_project_id = self.config.get('flow_project_id', '')
+            if existing_project_id:
+                self._log(f"  -> Reuse project_id: {existing_project_id[:8]}...")
+            else:
+                self._log(f"  -> Chua co project_id, se tao moi")
+
+            token, proj_id, error = extractor.extract_token(
+                project_id=existing_project_id,  # Reuse existing project
+                callback=log_callback
+            )
 
             if token:
                 self._log(f"OK - Da lay duoc token: {token[:20]}...{token[-10:]}", "success")
-                # Luu project_id neu co
+                # Luu project_id neu co gia tri moi
                 if proj_id:
                     self.config['flow_project_id'] = proj_id
+                    self._log(f"  -> Project ID: {proj_id[:8]}...")
                 return token
             else:
                 self._log(f"FAIL - Khong lay duoc token: {error}", "error")
