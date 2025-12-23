@@ -1285,10 +1285,10 @@ class UnixVoiceToVideo:
             if config_path.exists():
                 with open(config_path, 'r', encoding='utf-8') as f:
                     config = yaml.safe_load(f) or {}
-                return config.get('generation_mode', 'chrome')
+                return config.get('generation_mode', 'api')
         except:
             pass
-        return 'chrome'  # Default: browser mode
+        return 'api'  # Default: API mode (user preference)
 
     def _save_generation_mode(self, mode: str):
         """Save generation mode to config: 'chrome' or 'api'."""
