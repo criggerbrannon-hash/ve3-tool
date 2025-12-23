@@ -115,8 +115,8 @@ log_level: "INFO"
 
 # Generation mode: "chrome" (browser automation) or "api" (direct API call)
 # Chrome mode: Dung Playwright/Selenium dieu khien trinh duyet, khong can token
-# API mode: Goi truc tiep batchGenerateImages API, can bearer token
-generation_mode: "chrome"
+# API mode: Goi truc tiep batchGenerateImages API, can bearer token (mac dinh)
+generation_mode: "api"
 
 # Parallel mode: So luong browser chay song song (1-5)
 # Nhieu browser = nhanh hon, nhung can nhieu RAM va profile

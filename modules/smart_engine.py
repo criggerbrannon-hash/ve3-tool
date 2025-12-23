@@ -1471,8 +1471,22 @@ class SmartEngine:
         excel_path = proj_dir / "prompts" / f"{name}_prompts.xlsx"
         srt_path = proj_dir / "srt" / f"{name}.srt"
 
+        # Read generation mode from settings
+        generation_mode = 'api'  # Default
+        try:
+            import yaml
+            settings_path = self.config_dir / "settings.yaml"
+            if settings_path.exists():
+                with open(settings_path, 'r', encoding='utf-8') as f:
+                    settings = yaml.safe_load(f) or {}
+                generation_mode = settings.get('generation_mode', 'api')
+        except:
+            pass
+
+        mode_display = "API MODE" if generation_mode == 'api' else "BROWSER JS MODE"
+
         self.log("="*50)
-        self.log(f"VE3 TOOL v{__version__} - BROWSER JS MODE")
+        self.log(f"VE3 TOOL v{__version__} - {mode_display}")
         self.log(f"INPUT: {inp}")
         self.log(f"OUTPUT: {proj_dir}")
         self.log("="*50)
