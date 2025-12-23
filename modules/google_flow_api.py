@@ -1383,7 +1383,8 @@ class GoogleFlowAPI:
             "clientContext": {
                 "sessionId": self.session_id,
                 "projectId": self.project_id,
-                "tool": self.TOOL_NAME
+                "tool": self.TOOL_NAME,
+                "userPaygateTier": self.paygate_tier.value
             },
             "requests": [proxy_request]
         }
