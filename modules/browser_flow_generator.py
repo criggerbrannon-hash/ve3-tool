@@ -1682,9 +1682,9 @@ class BrowserFlowGenerator:
     def _get_generation_mode(self) -> str:
         """
         Lay generation mode tu config: 'chrome' hoac 'api'.
-        Mac dinh: 'chrome'.
+        Mac dinh: 'api' (user preference).
         """
-        return self.config.get('generation_mode', 'chrome')
+        return self.config.get('generation_mode', 'api')
 
     def _auto_extract_token(self) -> Optional[str]:
         """
