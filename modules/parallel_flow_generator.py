@@ -186,15 +186,17 @@ class ParallelFlowGenerator:
         return chunks
 
     def _get_profile_name(self, browser_idx: int) -> str:
-        """Lấy tên profile cho browser."""
-        # Tìm profile có sẵn
-        if self.profiles_dir.exists():
-            profiles = [p.name for p in self.profiles_dir.iterdir() if p.is_dir()]
-            if profiles:
-                # Dùng profile theo thứ tự round-robin
-                return profiles[browser_idx % len(profiles)]
+        """
+        Lấy tên profile RIÊNG cho mỗi browser.
 
-        # Fallback: tạo profile mới
+        QUAN TRỌNG: Mỗi browser PHẢI dùng profile riêng, không thể share
+        vì Chrome không cho phép 2 instance dùng chung 1 profile directory.
+
+        Returns:
+            Tên profile duy nhất cho browser này (e.g., "parallel_0", "parallel_1")
+        """
+        # LUÔN tạo profile riêng cho mỗi browser trong parallel mode
+        # Không dùng round-robin vì Chrome crash khi 2+ browsers share 1 profile
         return f"parallel_{browser_idx}"
 
     def _worker_generate(
