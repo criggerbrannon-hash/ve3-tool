@@ -1217,6 +1217,20 @@ class SmartEngine:
                     generator.project_path = Path(proj_dir)
                     generator.project_code = proj_dir.name
 
+            # === QUAN TRONG: Share project_id tu profile sang generator ===
+            # Tim profile matching voi profile_name de lay project_id
+            matching_profile = None
+            for p in self.profiles:
+                if Path(p.value).name == profile_name:
+                    matching_profile = p
+                    break
+
+            if matching_profile and matching_profile.project_id:
+                generator.config['flow_project_id'] = matching_profile.project_id
+                self.log(f"  -> Share project_id: {matching_profile.project_id[:8]}...")
+            else:
+                self.log(f"  -> Chua co project_id trong profile, se tao moi khi can")
+
             # Override callback
             def custom_log(msg, level="info"):
                 self.log(msg, level.upper() if level else "INFO")
@@ -1228,6 +1242,15 @@ class SmartEngine:
                 prompts=prompts,
                 excel_path=excel_files[0]
             )
+
+            # === SYNC project_id nguoc lai tu generator ve profile ===
+            # Neu generator da lay token moi va co project_id, cap nhat ve profile
+            new_project_id = generator.config.get('flow_project_id', '')
+            if new_project_id and matching_profile:
+                if matching_profile.project_id != new_project_id:
+                    self.log(f"  -> Sync project_id ve profile: {new_project_id[:8]}...")
+                    matching_profile.project_id = new_project_id
+                    self.save_cached_tokens()  # Luu lai de lan sau dung
 
             if result.get("success"):
                 stats = result.get("stats", {})
