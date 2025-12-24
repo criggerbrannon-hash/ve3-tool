@@ -187,13 +187,27 @@ class VoiceToSrt:
             "detect_disfluencies": False,
         }
         transcribe_options.update(kwargs)
-        
-        result = whisper_timestamped.transcribe(
-            self._model,
-            str(audio_path),
-            **transcribe_options
-        )
-        
+
+        # Try with VAD first, fallback to no VAD if error
+        try:
+            result = whisper_timestamped.transcribe(
+                self._model,
+                str(audio_path),
+                **transcribe_options
+            )
+        except Exception as e:
+            error_msg = str(e)
+            if "silero" in error_msg.lower() or "vad" in error_msg.lower() or "select()" in error_msg:
+                print(f"[Whisper] VAD error, retrying without VAD: {error_msg[:100]}")
+                transcribe_options["vad"] = False
+                result = whisper_timestamped.transcribe(
+                    self._model,
+                    str(audio_path),
+                    **transcribe_options
+                )
+            else:
+                raise
+
         return result
     
     def _transcribe_standard(
