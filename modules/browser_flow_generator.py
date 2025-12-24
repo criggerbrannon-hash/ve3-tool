@@ -468,17 +468,18 @@ class BrowserFlowGenerator:
                         self.config['flow_project_id'] = project_id  # Set vào config
                         self._log(f"[CACHE] Project ID: {project_id[:20]}...")
 
-                    # Check token còn valid không (< 50 phút)
-                    if bearer_token and token_time:
+                    # LUON dung cached token truoc - neu API tra ve 401 thi moi refresh
+                    # Khong dua vao thoi gian vi khong dang tin cay
+                    if bearer_token:
                         import time
-                        age_minutes = (time.time() - token_time) / 60
-                        if age_minutes < 50:
-                            self._cached_bearer_token = bearer_token
-                            self._cached_token_time = token_time
-                            self.config['flow_bearer_token'] = bearer_token  # Set vào config để dùng
-                            self._log(f"[CACHE] Token VALID ({age_minutes:.1f} phút) - REUSE, không cần mở Chrome!")
+                        self._cached_bearer_token = bearer_token
+                        self._cached_token_time = token_time or time.time()
+                        self.config['flow_bearer_token'] = bearer_token
+                        if token_time:
+                            age_minutes = (time.time() - token_time) / 60
+                            self._log(f"[CACHE] Token loaded ({age_minutes:.1f} phút) - TRY FIRST, refresh if API fails")
                         else:
-                            self._log(f"[CACHE] Token EXPIRED ({age_minutes:.1f} phút > 50) - cần lấy mới")
+                            self._log(f"[CACHE] Token loaded - TRY FIRST, refresh if API fails")
 
                     self._log(f"[CACHE] Loaded {len(data)} media_names")
                     return data
@@ -2404,13 +2405,36 @@ class BrowserFlowGenerator:
                                 ))
                                 self._log(f"[REF] Using cached media: {ref_id}")
 
-                # Generate image
+                # Generate image - co retry khi token het han
                 success, images, error = api.generate_images(
                     prompt=prompt,
                     count=self.config.get('flow_image_count', 2),
                     aspect_ratio=aspect_ratio,
                     image_inputs=[inp.to_dict() for inp in image_inputs] if image_inputs else None
                 )
+
+                # Check token expired (401) - auto refresh and retry
+                if not success and error:
+                    error_lower = str(error).lower()
+                    is_token_expired = '401' in error_lower or 'expired' in error_lower or 'authentication' in error_lower
+                    if is_token_expired:
+                        self._log(f"Token het han! Dang tu dong refresh...", "warn")
+                        new_token = self._auto_extract_token()
+                        if new_token:
+                            # Update API instance with new token
+                            api.bearer_token = new_token
+                            bearer_token = new_token
+                            self._log(f"Token moi OK - dang retry scene {scene_id}...")
+
+                            # Retry generation
+                            success, images, error = api.generate_images(
+                                prompt=prompt,
+                                count=self.config.get('flow_image_count', 2),
+                                aspect_ratio=aspect_ratio,
+                                image_inputs=[inp.to_dict() for inp in image_inputs] if image_inputs else None
+                            )
+                        else:
+                            self._log(f"Khong the refresh token!", "error")
 
                 if success and images:
                     # Download best image
@@ -2787,12 +2811,31 @@ class BrowserFlowGenerator:
             self._log(f"Prompt ({len(prompt)} chars): {prompt[:100]}...")
 
             try:
-                # Generate
+                # Generate - co retry khi token het han
                 success, images, error = api.generate_images(
                     prompt=prompt,
                     count=self.config.get('flow_image_count', 2),
                     aspect_ratio=aspect_ratio
                 )
+
+                # Check token expired (401) - auto refresh and retry
+                if not success and error:
+                    error_lower = str(error).lower()
+                    is_token_expired = '401' in error_lower or 'expired' in error_lower or 'authentication' in error_lower
+                    if is_token_expired:
+                        self._log(f"Token het han! Dang tu dong refresh...", "warn")
+                        new_token = self._auto_extract_token()
+                        if new_token:
+                            api.bearer_token = new_token
+                            bearer_token = new_token
+                            self._log(f"Token moi OK - dang retry ID {pid}...")
+                            success, images, error = api.generate_images(
+                                prompt=prompt,
+                                count=self.config.get('flow_image_count', 2),
+                                aspect_ratio=aspect_ratio
+                            )
+                        else:
+                            self._log(f"Khong the refresh token!", "error")
 
                 if success and images:
                     # Determine output dir
