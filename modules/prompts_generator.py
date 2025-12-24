@@ -1341,6 +1341,14 @@ class PromptGenerator:
             # Nguoi dung co the thay doi trong Excel sau
             planned_duration = scene_data.get("planned_duration", duration)
 
+            # CRITICAL: Clamp planned_duration to max 8 seconds (technical limit)
+            MAX_DURATION = 8
+            if planned_duration and planned_duration > MAX_DURATION:
+                self.logger.warning(
+                    f"Scene {scene_data['scene_id']}: planned_duration {planned_duration}s exceeds max {MAX_DURATION}s, clamping"
+                )
+                planned_duration = MAX_DURATION
+
             scene = Scene(
                 scene_id=scene_data["scene_id"],
                 srt_start=srt_start_val,              # Timestamp bat dau (HH:MM:SS,mmm)
@@ -1702,6 +1710,14 @@ class PromptGenerator:
                         planned_duration = end_secs - start_secs
                     except:
                         planned_duration = 5  # Default 5 seconds
+
+                # CRITICAL: Clamp planned_duration to max 8 seconds (technical limit)
+                MAX_DURATION = 8
+                if planned_duration > MAX_DURATION:
+                    self.logger.warning(
+                        f"Shot {scene_id}: planned_duration {planned_duration}s exceeds max {MAX_DURATION}s, clamping"
+                    )
+                    planned_duration = MAX_DURATION
 
                 scene = {
                     "scene_id": scene_id,

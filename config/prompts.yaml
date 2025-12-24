@@ -806,8 +806,34 @@ directors_shooting_plan: |
   - Action scene: more, shorter shots
   - Mixed content: varied durations
 
-  ## RULES:
-  - **Maximum 8 seconds per image** (technical limit)
+  ## ⚠️⚠️⚠️ CRITICAL RULES - MUST FOLLOW! ⚠️⚠️⚠️
+
+  ### 🚨 MAXIMUM 8 SECONDS PER SHOT - NEVER EXCEED!
+
+  **This is a HARD TECHNICAL LIMIT. ANY shot with planned_duration > 8 will FAIL!**
+
+  **❌ WRONG:** One 30-second SRT segment = one 30s shot
+  **✅ CORRECT:** One 30-second SRT segment = 4-6 shots (each 5-8s)
+
+  ### HOW TO SPLIT SRT SEGMENTS:
+
+  | SRT Duration | Split Into | Example Durations |
+  |--------------|------------|-------------------|
+  | 10-15s | 2-3 shots | 6s + 5s + 4s = 15s |
+  | 15-20s | 3-4 shots | 6s + 5s + 5s + 4s = 20s |
+  | 20-30s | 4-5 shots | 7s + 6s + 6s + 5s + 6s = 30s |
+  | 30-45s | 5-7 shots | 8s + 7s + 6s + 6s + 5s + 6s + 7s = 45s |
+  | 45-60s | 7-10 shots | Split evenly, max 8s each |
+  | 60s+ | 10+ shots | MUST split into many shots! |
+
+  ### FORMULA:
+  ```
+  Number of shots = ceil(SRT_duration / 6)
+  Each shot = 2-8 seconds (NEVER more than 8!)
+  Total of all shots = SRT_duration exactly
+  ```
+
+  ### OTHER RULES:
   - **Duration serves the story** - short is fine when content needs it!
   - **Minimize image count** - fewer images = less viewer fatigue
   - EVERY image must serve the part's GOAL
@@ -1048,12 +1074,15 @@ directors_shooting_plan: |
 
   ## CRITICAL INSTRUCTIONS:
 
-  1. **MAXIMUM 8 SECONDS per image!** (Technical limit - NEVER exceed!)
-  2. **Duration serves CONTENT** - 2-3s for action, 7-8s for emotion, 4-6s for narrative
-  3. **ADD planned_duration to each shot** (integer 2-8, based on content)
+  1. **🚨 MAXIMUM 8 SECONDS per shot!** (HARD LIMIT - system will REJECT shots > 8s!)
+  2. **🚨 MUST SPLIT long SRT segments into multiple shots!**
+     - 15s segment → 3 shots (5s + 5s + 5s)
+     - 30s segment → 5 shots (6s + 6s + 6s + 6s + 6s)
+     - 50s segment → 8 shots (6s + 6s + 6s + 6s + 7s + 6s + 6s + 7s)
+     - NEVER create a single shot for a long segment!
+  3. **ADD planned_duration to each shot** (integer 2-8 ONLY, based on content)
   4. **Total shot durations MUST EQUAL SRT segment duration exactly**
-     - Example: 30 second segment → could be 8+6+5+4+4+3 = 30s (6 varied shots)
-  5. **THINK LIKE REAL CINEMA** - vary rhythm, use short cuts for tension, long for emotion
+  5. **Duration serves CONTENT** - 2-3s for action, 7-8s for emotion, 4-6s for narrative
   6. VARY camera angles - don't repeat the same shot type consecutively!
   7. Use characters/locations from the provided lists
   8. Children (nvc1) should be DESCRIBED in img_prompt, NOT in reference_files
