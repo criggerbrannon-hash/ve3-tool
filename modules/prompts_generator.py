@@ -1689,12 +1689,28 @@ class PromptGenerator:
                 # Characters: ưu tiên characters_in_shot, fallback từ reference_files
                 characters_used = chars_in_shot if chars_in_shot else chars_from_refs
 
+                # Lấy planned_duration từ đạo diễn (nếu có)
+                # Nếu không có, tính từ srt_range
+                planned_duration = shot.get("planned_duration")
+                if not planned_duration:
+                    # Fallback: tính từ timestamps
+                    try:
+                        start_parts = start_time.split(",")[0].split(":")
+                        end_parts = end_time.split(",")[0].split(":")
+                        start_secs = int(start_parts[0]) * 3600 + int(start_parts[1]) * 60 + int(start_parts[2])
+                        end_secs = int(end_parts[0]) * 3600 + int(end_parts[1]) * 60 + int(end_parts[2])
+                        planned_duration = end_secs - start_secs
+                    except:
+                        planned_duration = 5  # Default 5 seconds
+
                 scene = {
                     "scene_id": scene_id,
                     "srt_start": start_time,
                     "srt_end": end_time,
                     "start_time": start_time,
                     "end_time": end_time,
+                    "planned_duration": planned_duration,  # Thời lượng đạo diễn quyết định
+                    "emotional_weight": shot.get("emotional_weight", ""),  # Mức độ quan trọng cảm xúc
                     "text": shot.get("srt_text", ""),
                     "scene_type": part.get("part_name", "SCENE"),
                     "location_id": location_id,
@@ -1706,6 +1722,7 @@ class PromptGenerator:
                     "shot_type": shot.get("shot_type", ""),
                     "camera_angle": shot.get("camera_angle", ""),
                     "visual_description": shot.get("visual_description", ""),
+                    "purpose": shot.get("purpose", ""),  # Mục đích của shot
                     # Đánh dấu đã có prompt từ đạo diễn
                     "from_director": True
                 }

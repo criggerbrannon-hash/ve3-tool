@@ -534,16 +534,48 @@ directors_shooting_plan: |
   | HAPPINESS | Radiant, bright | Warm, vibrant | Medium, two-shot | TEARS OF JOY |
   | BETRAYAL | Cold, harsh | Desaturated | Dutch angle | ANGRY, HURT |
 
-  ### STEP 3: MAP TO SRT TIMESTAMPS
+  ### STEP 3: PACING & RHYTHM - THE DIRECTOR'S ART
 
-  SRT tells you WHEN each image appears (start/end time).
-  Duration ÷ 8s = number of shots needed.
+  SRT tells you the CONTENT WINDOW. But YOU decide the RHYTHM within that window.
+
+  ## 🎬 SHOT DURATION - BASED ON EMOTIONAL WEIGHT, NOT FORMULA!
+
+  **FORGET "8 seconds per shot"! Think like a REAL DIRECTOR:**
+
+  | Moment Type | Duration | Why |
+  |-------------|----------|-----|
+  | EMOTIONAL PEAK (climax, revelation) | 8-12 seconds | Let audience FEEL it |
+  | ESTABLISHING (new location/scene) | 5-8 seconds | Set the stage |
+  | STANDARD NARRATIVE | 4-6 seconds | Keep story moving |
+  | TRANSITION/BRIDGE | 2-4 seconds | Quick connection |
+  | ACTION/TENSION | 2-4 seconds each | Fast cuts = energy |
+  | BREATHING MOMENT | 6-10 seconds | Let audience absorb |
+
+  ## 🎵 RHYTHM - VARY THE PACE!
+
+  **DON'T:** 5s - 5s - 5s - 5s (boring, monotonous)
+  **DO:** 8s - 4s - 6s - 3s - 10s (dynamic, engaging)
+
+  **PACING PATTERNS:**
+  ```
+  BUILD TENSION:   Long → Medium → Short → Short → SHORT (faster!)
+  CLIMAX:          Short → Short → LOOONG (release)
+  CALM AFTER STORM: Long → Long → Medium (breathing)
+  ```
+
+  ## 📊 EMPHASIS - KEY MOMENTS GET MORE TIME
+
+  **ASK: "What MUST land emotionally?"**
+  - The betrayal reveal → LONG shot (8-12s)
+  - The happy reunion → LONG shot (8-10s)
+  - The shocking discovery → LONG shot (8-12s)
+  - Generic walking/transition → SHORT shot (2-4s)
 
   ## RULES:
-  - Maximum 8 seconds per image
-  - Each part: duration ÷ 8 = shots needed (round up)
   - EVERY image must serve the part's GOAL
   - Images are NOT illustrations - they CREATE FEELING
+  - Duration is a CREATIVE CHOICE based on emotional weight
+  - Total shot durations should roughly match SRT segment length
 
   ## CHARACTER SELECTION - VERY IMPORTANT!
 
@@ -668,6 +700,8 @@ directors_shooting_plan: |
             {{
               "shot_number": 1,
               "purpose": "Establish loneliness and overwhelming situation",
+              "emotional_weight": "HIGH - Opening hook, must grab attention",
+              "planned_duration": 8,
               "srt_range": "00:00 - 00:08",
               "srt_text": "Tôi ngồi trên bậc thềm tòa án...",
               "shot_type": "WIDE SHOT",
@@ -679,6 +713,8 @@ directors_shooting_plan: |
             {{
               "shot_number": 2,
               "purpose": "Show emotional devastation up close",
+              "emotional_weight": "VERY HIGH - Emotional reveal",
+              "planned_duration": 7,
               "srt_range": "00:08 - 00:15",
               "srt_text": "Mẹ tôi đã kiện tôi...",
               "shot_type": "CLOSE-UP",
@@ -694,6 +730,7 @@ directors_shooting_plan: |
           "part_name": "CHILDHOOD",
           "goal": "BUILD SYMPATHY",
           "audience_feeling": "Poor kid, such a hard life",
+          "pacing_strategy": "Slow, warm, let audience connect with the hardship",
           "visual_strategy": {{
             "lighting": "Golden hour, warm tungsten",
             "colors": "Warm, slightly faded, nostalgic",
@@ -701,18 +738,58 @@ directors_shooting_plan: |
           }},
           "time_range": "00:15 - 00:45",
           "duration_seconds": 30,
-          "shots_needed": 4,
           "shots": [
             {{
               "shot_number": 3,
-              "purpose": "Show poverty but also warmth of home",
-              "srt_range": "00:15 - 00:22",
+              "purpose": "Establish the poverty but also love",
+              "emotional_weight": "HIGH - First sympathy moment",
+              "planned_duration": 10,
+              "srt_range": "00:15 - 00:25",
               "srt_text": "Năm tôi 8 tuổi, ba mẹ ly hôn...",
               "shot_type": "WIDE SHOT",
               "camera_angle": "Eye level, 24mm - intimate establishing",
               "characters_in_shot": ["nv1_young", "nvc1"],
               "reference_files": ["nv1_young.png", "loc_old_house.png"],
               "img_prompt": "Wide shot, 24mm lens, GOLDEN HOUR warm light. Rural countryside, small THATCHED-ROOF HOUSE with HOLES in roof, but WARM light glowing from inside. 32yo mother in worn but clean clothes, hand lovingly on young son's shoulder. NOSTALGIC, slightly faded warm colors. Despite poverty, feeling of LOVE and TOGETHERNESS. Cinematic, 4K photorealistic. (Child: 8yo boy, thin but bright-eyed, looking up at mother with trust)"
+            }},
+            {{
+              "shot_number": 4,
+              "purpose": "Detail shot - hands working together",
+              "emotional_weight": "MEDIUM - Supporting detail",
+              "planned_duration": 5,
+              "srt_range": "00:25 - 00:30",
+              "srt_text": "Mẹ tần tảo nuôi con...",
+              "shot_type": "CLOSE-UP",
+              "camera_angle": "Top-down, 50mm - detail focus",
+              "characters_in_shot": ["nv1_young"],
+              "reference_files": ["nv1_young.png"],
+              "img_prompt": "Close-up, 50mm lens, top-down angle. Mother's WORN hands washing clothes in basin, CALLOUSED fingers, simple but CLEAN clothes in the water. Golden afternoon light. Warm, nostalgic colors. Symbol of SACRIFICE and HARD WORK. Cinematic, 4K photorealistic."
+            }},
+            {{
+              "shot_number": 5,
+              "purpose": "Emotional peak - mother's sacrifice",
+              "emotional_weight": "VERY HIGH - Empathy moment",
+              "planned_duration": 9,
+              "srt_range": "00:30 - 00:39",
+              "srt_text": "Mẹ làm việc từ sáng tới khuya...",
+              "shot_type": "MEDIUM SHOT",
+              "camera_angle": "Eye level, 50mm - intimate",
+              "characters_in_shot": ["nv1_young"],
+              "reference_files": ["nv1_young.png", "loc_market.png"],
+              "img_prompt": "Medium shot, 50mm lens, eye level. 32yo mother at market stall, TIRED eyes but DETERMINED expression, selling vegetables. Late afternoon light casting LONG shadows. EXHAUSTION visible but also LOVE in her eyes. Warm but slightly desaturated. Cinematic, 4K photorealistic."
+            }},
+            {{
+              "shot_number": 6,
+              "purpose": "Transition - child watching mother",
+              "emotional_weight": "MEDIUM - Bridge to next scene",
+              "planned_duration": 6,
+              "srt_range": "00:39 - 00:45",
+              "srt_text": "Tôi nhìn mẹ và thầm hứa...",
+              "shot_type": "OVER-SHOULDER",
+              "camera_angle": "Behind child, looking at mother",
+              "characters_in_shot": ["nvc1", "nv1_young"],
+              "reference_files": ["nv1_young.png", "loc_old_house.png"],
+              "img_prompt": "Over-shoulder shot from behind child looking at mother cooking. Warm TUNGSTEN light from fire. Mother's back visible, stirring pot. SILHOUETTE of child in foreground. Feeling of ADMIRATION and LOVE. Golden warm tones. Cinematic, 4K photorealistic. (Child: 8yo boy, thin, watching mother intently)"
             }}
           ]
         }}
@@ -722,13 +799,17 @@ directors_shooting_plan: |
 
   ## CRITICAL INSTRUCTIONS:
 
-  1. CALCULATE images needed: duration_seconds ÷ 8, round UP
-  2. VARY camera angles - don't repeat the same shot type consecutively!
-  3. Match SRT timestamps to shots - each shot covers ~8 seconds of narration
+  1. **PLAN shots based on EMOTIONAL WEIGHT, not formula!**
+     - Key emotional moments: 8-12 seconds (longer = more impact)
+     - Transitions/bridges: 2-4 seconds (quick)
+     - Standard narrative: 4-6 seconds
+     - Total should roughly match SRT duration
+  2. **ADD planned_duration to each shot** - how long this image will display
+  3. VARY camera angles - don't repeat the same shot type consecutively!
   4. Use characters/locations from the provided lists
   5. Children (nvc1) should be DESCRIBED in img_prompt, NOT in reference_files
   6. Every img_prompt MUST end with the global_style
-  7. Make it feel like a FILM with visual variety!
+  7. Make it feel like a FILM with visual variety and RHYTHM!
   8. DO NOT add nationality/ethnicity (Vietnamese, American, etc.) unless EXPLICITLY mentioned in the story
      - If story doesn't mention nationality, just describe features (hair color, skin tone, etc.)
      - Only add nationality when it's RELEVANT to the story
@@ -801,15 +882,62 @@ directors_shooting_plan: |
   - Show: locations without people, symbolic objects, weather/mood
   - Example: "Close-up of wedding ring being removed", "Wide shot of empty house"
 
-  ## SHOT TYPE GUIDE:
-  - WIDE/ESTABLISHING: Set scene, show environment (24mm)
-  - MEDIUM: Character in context, waist up (50mm)
-  - CLOSE-UP: Face, emotion (85mm)
-  - EXTREME CLOSE-UP: Details, hands, objects (100mm)
-  - OVER-SHOULDER: Conversation, relationship
-  - TWO-SHOT: Two characters together
-  - LOW ANGLE: Power, heroic
-  - HIGH ANGLE: Vulnerability, small
+  ## 🎥 CINEMATOGRAPHY TECHNIQUES - THE DIRECTOR'S TOOLBOX
+
+  ### 12 ESSENTIAL SHOT TYPES (Use these to CREATE EMOTION!):
+
+  | # | Shot Type | Lens | When to Use | Emotional Effect |
+  |---|-----------|------|-------------|------------------|
+  | 1 | **WIDE/ESTABLISHING** | 24mm | New location, showing scale | "Where are we?" - Context, isolation, grandeur |
+  | 2 | **FULL SHOT** | 35mm | Show full body + environment | Action, body language, movement |
+  | 3 | **MEDIUM SHOT** | 50mm | Character waist-up | Standard conversation, balance |
+  | 4 | **MEDIUM CLOSE-UP** | 70mm | Chest to head | Intimacy, importance |
+  | 5 | **CLOSE-UP** | 85mm | Face only | Raw emotion, connection, intensity |
+  | 6 | **EXTREME CLOSE-UP** | 100mm+ | Eyes, hands, objects | Detail, tension, symbolic meaning |
+  | 7 | **OVER-SHOULDER (OTS)** | 50mm | From behind one character | Relationship, conversation, POV |
+  | 8 | **TWO-SHOT** | 50mm | Two characters in frame | Relationship dynamic, comparison |
+  | 9 | **POV SHOT** | 35mm | What character sees | Immersion, subjective experience |
+  | 10 | **DUTCH ANGLE** | Any | Tilted frame | Unease, tension, chaos, madness |
+  | 11 | **SILHOUETTE** | 24mm | Backlit figure | Mystery, drama, artistic |
+  | 12 | **REFLECTION** | 50mm | Through mirror/window | Introspection, dual nature |
+
+  ### CAMERA ANGLES (5 Essential):
+
+  | Angle | When to Use | Emotional Effect |
+  |-------|-------------|------------------|
+  | **EYE LEVEL** | Standard, neutral | Normal, relatable |
+  | **LOW ANGLE** (Looking up) | Power, heroic moment | Makes subject DOMINANT, powerful |
+  | **HIGH ANGLE** (Looking down) | Vulnerability, weakness | Makes subject SMALL, weak, trapped |
+  | **BIRD'S EYE** (Directly above) | God's view, fate | Detachment, insignificance |
+  | **WORM'S EYE** (Ground level) | Extreme power/drama | Maximum intimidation, epic feel |
+
+  ### LIGHTING TECHNIQUES (5 Essential):
+
+  | Technique | When to Use | Emotional Effect |
+  |-----------|-------------|------------------|
+  | **KEY LIGHT** (Soft, even) | Happy, normal scenes | Safety, clarity |
+  | **HIGH CONTRAST** (Harsh shadows) | Conflict, tension | Drama, danger, inner conflict |
+  | **SILHOUETTE** (Backlit) | Mystery, drama | Unknown, foreboding |
+  | **GOLDEN HOUR** (Warm glow) | Nostalgia, love, hope | Warmth, beauty, fleeting moment |
+  | **BLUE HOUR** (Cold light) | Sadness, isolation | Melancholy, loneliness |
+
+  ### 🎬 CHOOSING THE RIGHT TECHNIQUE:
+
+  **ASK YOURSELF:**
+  1. What EMOTION should audience feel? → Choose lighting
+  2. How POWERFUL is this character now? → Choose angle
+  3. How INTIMATE should we be? → Choose shot size
+  4. Is this moment STABLE or UNSTABLE? → Normal or Dutch angle
+
+  **EXAMPLES:**
+
+  | Story Moment | Technique Combo | Why |
+  |--------------|-----------------|-----|
+  | Mother sues son | LOW ANGLE + DUTCH + COLD LIGHT | Courthouse is powerful, world is wrong |
+  | Happy childhood memory | MEDIUM + EYE LEVEL + GOLDEN HOUR | Intimate, warm, nostalgic |
+  | Son's sacrifice | CLOSE-UP + LOW CONTRAST + WARM | Focus on emotion, determination |
+  | Betrayal reveal | EXTREME CU + HIGH CONTRAST | Intense emotion, harsh truth |
+  | Lonely moment | WIDE + HIGH ANGLE + BLUE LIGHT | Small person, big empty world |
 
   OUTPUT: JSON object with complete shooting_plan, NO markdown.
 
