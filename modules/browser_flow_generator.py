@@ -1713,9 +1713,17 @@ class BrowserFlowGenerator:
                 chrome_path = "/usr/bin/google-chrome"
 
         # Lay profile path
-        # Profile name tu self.profile_name, profile dir tu config hoac mac dinh
-        profiles_dir = self.config.get('browser_profiles_dir', './chrome_profiles')
-        profile_path = str(Path(profiles_dir) / self.profile_name)
+        # Uu tien: chrome_profile (absolute path tu settings) > browser_profiles_dir/profile_name
+        chrome_profile = self.config.get('chrome_profile', '')
+        if chrome_profile and Path(chrome_profile).exists():
+            # Dung profile tu settings.yaml (Chrome profile cua user)
+            profile_path = chrome_profile
+            self._log(f"Su dung Chrome profile tu settings: {profile_path}")
+        else:
+            # Fallback: dung tool's own profile
+            profiles_dir = self.config.get('browser_profiles_dir', './chrome_profiles')
+            profile_path = str(Path(profiles_dir) / self.profile_name)
+            self._log(f"Su dung tool profile: {profile_path}")
 
         self._log(f"Chrome: {chrome_path}")
         self._log(f"Profile: {profile_path}")
@@ -1775,9 +1783,15 @@ class BrowserFlowGenerator:
             self._log(f"Khong import duoc ChromeHeadersExtractor: {e}", "error")
             return None
 
-        # Lay profile path
-        profiles_dir = self.config.get('browser_profiles_dir', './chrome_profiles')
-        profile_path = str(Path(profiles_dir) / self.profile_name)
+        # Lay profile path - uu tien chrome_profile tu settings
+        chrome_profile = self.config.get('chrome_profile', '')
+        if chrome_profile and Path(chrome_profile).exists():
+            profile_path = chrome_profile
+            self._log(f"Su dung Chrome profile tu settings: {profile_path}")
+        else:
+            profiles_dir = self.config.get('browser_profiles_dir', './chrome_profiles')
+            profile_path = str(Path(profiles_dir) / self.profile_name)
+            self._log(f"Su dung tool profile: {profile_path}")
 
         self._log(f"Profile: {profile_path}")
 
