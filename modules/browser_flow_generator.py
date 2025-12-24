@@ -2811,11 +2811,34 @@ class BrowserFlowGenerator:
             self._log(f"Prompt ({len(prompt)} chars): {prompt[:100]}...")
 
             try:
+                # === PARSE FILENAME ANNOTATIONS VA TAO IMAGE INPUTS ===
+                # Tim cac pattern (xxx.png) trong prompt va map sang cached media_names
+                import re
+                image_inputs = []
+                filename_pattern = r'\(([a-zA-Z0-9_]+)\.png\)'
+                matches = re.findall(filename_pattern, prompt)
+
+                if matches and cached_media_names:
+                    from modules.google_flow_api import ImageInput, ImageInputType
+                    for ref_id in matches:
+                        if ref_id in cached_media_names:
+                            media_info = cached_media_names[ref_id]
+                            media_name = media_info.get('mediaName') if isinstance(media_info, dict) else media_info
+                            if media_name:
+                                image_inputs.append(ImageInput(
+                                    name=media_name,
+                                    input_type=ImageInputType.REFERENCE
+                                ))
+                                self._log(f"  [REF] {ref_id} -> mediaName OK")
+                        else:
+                            self._log(f"  [REF] {ref_id} -> NOT in cache!", "warn")
+
                 # Generate - co retry khi token het han
                 success, images, error = api.generate_images(
                     prompt=prompt,
                     count=self.config.get('flow_image_count', 2),
-                    aspect_ratio=aspect_ratio
+                    aspect_ratio=aspect_ratio,
+                    image_inputs=[inp.to_dict() for inp in image_inputs] if image_inputs else None
                 )
 
                 # Check token expired (401) - auto refresh and retry
@@ -2832,7 +2855,8 @@ class BrowserFlowGenerator:
                             success, images, error = api.generate_images(
                                 prompt=prompt,
                                 count=self.config.get('flow_image_count', 2),
-                                aspect_ratio=aspect_ratio
+                                aspect_ratio=aspect_ratio,
+                                image_inputs=[inp.to_dict() for inp in image_inputs] if image_inputs else None
                             )
                         else:
                             self._log(f"Khong the refresh token!", "error")
