@@ -863,19 +863,60 @@ directors_shooting_plan: |
   - ❌ "Medium shot: Woman sitting in room looking thoughtful" (BORING - viewer leaves!)
   - ❌ "Medium shot: Person standing, calm expression" (NO DRAMA - FAIL!)
 
-  ## 📷 VARIETY ENFORCEMENT - NO REPETITION!
+  ## 📷 CAMERA VARIETY LOGIC - AUTO CHANGE BY STORY BEAT!
 
-  **BANNED:** Same shot type 3 times in a row!
+  **🎬 STORY BEAT → CAMERA RULE:**
 
-  **REQUIRED MIX (per 10 shots):**
-  - At least 2 WIDE/ESTABLISHING shots
-  - At least 2 CLOSE-UP shots
-  - At least 1 EXTREME CLOSE-UP (hands, objects, details)
-  - At least 1 different angle (LOW, HIGH, OVER-SHOULDER)
+  | Story Beat | Required Camera | Why |
+  |------------|-----------------|-----|
+  | NEW LOCATION/SCENE | WIDE ESTABLISHING | Set context, show environment |
+  | INTRODUCTION | FULL/MEDIUM | Show character in context |
+  | RISING ACTION | MEDIUM → CLOSE-UP | Build tension, get closer |
+  | DIALOGUE/CONFLICT | OTS or TWO-SHOT | Show relationship |
+  | EMOTIONAL CLIMAX | EXTREME CLOSE-UP | Maximum impact on face |
+  | REALIZATION | CLOSE-UP → WIDE | From intimate to show consequence |
+  | TENSION/DANGER | DUTCH + LOW | Unstable, threatening |
+  | RESOLUTION | WIDE or MEDIUM | Breathe, context |
+  | TRANSITION | OBJECT/DETAIL | Bridge between scenes |
 
-  **EVERY LOCATION CHANGE:** Must have ESTABLISHING shot first!
+  **🔄 AUTOMATIC VARIETY RULES:**
 
-  **EMOTIONAL MOMENTS:** Must have CLOSE-UP on face!
+  1. **NEVER** repeat same shot type 3 times in a row!
+  2. **PATTERN:** Wide → Medium → Close → Detail → Wide (cycle)
+  3. **EMOTIONAL BUILD:** Shots get TIGHTER as emotion intensifies
+  4. **RELEASE:** After climax, pull WIDER to let audience breathe
+
+  **EXAMPLE SEQUENCE:**
+  ```
+  Shot 1: WIDE (New location - courthouse)
+  Shot 2: MEDIUM (Show character approaching)
+  Shot 3: CLOSE-UP (Face shows fear)
+  Shot 4: EXTREME CU (Trembling hands on papers)
+  Shot 5: WIDE (Tiny person vs huge courthouse) ← CLIMAX
+  Shot 6: OTS (Looking at door) ← TRANSITION
+  ```
+
+  ## 💡 LIGHTING CONSISTENCY - SYNC WITH LOCATION!
+
+  **LOCATION → LIGHTING RULE:**
+
+  | Location Type | Time of Day | Lighting Style | Colors |
+  |---------------|-------------|----------------|--------|
+  | COURTHOUSE | Any | COLD, harsh, institutional | Desaturated, gray-blue |
+  | OLD HOME | Memory | GOLDEN HOUR, warm | Warm, nostalgic, amber |
+  | HOSPITAL | Day | FLUORESCENT, clinical | Green-white, sterile |
+  | OFFICE | Day | SOFT KEY LIGHT | Neutral, professional |
+  | STREET | Night | BLUE HOUR + street lights | Cold blue + warm pools |
+  | BEDROOM | Morning | SOFT, warm window light | Warm, peaceful |
+  | RESTAURANT | Evening | WARM AMBIENT | Warm, romantic, tungsten |
+  | CONSTRUCTION | Day | HARSH SUNLIGHT | High contrast, hot |
+  | MARKET | Afternoon | OVERCAST or GOLDEN | Warm but realistic |
+
+  **⚠️ CONSISTENCY RULES:**
+  1. **SAME LOCATION = SAME LIGHTING** (don't change lighting within a location unless time passes!)
+  2. **FLASHBACK = WARMER** (memories are always slightly golden/warmer)
+  3. **PRESENT = COOLER** (current timeline is more neutral/cooler)
+  4. **CONFLICT = HARSHER** (more contrast, harder shadows)
 
   **VARY SUBJECTS - NOT JUST MAIN CHARACTER!**
   - Include: environment shots, object details, hands/actions
