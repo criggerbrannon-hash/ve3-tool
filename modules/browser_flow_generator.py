@@ -1713,9 +1713,30 @@ class BrowserFlowGenerator:
                 chrome_path = "/usr/bin/google-chrome"
 
         # Lay profile path
-        # Uu tien: chrome_profile (absolute path tu settings) > browser_profiles_dir/profile_name
+        # Uu tien: 1. chrome_profile tu settings.yaml
+        #          2. chrome_profiles tu accounts.json (GUI settings)
+        #          3. browser_profiles_dir/profile_name (fallback)
         chrome_profile = self.config.get('chrome_profile', '')
-        self._log(f"[DEBUG] chrome_profile from config: '{chrome_profile}'")
+
+        # Neu khong co trong settings.yaml, thu doc tu accounts.json (GUI settings)
+        if not chrome_profile:
+            try:
+                accounts_file = Path(__file__).parent.parent / "config" / "accounts.json"
+                if accounts_file.exists():
+                    import json
+                    with open(accounts_file, 'r', encoding='utf-8') as f:
+                        accounts = json.load(f)
+                    profiles = accounts.get('chrome_profiles', [])
+                    for p in profiles:
+                        path = p if isinstance(p, str) else p.get('path', '')
+                        if path and not path.startswith('THAY_BANG') and Path(path).exists():
+                            chrome_profile = path
+                            self._log(f"Got chrome_profile from accounts.json (GUI): {chrome_profile}")
+                            break
+            except Exception as e:
+                self._log(f"[DEBUG] Cannot read accounts.json: {e}")
+
+        self._log(f"[DEBUG] chrome_profile: '{chrome_profile}'")
 
         if chrome_profile:
             chrome_profile_path = Path(chrome_profile)
@@ -1801,15 +1822,33 @@ class BrowserFlowGenerator:
             self._log(f"Khong import duoc ChromeHeadersExtractor: {e}", "error")
             return None
 
-        # Lay profile path - uu tien chrome_profile tu settings
+        # Lay profile path - uu tien chrome_profile tu settings hoac accounts.json
         chrome_profile = self.config.get('chrome_profile', '')
+
+        # Neu khong co trong settings.yaml, thu doc tu accounts.json (GUI)
+        if not chrome_profile:
+            try:
+                accounts_file = Path(__file__).parent.parent / "config" / "accounts.json"
+                if accounts_file.exists():
+                    import json
+                    with open(accounts_file, 'r', encoding='utf-8') as f:
+                        accounts = json.load(f)
+                    profiles = accounts.get('chrome_profiles', [])
+                    for p in profiles:
+                        path = p if isinstance(p, str) else p.get('path', '')
+                        if path and not path.startswith('THAY_BANG') and Path(path).exists():
+                            chrome_profile = path
+                            self._log(f"Got chrome_profile from accounts.json (GUI): {chrome_profile}")
+                            break
+            except:
+                pass
+
         if chrome_profile:
             chrome_profile_path = Path(chrome_profile)
             if chrome_profile_path.exists():
                 profile_path = str(chrome_profile_path)
-                self._log(f"Su dung Chrome profile tu settings: {profile_path}")
+                self._log(f"Su dung Chrome profile: {profile_path}")
             else:
-                # Thu resolve relative path
                 base_dir = Path(__file__).parent.parent
                 abs_chrome_profile = base_dir / chrome_profile
                 if abs_chrome_profile.exists():
