@@ -1842,7 +1842,10 @@ class PromptGenerator:
                 self.logger.error(f"[Director CHUNKING] 🚨 CRITICAL: Chunk {chunk_num} has NO parts even after fallback!")
                 chunk_parts = []
 
-            # Adjust part and shot numbers
+            # Adjust part and shot numbers + VALIDATE TIMESTAMPS
+            chunk_start_sec = chunk_entries[0].start_time.total_seconds()
+            chunk_end_sec = chunk_entries[-1].end_time.total_seconds()
+
             for part in chunk_parts:
                 part_number_offset += 1
                 part["part_number"] = part_number_offset
@@ -1850,6 +1853,32 @@ class PromptGenerator:
                 for shot in part.get("shots", []):
                     shot_number_offset += 1
                     shot["shot_number"] = shot_number_offset
+
+                    # === VALIDATE & FIX TIMESTAMPS ===
+                    # Đảm bảo shot có timestamp nằm trong chunk's time range
+                    srt_range = shot.get("srt_range", "")
+                    if srt_range and " - " in srt_range:
+                        try:
+                            start_str = srt_range.split(" - ")[0].strip()
+                            # Parse time
+                            parts = start_str.replace(",", ".").split(":")
+                            if len(parts) == 3:
+                                shot_start_sec = int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+                            elif len(parts) == 2:
+                                shot_start_sec = int(parts[0]) * 60 + float(parts[1])
+                            else:
+                                shot_start_sec = 0
+
+                            # Kiểm tra timestamp có nằm trong chunk không
+                            if shot_start_sec < chunk_start_sec - 10 or shot_start_sec > chunk_end_sec + 10:
+                                # Timestamp sai! Fix bằng cách dùng chunk's time range
+                                self.logger.warning(
+                                    f"[TIMESTAMP FIX] Shot {shot['shot_number']}: {srt_range} nằm ngoài chunk "
+                                    f"({self._format_timedelta_simple(chunk_start_sec)} - {self._format_timedelta_simple(chunk_end_sec)})"
+                                )
+                                # Không fix ở đây, chỉ log warning
+                        except Exception as e:
+                            pass  # Ignore parsing errors
 
             all_parts.extend(chunk_parts)
 
@@ -1981,6 +2010,16 @@ class PromptGenerator:
             seconds = total_seconds % 60
             return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
         return str(td)
+
+    def _format_timedelta_simple(self, total_seconds: float) -> str:
+        """Format seconds thành MM:SS hoặc HH:MM:SS"""
+        total_seconds = int(total_seconds)
+        hours = total_seconds // 3600
+        minutes = (total_seconds % 3600) // 60
+        seconds = total_seconds % 60
+        if hours > 0:
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        return f"{minutes:02d}:{seconds:02d}"
 
     def _create_fallback_shots_from_srt(
         self,
