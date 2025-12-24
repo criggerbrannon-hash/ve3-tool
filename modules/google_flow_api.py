@@ -435,28 +435,9 @@ class GoogleFlowAPI:
         self._log(f"POST {self.PROXY_IMAGE_API_URL} (via proxy)")
 
         # Build proxy request - format giống direct Google API
-        # Google API cần: imageAspectRatio, prompt, imageModelName (không phải aspectRatio, textInput, imageModelKey)
-        proxy_body = {
-            "clientContext": {
-                "sessionId": self.session_id,
-                "projectId": self.project_id,
-                "tool": self.TOOL_NAME
-            },
-            "requests": [
-                {
-                    "clientContext": {
-                        "sessionId": self.session_id,
-                        "projectId": self.project_id,
-                        "tool": self.TOOL_NAME
-                    },
-                    "seed": self._generate_seed(),
-                    "imageModelName": "GEM_PIX_2",
-                    "imageAspectRatio": aspect_ratio,
-                    "prompt": prompt,
-                    "imageInputs": []
-                }
-            ]
-        }
+        # QUAN TRONG: Dung payload goc de giu nguyen imageInputs (references)
+        # Payload da duoc build trong generate_images() voi imageInputs day du
+        proxy_body = payload  # Su dung payload goc thay vi rebuild
 
         proxy_payload = {
             "body_json": proxy_body,
