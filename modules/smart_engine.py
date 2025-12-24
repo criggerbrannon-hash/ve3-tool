@@ -1071,6 +1071,91 @@ class SmartEngine:
                 self.log(f"Image error {pid}: {e}", "ERROR")
             return False, token_expired
 
+    def generate_images_api(self, prompts: List[Dict], proj_dir: Path) -> Dict:
+        """
+        Tao anh bang API MODE (nhanh hon, khong can mo browser).
+        Su dung Proxy API de bypass captcha.
+
+        Flow:
+        1. Lay bearer token tu Chrome profile (1 lan)
+        2. Goi Proxy API de tao anh
+        3. Download anh ve local
+
+        Args:
+            prompts: List prompts [{'id': '1', 'prompt': '...', 'output_path': '...'}]
+            proj_dir: Thu muc project
+
+        Returns:
+            Dict {"success": int, "failed": int}
+        """
+        self.log("=== TAO ANH BANG API MODE ===")
+
+        # Tim Excel file
+        excel_files = list((proj_dir / "prompts").glob("*_prompts.xlsx"))
+        if not excel_files:
+            self.log("Khong tim thay file Excel!", "ERROR")
+            return {"success": 0, "failed": len(prompts)}
+
+        try:
+            from modules.browser_flow_generator import BrowserFlowGenerator
+        except ImportError as e:
+            self.log(f"Khong import duoc BrowserFlowGenerator: {e}", "ERROR")
+            return {"success": 0, "failed": len(prompts)}
+
+        # Load settings
+        import yaml
+        headless = True
+        try:
+            config_path = self.config_dir / "settings.yaml"
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    settings = yaml.safe_load(f) or {}
+                headless = settings.get('browser_headless', True)
+        except:
+            pass
+
+        # Tim profile co san
+        profile_name = "main"
+        if self.assigned_profile:
+            profile_name = self.assigned_profile
+        elif self.profiles:
+            profile_name = Path(self.profiles[0].value).name
+
+        self.log(f"API mode voi profile: {profile_name}")
+
+        try:
+            # Tao BrowserFlowGenerator
+            generator = BrowserFlowGenerator(
+                project_path=str(proj_dir),
+                profile_name=profile_name,
+                headless=headless,
+                verbose=True,
+                config_path=str(self.config_path)
+            )
+
+            # Goi generate_from_prompts_auto - tu dong chon API hoac Chrome
+            result = generator.generate_from_prompts_auto(
+                prompts=prompts,
+                excel_path=excel_files[0]
+            )
+
+            if result.get("success") == False:
+                self.log(f"API mode error: {result.get('error')}", "ERROR")
+                return {"success": 0, "failed": len(prompts)}
+
+            # Parse results
+            success_count = result.get("success", 0)
+            failed_count = result.get("failed", 0)
+
+            self.log(f"API mode: {success_count} thanh cong, {failed_count} that bai")
+            return {"success": success_count, "failed": failed_count}
+
+        except Exception as e:
+            self.log(f"API mode exception: {e}", "ERROR")
+            import traceback
+            traceback.print_exc()
+            return {"success": 0, "failed": len(prompts)}
+
     def generate_images_browser(self, prompts: List[Dict], proj_dir: Path) -> Dict:
         """
         Tao anh bang BROWSER AUTOMATION (khong can API token).
@@ -1565,11 +1650,13 @@ class SmartEngine:
                 "skipped": "all_exist"
             }
         else:
-            # === 5. TAO SCENE IMAGES (BROWSER - khong can token) ===
-            self.log("[STEP 5] Tao scene images bang BROWSER...")
-
-            # CHI DUNG BROWSER - khong dung API
-            scene_results = self.generate_images_browser(prompts, proj_dir)
+            # === 5. TAO IMAGES - CHON MODE DUA TREN SETTINGS ===
+            if generation_mode == 'api':
+                self.log("[STEP 5] Tao images bang API MODE...")
+                scene_results = self.generate_images_api(prompts, proj_dir)
+            else:
+                self.log("[STEP 5] Tao images bang BROWSER MODE...")
+                scene_results = self.generate_images_browser(prompts, proj_dir)
 
             # Merge results
             results = {
