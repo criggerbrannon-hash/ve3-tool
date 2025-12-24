@@ -1618,13 +1618,50 @@ class PromptGenerator:
         scenes = []
         scene_id = 1
 
+        def normalize_timestamp(ts: str) -> str:
+            """
+            Chuẩn hóa timestamp về format SRT: HH:MM:SS,mmm
+            Input có thể là: "00:00", "00:00:00", "00:00:00,000", "0:00", etc.
+            """
+            ts = ts.strip()
+            if not ts:
+                return "00:00:00,000"
+
+            # Nếu có dấu phẩy (milliseconds)
+            if "," in ts:
+                main_part, ms = ts.rsplit(",", 1)
+            else:
+                main_part = ts
+                ms = "000"
+
+            # Đảm bảo ms là 3 chữ số
+            ms = ms.ljust(3, "0")[:3]
+
+            # Parse main part
+            parts = main_part.split(":")
+            if len(parts) == 2:
+                # MM:SS -> HH:MM:SS
+                mm, ss = parts
+                hh = "00"
+            elif len(parts) == 3:
+                hh, mm, ss = parts
+            else:
+                return "00:00:00,000"
+
+            # Pad với 0
+            hh = hh.zfill(2)
+            mm = mm.zfill(2)
+            ss = ss.zfill(2)
+
+            return f"{hh}:{mm}:{ss},{ms}"
+
         for part in shooting_plan.get("story_parts", []):
             for shot in part.get("shots", []):
                 # Parse srt_range để lấy timestamps
                 srt_range = shot.get("srt_range", "00:00 - 00:08")
                 times = srt_range.split(" - ")
-                start_time = times[0] if len(times) > 0 else "00:00:00"
-                end_time = times[1] if len(times) > 1 else "00:00:08"
+                start_time = normalize_timestamp(times[0]) if len(times) > 0 else "00:00:00,000"
+                end_time = normalize_timestamp(times[1]) if len(times) > 1 else "00:00:08,000"
 
                 scene = {
                     "scene_id": scene_id,
