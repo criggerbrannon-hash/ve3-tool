@@ -42,13 +42,19 @@ class SimpleTokenHelper:
                 cmd = [self.chrome_path]
                 
                 if self.profile_path:
-                    profile_name = Path(self.profile_path).name
-                    user_data_dir = str(Path(self.profile_path).parent)
-                    cmd.extend([
-                        f"--user-data-dir={user_data_dir}",
-                        f"--profile-directory={profile_name}"
-                    ])
-                
+                    profile_path = Path(self.profile_path)
+                    default_folder = profile_path / "Default"
+
+                    if default_folder.exists():
+                        # Tool's user-data-dir (has Default inside)
+                        cmd.append(f"--user-data-dir={profile_path}")
+                    else:
+                        # System Chrome profile folder
+                        cmd.extend([
+                            f"--user-data-dir={profile_path.parent}",
+                            f"--profile-directory={profile_path.name}"
+                        ])
+
                 cmd.append(self.FLOW_URL)
                 
                 subprocess.Popen(cmd, shell=False)
@@ -78,13 +84,17 @@ class SimpleTokenHelper:
                 cmd = [self.chrome_path]
                 
                 if self.profile_path:
-                    profile_name = Path(self.profile_path).name
-                    user_data_dir = str(Path(self.profile_path).parent)
-                    cmd.extend([
-                        f"--user-data-dir={user_data_dir}",
-                        f"--profile-directory={profile_name}"
-                    ])
-                
+                    profile_path = Path(self.profile_path)
+                    default_folder = profile_path / "Default"
+
+                    if default_folder.exists():
+                        cmd.append(f"--user-data-dir={profile_path}")
+                    else:
+                        cmd.extend([
+                            f"--user-data-dir={profile_path.parent}",
+                            f"--profile-directory={profile_path.name}"
+                        ])
+
                 cmd.append(url)
                 subprocess.Popen(cmd, shell=False)
                 return True
