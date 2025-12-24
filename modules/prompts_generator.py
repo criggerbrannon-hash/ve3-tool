@@ -1059,11 +1059,15 @@ class PromptGenerator:
             self.logger.info("[Director Flow] Đạo diễn đã tạo prompts! Sử dụng trực tiếp...")
             for scene in scenes_data:
                 # Lấy prompts từ scene (đạo diễn đã điền)
+                # Ưu tiên characters_used/location_used đã được set trong _convert_shooting_plan_to_scenes
+                chars_used = scene.get("characters_used", scene.get("characters_in_scene", []))
+                loc_used = scene.get("location_used", scene.get("location_id", ""))
+
                 all_scene_prompts.append({
                     "img_prompt": scene.get("img_prompt", ""),
                     "video_prompt": scene.get("img_prompt", ""),  # Dùng chung img_prompt cho video
-                    "characters_used": scene.get("characters_in_scene", []),
-                    "location_used": scene.get("location_id", ""),
+                    "characters_used": chars_used,
+                    "location_used": loc_used,
                     "reference_files": scene.get("reference_files", []),
                     "shot_type": scene.get("shot_type", ""),
                     "camera_angle": scene.get("camera_angle", ""),
@@ -1663,6 +1667,28 @@ class PromptGenerator:
                 start_time = normalize_timestamp(times[0]) if len(times) > 0 else "00:00:00,000"
                 end_time = normalize_timestamp(times[1]) if len(times) > 1 else "00:00:08,000"
 
+                # === Extract characters_used và location_used từ reference_files ===
+                ref_files = shot.get("reference_files", [])
+                chars_in_shot = shot.get("characters_in_shot", [])
+
+                # Location: ưu tiên từ reference_files (loc_xxx.png), fallback từ part.location
+                location_from_refs = ""
+                chars_from_refs = []
+                for ref in ref_files:
+                    ref_name = ref.replace(".png", "").strip()
+                    if ref_name.startswith("loc_"):
+                        location_from_refs = ref_name  # e.g., "loc_courthouse"
+                    else:
+                        chars_from_refs.append(ref_name)  # e.g., "nvc"
+
+                # Fallback location từ part level
+                location_id = location_from_refs or (
+                    part.get("location", "").split(",")[0].strip() if part.get("location") else ""
+                )
+
+                # Characters: ưu tiên characters_in_shot, fallback từ reference_files
+                characters_used = chars_in_shot if chars_in_shot else chars_from_refs
+
                 scene = {
                     "scene_id": scene_id,
                     "srt_start": start_time,
@@ -1671,9 +1697,11 @@ class PromptGenerator:
                     "end_time": end_time,
                     "text": shot.get("srt_text", ""),
                     "scene_type": part.get("part_name", "SCENE"),
-                    "location_id": part.get("location", "").split(",")[0].strip() if part.get("location") else "",
-                    "characters_in_scene": shot.get("characters_in_shot", []),
-                    "reference_files": shot.get("reference_files", []),
+                    "location_id": location_id,
+                    "characters_in_scene": characters_used,
+                    "characters_used": characters_used,  # Thêm trực tiếp cho Excel
+                    "location_used": location_id,  # Thêm trực tiếp cho Excel
+                    "reference_files": ref_files,
                     "img_prompt": shot.get("img_prompt", ""),
                     "shot_type": shot.get("shot_type", ""),
                     "camera_angle": shot.get("camera_angle", ""),
