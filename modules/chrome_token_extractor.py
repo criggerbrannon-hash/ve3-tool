@@ -29,26 +29,32 @@ class ChromeTokenExtractor:
         chrome_path: str,
         profile_path: str,
         headless: bool = False,
-        timeout: int = 60
+        timeout: int = 60,
+        debug_port: int = None
     ):
         """
         Khởi tạo extractor.
-        
+
         Args:
             chrome_path: Đường dẫn đến chrome.exe
             profile_path: Đường dẫn đến Chrome User Data
             headless: Chạy ẩn không hiện UI
             timeout: Timeout cho việc lấy token (giây)
+            debug_port: Port cho Chrome DevTools (mặc định random 9222-9322)
         """
         self.chrome_path = chrome_path
         self.profile_path = profile_path
         self.headless = headless
         self.timeout = timeout
-        
+
+        # Random port để tránh xung đột khi chạy nhiều instance
+        import random
+        self.debug_port = debug_port or random.randint(9222, 9322)
+
         self.driver = None
         self.bearer_token = None
         self.project_id = None
-        
+
         # Extract profile info from path
         profile_path = Path(profile_path)
         default_folder = profile_path / "Default"
@@ -92,6 +98,9 @@ class ChromeTokenExtractor:
         options.add_argument("--disable-blink-features=AutomationControlled")
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option("useAutomationExtension", False)
+
+        # Unique debug port để chạy nhiều instance song song
+        options.add_argument(f"--remote-debugging-port={self.debug_port}")
         
         # Try to use webdriver-manager
         try:
