@@ -1773,13 +1773,20 @@ class PromptGenerator:
             # FALLBACK: Nếu tất cả retry đều fail, tạo shots cơ bản từ SRT
             if not chunk_parts:
                 self.logger.warning(f"[Director CHUNKING] ⚠️ Chunk {chunk_num} FAILED after {MAX_RETRIES} attempts!")
-                self.logger.warning(f"[Director CHUNKING] Creating FALLBACK shots from SRT entries...")
+                self.logger.warning(f"[Director CHUNKING] Creating FALLBACK shots from {len(chunk_entries)} SRT entries...")
                 chunk_parts = self._create_fallback_shots_from_srt(
                     chunk_entries,
                     part_number_offset + 1,
                     shot_number_offset + 1,
                     global_style
                 )
+                fallback_shots = sum(len(p.get("shots", [])) for p in chunk_parts) if chunk_parts else 0
+                self.logger.warning(f"[Director CHUNKING] FALLBACK created {len(chunk_parts) if chunk_parts else 0} parts, {fallback_shots} shots")
+
+            # Safety check - nếu vẫn không có chunk_parts, tạo empty list để tránh crash
+            if not chunk_parts:
+                self.logger.error(f"[Director CHUNKING] 🚨 CRITICAL: Chunk {chunk_num} has NO parts even after fallback!")
+                chunk_parts = []
 
             # Adjust part and shot numbers
             for part in chunk_parts:
