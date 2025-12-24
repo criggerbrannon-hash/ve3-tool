@@ -1144,6 +1144,27 @@ class SmartEngine:
         # Config path - dung settings.yaml, khong phai accounts.json
         settings_path = self.config_dir / "settings.yaml"
 
+        # Check bearer token trong settings
+        bearer_token = ""
+        proxy_token = ""
+        try:
+            with open(settings_path, 'r', encoding='utf-8') as f:
+                cfg = yaml.safe_load(f) or {}
+            bearer_token = cfg.get('flow_bearer_token', '')
+            proxy_token = cfg.get('proxy_api_token', '')
+        except:
+            pass
+
+        if not proxy_token:
+            self.log("THIEU proxy_api_token trong settings.yaml!", "ERROR")
+            self.log("API mode can proxy token tu nanoai.pics", "ERROR")
+            return {"success": 0, "failed": len(prompts)}
+
+        if not bearer_token:
+            self.log("Chua co flow_bearer_token, se tu dong lay...", "WARN")
+            self.log("Neu loi Chrome, hay mo https://labs.google/fx/vi/tools/flow", "WARN")
+            self.log("va copy bearer token vao settings.yaml (flow_bearer_token)", "WARN")
+
         try:
             # Tao BrowserFlowGenerator
             generator = BrowserFlowGenerator(
@@ -1157,11 +1178,19 @@ class SmartEngine:
             # Goi generate_from_prompts_auto - tu dong chon API hoac Chrome
             result = generator.generate_from_prompts_auto(
                 prompts=prompts,
-                excel_path=excel_files[0]
+                excel_path=excel_files[0],
+                bearer_token=bearer_token if bearer_token else None
             )
 
             if result.get("success") == False:
-                self.log(f"API mode error: {result.get('error')}", "ERROR")
+                error_msg = result.get('error', '')
+                self.log(f"API mode error: {error_msg}", "ERROR")
+                if 'Chrome' in error_msg or 'session' in error_msg:
+                    self.log("=== HUONG DAN LAY TOKEN THU CONG ===", "WARN")
+                    self.log("1. Mo https://labs.google/fx/vi/tools/flow trong Chrome", "WARN")
+                    self.log("2. Tao 1 anh bat ky de trigger API", "WARN")
+                    self.log("3. Mo DevTools (F12) > Network > tim request 'batchGenerateImages'", "WARN")
+                    self.log("4. Copy 'Authorization: Bearer ya29.xxx...' vao settings.yaml", "WARN")
                 return {"success": 0, "failed": len(prompts)}
 
             # Parse results
