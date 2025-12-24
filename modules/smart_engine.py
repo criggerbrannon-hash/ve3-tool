@@ -2001,7 +2001,9 @@ class SmartEngine:
                     img['duration'] = max(0.5, (total_duration - img['start']) / max(1, len(images) - i))
 
             # 4. Tạo video với FFmpeg + Fade Transitions
-            with tempfile.TemporaryDirectory() as temp_dir:
+            # Windows fix: Don't use context manager - manual cleanup with retry
+            temp_dir = tempfile.mkdtemp()
+            try:
                 # Debug: show first few images
                 self.log(f"  First image: {Path(images[0]['path']).resolve()}")
                 for i in range(min(3, len(images))):
@@ -2147,8 +2149,27 @@ class SmartEngine:
                     import shutil
                     shutil.copy(temp_with_audio, output_path)
 
-            self.log(f"  Video hoan thanh: {output_path.name}", "OK")
-            return output_path
+                self.log(f"  Video hoan thanh: {output_path.name}", "OK")
+                return output_path
+
+            finally:
+                # Windows fix: Wait for FFmpeg to release file handles, then cleanup with retry
+                import gc
+                import shutil
+                gc.collect()
+                time.sleep(1)  # Wait longer for file handles
+
+                # Retry cleanup up to 5 times
+                for attempt in range(5):
+                    try:
+                        shutil.rmtree(temp_dir, ignore_errors=False)
+                        break
+                    except PermissionError:
+                        gc.collect()
+                        time.sleep(1)
+                        if attempt == 4:
+                            # Last attempt - ignore errors
+                            shutil.rmtree(temp_dir, ignore_errors=True)
 
         except Exception as e:
             self.log(f"  Video compose error: {e}", "ERROR")
