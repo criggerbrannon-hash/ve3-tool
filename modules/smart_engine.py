@@ -1141,6 +1141,9 @@ class SmartEngine:
 
         self.log(f"API mode voi profile: {profile_name}")
 
+        # Config path - dung settings.yaml, khong phai accounts.json
+        settings_path = self.config_dir / "settings.yaml"
+
         try:
             # Tao BrowserFlowGenerator
             generator = BrowserFlowGenerator(
@@ -1148,7 +1151,7 @@ class SmartEngine:
                 profile_name=profile_name,
                 headless=headless,
                 verbose=True,
-                config_path=str(self.config_path)
+                config_path=str(settings_path)
             )
 
             # Goi generate_from_prompts_auto - tu dong chon API hoac Chrome
