@@ -282,9 +282,15 @@ class BrowserFlowGenerator:
             traceback.print_exc()
             raise
 
-    def start_browser(self) -> bool:
+    def start_browser(self, use_cached_project: bool = True) -> bool:
         """
         Khoi dong trinh duyet va navigate den Google Flow.
+
+        Args:
+            use_cached_project: Neu True, se vao project cu (tu cache) de giu media_name valid
+
+        QUAN TRONG: Khi tao img, phai vao DUNG project da tao nv
+        de media_name cua nv con valid cho reference.
 
         Returns:
             True neu thanh cong
@@ -299,9 +305,19 @@ class BrowserFlowGenerator:
             self.driver.set_script_timeout(300)  # 5 phut
             self._log("Set script timeout: 300s")
 
-            # Navigate den Google Flow
-            self._log(f"Navigate den: {self.FLOW_URL}")
-            self.driver.get(self.FLOW_URL)
+            # QUAN TRONG: Kiem tra cached project URL
+            # Neu co, vao project cu de giu media_name valid
+            target_url = self.FLOW_URL
+            cached_url = getattr(self, '_cached_project_url', None)
+
+            if use_cached_project and cached_url:
+                self._log(f"[REUSE PROJECT] Vao project cu de giu media_name valid")
+                self._log(f"  -> URL: {cached_url[:60]}...")
+                target_url = cached_url
+            else:
+                self._log(f"Navigate den: {self.FLOW_URL}")
+
+            self.driver.get(target_url)
 
             # Cho page load
             time.sleep(5)
@@ -423,7 +439,12 @@ class BrowserFlowGenerator:
         """
         Load media_names tu cache file.
 
-        Format moi: {id: {mediaName: str, seed: int|null}}
+        Format moi: {
+            "_project_url": "https://...",
+            "_project_id": "xxx",
+            "nvc": {mediaName: str, seed: int|null},
+            ...
+        }
         Backward compatible voi format cu: {id: str}
         """
         cache_path = self._get_media_cache_path()
@@ -431,23 +452,55 @@ class BrowserFlowGenerator:
             try:
                 with open(cache_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
+                    # Extract project info
+                    project_url = data.pop('_project_url', None)
+                    project_id = data.pop('_project_id', None)
+                    if project_url:
+                        self._cached_project_url = project_url
+                        self._log(f"Loaded project_url from cache: {project_url[:50]}...")
+                    if project_id:
+                        self._cached_project_id = project_id
+                        self._log(f"Loaded project_id from cache: {project_id[:20]}...")
                     self._log(f"Loaded {len(data)} media_names from cache")
                     return data
-            except:
-                pass
+            except Exception as e:
+                self._log(f"Error loading cache: {e}", "warn")
         return {}
 
     def _save_media_cache(self, media_names: Dict[str, Any]) -> None:
         """
         Luu media_names vao cache file.
 
-        Format: {id: {mediaName: str, seed: int|null}}
+        Format: {
+            "_project_url": "https://...",
+            "_project_id": "xxx",
+            "nvc": {mediaName: str, seed: int|null},
+            ...
+        }
+
+        QUAN TRONG: Luu project_url de khi tao img co the vao dung project
+        de media_name con valid.
         """
         cache_path = self._get_media_cache_path()
         try:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Add project info to cache
+            cache_data = dict(media_names)  # Copy to avoid modifying original
+
+            # Get project URL from current session or config
+            project_url = getattr(self, '_project_url', None)
+            project_id = self.config.get('flow_project_id', '')
+
+            if project_url:
+                cache_data['_project_url'] = project_url
+                self._log(f"Saving project_url: {project_url[:50]}...")
+            if project_id:
+                cache_data['_project_id'] = project_id
+                self._log(f"Saving project_id: {project_id[:20]}...")
+
             with open(cache_path, 'w', encoding='utf-8') as f:
-                json.dump(media_names, f, indent=2)
+                json.dump(cache_data, f, indent=2)
             self._log(f"Saved {len(media_names)} media_names to cache")
         except Exception as e:
             self._log(f"Loi save cache: {e}", "warn")
@@ -898,9 +951,21 @@ class BrowserFlowGenerator:
         self._log(f"Se tao {len(scenes_to_process)} anh")
         self.stats["total"] = len(scenes_to_process)
 
-        # Khoi dong browser
+        # QUAN TRONG: Load cache TRUOC khi start browser
+        # De lay _cached_project_url va vao dung project (giu media_name valid)
+        cached_media_names = self._load_media_cache()
+        has_cached_project = hasattr(self, '_cached_project_url') and self._cached_project_url
+
+        if cached_media_names:
+            self._log(f"[CACHE] Loaded {len(cached_media_names)} media references (nv/loc)")
+            if has_cached_project:
+                self._log(f"[CACHE] Co project URL -> se reuse de giu media_name valid")
+        else:
+            self._log("Khong co media cache - scenes se khong co reference", "warn")
+
+        # Khoi dong browser - vao dung project neu co cache
         if not self.driver:
-            if not self.start_browser():
+            if not self.start_browser(use_cached_project=has_cached_project):
                 return {"success": False, "error": "Khong khoi dong duoc browser"}
 
             # Cho dang nhap
@@ -912,13 +977,10 @@ class BrowserFlowGenerator:
         if not self._inject_js():
             return {"success": False, "error": "Khong inject duoc JS"}
 
-        # IMPORTANT: Load media_names tu cache de reference characters
-        cached_media_names = self._load_media_cache()
+        # Load media_names vao JS sau khi inject
         if cached_media_names:
             self._load_media_names_to_js(cached_media_names)
-            self._log(f"Loaded {len(cached_media_names)} media references (nv/loc)")
-        else:
-            self._log("Khong co media cache - scenes se khong co reference", "warn")
+            self._log(f"Loaded media references vao JS")
 
         # Chuan bi prompts cho VE3.run()
         # QUAN TRONG: Dung numeric ID (1, 2, 3) de khop voi SmartEngine video composer
@@ -1332,9 +1394,21 @@ class BrowserFlowGenerator:
             except Exception as e:
                 self._log(f"[Excel] Warning: Khong load duoc Excel: {e}", "warn")
 
-        # Khoi dong browser
+        # QUAN TRONG: Load cache TRUOC khi start browser
+        # De lay _cached_project_url va vao dung project (giu media_name valid)
+        cached_media_names = self._load_media_cache()
+        has_cached_project = hasattr(self, '_cached_project_url') and self._cached_project_url
+
+        if cached_media_names:
+            self._log(f"[CACHE] Loaded {len(cached_media_names)} media_names")
+            if has_cached_project:
+                self._log(f"[CACHE] Co project URL -> se reuse de giu media_name valid")
+        else:
+            self._log("[CACHE] ⚠️ EMPTY - Characters (nv/loc) chua duoc tao!", "warn")
+
+        # Khoi dong browser - vao dung project neu co cache
         if not self.driver:
-            if not self.start_browser():
+            if not self.start_browser(use_cached_project=has_cached_project):
                 return {"success": False, "error": "Khong khoi dong duoc browser"}
 
             if not self.wait_for_login(timeout=120):
@@ -1345,12 +1419,9 @@ class BrowserFlowGenerator:
         if not self._inject_js():
             return {"success": False, "error": "Khong inject duoc JS"}
 
-        # Load media_names tu cache va set vao JS
-        cached_media_names = self._load_media_cache()
+        # Load media_names vao JS sau khi inject
         if cached_media_names:
-            self._log(f"[CACHE] Loaded {len(cached_media_names)} media_names:")
             for key, val in cached_media_names.items():
-                # Support ca format cu (string) va moi ({mediaName, seed})
                 if isinstance(val, dict):
                     mn = val.get('mediaName', '')
                     seed = val.get('seed')
@@ -1358,9 +1429,6 @@ class BrowserFlowGenerator:
                 else:
                     self._log(f"  {key} -> {val[:50] if val else 'None'}...")
             self._load_media_names_to_js(cached_media_names)
-        else:
-            self._log("[CACHE] ⚠️ EMPTY - Characters (nv/loc) chua duoc tao!", "warn")
-            self._log("[CACHE] Hay chay tao anh nhan vat truoc de co media_names", "warn")
 
         self._log(f"\nBat dau tao {len(prompts)} anh...")
 
