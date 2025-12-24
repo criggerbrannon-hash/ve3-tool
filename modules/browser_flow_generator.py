@@ -1785,30 +1785,79 @@ class BrowserFlowGenerator:
         """
         return self.config.get('generation_mode', 'api')
 
-    def _auto_extract_token(self) -> Optional[str]:
+    def _auto_extract_token(self, force_refresh: bool = False) -> Optional[str]:
         """
         Tu dong lay bearer token tu Chrome bang profile hien tai.
         Su dung ChromeAutoToken de mo Chrome, navigate den Flow va capture token.
 
+        Args:
+            force_refresh: True = bo qua cache, luon lay token moi (dung khi API tra 401)
+
         QUAN TRONG:
+        - KHONG check thoi gian token
+        - Chi refresh khi force_refresh=True (API tra 401)
         - Neu co cached project_url -> mo truc tiep project do -> skip 'Tao du an moi'
-        - Token moi se duoc luu lai vao cache de reuse lan sau
 
         Returns:
             Bearer token (ya29.xxx) hoac None neu that bai
         """
-        self._log("=== TU DONG LAY BEARER TOKEN ===")
+        import time
 
-        # Load cache de lay _cached_project_url (neu chua load)
+        # =====================================================================
+        # LOAD CACHE TRUOC - de co token va project_url
+        # =====================================================================
         if not hasattr(self, '_cached_project_url') or not self._cached_project_url:
-            self._log("Loading media cache de lay project URL...")
+            self._log("Loading media cache de lay token va project URL...")
             self._load_media_cache()
 
-        try:
-            from modules.auto_token import ChromeAutoToken
-        except ImportError:
-            self._log("Khong import duoc ChromeAutoToken", "error")
-            return None
+        # =====================================================================
+        # REUSE CACHED TOKEN (tru khi force_refresh)
+        # Chi refresh khi API tra loi 401 -> caller goi force_refresh=True
+        # =====================================================================
+        if not force_refresh:
+            cached_token = self.config.get('flow_bearer_token', '')
+
+            if cached_token:
+                # Luon dung token da co - khong can biet tuoi
+                # Neu het han, API se tra 401 -> caller goi force_refresh=True
+                cached_token_time = getattr(self, '_cached_token_time', 0)
+                if cached_token_time:
+                    age_minutes = (time.time() - cached_token_time) / 60
+                    self._log(f"=== REUSE CACHED TOKEN (tuoi: {age_minutes:.1f} phut) ===")
+                else:
+                    self._log(f"=== REUSE CACHED TOKEN ===")
+                self._log(f"Token: {cached_token[:20]}...{cached_token[-10:]}")
+                return cached_token
+        else:
+            self._log("=== FORCE REFRESH TOKEN (API tra 401) ===")
+            # Clear cached token
+            self.config['flow_bearer_token'] = ''
+
+        self._log("=== TU DONG LAY BEARER TOKEN (mo Chrome) ===")
+
+        # Check headless setting
+        use_headless = self.config.get('browser_headless', True)
+
+        # Chon extractor phu hop:
+        # - Headless ON: dung ChromeTokenExtractor (Selenium/CDP) - chay an
+        # - Headless OFF: dung ChromeAutoToken (PyAutoGUI) - can cua so
+        TokenExtractor = None
+        if use_headless:
+            try:
+                from modules.chrome_token_extractor import ChromeTokenExtractor
+                TokenExtractor = ChromeTokenExtractor
+                self._log("Su dung ChromeTokenExtractor (Selenium - headless)")
+            except ImportError:
+                self._log("ChromeTokenExtractor khong kha dung, fallback sang PyAutoGUI", "warn")
+
+        if TokenExtractor is None:
+            try:
+                from modules.auto_token import ChromeAutoToken
+                TokenExtractor = ChromeAutoToken
+                self._log("Su dung ChromeAutoToken (PyAutoGUI - can cua so)")
+            except ImportError:
+                self._log("Khong import duoc token extractor", "error")
+                return None
 
         # Lay chrome_path tu config
         chrome_path = self.config.get('chrome_path', '')
@@ -1821,28 +1870,31 @@ class BrowserFlowGenerator:
                 chrome_path = "/usr/bin/google-chrome"
 
         # Lay profile path
-        # Uu tien: 1. chrome_profile tu settings.yaml
-        #          2. chrome_profiles tu accounts.json (GUI settings)
-        #          3. browser_profiles_dir/profile_name (fallback)
-        chrome_profile = self.config.get('chrome_profile', '')
+        # Uu tien: 1. chrome_profiles tu accounts.json (GUI settings) - CAO NHAT
+        #          2. chrome_profile tu settings.yaml (fallback)
+        #          3. browser_profiles_dir/profile_name (fallback cuoi)
+        chrome_profile = ''
 
-        # Neu khong co trong settings.yaml, thu doc tu accounts.json (GUI settings)
+        # 1. UU TIEN accounts.json (user them profile qua GUI)
+        try:
+            accounts_file = Path(__file__).parent.parent / "config" / "accounts.json"
+            if accounts_file.exists():
+                import json
+                with open(accounts_file, 'r', encoding='utf-8') as f:
+                    accounts = json.load(f)
+                profiles = accounts.get('chrome_profiles', [])
+                for p in profiles:
+                    path = p if isinstance(p, str) else p.get('path', '')
+                    if path and not path.startswith('THAY_BANG') and Path(path).exists():
+                        chrome_profile = path
+                        self._log(f"Got chrome_profile from accounts.json (GUI): {chrome_profile}")
+                        break
+        except Exception as e:
+            self._log(f"[DEBUG] Cannot read accounts.json: {e}")
+
+        # 2. Fallback: settings.yaml (neu accounts.json khong co)
         if not chrome_profile:
-            try:
-                accounts_file = Path(__file__).parent.parent / "config" / "accounts.json"
-                if accounts_file.exists():
-                    import json
-                    with open(accounts_file, 'r', encoding='utf-8') as f:
-                        accounts = json.load(f)
-                    profiles = accounts.get('chrome_profiles', [])
-                    for p in profiles:
-                        path = p if isinstance(p, str) else p.get('path', '')
-                        if path and not path.startswith('THAY_BANG') and Path(path).exists():
-                            chrome_profile = path
-                            self._log(f"Got chrome_profile from accounts.json (GUI): {chrome_profile}")
-                            break
-            except Exception as e:
-                self._log(f"[DEBUG] Cannot read accounts.json: {e}")
+            chrome_profile = self.config.get('chrome_profile', '')
 
         self._log(f"[DEBUG] chrome_profile: '{chrome_profile}'")
 
@@ -1874,13 +1926,9 @@ class BrowserFlowGenerator:
 
         self._log(f"Chrome: {chrome_path}")
         self._log(f"Profile: {profile_path}")
+        self._log(f"Headless: {'ON' if use_headless else 'OFF'}")
 
         try:
-            extractor = ChromeAutoToken(
-                chrome_path=chrome_path,
-                profile_path=profile_path
-            )
-
             # Callback de log
             def log_callback(msg, level="info"):
                 self._log(f"[TokenExtract] {msg}", level)
@@ -1893,17 +1941,37 @@ class BrowserFlowGenerator:
 
             if existing_project_url:
                 self._log(f"  -> Reuse project URL: {existing_project_url[:50]}...")
-                self._log(f"  -> Da trong project -> skip 'Tao du an moi' -> tao anh de lay token!")
             elif existing_project_id:
                 self._log(f"  -> Reuse project_id: {existing_project_id[:20]}...")
             else:
                 self._log(f"  -> Chua co project -> se tao moi")
 
-            token, proj_id, error = extractor.extract_token(
-                project_id=existing_project_id,  # Fallback
-                project_url=existing_project_url,  # Uu tien (full URL)
-                callback=log_callback
-            )
+            # Tao extractor va goi extract_token
+            # ChromeTokenExtractor (Selenium) va ChromeAutoToken (PyAutoGUI) co interface khac nhau
+            from modules.chrome_token_extractor import ChromeTokenExtractor as SeleniumExtractor
+            from modules.auto_token import ChromeAutoToken as PyAutoGUIExtractor
+
+            if TokenExtractor == SeleniumExtractor:
+                # Selenium-based: headless OK, nhung khong co project_id/url param
+                extractor = TokenExtractor(
+                    chrome_path=chrome_path,
+                    profile_path=profile_path,
+                    headless=use_headless,
+                    timeout=90
+                )
+                token, proj_id, error = extractor.extract_token(callback=log_callback)
+            else:
+                # PyAutoGUI-based: can cua so, nhung co project reuse
+                extractor = TokenExtractor(
+                    chrome_path=chrome_path,
+                    profile_path=profile_path,
+                    headless=use_headless
+                )
+                token, proj_id, error = extractor.extract_token(
+                    project_id=existing_project_id,
+                    project_url=existing_project_url,
+                    callback=log_callback
+                )
 
             if token:
                 self._log(f"OK - Da lay duoc token: {token[:20]}...{token[-10:]}", "success")
@@ -1953,26 +2021,29 @@ class BrowserFlowGenerator:
             self._log(f"Khong import duoc ChromeHeadersExtractor: {e}", "error")
             return None
 
-        # Lay profile path - uu tien chrome_profile tu settings hoac accounts.json
-        chrome_profile = self.config.get('chrome_profile', '')
+        # Lay profile path - UU TIEN accounts.json (GUI) truoc settings.yaml
+        chrome_profile = ''
 
-        # Neu khong co trong settings.yaml, thu doc tu accounts.json (GUI)
+        # 1. UU TIEN accounts.json (user them profile qua GUI)
+        try:
+            accounts_file = Path(__file__).parent.parent / "config" / "accounts.json"
+            if accounts_file.exists():
+                import json
+                with open(accounts_file, 'r', encoding='utf-8') as f:
+                    accounts = json.load(f)
+                profiles = accounts.get('chrome_profiles', [])
+                for p in profiles:
+                    path = p if isinstance(p, str) else p.get('path', '')
+                    if path and not path.startswith('THAY_BANG') and Path(path).exists():
+                        chrome_profile = path
+                        self._log(f"Got chrome_profile from accounts.json (GUI): {chrome_profile}")
+                        break
+        except:
+            pass
+
+        # 2. Fallback: settings.yaml
         if not chrome_profile:
-            try:
-                accounts_file = Path(__file__).parent.parent / "config" / "accounts.json"
-                if accounts_file.exists():
-                    import json
-                    with open(accounts_file, 'r', encoding='utf-8') as f:
-                        accounts = json.load(f)
-                    profiles = accounts.get('chrome_profiles', [])
-                    for p in profiles:
-                        path = p if isinstance(p, str) else p.get('path', '')
-                        if path and not path.startswith('THAY_BANG') and Path(path).exists():
-                            chrome_profile = path
-                            self._log(f"Got chrome_profile from accounts.json (GUI): {chrome_profile}")
-                            break
-            except:
-                pass
+            chrome_profile = self.config.get('chrome_profile', '')
 
         if chrome_profile:
             chrome_profile_path = Path(chrome_profile)
@@ -2416,10 +2487,10 @@ class BrowserFlowGenerator:
                 # Check token expired (401) - auto refresh and retry
                 if not success and error:
                     error_lower = str(error).lower()
-                    is_token_expired = '401' in error_lower or 'expired' in error_lower or 'authentication' in error_lower
+                    is_token_expired = '401' in error_lower or 'expired' in error_lower or 'authentication' in error_lower or 'unauthenticated' in error_lower
                     if is_token_expired:
-                        self._log(f"Token het han! Dang tu dong refresh...", "warn")
-                        new_token = self._auto_extract_token()
+                        self._log(f"Token het han (401)! Dang mo Chrome lay token moi...", "warn")
+                        new_token = self._auto_extract_token(force_refresh=True)  # FORCE lay token moi
                         if new_token:
                             # Update API instance with new token
                             api.bearer_token = new_token
@@ -2871,10 +2942,10 @@ class BrowserFlowGenerator:
                 # Check token expired (401) - auto refresh and retry
                 if not success and error:
                     error_lower = str(error).lower()
-                    is_token_expired = '401' in error_lower or 'expired' in error_lower or 'authentication' in error_lower
+                    is_token_expired = '401' in error_lower or 'expired' in error_lower or 'authentication' in error_lower or 'unauthenticated' in error_lower
                     if is_token_expired:
-                        self._log(f"Token het han! Dang tu dong refresh...", "warn")
-                        new_token = self._auto_extract_token()
+                        self._log(f"Token het han (401)! Dang mo Chrome lay token moi...", "warn")
+                        new_token = self._auto_extract_token(force_refresh=True)  # FORCE lay token moi
                         if new_token:
                             api.bearer_token = new_token
                             bearer_token = new_token

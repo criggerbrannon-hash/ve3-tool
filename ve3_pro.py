@@ -1507,32 +1507,49 @@ class UnixVoiceToVideo:
             num_parallel = self._get_parallel_browsers()
             use_headless = self._get_headless_setting()
 
-            # Get Chrome profiles from accounts.json
+            # Get Chrome profiles from chrome_profiles/ directory (GUI creates profiles here)
             chrome_profiles = []
+            profiles_dir = ROOT_DIR / "chrome_profiles"
+
+            # Debug: Log exact path being scanned
+            self.log(f"📂 Scan profiles: {profiles_dir.resolve()}")
+
+            if profiles_dir.exists():
+                # List all items in directory
+                all_items = list(profiles_dir.iterdir())
+                self.log(f"   Tìm thấy {len(all_items)} items")
+
+                for item in all_items:
+                    if item.is_dir() and not item.name.startswith('.'):
+                        chrome_profiles.append(str(item))
+                        self.log(f"   ✓ {item.name}")
+                    else:
+                        self.log(f"   ✗ {item.name} (không phải thư mục)")
+            else:
+                self.log(f"   ⚠️ Thư mục không tồn tại, tạo mới...")
+                profiles_dir.mkdir(exist_ok=True)
+
+            # Fallback: Load from accounts.json (additional profiles)
             try:
                 accounts_path = CONFIG_DIR / "accounts.json"
                 if accounts_path.exists():
                     with open(accounts_path, 'r', encoding='utf-8') as f:
                         accounts = json.load(f)
-                    chrome_profiles = accounts.get('chrome_profiles', [])
-                    # Filter valid profiles
-                    chrome_profiles = [p for p in chrome_profiles if p and not p.startswith('THAY_BANG') and Path(p).exists()]
+                    existing_paths = set(chrome_profiles)
+                    for p in accounts.get('chrome_profiles', []):
+                        if p and not p.startswith('THAY_BANG') and Path(p).exists():
+                            if p not in existing_paths:
+                                chrome_profiles.append(p)
+                                self.log(f"   + {Path(p).name} (từ accounts.json)")
             except Exception as e:
-                self.log(f"Load profiles error: {e}", "WARN")
-
-            # Fallback to chrome_profiles directory
-            if not chrome_profiles:
-                profiles_dir = ROOT_DIR / "chrome_profiles"
-                if profiles_dir.exists():
-                    chrome_profiles = [str(p) for p in profiles_dir.iterdir() if p.is_dir()]
+                self.log(f"Load accounts.json error: {e}", "WARN")
 
             # Create default profile if none
             if not chrome_profiles:
-                profiles_dir = ROOT_DIR / "chrome_profiles"
-                profiles_dir.mkdir(exist_ok=True)
                 default_profile = profiles_dir / "main"
                 default_profile.mkdir(exist_ok=True)
                 chrome_profiles = [str(default_profile)]
+                self.log(f"   → Tạo profile mặc định: main")
 
             num_profiles = len(chrome_profiles)
             num_parallel = min(num_parallel, num_profiles, len(voices))

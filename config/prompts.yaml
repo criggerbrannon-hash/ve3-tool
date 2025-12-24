@@ -1090,6 +1090,10 @@ directors_shooting_plan: |
   10. DO NOT add nationality/ethnicity (Vietnamese, American, etc.) unless EXPLICITLY mentioned in the story
      - If story doesn't mention nationality, just describe features (hair color, skin tone, etc.)
      - Only add nationality when it's RELEVANT to the story
+  11. **🎭 CROWD/BACKGROUND CONSISTENCY** - If scene is a party/wedding/event:
+     - ALWAYS include crowd/guests in background (even in close-ups: "blurred guests behind")
+     - Party without people = ILLOGICAL! Wedding without guests = ILLOGICAL!
+     - Match crowd emotion to scene: celebration=cheering, tension=staring, revelation=gasping
 
   ## ⚠️ LOCATION CONSISTENCY - CRITICAL BUG FIX! ⚠️
 
@@ -1121,6 +1125,79 @@ directors_shooting_plan: |
   - "master bedroom" → Use "Master bedroom, king-sized bed, elegant furniture"
   - "courthouse" → Use "Courthouse exterior/interior, columns, official"
   - "restaurant" → Use "Restaurant interior, tables, elegant dining"
+
+  ## 🎭 SCENE LOGIC & CROWD CONSISTENCY - CRITICAL! 🎭
+
+  **PROBLEM: Scenes look ILLOGICAL when background doesn't match the situation!**
+
+  A PARTY without people = ILLOGICAL!
+  A WEDDING without guests = ILLOGICAL!
+  A RESTAURANT without diners = ILLOGICAL!
+
+  **RULE: EVERY scene must have LOGICAL BACKGROUND ELEMENTS!**
+
+  ### CROWD LOGIC TABLE:
+
+  | Scene Type | MUST INCLUDE in img_prompt |
+  |------------|---------------------------|
+  | PARTY/CELEBRATION | "crowd of guests in background", "people mingling", "festive atmosphere with attendees" |
+  | WEDDING | "wedding guests seated in rows", "audience watching ceremony", "guests in formal attire" |
+  | RESTAURANT | "other diners at nearby tables", "busy restaurant atmosphere", "waiters moving between tables" |
+  | OFFICE | "coworkers at desks in background", "busy office environment", "people working at computers" |
+  | SCHOOL | "other students in classroom", "students walking in hallway", "busy campus" |
+  | FUNERAL | "mourners in black", "crowd of grieving people", "solemn attendees" |
+  | STREET | "pedestrians walking", "busy sidewalk", "people in background" |
+  | MALL/STORE | "shoppers browsing", "customers in background", "busy retail environment" |
+  | HOSPITAL | "nurses and doctors in background", "other patients visible", "busy medical staff" |
+  | CONCERT/EVENT | "crowd cheering", "audience with raised hands", "packed venue" |
+
+  ### HOW TO WRITE CROWD IN IMG_PROMPT:
+
+  **❌ WRONG (No crowd - illogical):**
+  ```
+  "WIDE shot of gender reveal party. Man standing ALONE holding remote control.
+  Blue smoke clouds. Sunny day. Cinematic."
+  ```
+  → This is a PARTY but where are the GUESTS?!
+
+  **✅ CORRECT (Crowd included):**
+  ```
+  "WIDE shot of gender reveal party. Man standing holding remote control.
+  CROWD OF EXCITED GUESTS in background - some holding phones, others clapping.
+  Blue smoke clouds. Sunny day. FESTIVE ATMOSPHERE with 20+ attendees visible. Cinematic."
+  ```
+
+  ### CROWD CONSISTENCY RULES:
+
+  1. **If scene is PUBLIC EVENT** → ALWAYS include crowd/attendees
+  2. **If previous shot showed crowd** → Next shot must ALSO show crowd (consistency!)
+  3. **Even in CLOSE-UP** → Add "blurred crowd in background" or "out-of-focus guests behind"
+  4. **EXCEPTION: Private moment** → Character INTENTIONALLY alone (explain in prompt: "sneaked away from party")
+
+  ### BACKGROUND ELEMENTS FOR DIFFERENT EMOTIONS:
+
+  | Emotion | Background Should Show |
+  |---------|----------------------|
+  | ISOLATION | Character SEPARATED from crowd, crowd DISTANT or BLURRED |
+  | CELEBRATION | Crowd CLOSE, ENGAGED, CHEERING |
+  | TENSION | Crowd SILENT, STARING, FROZEN |
+  | REVELATION | Crowd GASPING, SHOCKED expressions |
+  | EMBARRASSMENT | Crowd WHISPERING, POINTING, JUDGING |
+
+  **EXAMPLE - Gender Reveal Scene:**
+  ```
+  Shot 1 (Wide): "Party setup. 30+ GUESTS gathered around decorated area,
+                  holding drinks, EXCITED ANTICIPATION on faces..."
+
+  Shot 2 (Close-up main character): "Man's face. BLURRED CROWD visible
+                                     behind him, their festive clothes out of focus..."
+
+  Shot 3 (Reaction): "Woman smiling. GUESTS in background CHEERING,
+                      some with phones recording..."
+
+  Shot 4 (Revelation): "Smoke explodes. CROWD GASPS, hands covering mouths,
+                        SHOCKED expressions spreading through attendees..."
+  ```
 
   ## 🔥 HOOK RULES (FIRST 30 SECONDS) - CRITICAL FOR VIEWER RETENTION! 🔥
 
@@ -1762,6 +1839,8 @@ smart_divide_scenes: |
   [ ] CHILDREN: NOT in reference_files! Describe FULLY in img_prompt!
   [ ] STYLE CONSISTENCY: Every img_prompt ends with GLOBAL STYLE!
   [ ] YOUTUBE CTA: Keep story location + emotion! NO smiling, NO plain background!
+  [ ] CROWD CONSISTENCY: Party/wedding/event = ALWAYS include guests/crowd in background!
+  [ ] Even CLOSE-UP shots: "blurred crowd behind", "guests visible in bokeh"
 
   ## 🔥 HOOK CHECKLIST (Scene 1-3) - MOST CRITICAL!:
   [ ] Scene 1: WIDE LOW ANGLE with CHARACTER visible (NOT empty location!)
