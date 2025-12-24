@@ -1383,7 +1383,8 @@ class PromptGenerator:
         """
         # Load prompt từ config/prompts.yaml
         prompt_template = get_analyze_story_prompt()
-        prompt = prompt_template.format(story_text=story_text[:8000])
+        # Increased limit for longer stories (30+ min videos)
+        prompt = prompt_template.format(story_text=story_text[:30000])
 
         try:
             # Dùng _generate_content_large để ưu tiên Ollama (không giới hạn tokens)
@@ -1475,7 +1476,8 @@ class PromptGenerator:
                 self.logger.warning("[Director's Treatment] Không tìm thấy prompt template, bỏ qua")
                 return None
 
-            prompt = prompt_template.format(story_text=story_text[:12000])
+            # Increased limit for longer stories (30+ min videos)
+            prompt = prompt_template.format(story_text=story_text[:30000])
 
             self.logger.info("[Director's Treatment] Đang phân tích cấu trúc câu chuyện...")
             response = self._generate_content(prompt, temperature=0.3, max_tokens=8000)
@@ -1550,9 +1552,19 @@ class PromptGenerator:
             ]) if locations else "Không có thông tin bối cảnh"
 
             # Build prompt
+            # IMPORTANT: Increased limits to handle longer content (30+ min videos)
+            # Previous limits (10000/15000) were truncating content!
+            story_truncated = story_text[:30000]
+            srt_truncated = srt_segments[:60000]
+
+            if len(story_text) > 30000:
+                self.logger.warning(f"[Director] Story text truncated: {len(story_text)} -> 30000 chars")
+            if len(srt_segments) > 60000:
+                self.logger.warning(f"[Director] SRT segments truncated: {len(srt_segments)} -> 60000 chars")
+
             prompt = prompt_template.format(
-                story_text=story_text[:10000],
-                srt_segments=srt_segments[:15000],
+                story_text=story_truncated,
+                srt_segments=srt_truncated,
                 characters_info=chars_info,
                 locations_info=locs_info,
                 global_style=global_style or get_global_style()
