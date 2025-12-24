@@ -473,6 +473,93 @@ directors_shooting_plan: |
                                    What should AUDIENCE FEEL?
   ```
 
+  ## 💔 EMOTIONAL DIRECTOR'S GUIDE - HOW TO MAKE AUDIENCE CRY/FEEL
+
+  **🎯 YOUR ULTIMATE GOAL: Touch the audience's HEART, not just their eyes!**
+
+  ### THE 5 EMOTIONAL TECHNIQUES:
+
+  **1. CONTRAST = IMPACT (Tương phản tạo cảm xúc mạnh)**
+  ```
+  Happy → Sad       = Heartbreak amplified
+  Light → Dark      = Tragedy feels darker
+  Together → Alone  = Loneliness hurts more
+  Rich → Poor       = Sacrifice feels heavier
+  Trust → Betrayal  = Wound cuts deeper
+  ```
+  Example: Show mother-son happy FIRST, then betrayal → audience feels the loss
+
+  **2. SHOW DON'T TELL (Hình ảnh kể chuyện, không cần lời)**
+  ```
+  Instead of "he was poor":
+  → Worn shoes with holes, thin blanket, empty fridge
+
+  Instead of "she worked hard":
+  → Calloused hands, sweat on brow, clock showing 11 PM
+
+  Instead of "they were happy":
+  → Eyes crinkling with genuine smile, warm embrace, shared laughter
+  ```
+
+  **3. UNIVERSAL HUMAN MOMENTS (Khoảnh khắc ai cũng đồng cảm)**
+  ```
+  - Parent's sacrifice for child
+  - Child's love for parent
+  - Dreams being crushed
+  - Being abandoned by loved one
+  - Working hard but still poor
+  - Betrayal by someone you trusted
+  - Finally achieving after struggle
+  ```
+  Focus on THESE moments - they touch EVERYONE regardless of culture
+
+  **4. FACE = EMOTION (Khuôn mặt là cửa sổ cảm xúc)**
+  ```
+  Key emotional moments → MUST SHOW FACE!
+  - Tears welling up (not falling yet) = anticipation of sadness
+  - Trembling lips = trying not to cry
+  - Eyes looking down = shame, defeat
+  - Forced smile hiding pain = heartbreaking
+  - Clenched jaw = suppressed anger/pain
+  ```
+
+  **5. SYMBOLIC OBJECTS (Vật thể mang ý nghĩa)**
+  ```
+  - Empty chair where someone used to sit = absence, loss
+  - Faded photograph = memory, time passed
+  - Wedding ring being removed = end of love
+  - House being built brick by brick = sacrifice, effort
+  - Legal papers = cold bureaucracy vs human emotion
+  - Old, worn object still kept = love despite poverty
+  ```
+
+  ### 🎬 EMOTIONAL ARC STRUCTURE:
+
+  ```
+  HOOK (0-30s):     SHOCK/CURIOSITY → "What happened? I need to know!"
+       ↓
+  SETUP (30s-2m):   SYMPATHY → "I like this person, I care about them"
+       ↓
+  BUILD (2m-5m):    INVESTMENT → "I'm rooting for them, I want them to succeed"
+       ↓
+  CONFLICT (5m-8m): TENSION → "Oh no, things are going wrong..."
+       ↓
+  CLIMAX (8m-10m):  PEAK EMOTION → "This is so sad/beautiful/moving!"
+       ↓
+  RESOLUTION:       CLOSURE → "I feel satisfied/reflective"
+  ```
+
+  ### ⚠️ COMMON MISTAKES THAT KILL EMOTION:
+
+  ```
+  ❌ Too many images = audience can't absorb emotion
+  ❌ Rushed pacing = no time to feel
+  ❌ Generic faces = no connection
+  ❌ Text in images = breaks immersion
+  ❌ Same lighting throughout = no emotional contrast
+  ❌ No close-ups at key moments = missing the emotion
+  ```
+
   ## YOUR WORKFLOW:
 
   ### STEP 1: ANALYZE CONTENT (from TXT) - THIS IS MOST IMPORTANT!
@@ -538,44 +625,56 @@ directors_shooting_plan: |
 
   SRT tells you the CONTENT WINDOW. But YOU decide the RHYTHM within that window.
 
-  ## 🎬 SHOT DURATION - BASED ON EMOTIONAL WEIGHT, NOT FORMULA!
+  ## 🎬 SHOT DURATION - MAXIMIZE 8 SECONDS, MINIMIZE IMAGE COUNT!
 
-  **FORGET "8 seconds per shot"! Think like a REAL DIRECTOR:**
+  **⚠️ TECHNICAL LIMIT: Maximum 8 seconds per image!**
 
-  | Moment Type | Duration | Why |
-  |-------------|----------|-----|
-  | EMOTIONAL PEAK (climax, revelation) | 8-12 seconds | Let audience FEEL it |
-  | ESTABLISHING (new location/scene) | 5-8 seconds | Set the stage |
-  | STANDARD NARRATIVE | 4-6 seconds | Keep story moving |
-  | TRANSITION/BRIDGE | 2-4 seconds | Quick connection |
-  | ACTION/TENSION | 2-4 seconds each | Fast cuts = energy |
-  | BREATHING MOMENT | 6-10 seconds | Let audience absorb |
+  **🎯 GOAL: FEWER IMAGES, LONGER DURATION = LESS VIEWER FATIGUE**
 
-  ## 🎵 RHYTHM - VARY THE PACE!
+  Video dài 30-60 phút. Nếu mỗi ảnh 4s = 450-900 ảnh (QUÁ NHIỀU, mệt mắt!)
+  Nếu mỗi ảnh 7-8s = 225-450 ảnh (VỪA PHẢI, dễ xem!)
 
-  **DON'T:** 5s - 5s - 5s - 5s (boring, monotonous)
-  **DO:** 8s - 4s - 6s - 3s - 10s (dynamic, engaging)
+  **📊 DURATION STRATEGY (ưu tiên DÀI, hạn chế NGẮN):**
 
-  **PACING PATTERNS:**
+  | Moment Type | Duration | Priority | Note |
+  |-------------|----------|----------|------|
+  | EMOTIONAL PEAK | **8 seconds** | ⭐⭐⭐ | Maximum - let it breathe |
+  | ESTABLISHING SHOT | **8 seconds** | ⭐⭐⭐ | Full duration for context |
+  | STANDARD NARRATIVE | **7-8 seconds** | ⭐⭐⭐ | Default - PREFER LONG |
+  | DIALOGUE/STORY | **6-8 seconds** | ⭐⭐ | Keep story flowing |
+  | TRANSITION/BRIDGE | **5-6 seconds** | ⭐ | Still decent length |
+  | ACTION SEQUENCE | **4-5 seconds** | ⭐ | Only when truly needed |
+
+  **❌ AVOID:** Shots under 5 seconds unless absolutely necessary!
+  **✅ PREFER:** 7-8 seconds for most shots!
+
+  ## 🎵 RHYTHM - SUBTLE VARIATION, NOT EXTREME!
+
+  **DON'T:** 8s - 3s - 8s - 2s - 8s (too jarring, tiring)
+  **DO:** 8s - 7s - 8s - 6s - 8s (smooth, comfortable)
+
+  **PACING (within 8s limit):**
   ```
-  BUILD TENSION:   Long → Medium → Short → Short → SHORT (faster!)
-  CLIMAX:          Short → Short → LOOONG (release)
-  CALM AFTER STORM: Long → Long → Medium (breathing)
+  NORMAL FLOW:     8s → 7s → 8s → 7s → 8s (consistent, relaxing)
+  BUILD TENSION:   8s → 7s → 6s → 5s → 8s (slight acceleration then release)
+  EMOTIONAL:       8s → 8s → 8s (let audience absorb)
   ```
 
-  ## 📊 EMPHASIS - KEY MOMENTS GET MORE TIME
+  ## 📊 SHOT COUNT CALCULATION
 
-  **ASK: "What MUST land emotionally?"**
-  - The betrayal reveal → LONG shot (8-12s)
-  - The happy reunion → LONG shot (8-10s)
-  - The shocking discovery → LONG shot (8-12s)
-  - Generic walking/transition → SHORT shot (2-4s)
+  **FORMULA: SRT_duration ÷ 7.5 = approximate shots needed**
+
+  Example:
+  - Part 1: 45 seconds → 45 ÷ 7.5 = 6 shots (average 7.5s each)
+  - Part 2: 60 seconds → 60 ÷ 7.5 = 8 shots
+  - Full 30 min video → 1800 ÷ 7.5 = ~240 shots total
 
   ## RULES:
+  - **Maximum 8 seconds per image** (technical limit)
+  - **Default to 7-8 seconds** - only go shorter when story demands
+  - **Minimize image count** - fewer images = less viewer fatigue
   - EVERY image must serve the part's GOAL
-  - Images are NOT illustrations - they CREATE FEELING
-  - Duration is a CREATIVE CHOICE based on emotional weight
-  - Total shot durations should roughly match SRT segment length
+  - Total shot durations must match SRT segment length exactly
 
   ## CHARACTER SELECTION - VERY IMPORTANT!
 
@@ -743,8 +842,8 @@ directors_shooting_plan: |
               "shot_number": 3,
               "purpose": "Establish the poverty but also love",
               "emotional_weight": "HIGH - First sympathy moment",
-              "planned_duration": 10,
-              "srt_range": "00:15 - 00:25",
+              "planned_duration": 8,
+              "srt_range": "00:15 - 00:23",
               "srt_text": "Năm tôi 8 tuổi, ba mẹ ly hôn...",
               "shot_type": "WIDE SHOT",
               "camera_angle": "Eye level, 24mm - intimate establishing",
@@ -756,8 +855,8 @@ directors_shooting_plan: |
               "shot_number": 4,
               "purpose": "Detail shot - hands working together",
               "emotional_weight": "MEDIUM - Supporting detail",
-              "planned_duration": 5,
-              "srt_range": "00:25 - 00:30",
+              "planned_duration": 7,
+              "srt_range": "00:23 - 00:30",
               "srt_text": "Mẹ tần tảo nuôi con...",
               "shot_type": "CLOSE-UP",
               "camera_angle": "Top-down, 50mm - detail focus",
@@ -769,8 +868,8 @@ directors_shooting_plan: |
               "shot_number": 5,
               "purpose": "Emotional peak - mother's sacrifice",
               "emotional_weight": "VERY HIGH - Empathy moment",
-              "planned_duration": 9,
-              "srt_range": "00:30 - 00:39",
+              "planned_duration": 8,
+              "srt_range": "00:30 - 00:38",
               "srt_text": "Mẹ làm việc từ sáng tới khuya...",
               "shot_type": "MEDIUM SHOT",
               "camera_angle": "Eye level, 50mm - intimate",
@@ -782,8 +881,8 @@ directors_shooting_plan: |
               "shot_number": 6,
               "purpose": "Transition - child watching mother",
               "emotional_weight": "MEDIUM - Bridge to next scene",
-              "planned_duration": 6,
-              "srt_range": "00:39 - 00:45",
+              "planned_duration": 7,
+              "srt_range": "00:38 - 00:45",
               "srt_text": "Tôi nhìn mẹ và thầm hứa...",
               "shot_type": "OVER-SHOULDER",
               "camera_angle": "Behind child, looking at mother",
@@ -799,18 +898,17 @@ directors_shooting_plan: |
 
   ## CRITICAL INSTRUCTIONS:
 
-  1. **PLAN shots based on EMOTIONAL WEIGHT, not formula!**
-     - Key emotional moments: 8-12 seconds (longer = more impact)
-     - Transitions/bridges: 2-4 seconds (quick)
-     - Standard narrative: 4-6 seconds
-     - Total should roughly match SRT duration
-  2. **ADD planned_duration to each shot** - how long this image will display
-  3. VARY camera angles - don't repeat the same shot type consecutively!
-  4. Use characters/locations from the provided lists
-  5. Children (nvc1) should be DESCRIBED in img_prompt, NOT in reference_files
-  6. Every img_prompt MUST end with the global_style
-  7. Make it feel like a FILM with visual variety and RHYTHM!
-  8. DO NOT add nationality/ethnicity (Vietnamese, American, etc.) unless EXPLICITLY mentioned in the story
+  1. **MAXIMUM 8 SECONDS per image!** (Technical limit - NEVER exceed!)
+  2. **PREFER 7-8 seconds** for most shots - minimize image count, reduce viewer fatigue
+  3. **ADD planned_duration to each shot** (integer 5-8, default 8)
+  4. **Total shot durations MUST EQUAL SRT segment duration exactly**
+     - Example: 30 second segment → could be 8+8+7+7 = 30s (4 shots)
+  5. VARY camera angles - don't repeat the same shot type consecutively!
+  6. Use characters/locations from the provided lists
+  7. Children (nvc1) should be DESCRIBED in img_prompt, NOT in reference_files
+  8. Every img_prompt MUST end with the global_style
+  9. Make it feel like a FILM with visual variety and RHYTHM!
+  10. DO NOT add nationality/ethnicity (Vietnamese, American, etc.) unless EXPLICITLY mentioned in the story
      - If story doesn't mention nationality, just describe features (hair color, skin tone, etc.)
      - Only add nationality when it's RELEVANT to the story
 
