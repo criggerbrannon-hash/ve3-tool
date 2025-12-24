@@ -1708,6 +1708,10 @@ class PromptGenerator:
         shot_number_offset = 0
         MAX_RETRIES = 3  # Số lần retry tối đa
 
+        # Track previous chunk context for continuity
+        previous_chunk_summary = ""
+        previous_last_shots = []
+
         for chunk_idx, chunk_entries in enumerate(chunks):
             chunk_num = chunk_idx + 1
             chunk_start = self._format_timedelta(chunk_entries[0].start_time)
@@ -1723,6 +1727,23 @@ class PromptGenerator:
                 for e in chunk_entries
             ])
 
+            # Build context from previous chunk for CONTINUITY
+            continuity_context = ""
+            if previous_chunk_summary:
+                continuity_context = f"""
+**CONTEXT TỪ PHẦN TRƯỚC (để đảm bảo liên tục):**
+{previous_chunk_summary}
+
+**3 SHOTS CUỐI CỦA PHẦN TRƯỚC (để transition mượt):**
+{chr(10).join(previous_last_shots) if previous_last_shots else "Đây là phần đầu tiên"}
+
+**YÊU CẦU LIÊN TỤC:**
+- Giữ nguyên trang phục/ngoại hình nhân vật như phần trước
+- Nếu cùng bối cảnh, giữ lighting/mood nhất quán
+- Shot đầu tiên phải transition mượt từ shot cuối phần trước
+
+"""
+
             # Add context about this being a chunk
             chunk_context = f"""
 **LƯU Ý: Đây là PHẦN {chunk_num}/{len(chunks)} của video dài.**
@@ -1730,7 +1751,7 @@ class PromptGenerator:
 - Hãy tạo shooting plan CHỈ cho phần này.
 - Đánh số part bắt đầu từ {part_number_offset + 1}.
 - Đánh số shot bắt đầu từ {shot_number_offset + 1}.
-
+{continuity_context}
 """
 
             prompt = prompt_template.format(
@@ -1834,6 +1855,43 @@ class PromptGenerator:
 
             shots_in_chunk = sum(len(p.get("shots", [])) for p in chunk_parts)
             self.logger.info(f"[Director CHUNKING] Chunk {chunk_num}: {len(chunk_parts)} parts, {shots_in_chunk} shots")
+
+            # === EXTRACT CONTEXT FOR NEXT CHUNK (Continuity) ===
+            if chunk_parts:
+                # Get all shots from this chunk
+                chunk_all_shots = []
+                for part in chunk_parts:
+                    chunk_all_shots.extend(part.get("shots", []))
+
+                # Extract last 3 shots for visual continuity
+                if chunk_all_shots:
+                    last_shots = chunk_all_shots[-3:] if len(chunk_all_shots) >= 3 else chunk_all_shots
+                    previous_last_shots = []
+                    for shot in last_shots:
+                        shot_desc = f"- Shot {shot.get('shot_number')}: {shot.get('img_prompt', '')[:100]}..."
+                        previous_last_shots.append(shot_desc)
+
+                # Create summary of this chunk for context
+                part_names = [p.get("part_name", "Unknown") for p in chunk_parts[:3]]
+                locations_used = set()
+                characters_used = set()
+                for part in chunk_parts:
+                    if part.get("location"):
+                        locations_used.add(part.get("location"))
+                    for shot in part.get("shots", []):
+                        for char in shot.get("characters_in_shot", []):
+                            if isinstance(char, str):
+                                characters_used.add(char)
+                            elif isinstance(char, dict):
+                                characters_used.add(char.get("id", ""))
+
+                previous_chunk_summary = f"""Phần {chunk_num} ({chunk_start} - {chunk_end}):
+- Các cảnh: {', '.join(part_names)}
+- Bối cảnh: {', '.join(locations_used) if locations_used else 'Không xác định'}
+- Nhân vật xuất hiện: {', '.join(characters_used) if characters_used else 'Không xác định'}
+- Tổng {shots_in_chunk} shots"""
+
+                self.logger.info(f"[CONTINUITY] Saved context for next chunk: {len(previous_last_shots)} shots, summary ready")
 
         if not all_parts:
             self.logger.error("[Director CHUNKING] Không có parts nào được tạo!")
