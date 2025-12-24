@@ -88,56 +88,224 @@ class ChromeAutoToken:
         return self.temp_profile_dir
     
     def _create_driver(self, use_temp_profile: bool = True):
-        """Tao Chrome WebDriver."""
-        from selenium import webdriver
-        from selenium.webdriver.chrome.service import Service
-        from selenium.webdriver.chrome.options import Options
-        
-        options = Options()
-        
+        """Tao Chrome WebDriver voi anti-detection."""
+
+        # Prioritize undetected-chromedriver (best anti-detection)
+        try:
+            import undetected_chromedriver as uc
+            self._create_driver_undetected(uc, use_temp_profile)
+            return
+        except ImportError:
+            pass
+
+        # Fallback to selenium with stealth
+        self._create_driver_selenium(use_temp_profile)
+
+    def _create_driver_undetected(self, uc, use_temp_profile: bool = True):
+        """Tao driver voi undetected-chromedriver."""
+        options = uc.ChromeOptions()
+
         # Profile
         if use_temp_profile and self.profile_path:
             temp_dir = self._copy_profile()
             if temp_dir:
                 options.add_argument(f"--user-data-dir={temp_dir}")
                 options.add_argument("--profile-directory=Profile")
-        
+
         # Chrome binary
         if self.chrome_path and Path(self.chrome_path).exists():
             options.binary_location = self.chrome_path
-        
+
         # Headless
         if self.headless:
             options.add_argument("--headless=new")
-        
-        # Performance logging for network capture
-        options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
-        
-        # Common options
+
+        # NOTE: Removed goog:loggingPrefs - it's a strong fingerprint!
+        # Will use JavaScript injection to capture tokens instead
+
+        # Anti-detection flags
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-gpu")
         options.add_argument("--window-size=1400,900")
         options.add_argument("--disable-blink-features=AutomationControlled")
-        options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        options.add_experimental_option("useAutomationExtension", False)
-        
+        options.add_argument("--disable-infobars")
+        options.add_argument("--disable-popup-blocking")
+
         # Disable images in headless for speed
         if self.headless:
             prefs = {"profile.managed_default_content_settings.images": 2}
             options.add_experimental_option("prefs", prefs)
-        
+
+        self.driver = uc.Chrome(
+            options=options,
+            use_subprocess=True,
+            version_main=None
+        )
+
+        # Setup CDP for network interception (more stealthy)
+        self._setup_cdp_network_capture()
+
+        # Inject stealth scripts
+        self._inject_stealth_scripts()
+
+    def _create_driver_selenium(self, use_temp_profile: bool = True):
+        """Fallback: Tao driver voi Selenium + stealth."""
+        from selenium import webdriver
+        from selenium.webdriver.chrome.service import Service
+        from selenium.webdriver.chrome.options import Options
+
+        options = Options()
+
+        # Profile
+        if use_temp_profile and self.profile_path:
+            temp_dir = self._copy_profile()
+            if temp_dir:
+                options.add_argument(f"--user-data-dir={temp_dir}")
+                options.add_argument("--profile-directory=Profile")
+
+        # Chrome binary
+        if self.chrome_path and Path(self.chrome_path).exists():
+            options.binary_location = self.chrome_path
+
+        # Headless
+        if self.headless:
+            options.add_argument("--headless=new")
+
+        # NOTE: Removed goog:loggingPrefs - it's a strong fingerprint!
+
+        # === ANTI-DETECTION FLAGS ===
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--window-size=1400,900")
+
+        # Key anti-detection flags
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_argument("--disable-infobars")
+        options.add_argument("--disable-popup-blocking")
+        options.add_argument("--ignore-certificate-errors")
+        options.add_argument("--allow-running-insecure-content")
+
+        # Hide automation indicators
+        options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
+        options.add_experimental_option("useAutomationExtension", False)
+
+        # Disable images in headless for speed
+        if self.headless:
+            prefs = {"profile.managed_default_content_settings.images": 2}
+            options.add_experimental_option("prefs", prefs)
+
         # Get chromedriver
         try:
             from webdriver_manager.chrome import ChromeDriverManager
             service = Service(ChromeDriverManager().install())
         except:
             service = Service()
-        
+
         self.driver = webdriver.Chrome(service=service, options=options)
-        
-        # Enable Network domain for CDP
+
+        # Setup CDP for network interception (more stealthy)
+        self._setup_cdp_network_capture()
+
+        # Inject stealth scripts
+        self._inject_stealth_scripts()
+
+    def _setup_cdp_network_capture(self):
+        """Setup CDP network capture without using loggingPrefs."""
+        # Enable Network domain
         self.driver.execute_cdp_cmd("Network.enable", {})
+
+        # Inject JavaScript to intercept fetch/XHR and capture Authorization headers
+        intercept_js = """
+        window.__ve3_captured_tokens__ = [];
+
+        // Intercept fetch
+        const originalFetch = window.fetch;
+        window.fetch = function(...args) {
+            const [url, options] = args;
+            if (url && url.includes('aisandbox-pa.googleapis.com') && url.includes('flowMedia')) {
+                const headers = options?.headers || {};
+                const auth = headers['Authorization'] || headers['authorization'];
+                if (auth && auth.startsWith('Bearer ')) {
+                    window.__ve3_captured_tokens__.push({
+                        token: auth.substring(7),
+                        url: url,
+                        timestamp: Date.now()
+                    });
+                }
+            }
+            return originalFetch.apply(this, args);
+        };
+
+        // Intercept XMLHttpRequest
+        const originalXHROpen = XMLHttpRequest.prototype.open;
+        const originalXHRSetHeader = XMLHttpRequest.prototype.setRequestHeader;
+
+        XMLHttpRequest.prototype.open = function(method, url) {
+            this.__ve3_url__ = url;
+            return originalXHROpen.apply(this, arguments);
+        };
+
+        XMLHttpRequest.prototype.setRequestHeader = function(name, value) {
+            if (this.__ve3_url__ &&
+                this.__ve3_url__.includes('aisandbox-pa.googleapis.com') &&
+                this.__ve3_url__.includes('flowMedia') &&
+                (name.toLowerCase() === 'authorization') &&
+                value.startsWith('Bearer ')) {
+                window.__ve3_captured_tokens__.push({
+                    token: value.substring(7),
+                    url: this.__ve3_url__,
+                    timestamp: Date.now()
+                });
+            }
+            return originalXHRSetHeader.apply(this, arguments);
+        };
+        """
+        try:
+            self.driver.execute_script(intercept_js)
+        except Exception:
+            pass
+
+    def _inject_stealth_scripts(self):
+        """Inject JavaScript to hide automation fingerprints."""
+        stealth_js = """
+        // Override navigator.webdriver
+        Object.defineProperty(navigator, 'webdriver', {
+            get: () => undefined
+        });
+
+        // Override navigator.plugins (non-empty)
+        Object.defineProperty(navigator, 'plugins', {
+            get: () => [1, 2, 3, 4, 5]
+        });
+
+        // Override navigator.languages
+        Object.defineProperty(navigator, 'languages', {
+            get: () => ['en-US', 'en', 'vi']
+        });
+
+        // Override permissions query
+        const originalQuery = window.navigator.permissions.query;
+        window.navigator.permissions.query = (parameters) => (
+            parameters.name === 'notifications' ?
+                Promise.resolve({ state: Notification.permission }) :
+                originalQuery(parameters)
+        );
+
+        // Override Chrome automation detection
+        window.chrome = {
+            runtime: {}
+        };
+
+        // Remove automation-related properties
+        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
+        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
+        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
+        """
+        try:
+            self.driver.execute_script(stealth_js)
+        except Exception:
+            pass
     
     def _wait_for_element(self, by, value, timeout=10, clickable=False):
         """Doi element xuat hien."""
@@ -148,37 +316,28 @@ class ChromeAutoToken:
         return WebDriverWait(self.driver, timeout).until(condition((by, value)))
     
     def _extract_token_from_logs(self) -> Tuple[Optional[str], Optional[str]]:
-        """Extract Bearer Token tu performance logs."""
+        """Extract Bearer Token tu JavaScript captured tokens."""
         try:
-            logs = self.driver.get_log("performance")
-        except:
-            return None, None
-        
-        for log in logs:
-            try:
-                msg = json.loads(log["message"])
-                method = msg.get("message", {}).get("method", "")
-                
-                if method == "Network.requestWillBeSent":
-                    params = msg.get("message", {}).get("params", {})
-                    request = params.get("request", {})
-                    url = request.get("url", "")
-                    headers = request.get("headers", {})
-                    
-                    if "aisandbox-pa.googleapis.com" in url and "flowMedia" in url:
-                        auth = headers.get("Authorization") or headers.get("authorization")
-                        if auth and auth.startswith("Bearer "):
-                            self.bearer_token = auth[7:]
-                            
-                            # Extract project ID
-                            if "/projects/" in url:
-                                parts = url.split("/projects/")[1]
-                                self.project_id = parts.split("/")[0]
-                            
-                            return self.bearer_token, self.project_id
-            except:
-                continue
-        
+            # Get tokens captured by JavaScript injection
+            tokens = self.driver.execute_script("return window.__ve3_captured_tokens__ || [];")
+
+            if tokens and len(tokens) > 0:
+                # Get the latest token
+                latest = tokens[-1]
+                self.bearer_token = latest.get("token")
+                url = latest.get("url", "")
+
+                # Extract project ID from URL
+                if "/projects/" in url:
+                    parts = url.split("/projects/")[1]
+                    self.project_id = parts.split("/")[0]
+
+                if self.bearer_token:
+                    return self.bearer_token, self.project_id
+
+        except Exception:
+            pass
+
         return None, None
     
     def _navigate_to_flow(self, project_id: str = None):
@@ -187,9 +346,13 @@ class ChromeAutoToken:
             url = f"https://labs.google/fx/vi/tools/flow/project/{project_id}"
         else:
             url = self.FLOW_URL
-        
+
         self.driver.get(url)
         time.sleep(3)
+
+        # Re-inject token capture script after navigation (script is lost on page load)
+        self._setup_cdp_network_capture()
+        self._inject_stealth_scripts()
     
     def _click_new_project(self) -> bool:
         """Click nut Du an moi."""
