@@ -755,6 +755,7 @@ class SmartEngine:
         """
         Generate character images trong background thread.
         Duoc goi tu callback khi characters ready.
+        Respect generation_mode setting (api hoac chrome).
         """
         def _worker():
             try:
@@ -770,8 +771,25 @@ class SmartEngine:
 
                 self.log(f"[PARALLEL] Tao {len(char_prompts)} anh nhan vat...")
 
-                # Generate using browser
-                results = self.generate_images_browser(char_prompts, proj_dir)
+                # Check generation_mode setting
+                generation_mode = 'api'  # Default
+                try:
+                    import yaml
+                    settings_path = self.config_dir / "settings.yaml"
+                    if settings_path.exists():
+                        with open(settings_path, 'r', encoding='utf-8') as f:
+                            settings = yaml.safe_load(f) or {}
+                        generation_mode = settings.get('generation_mode', 'api')
+                except:
+                    pass
+
+                # Generate using correct mode
+                if generation_mode == 'api':
+                    self.log("[PARALLEL] Dung API MODE cho characters...")
+                    results = self.generate_images_api(char_prompts, proj_dir)
+                else:
+                    self.log("[PARALLEL] Dung BROWSER MODE cho characters...")
+                    results = self.generate_images_browser(char_prompts, proj_dir)
 
                 self._character_gen_result = results
                 self.log(f"[PARALLEL] Xong! Success={results.get('success', 0)}, Failed={results.get('failed', 0)}")
