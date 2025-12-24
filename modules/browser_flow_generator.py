@@ -1715,14 +1715,32 @@ class BrowserFlowGenerator:
         # Lay profile path
         # Uu tien: chrome_profile (absolute path tu settings) > browser_profiles_dir/profile_name
         chrome_profile = self.config.get('chrome_profile', '')
-        if chrome_profile and Path(chrome_profile).exists():
-            # Dung profile tu settings.yaml (Chrome profile cua user)
-            profile_path = chrome_profile
-            self._log(f"Su dung Chrome profile tu settings: {profile_path}")
+        self._log(f"[DEBUG] chrome_profile from config: '{chrome_profile}'")
+
+        if chrome_profile:
+            chrome_profile_path = Path(chrome_profile)
+            self._log(f"[DEBUG] chrome_profile exists: {chrome_profile_path.exists()}")
+
+            if chrome_profile_path.exists():
+                # Dung profile tu settings.yaml
+                profile_path = str(chrome_profile_path)
+                self._log(f"Su dung Chrome profile tu settings: {profile_path}")
+            else:
+                # Path khong ton tai - thu resolve relative path
+                base_dir = Path(__file__).parent.parent
+                abs_chrome_profile = base_dir / chrome_profile
+                self._log(f"[DEBUG] Trying absolute: {abs_chrome_profile}")
+
+                if abs_chrome_profile.exists():
+                    profile_path = str(abs_chrome_profile)
+                    self._log(f"Su dung Chrome profile (resolved): {profile_path}")
+                else:
+                    # Van khong ton tai - dung profile_dir da setup
+                    profile_path = str(self.profile_dir)
+                    self._log(f"[WARN] chrome_profile path khong ton tai, dung: {profile_path}")
         else:
-            # Fallback: dung tool's own profile
-            profiles_dir = self.config.get('browser_profiles_dir', './chrome_profiles')
-            profile_path = str(Path(profiles_dir) / self.profile_name)
+            # Khong co chrome_profile - dung profile_dir da setup
+            profile_path = str(self.profile_dir)
             self._log(f"Su dung tool profile: {profile_path}")
 
         self._log(f"Chrome: {chrome_path}")
@@ -1785,12 +1803,23 @@ class BrowserFlowGenerator:
 
         # Lay profile path - uu tien chrome_profile tu settings
         chrome_profile = self.config.get('chrome_profile', '')
-        if chrome_profile and Path(chrome_profile).exists():
-            profile_path = chrome_profile
-            self._log(f"Su dung Chrome profile tu settings: {profile_path}")
+        if chrome_profile:
+            chrome_profile_path = Path(chrome_profile)
+            if chrome_profile_path.exists():
+                profile_path = str(chrome_profile_path)
+                self._log(f"Su dung Chrome profile tu settings: {profile_path}")
+            else:
+                # Thu resolve relative path
+                base_dir = Path(__file__).parent.parent
+                abs_chrome_profile = base_dir / chrome_profile
+                if abs_chrome_profile.exists():
+                    profile_path = str(abs_chrome_profile)
+                    self._log(f"Su dung Chrome profile (resolved): {profile_path}")
+                else:
+                    profile_path = str(self.profile_dir)
+                    self._log(f"[WARN] chrome_profile khong ton tai, dung: {profile_path}")
         else:
-            profiles_dir = self.config.get('browser_profiles_dir', './chrome_profiles')
-            profile_path = str(Path(profiles_dir) / self.profile_name)
+            profile_path = str(self.profile_dir)
             self._log(f"Su dung tool profile: {profile_path}")
 
         self._log(f"Profile: {profile_path}")
