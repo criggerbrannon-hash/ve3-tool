@@ -221,28 +221,58 @@ class VoiceToSrt:
     def _write_srt(self, result: Dict[str, Any], output_path: Path) -> None:
         """
         Ghi kết quả transcription ra file SRT.
-        
+
         Args:
             result: Kết quả từ Whisper
             output_path: Path file SRT
         """
         segments = result.get("segments", [])
-        
+
         with open(output_path, "w", encoding="utf-8") as f:
             for idx, segment in enumerate(segments, start=1):
                 start_time = segment.get("start", 0)
                 end_time = segment.get("end", 0)
                 text = segment.get("text", "").strip()
-                
+
                 # Format thời gian SRT
                 start_str = self._seconds_to_srt_time(start_time)
                 end_str = self._seconds_to_srt_time(end_time)
-                
+
                 # Ghi entry
                 f.write(f"{idx}\n")
                 f.write(f"{start_str} --> {end_str}\n")
                 f.write(f"{text}\n")
                 f.write("\n")
+
+        # Cũng xuất file TXT (full text không có timestamp) cho đạo diễn
+        self._write_txt(result, output_path)
+
+    def _write_txt(self, result: Dict[str, Any], srt_path: Path) -> None:
+        """
+        Ghi kết quả transcription ra file TXT (không có timestamp).
+        File TXT dùng cho đạo diễn để đọc và phân tích nội dung.
+
+        Args:
+            result: Kết quả từ Whisper
+            srt_path: Path file SRT (sẽ đổi đuôi thành .txt)
+        """
+        segments = result.get("segments", [])
+        txt_path = srt_path.with_suffix(".txt")
+
+        # Ghép tất cả text thành đoạn văn
+        full_text = " ".join([
+            segment.get("text", "").strip()
+            for segment in segments
+        ])
+
+        # Xử lý format: đảm bảo có space sau dấu câu
+        import re
+        full_text = re.sub(r'([.!?])([A-ZÀ-Ỹ])', r'\1 \2', full_text)
+
+        with open(txt_path, "w", encoding="utf-8") as f:
+            f.write(full_text)
+
+        self.logger.info(f"TXT saved to: {txt_path}")
     
     @staticmethod
     def _seconds_to_srt_time(seconds: float) -> str:

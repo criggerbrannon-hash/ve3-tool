@@ -282,9 +282,15 @@ class BrowserFlowGenerator:
             traceback.print_exc()
             raise
 
-    def start_browser(self) -> bool:
+    def start_browser(self, use_cached_project: bool = True) -> bool:
         """
         Khoi dong trinh duyet va navigate den Google Flow.
+
+        Args:
+            use_cached_project: Neu True, se vao project cu (tu cache) de giu media_name valid
+
+        QUAN TRONG: Khi tao img, phai vao DUNG project da tao nv
+        de media_name cua nv con valid cho reference.
 
         Returns:
             True neu thanh cong
@@ -299,9 +305,19 @@ class BrowserFlowGenerator:
             self.driver.set_script_timeout(300)  # 5 phut
             self._log("Set script timeout: 300s")
 
-            # Navigate den Google Flow
-            self._log(f"Navigate den: {self.FLOW_URL}")
-            self.driver.get(self.FLOW_URL)
+            # QUAN TRONG: Kiem tra cached project URL
+            # Neu co, vao project cu de giu media_name valid
+            target_url = self.FLOW_URL
+            cached_url = getattr(self, '_cached_project_url', None)
+
+            if use_cached_project and cached_url:
+                self._log(f"[REUSE PROJECT] Vao project cu de giu media_name valid")
+                self._log(f"  -> URL: {cached_url[:60]}...")
+                target_url = cached_url
+            else:
+                self._log(f"Navigate den: {self.FLOW_URL}")
+
+            self.driver.get(target_url)
 
             # Cho page load
             time.sleep(5)
@@ -423,7 +439,14 @@ class BrowserFlowGenerator:
         """
         Load media_names tu cache file.
 
-        Format moi: {id: {mediaName: str, seed: int|null}}
+        Format moi: {
+            "_project_url": "https://...",
+            "_project_id": "xxx",
+            "_bearer_token": "ya29.xxx",
+            "_token_time": 1234567890.0,
+            "nvc": {mediaName: str, seed: int|null},
+            ...
+        }
         Backward compatible voi format cu: {id: str}
         """
         cache_path = self._get_media_cache_path()
@@ -431,24 +454,85 @@ class BrowserFlowGenerator:
             try:
                 with open(cache_path, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                    self._log(f"Loaded {len(data)} media_names from cache")
+                    # Extract project info
+                    project_url = data.pop('_project_url', None)
+                    project_id = data.pop('_project_id', None)
+                    bearer_token = data.pop('_bearer_token', None)
+                    token_time = data.pop('_token_time', None)
+
+                    if project_url:
+                        self._cached_project_url = project_url
+                        self._log(f"[CACHE] Project URL: {project_url[:50]}...")
+                    if project_id:
+                        self._cached_project_id = project_id
+                        self.config['flow_project_id'] = project_id  # Set vào config
+                        self._log(f"[CACHE] Project ID: {project_id[:20]}...")
+
+                    # LUON dung cached token truoc - neu API tra ve 401 thi moi refresh
+                    # Khong dua vao thoi gian vi khong dang tin cay
+                    if bearer_token:
+                        import time
+                        self._cached_bearer_token = bearer_token
+                        self._cached_token_time = token_time or time.time()
+                        self.config['flow_bearer_token'] = bearer_token
+                        if token_time:
+                            age_minutes = (time.time() - token_time) / 60
+                            self._log(f"[CACHE] Token loaded ({age_minutes:.1f} phút) - TRY FIRST, refresh if API fails")
+                        else:
+                            self._log(f"[CACHE] Token loaded - TRY FIRST, refresh if API fails")
+
+                    self._log(f"[CACHE] Loaded {len(data)} media_names")
                     return data
-            except:
-                pass
+            except Exception as e:
+                self._log(f"Error loading cache: {e}", "warn")
         return {}
 
     def _save_media_cache(self, media_names: Dict[str, Any]) -> None:
         """
         Luu media_names vao cache file.
 
-        Format: {id: {mediaName: str, seed: int|null}}
+        Format: {
+            "_project_url": "https://...",
+            "_project_id": "xxx",
+            "_bearer_token": "ya29.xxx",
+            "_token_time": 1234567890.0,
+            "nvc": {mediaName: str, seed: int|null},
+            ...
+        }
+
+        QUAN TRONG: Luu project_url VA token de khi tao img co the:
+        1. Vao dung project (giu media_name valid)
+        2. Reuse token (khong can mo Chrome lai)
         """
+        import time
         cache_path = self._get_media_cache_path()
         try:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Add project info to cache
+            cache_data = dict(media_names)  # Copy to avoid modifying original
+
+            # Get project URL from current session or config
+            project_url = getattr(self, '_project_url', None)
+            project_id = self.config.get('flow_project_id', '')
+            bearer_token = self.config.get('flow_bearer_token', '')
+
+            if project_url:
+                cache_data['_project_url'] = project_url
+                self._log(f"[CACHE] Saving project_url: {project_url[:50]}...")
+            if project_id:
+                cache_data['_project_id'] = project_id
+                self._log(f"[CACHE] Saving project_id: {project_id[:20]}...")
+
+            # QUAN TRONG: Luu token de reuse (khong can mo Chrome lai)
+            if bearer_token:
+                cache_data['_bearer_token'] = bearer_token
+                cache_data['_token_time'] = time.time()  # Luu thoi diem lay token
+                self._log(f"[CACHE] Saving bearer_token: {bearer_token[:30]}... (de reuse)")
+
             with open(cache_path, 'w', encoding='utf-8') as f:
-                json.dump(media_names, f, indent=2)
-            self._log(f"Saved {len(media_names)} media_names to cache")
+                json.dump(cache_data, f, indent=2)
+            self._log(f"[CACHE] Saved {len(media_names)} media_names + token + project")
         except Exception as e:
             self._log(f"Loi save cache: {e}", "warn")
 
@@ -898,9 +982,21 @@ class BrowserFlowGenerator:
         self._log(f"Se tao {len(scenes_to_process)} anh")
         self.stats["total"] = len(scenes_to_process)
 
-        # Khoi dong browser
+        # QUAN TRONG: Load cache TRUOC khi start browser
+        # De lay _cached_project_url va vao dung project (giu media_name valid)
+        cached_media_names = self._load_media_cache()
+        has_cached_project = hasattr(self, '_cached_project_url') and self._cached_project_url
+
+        if cached_media_names:
+            self._log(f"[CACHE] Loaded {len(cached_media_names)} media references (nv/loc)")
+            if has_cached_project:
+                self._log(f"[CACHE] Co project URL -> se reuse de giu media_name valid")
+        else:
+            self._log("Khong co media cache - scenes se khong co reference", "warn")
+
+        # Khoi dong browser - vao dung project neu co cache
         if not self.driver:
-            if not self.start_browser():
+            if not self.start_browser(use_cached_project=has_cached_project):
                 return {"success": False, "error": "Khong khoi dong duoc browser"}
 
             # Cho dang nhap
@@ -912,13 +1008,10 @@ class BrowserFlowGenerator:
         if not self._inject_js():
             return {"success": False, "error": "Khong inject duoc JS"}
 
-        # IMPORTANT: Load media_names tu cache de reference characters
-        cached_media_names = self._load_media_cache()
+        # Load media_names vao JS sau khi inject
         if cached_media_names:
             self._load_media_names_to_js(cached_media_names)
-            self._log(f"Loaded {len(cached_media_names)} media references (nv/loc)")
-        else:
-            self._log("Khong co media cache - scenes se khong co reference", "warn")
+            self._log(f"Loaded media references vao JS")
 
         # Chuan bi prompts cho VE3.run()
         # QUAN TRONG: Dung numeric ID (1, 2, 3) de khop voi SmartEngine video composer
@@ -1332,9 +1425,21 @@ class BrowserFlowGenerator:
             except Exception as e:
                 self._log(f"[Excel] Warning: Khong load duoc Excel: {e}", "warn")
 
-        # Khoi dong browser
+        # QUAN TRONG: Load cache TRUOC khi start browser
+        # De lay _cached_project_url va vao dung project (giu media_name valid)
+        cached_media_names = self._load_media_cache()
+        has_cached_project = hasattr(self, '_cached_project_url') and self._cached_project_url
+
+        if cached_media_names:
+            self._log(f"[CACHE] Loaded {len(cached_media_names)} media_names")
+            if has_cached_project:
+                self._log(f"[CACHE] Co project URL -> se reuse de giu media_name valid")
+        else:
+            self._log("[CACHE] ⚠️ EMPTY - Characters (nv/loc) chua duoc tao!", "warn")
+
+        # Khoi dong browser - vao dung project neu co cache
         if not self.driver:
-            if not self.start_browser():
+            if not self.start_browser(use_cached_project=has_cached_project):
                 return {"success": False, "error": "Khong khoi dong duoc browser"}
 
             if not self.wait_for_login(timeout=120):
@@ -1345,12 +1450,9 @@ class BrowserFlowGenerator:
         if not self._inject_js():
             return {"success": False, "error": "Khong inject duoc JS"}
 
-        # Load media_names tu cache va set vao JS
-        cached_media_names = self._load_media_cache()
+        # Load media_names vao JS sau khi inject
         if cached_media_names:
-            self._log(f"[CACHE] Loaded {len(cached_media_names)} media_names:")
             for key, val in cached_media_names.items():
-                # Support ca format cu (string) va moi ({mediaName, seed})
                 if isinstance(val, dict):
                     mn = val.get('mediaName', '')
                     seed = val.get('seed')
@@ -1358,9 +1460,6 @@ class BrowserFlowGenerator:
                 else:
                     self._log(f"  {key} -> {val[:50] if val else 'None'}...")
             self._load_media_names_to_js(cached_media_names)
-        else:
-            self._log("[CACHE] ⚠️ EMPTY - Characters (nv/loc) chua duoc tao!", "warn")
-            self._log("[CACHE] Hay chay tao anh nhan vat truoc de co media_names", "warn")
 
         self._log(f"\nBat dau tao {len(prompts)} anh...")
 
@@ -1691,10 +1790,19 @@ class BrowserFlowGenerator:
         Tu dong lay bearer token tu Chrome bang profile hien tai.
         Su dung ChromeAutoToken de mo Chrome, navigate den Flow va capture token.
 
+        QUAN TRONG:
+        - Neu co cached project_url -> mo truc tiep project do -> skip 'Tao du an moi'
+        - Token moi se duoc luu lai vao cache de reuse lan sau
+
         Returns:
             Bearer token (ya29.xxx) hoac None neu that bai
         """
         self._log("=== TU DONG LAY BEARER TOKEN ===")
+
+        # Load cache de lay _cached_project_url (neu chua load)
+        if not hasattr(self, '_cached_project_url') or not self._cached_project_url:
+            self._log("Loading media cache de lay project URL...")
+            self._load_media_cache()
 
         try:
             from modules.auto_token import ChromeAutoToken
@@ -1777,24 +1885,47 @@ class BrowserFlowGenerator:
             def log_callback(msg, level="info"):
                 self._log(f"[TokenExtract] {msg}", level)
 
-            # QUAN TRONG: Reuse project_id da co de share media_ids giua nv va img
+            # QUAN TRONG: Reuse project URL/ID da co de:
+            # 1. Share media_ids giua nv va img
+            # 2. Skip buoc "Tao du an moi" -> lay token nhanh hon
+            existing_project_url = getattr(self, '_cached_project_url', None)
             existing_project_id = self.config.get('flow_project_id', '')
-            if existing_project_id:
-                self._log(f"  -> Reuse project_id: {existing_project_id[:8]}...")
+
+            if existing_project_url:
+                self._log(f"  -> Reuse project URL: {existing_project_url[:50]}...")
+                self._log(f"  -> Da trong project -> skip 'Tao du an moi' -> tao anh de lay token!")
+            elif existing_project_id:
+                self._log(f"  -> Reuse project_id: {existing_project_id[:20]}...")
             else:
-                self._log(f"  -> Chua co project_id, se tao moi")
+                self._log(f"  -> Chua co project -> se tao moi")
 
             token, proj_id, error = extractor.extract_token(
-                project_id=existing_project_id,  # Reuse existing project
+                project_id=existing_project_id,  # Fallback
+                project_url=existing_project_url,  # Uu tien (full URL)
                 callback=log_callback
             )
 
             if token:
                 self._log(f"OK - Da lay duoc token: {token[:20]}...{token[-10:]}", "success")
-                # Luu project_id neu co gia tri moi
+                # Luu project_id va token vao config
                 if proj_id:
                     self.config['flow_project_id'] = proj_id
-                    self._log(f"  -> Project ID: {proj_id[:8]}...")
+                    self._log(f"  -> Project ID: {proj_id[:20]}...")
+
+                # Luu token vao config va cache
+                import time
+                self.config['flow_bearer_token'] = token
+                self._cached_bearer_token = token
+                self._cached_token_time = time.time()
+
+                # Save vao cache file de reuse lan sau
+                try:
+                    cached_media_names = self._load_media_cache() or {}
+                    self._save_media_cache(cached_media_names)
+                    self._log("  -> Token da luu vao cache")
+                except Exception as e:
+                    self._log(f"  -> Luu cache that bai: {e}")
+
                 return token
             else:
                 self._log(f"FAIL - Khong lay duoc token: {error}", "error")
@@ -2274,13 +2405,36 @@ class BrowserFlowGenerator:
                                 ))
                                 self._log(f"[REF] Using cached media: {ref_id}")
 
-                # Generate image
+                # Generate image - co retry khi token het han
                 success, images, error = api.generate_images(
                     prompt=prompt,
                     count=self.config.get('flow_image_count', 2),
                     aspect_ratio=aspect_ratio,
                     image_inputs=[inp.to_dict() for inp in image_inputs] if image_inputs else None
                 )
+
+                # Check token expired (401) - auto refresh and retry
+                if not success and error:
+                    error_lower = str(error).lower()
+                    is_token_expired = '401' in error_lower or 'expired' in error_lower or 'authentication' in error_lower
+                    if is_token_expired:
+                        self._log(f"Token het han! Dang tu dong refresh...", "warn")
+                        new_token = self._auto_extract_token()
+                        if new_token:
+                            # Update API instance with new token
+                            api.bearer_token = new_token
+                            bearer_token = new_token
+                            self._log(f"Token moi OK - dang retry scene {scene_id}...")
+
+                            # Retry generation
+                            success, images, error = api.generate_images(
+                                prompt=prompt,
+                                count=self.config.get('flow_image_count', 2),
+                                aspect_ratio=aspect_ratio,
+                                image_inputs=[inp.to_dict() for inp in image_inputs] if image_inputs else None
+                            )
+                        else:
+                            self._log(f"Khong the refresh token!", "error")
 
                 if success and images:
                     # Download best image
@@ -2657,12 +2811,82 @@ class BrowserFlowGenerator:
             self._log(f"Prompt ({len(prompt)} chars): {prompt[:100]}...")
 
             try:
-                # Generate
+                # === BUILD IMAGE INPUTS TU reference_files VA prompt annotations ===
+                import re
+                import json as json_mod
+                from modules.google_flow_api import ImageInput, ImageInputType
+
+                image_inputs = []
+                ref_ids_added = set()  # Track de tranh duplicate
+
+                # === 1. Uu tien: Lay reference_files tu prompt_data (tu Excel) ===
+                ref_files_str = prompt_data.get('reference_files', '')
+                if ref_files_str and cached_media_names:
+                    try:
+                        ref_files = json_mod.loads(ref_files_str) if ref_files_str.startswith('[') else [f.strip() for f in str(ref_files_str).split(',') if f.strip()]
+                    except:
+                        ref_files = [f.strip() for f in str(ref_files_str).split(',') if f.strip()]
+
+                    for ref_file in ref_files:
+                        ref_id = ref_file.replace('.png', '').replace('.jpg', '')
+                        if ref_id in cached_media_names and ref_id not in ref_ids_added:
+                            media_info = cached_media_names[ref_id]
+                            media_name = media_info.get('mediaName') if isinstance(media_info, dict) else media_info
+                            if media_name:
+                                image_inputs.append(ImageInput(
+                                    name=media_name,
+                                    input_type=ImageInputType.REFERENCE
+                                ))
+                                ref_ids_added.add(ref_id)
+                                self._log(f"  [REF:Excel] {ref_id} -> mediaName OK")
+
+                # === 2. Fallback: Parse (xxx.png) tu prompt text ===
+                filename_pattern = r'\(([a-zA-Z0-9_]+)\.png\)'
+                matches = re.findall(filename_pattern, prompt)
+
+                if matches and cached_media_names:
+                    for ref_id in matches:
+                        if ref_id in cached_media_names and ref_id not in ref_ids_added:
+                            media_info = cached_media_names[ref_id]
+                            media_name = media_info.get('mediaName') if isinstance(media_info, dict) else media_info
+                            if media_name:
+                                image_inputs.append(ImageInput(
+                                    name=media_name,
+                                    input_type=ImageInputType.REFERENCE
+                                ))
+                                ref_ids_added.add(ref_id)
+                                self._log(f"  [REF:Prompt] {ref_id} -> mediaName OK")
+
+                if not image_inputs:
+                    self._log(f"  [REF] Khong co reference (ref_files='{ref_files_str[:30]}...' neu co)")
+
+                # Generate - co retry khi token het han
                 success, images, error = api.generate_images(
                     prompt=prompt,
                     count=self.config.get('flow_image_count', 2),
-                    aspect_ratio=aspect_ratio
+                    aspect_ratio=aspect_ratio,
+                    image_inputs=[inp.to_dict() for inp in image_inputs] if image_inputs else None
                 )
+
+                # Check token expired (401) - auto refresh and retry
+                if not success and error:
+                    error_lower = str(error).lower()
+                    is_token_expired = '401' in error_lower or 'expired' in error_lower or 'authentication' in error_lower
+                    if is_token_expired:
+                        self._log(f"Token het han! Dang tu dong refresh...", "warn")
+                        new_token = self._auto_extract_token()
+                        if new_token:
+                            api.bearer_token = new_token
+                            bearer_token = new_token
+                            self._log(f"Token moi OK - dang retry ID {pid}...")
+                            success, images, error = api.generate_images(
+                                prompt=prompt,
+                                count=self.config.get('flow_image_count', 2),
+                                aspect_ratio=aspect_ratio,
+                                image_inputs=[inp.to_dict() for inp in image_inputs] if image_inputs else None
+                            )
+                        else:
+                            self._log(f"Khong the refresh token!", "error")
 
                 if success and images:
                     # Determine output dir

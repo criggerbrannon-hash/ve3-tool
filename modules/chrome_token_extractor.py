@@ -29,26 +29,32 @@ class ChromeTokenExtractor:
         chrome_path: str,
         profile_path: str,
         headless: bool = False,
-        timeout: int = 60
+        timeout: int = 60,
+        debug_port: int = None
     ):
         """
         Khởi tạo extractor.
-        
+
         Args:
             chrome_path: Đường dẫn đến chrome.exe
             profile_path: Đường dẫn đến Chrome User Data
             headless: Chạy ẩn không hiện UI
             timeout: Timeout cho việc lấy token (giây)
+            debug_port: Port cho Chrome DevTools (mặc định random 9222-9322)
         """
         self.chrome_path = chrome_path
         self.profile_path = profile_path
         self.headless = headless
         self.timeout = timeout
-        
+
+        # Random port để tránh xung đột khi chạy nhiều instance
+        import random
+        self.debug_port = debug_port or random.randint(9222, 9322)
+
         self.driver = None
         self.bearer_token = None
         self.project_id = None
-        
+
         # Extract profile info from path
         profile_path = Path(profile_path)
         default_folder = profile_path / "Default"
@@ -63,7 +69,62 @@ class ChromeTokenExtractor:
             self.user_data_dir = str(profile_path.parent)  # e.g., "C:\Users\...\User Data"
 
     def _create_driver(self):
-        """Tạo Chrome WebDriver với CDP enabled."""
+        """Tạo Chrome WebDriver với CDP enabled và anti-detection."""
+
+        # Prioritize undetected-chromedriver (best anti-detection)
+        try:
+            import undetected_chromedriver as uc
+            self._create_driver_undetected(uc)
+            return
+        except ImportError:
+            pass
+
+        # Fallback to standard selenium with stealth settings
+        self._create_driver_selenium()
+
+    def _create_driver_undetected(self, uc):
+        """Tạo driver với undetected-chromedriver (best anti-detection)."""
+        options = uc.ChromeOptions()
+
+        # Use existing Chrome profile
+        options.add_argument(f"--user-data-dir={self.user_data_dir}")
+        if self.profile_name:
+            options.add_argument(f"--profile-directory={self.profile_name}")
+
+        # Chrome binary location
+        options.binary_location = self.chrome_path
+
+        # NOTE: Removed goog:loggingPrefs - it's a strong fingerprint!
+        # Will use JavaScript injection to capture tokens instead
+
+        if self.headless:
+            options.add_argument("--headless=new")
+
+        # Anti-detection flags
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--window-size=1280,800")
+        options.add_argument(f"--remote-debugging-port={self.debug_port}")
+
+        # Additional anti-detection
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_argument("--disable-infobars")
+        options.add_argument("--disable-popup-blocking")
+
+        self.driver = uc.Chrome(
+            options=options,
+            use_subprocess=True,
+            version_main=None
+        )
+
+        # Setup CDP for network interception (more stealthy than loggingPrefs)
+        self._setup_cdp_network_capture()
+
+        # Additional stealth: override navigator properties
+        self._inject_stealth_scripts()
+
+    def _create_driver_selenium(self):
+        """Fallback: Tạo driver với Selenium + stealth settings."""
         from selenium import webdriver
         from selenium.webdriver.chrome.service import Service
         from selenium.webdriver.chrome.options import Options
@@ -74,25 +135,33 @@ class ChromeTokenExtractor:
         options.add_argument(f"--user-data-dir={self.user_data_dir}")
         if self.profile_name:
             options.add_argument(f"--profile-directory={self.profile_name}")
-        
+
         # Chrome binary location
         options.binary_location = self.chrome_path
-        
-        # Enable CDP for network interception
-        options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
-        
+
+        # NOTE: Removed goog:loggingPrefs - it's a strong fingerprint!
+
         if self.headless:
             options.add_argument("--headless=new")
-        
-        # Common options
+
+        # === ANTI-DETECTION FLAGS ===
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
         options.add_argument("--window-size=1280,800")
+        options.add_argument(f"--remote-debugging-port={self.debug_port}")
+
+        # Key anti-detection flags
         options.add_argument("--disable-blink-features=AutomationControlled")
-        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_argument("--disable-infobars")
+        options.add_argument("--disable-popup-blocking")
+        options.add_argument("--ignore-certificate-errors")
+        options.add_argument("--allow-running-insecure-content")
+
+        # Hide automation indicators
+        options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
         options.add_experimental_option("useAutomationExtension", False)
-        
+
         # Try to use webdriver-manager
         try:
             from webdriver_manager.chrome import ChromeDriverManager
@@ -100,51 +169,143 @@ class ChromeTokenExtractor:
         except ImportError:
             # Fallback to default
             service = Service()
-        
+
         self.driver = webdriver.Chrome(service=service, options=options)
-        
-        # Execute CDP command to enable network tracking
+
+        # Setup CDP for network interception (more stealthy than loggingPrefs)
+        self._setup_cdp_network_capture()
+
+        # Inject stealth scripts
+        self._inject_stealth_scripts()
+
+    def _setup_cdp_network_capture(self):
+        """Setup CDP network capture without using loggingPrefs."""
+        # Store captured requests
+        self._captured_requests = []
+
+        # Enable Network domain
         self.driver.execute_cdp_cmd("Network.enable", {})
+
+        # Inject JavaScript to intercept fetch/XHR and capture Authorization headers
+        intercept_js = """
+        window.__ve3_captured_tokens__ = [];
+
+        // Intercept fetch
+        const originalFetch = window.fetch;
+        window.fetch = function(...args) {
+            const [url, options] = args;
+            if (url && url.includes('aisandbox-pa.googleapis.com') && url.includes('flowMedia')) {
+                const headers = options?.headers || {};
+                const auth = headers['Authorization'] || headers['authorization'];
+                if (auth && auth.startsWith('Bearer ')) {
+                    window.__ve3_captured_tokens__.push({
+                        token: auth.substring(7),
+                        url: url,
+                        timestamp: Date.now()
+                    });
+                }
+            }
+            return originalFetch.apply(this, args);
+        };
+
+        // Intercept XMLHttpRequest
+        const originalXHROpen = XMLHttpRequest.prototype.open;
+        const originalXHRSetHeader = XMLHttpRequest.prototype.setRequestHeader;
+
+        XMLHttpRequest.prototype.open = function(method, url) {
+            this.__ve3_url__ = url;
+            return originalXHROpen.apply(this, arguments);
+        };
+
+        XMLHttpRequest.prototype.setRequestHeader = function(name, value) {
+            if (this.__ve3_url__ &&
+                this.__ve3_url__.includes('aisandbox-pa.googleapis.com') &&
+                this.__ve3_url__.includes('flowMedia') &&
+                (name.toLowerCase() === 'authorization') &&
+                value.startsWith('Bearer ')) {
+                window.__ve3_captured_tokens__.push({
+                    token: value.substring(7),
+                    url: this.__ve3_url__,
+                    timestamp: Date.now()
+                });
+            }
+            return originalXHRSetHeader.apply(this, arguments);
+        };
+        """
+        try:
+            self.driver.execute_script(intercept_js)
+        except Exception:
+            pass
+
+    def _inject_stealth_scripts(self):
+        """Inject JavaScript to hide automation fingerprints."""
+        stealth_js = """
+        // Override navigator.webdriver
+        Object.defineProperty(navigator, 'webdriver', {
+            get: () => undefined
+        });
+
+        // Override navigator.plugins (non-empty)
+        Object.defineProperty(navigator, 'plugins', {
+            get: () => [1, 2, 3, 4, 5]
+        });
+
+        // Override navigator.languages
+        Object.defineProperty(navigator, 'languages', {
+            get: () => ['en-US', 'en']
+        });
+
+        // Override permissions query
+        const originalQuery = window.navigator.permissions.query;
+        window.navigator.permissions.query = (parameters) => (
+            parameters.name === 'notifications' ?
+                Promise.resolve({ state: Notification.permission }) :
+                originalQuery(parameters)
+        );
+
+        // Override Chrome automation detection
+        window.chrome = {
+            runtime: {}
+        };
+
+        // Remove automation-related properties
+        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
+        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
+        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
+        """
+        try:
+            self.driver.execute_script(stealth_js)
+        except Exception:
+            pass  # Ignore if script fails
     
     def _extract_token_from_logs(self) -> Tuple[Optional[str], Optional[str]]:
         """
-        Extract Bearer Token và Project ID từ Chrome performance logs.
-        
+        Extract Bearer Token và Project ID từ JavaScript captured tokens.
+
         Returns:
             Tuple[bearer_token, project_id]
         """
-        logs = self.driver.get_log("performance")
-        
-        for log in logs:
-            try:
-                message = json.loads(log["message"])
-                method = message.get("message", {}).get("method", "")
-                
-                # Look for network request with Authorization header
-                if method == "Network.requestWillBeSent":
-                    params = message.get("message", {}).get("params", {})
-                    request = params.get("request", {})
-                    url = request.get("url", "")
-                    headers = request.get("headers", {})
-                    
-                    # Check if this is a Flow API request
-                    if "aisandbox-pa.googleapis.com" in url and "flowMedia" in url:
-                        # Extract Authorization header
-                        auth = headers.get("Authorization") or headers.get("authorization")
-                        if auth and auth.startswith("Bearer "):
-                            self.bearer_token = auth[7:]  # Remove "Bearer " prefix
-                            
-                            # Extract project ID from URL
-                            # URL format: .../projects/{project_id}/flowMedia:...
-                            if "/projects/" in url:
-                                parts = url.split("/projects/")[1]
-                                self.project_id = parts.split("/")[0]
-                            
-                            return self.bearer_token, self.project_id
-                            
-            except (json.JSONDecodeError, KeyError, IndexError):
-                continue
-        
+        try:
+            # Get tokens captured by JavaScript injection
+            tokens = self.driver.execute_script("return window.__ve3_captured_tokens__ || [];")
+
+            if tokens and len(tokens) > 0:
+                # Get the latest token
+                latest = tokens[-1]
+                self.bearer_token = latest.get("token")
+                url = latest.get("url", "")
+
+                # Extract project ID from URL
+                if "/projects/" in url:
+                    parts = url.split("/projects/")[1]
+                    self.project_id = parts.split("/")[0]
+
+                if self.bearer_token:
+                    return self.bearer_token, self.project_id
+
+        except Exception:
+            pass
+
         return None, None
     
     def _trigger_image_generation(self):
@@ -224,7 +385,11 @@ class ChromeTokenExtractor:
             # Navigate to Flow
             self.driver.get(self.FLOW_URL)
             time.sleep(5)  # Wait for page load and potential redirects
-            
+
+            # Re-inject scripts after navigation (scripts are lost on page load)
+            self._setup_cdp_network_capture()
+            self._inject_stealth_scripts()
+
             if callback:
                 callback("Đang chờ đăng nhập (nếu cần)...")
             

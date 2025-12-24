@@ -259,20 +259,37 @@ class ChromeAutoToken:
     def extract_token(
         self,
         project_id: str = None,
+        project_url: str = None,
         callback: Callable = None,
         timeout: int = 90
     ) -> Tuple[Optional[str], Optional[str], str]:
-        """Main function."""
+        """
+        Main function.
+
+        Args:
+            project_id: Project ID de vao project cu (skip create new project)
+            project_url: Full project URL (uu tien hon project_id)
+            callback: Callback function
+            timeout: Timeout
+        """
         self.callback = callback
-        
+
         if not pag:
             return None, None, "Thieu pyautogui"
         if not pyperclip:
             return None, None, "Thieu pyperclip"
-        
+
         try:
             # === 1. Mo Chrome ===
-            url = f"https://labs.google/fx/vi/tools/flow/project/{project_id}" if project_id else self.FLOW_URL
+            # Uu tien project_url (full URL) > project_id > FLOW_URL
+            if project_url:
+                url = project_url
+                self.log(f"Vao project URL cu: {url[:60]}...")
+            elif project_id:
+                url = f"https://labs.google/fx/vi/tools/flow/project/{project_id}"
+                self.log(f"Vao project ID cu: {project_id[:20]}...")
+            else:
+                url = self.FLOW_URL
             self.log("Mo Chrome...")
             
             if not self.open_chrome(url):
@@ -287,11 +304,14 @@ class ChromeAutoToken:
             time.sleep(1)
             
             # === 4. Click "Du an moi" (JS) ===
-            if not project_id:
+            # Neu da co project URL/ID -> da trong project -> skip buoc nay
+            if not project_id and not project_url:
                 self.log("Click Du an moi...")
                 self.click_new_project_js()
                 self.log("Doi 5s...")
                 time.sleep(5)
+            else:
+                self.log("Da trong project cu -> skip 'Du an moi' -> tao anh de lay token!")
             
             # === 5. Click dropdown + chon "Tao hinh anh" (JS) ===
             self.log("Chon mode Tao hinh anh...")
@@ -336,5 +356,5 @@ class ChromeAutoToken:
 # Aliases
 FlowAutoToken = ChromeAutoToken
 
-def get_flow_token(chrome_path=None, profile_path=None, project_id=None, callback=None):
-    return ChromeAutoToken(chrome_path, profile_path).extract_token(project_id, callback)
+def get_flow_token(chrome_path=None, profile_path=None, project_id=None, project_url=None, callback=None):
+    return ChromeAutoToken(chrome_path, profile_path).extract_token(project_id, project_url, callback)

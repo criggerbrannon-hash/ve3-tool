@@ -87,7 +87,7 @@ def auto_update_from_git():
         return False, "Not a git repo"
 
     # FIXED: Always pull from the correct branch
-    TARGET_BRANCH = "claude/veo3-tool-review-rdu8g"
+    TARGET_BRANCH = "claude/setup-tool-development-1fwGG"
 
     try:
         # Fetch and reset to target branch
@@ -1489,7 +1489,7 @@ class UnixVoiceToVideo:
             self.root.after(0, self._reset_ui)
     
     def _process_folder(self):
-        """Process folder with multiple voice files - PARALLEL with profiles."""
+        """Process folder with multiple voice files - PARALLEL with headless Chrome."""
         try:
             from modules.smart_engine import SmartEngine
             from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -1503,39 +1503,64 @@ class UnixVoiceToVideo:
 
             self.log(f"📁 Tìm thấy {len(voices)} file voice")
 
-            # Get available profiles from chrome_profiles directory
-            profiles_dir = ROOT_DIR / "chrome_profiles"
-            available_profiles = []
-            if profiles_dir.exists():
-                available_profiles = [p.name for p in profiles_dir.iterdir() if p.is_dir()]
+            # Get settings
+            num_parallel = self._get_parallel_browsers()
+            use_headless = self._get_headless_setting()
 
-            if not available_profiles:
-                # Create default profile
+            # Get Chrome profiles from accounts.json
+            chrome_profiles = []
+            try:
+                accounts_path = CONFIG_DIR / "accounts.json"
+                if accounts_path.exists():
+                    with open(accounts_path, 'r', encoding='utf-8') as f:
+                        accounts = json.load(f)
+                    chrome_profiles = accounts.get('chrome_profiles', [])
+                    # Filter valid profiles
+                    chrome_profiles = [p for p in chrome_profiles if p and not p.startswith('THAY_BANG') and Path(p).exists()]
+            except Exception as e:
+                self.log(f"Load profiles error: {e}", "WARN")
+
+            # Fallback to chrome_profiles directory
+            if not chrome_profiles:
+                profiles_dir = ROOT_DIR / "chrome_profiles"
+                if profiles_dir.exists():
+                    chrome_profiles = [str(p) for p in profiles_dir.iterdir() if p.is_dir()]
+
+            # Create default profile if none
+            if not chrome_profiles:
+                profiles_dir = ROOT_DIR / "chrome_profiles"
                 profiles_dir.mkdir(exist_ok=True)
-                (profiles_dir / "main").mkdir(exist_ok=True)
-                available_profiles = ["main"]
+                default_profile = profiles_dir / "main"
+                default_profile.mkdir(exist_ok=True)
+                chrome_profiles = [str(default_profile)]
 
-            num_profiles = len(available_profiles)
-            num_parallel = min(num_profiles, len(voices), 3)  # Max 3 parallel
+            num_profiles = len(chrome_profiles)
+            num_parallel = min(num_parallel, num_profiles, len(voices))
 
-            self.log(f"🌐 {num_profiles} profile(s) | Chạy song song: {num_parallel}")
-            for p in available_profiles[:num_parallel]:
-                self.log(f"   • {p}")
+            self.log(f"🌐 {num_profiles} profile(s) | Song song: {num_parallel} | Headless: {'ON' if use_headless else 'OFF'}")
+            for i, p in enumerate(chrome_profiles[:num_parallel]):
+                profile_name = Path(p).name
+                self.log(f"   [{i+1}] {profile_name}")
 
             # Result tracking
             results_lock = threading.Lock()
             total_results = {"success": 0, "failed": 0}
-            completed_count = [0]  # Use list for mutable in closure
+            completed_count = [0]
 
-            def process_voice(voice_path, profile_name, voice_idx):
-                """Process single voice with assigned profile."""
+            def process_voice(voice_path, profile_path, voice_idx, worker_id):
+                """Process single voice with dedicated Chrome profile (headless)."""
                 try:
-                    self.root.after(0, lambda: self.log(f"\n[{voice_idx+1}/{len(voices)}] 📄 {voice_path.name} → {profile_name}"))
+                    profile_name = Path(profile_path).name
+                    self.root.after(0, lambda: self.log(f"\n[{voice_idx+1}/{len(voices)}] 📄 {voice_path.name} → Worker {worker_id} ({profile_name})"))
 
+                    # Create engine with specific profile
                     engine = SmartEngine(assigned_profile=profile_name)
 
+                    # Force headless mode if enabled
+                    engine.use_headless = use_headless
+
                     def log_cb(msg):
-                        self.root.after(0, lambda m=msg, p=profile_name: self.log(f"  [{p}] {m}"))
+                        self.root.after(0, lambda m=msg, w=worker_id: self.log(f"  [W{w}] {m}"))
 
                     result = engine.run(str(voice_path), callback=log_cb)
 
@@ -1554,15 +1579,17 @@ class UnixVoiceToVideo:
                     self.root.after(0, lambda err=e: self.log(f"Lỗi: {err}", "ERROR"))
                     return {"error": str(e)}
 
-            # Process voices in parallel
+            # Process voices in parallel with dedicated profiles
             with ThreadPoolExecutor(max_workers=num_parallel) as executor:
                 futures = {}
                 for i, voice in enumerate(voices):
                     if self._stop:
                         break
-                    profile = available_profiles[i % num_profiles]  # Round-robin profiles
-                    future = executor.submit(process_voice, voice, profile, i)
-                    futures[future] = (voice, profile)
+                    # Assign worker and profile (round-robin)
+                    worker_id = i % num_parallel
+                    profile_path = chrome_profiles[worker_id % num_profiles]
+                    future = executor.submit(process_voice, voice, profile_path, i, worker_id)
+                    futures[future] = (voice, profile_path)
 
                 # Wait for completion
                 for future in as_completed(futures):

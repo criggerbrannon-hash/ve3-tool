@@ -1059,11 +1059,15 @@ class PromptGenerator:
             self.logger.info("[Director Flow] Đạo diễn đã tạo prompts! Sử dụng trực tiếp...")
             for scene in scenes_data:
                 # Lấy prompts từ scene (đạo diễn đã điền)
+                # Ưu tiên characters_used/location_used đã được set trong _convert_shooting_plan_to_scenes
+                chars_used = scene.get("characters_used", scene.get("characters_in_scene", []))
+                loc_used = scene.get("location_used", scene.get("location_id", ""))
+
                 all_scene_prompts.append({
                     "img_prompt": scene.get("img_prompt", ""),
                     "video_prompt": scene.get("img_prompt", ""),  # Dùng chung img_prompt cho video
-                    "characters_used": scene.get("characters_in_scene", []),
-                    "location_used": scene.get("location_id", ""),
+                    "characters_used": chars_used,
+                    "location_used": loc_used,
                     "reference_files": scene.get("reference_files", []),
                     "shot_type": scene.get("shot_type", ""),
                     "camera_angle": scene.get("camera_angle", ""),
@@ -1321,17 +1325,36 @@ class PromptGenerator:
                     video_prompt, ref_files, characters, locations
                 )
 
-            # Lấy srt_start/srt_end với fallback sang start_time/end_time
-            srt_start_val = scene_data.get("srt_start") or start_time or ""
-            srt_end_val = scene_data.get("srt_end") or end_time or ""
+            # QUAN TRONG: srt_start/srt_end la timestamps chinh
+            # Fallback sang start_time/end_time neu khong co
+            srt_start_val = scene_data.get("srt_start") or start_time or "00:00:00,000"
+            srt_end_val = scene_data.get("srt_end") or end_time or "00:00:05,000"
+
+            # Tinh duration neu chua co
+            if not duration and srt_start_val and srt_end_val:
+                try:
+                    duration = parse_time_to_seconds(srt_end_val) - parse_time_to_seconds(srt_start_val)
+                except:
+                    duration = 5.0  # Default 5s
+
+            # planned_duration: thoi luong dao dien len ke hoach (mac dinh = duration)
+            # Nguoi dung co the thay doi trong Excel sau
+            planned_duration = scene_data.get("planned_duration", duration)
+
+            # CRITICAL: Clamp planned_duration to max 8 seconds (technical limit)
+            MAX_DURATION = 8
+            if planned_duration and planned_duration > MAX_DURATION:
+                self.logger.warning(
+                    f"Scene {scene_data['scene_id']}: planned_duration {planned_duration}s exceeds max {MAX_DURATION}s, clamping"
+                )
+                planned_duration = MAX_DURATION
 
             scene = Scene(
                 scene_id=scene_data["scene_id"],
-                start_time=start_time,          # Thời gian bắt đầu (HH:MM:SS,mmm)
-                end_time=end_time,              # Thời gian kết thúc (HH:MM:SS,mmm)
-                duration=round(duration, 2),    # Độ dài (giây)
-                srt_start=srt_start_val,        # Timestamp từ SRT
-                srt_end=srt_end_val,            # Timestamp từ SRT
+                srt_start=srt_start_val,              # Timestamp bat dau (HH:MM:SS,mmm)
+                srt_end=srt_end_val,                  # Timestamp ket thuc (HH:MM:SS,mmm)
+                duration=round(duration, 2),          # Do dai tu SRT (giay)
+                planned_duration=round(planned_duration, 2),  # Thoi luong dao dien ke hoach
                 srt_text=scene_data.get("text", "")[:500],  # Truncate nếu quá dài
                 img_prompt=img_prompt,
                 video_prompt=video_prompt,
@@ -1607,13 +1630,94 @@ class PromptGenerator:
         scenes = []
         scene_id = 1
 
+        def normalize_timestamp(ts: str) -> str:
+            """
+            Chuẩn hóa timestamp về format SRT: HH:MM:SS,mmm
+            Input có thể là: "00:00", "00:00:00", "00:00:00,000", "0:00", etc.
+            """
+            ts = ts.strip()
+            if not ts:
+                return "00:00:00,000"
+
+            # Nếu có dấu phẩy (milliseconds)
+            if "," in ts:
+                main_part, ms = ts.rsplit(",", 1)
+            else:
+                main_part = ts
+                ms = "000"
+
+            # Đảm bảo ms là 3 chữ số
+            ms = ms.ljust(3, "0")[:3]
+
+            # Parse main part
+            parts = main_part.split(":")
+            if len(parts) == 2:
+                # MM:SS -> HH:MM:SS
+                mm, ss = parts
+                hh = "00"
+            elif len(parts) == 3:
+                hh, mm, ss = parts
+            else:
+                return "00:00:00,000"
+
+            # Pad với 0
+            hh = hh.zfill(2)
+            mm = mm.zfill(2)
+            ss = ss.zfill(2)
+
+            return f"{hh}:{mm}:{ss},{ms}"
+
         for part in shooting_plan.get("story_parts", []):
             for shot in part.get("shots", []):
                 # Parse srt_range để lấy timestamps
                 srt_range = shot.get("srt_range", "00:00 - 00:08")
                 times = srt_range.split(" - ")
-                start_time = times[0] if len(times) > 0 else "00:00:00"
-                end_time = times[1] if len(times) > 1 else "00:00:08"
+                start_time = normalize_timestamp(times[0]) if len(times) > 0 else "00:00:00,000"
+                end_time = normalize_timestamp(times[1]) if len(times) > 1 else "00:00:08,000"
+
+                # === Extract characters_used và location_used từ reference_files ===
+                ref_files = shot.get("reference_files", [])
+                chars_in_shot = shot.get("characters_in_shot", [])
+
+                # Location: ưu tiên từ reference_files (loc_xxx.png), fallback từ part.location
+                location_from_refs = ""
+                chars_from_refs = []
+                for ref in ref_files:
+                    ref_name = ref.replace(".png", "").strip()
+                    if ref_name.startswith("loc_"):
+                        location_from_refs = ref_name  # e.g., "loc_courthouse"
+                    else:
+                        chars_from_refs.append(ref_name)  # e.g., "nvc"
+
+                # Fallback location từ part level
+                location_id = location_from_refs or (
+                    part.get("location", "").split(",")[0].strip() if part.get("location") else ""
+                )
+
+                # Characters: ưu tiên characters_in_shot, fallback từ reference_files
+                characters_used = chars_in_shot if chars_in_shot else chars_from_refs
+
+                # Lấy planned_duration từ đạo diễn (nếu có)
+                # Nếu không có, tính từ srt_range
+                planned_duration = shot.get("planned_duration")
+                if not planned_duration:
+                    # Fallback: tính từ timestamps
+                    try:
+                        start_parts = start_time.split(",")[0].split(":")
+                        end_parts = end_time.split(",")[0].split(":")
+                        start_secs = int(start_parts[0]) * 3600 + int(start_parts[1]) * 60 + int(start_parts[2])
+                        end_secs = int(end_parts[0]) * 3600 + int(end_parts[1]) * 60 + int(end_parts[2])
+                        planned_duration = end_secs - start_secs
+                    except:
+                        planned_duration = 5  # Default 5 seconds
+
+                # CRITICAL: Clamp planned_duration to max 8 seconds (technical limit)
+                MAX_DURATION = 8
+                if planned_duration > MAX_DURATION:
+                    self.logger.warning(
+                        f"Shot {scene_id}: planned_duration {planned_duration}s exceeds max {MAX_DURATION}s, clamping"
+                    )
+                    planned_duration = MAX_DURATION
 
                 scene = {
                     "scene_id": scene_id,
@@ -1621,15 +1725,20 @@ class PromptGenerator:
                     "srt_end": end_time,
                     "start_time": start_time,
                     "end_time": end_time,
+                    "planned_duration": planned_duration,  # Thời lượng đạo diễn quyết định
+                    "emotional_weight": shot.get("emotional_weight", ""),  # Mức độ quan trọng cảm xúc
                     "text": shot.get("srt_text", ""),
                     "scene_type": part.get("part_name", "SCENE"),
-                    "location_id": part.get("location", "").split(",")[0].strip() if part.get("location") else "",
-                    "characters_in_scene": shot.get("characters_in_shot", []),
-                    "reference_files": shot.get("reference_files", []),
+                    "location_id": location_id,
+                    "characters_in_scene": characters_used,
+                    "characters_used": characters_used,  # Thêm trực tiếp cho Excel
+                    "location_used": location_id,  # Thêm trực tiếp cho Excel
+                    "reference_files": ref_files,
                     "img_prompt": shot.get("img_prompt", ""),
                     "shot_type": shot.get("shot_type", ""),
                     "camera_angle": shot.get("camera_angle", ""),
                     "visual_description": shot.get("visual_description", ""),
+                    "purpose": shot.get("purpose", ""),  # Mục đích của shot
                     # Đánh dấu đã có prompt từ đạo diễn
                     "from_director": True
                 }

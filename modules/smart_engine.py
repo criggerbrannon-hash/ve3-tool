@@ -2001,7 +2001,9 @@ class SmartEngine:
                     img['duration'] = max(0.5, (total_duration - img['start']) / max(1, len(images) - i))
 
             # 4. Tạo video với FFmpeg + Fade Transitions
-            with tempfile.TemporaryDirectory() as temp_dir:
+            # Windows fix: Don't use context manager - manual cleanup with retry
+            temp_dir = tempfile.mkdtemp()
+            try:
                 # Debug: show first few images
                 self.log(f"  First image: {Path(images[0]['path']).resolve()}")
                 for i in range(min(3, len(images))):
@@ -2147,8 +2149,27 @@ class SmartEngine:
                     import shutil
                     shutil.copy(temp_with_audio, output_path)
 
-            self.log(f"  Video hoan thanh: {output_path.name}", "OK")
-            return output_path
+                self.log(f"  Video hoan thanh: {output_path.name}", "OK")
+                return output_path
+
+            finally:
+                # Windows fix: Wait for FFmpeg to release file handles, then cleanup with retry
+                import gc
+                import shutil
+                gc.collect()
+                time.sleep(1)  # Wait longer for file handles
+
+                # Retry cleanup up to 5 times
+                for attempt in range(5):
+                    try:
+                        shutil.rmtree(temp_dir, ignore_errors=False)
+                        break
+                    except PermissionError:
+                        gc.collect()
+                        time.sleep(1)
+                        if attempt == 4:
+                            # Last attempt - ignore errors
+                            shutil.rmtree(temp_dir, ignore_errors=True)
 
         except Exception as e:
             self.log(f"  Video compose error: {e}", "ERROR")
@@ -2263,6 +2284,8 @@ class SmartEngine:
             id_col = None
             prompt_col = None
             ref_col = None  # reference_files column
+            chars_col = None  # characters_used column
+            loc_col = None  # location_used column
 
             for i, h in enumerate(headers):
                 if h is None:
@@ -2291,6 +2314,12 @@ class SmartEngine:
                 # Tim cot reference_files (cho scene images)
                 if 'reference' in h_lower and 'file' in h_lower:
                     ref_col = i
+
+                # Tim cot characters_used va location_used (de build reference_files neu can)
+                if h_lower == 'characters_used':
+                    chars_col = i
+                if h_lower == 'location_used':
+                    loc_col = i
 
             # Neu khong tim thay, thu cot dau = ID, tim cot co "prompt"
             if id_col is None and len(headers) > 0 and headers[0]:
@@ -2324,6 +2353,35 @@ class SmartEngine:
                 reference_files = ""
                 if ref_col is not None and ref_col < len(row):
                     reference_files = row[ref_col] or ""
+
+                # === FALLBACK: Build reference_files tu characters_used + location_used ===
+                # Neu reference_files rong, tao tu cac cot khac (dao dien da set)
+                if not reference_files:
+                    ref_list = []
+
+                    # Lay characters_used
+                    if chars_col is not None and chars_col < len(row):
+                        chars_val = row[chars_col]
+                        if chars_val:
+                            try:
+                                chars = json.loads(str(chars_val)) if str(chars_val).startswith('[') else [c.strip() for c in str(chars_val).split(',') if c.strip()]
+                                for c in chars:
+                                    c_id = c.replace('.png', '').strip()
+                                    if c_id and c_id not in ref_list:
+                                        ref_list.append(f"{c_id}.png")
+                            except:
+                                pass
+
+                    # Lay location_used
+                    if loc_col is not None and loc_col < len(row):
+                        loc_val = row[loc_col]
+                        if loc_val:
+                            loc_id = str(loc_val).replace('.png', '').strip()
+                            if loc_id and f"{loc_id}.png" not in ref_list:
+                                ref_list.append(f"{loc_id}.png")
+
+                    if ref_list:
+                        reference_files = json.dumps(ref_list)
 
                 # Xac dinh output folder
                 # Characters (nv*) and Locations (loc*) -> nv/ folder
