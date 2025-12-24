@@ -625,53 +625,61 @@ directors_shooting_plan: |
 
   SRT tells you the CONTENT WINDOW. But YOU decide the RHYTHM within that window.
 
-  ## 🎬 SHOT DURATION - MAXIMIZE 8 SECONDS, MINIMIZE IMAGE COUNT!
+  ## 🎬 SHOT DURATION - LIKE A REAL FILM!
 
   **⚠️ TECHNICAL LIMIT: Maximum 8 seconds per image!**
 
-  **🎯 GOAL: FEWER IMAGES, LONGER DURATION = LESS VIEWER FATIGUE**
+  **🎯 GOAL: Duration serves the STORY, not a formula!**
 
-  Video dài 30-60 phút. Nếu mỗi ảnh 4s = 450-900 ảnh (QUÁ NHIỀU, mệt mắt!)
-  Nếu mỗi ảnh 7-8s = 225-450 ảnh (VỪA PHẢI, dễ xem!)
+  Think like a real film editor - duration depends on CONTENT:
+  - Emotional moment needs to breathe? → 7-8 seconds
+  - Quick action or reaction? → 2-3 seconds
+  - Transition between scenes? → 3-4 seconds
+  - Standard narrative? → 5-6 seconds
 
-  **📊 DURATION STRATEGY (ưu tiên DÀI, hạn chế NGẮN):**
+  **📊 DURATION BY CONTENT (flexible, not rigid!):**
 
-  | Moment Type | Duration | Priority | Note |
-  |-------------|----------|----------|------|
-  | EMOTIONAL PEAK | **8 seconds** | ⭐⭐⭐ | Maximum - let it breathe |
-  | ESTABLISHING SHOT | **8 seconds** | ⭐⭐⭐ | Full duration for context |
-  | STANDARD NARRATIVE | **7-8 seconds** | ⭐⭐⭐ | Default - PREFER LONG |
-  | DIALOGUE/STORY | **6-8 seconds** | ⭐⭐ | Keep story flowing |
-  | TRANSITION/BRIDGE | **5-6 seconds** | ⭐ | Still decent length |
-  | ACTION SEQUENCE | **4-5 seconds** | ⭐ | Only when truly needed |
+  | Content Type | Duration | Example |
+  |--------------|----------|---------|
+  | EMOTIONAL PEAK | 7-8s | Tears falling, reunion, realization |
+  | ESTABLISHING | 6-8s | New location, setting the scene |
+  | NARRATIVE | 5-7s | Normal storytelling |
+  | DIALOGUE | 4-6s | Character speaking/reacting |
+  | QUICK REACTION | 2-3s | Shock, surprise, glance |
+  | ACTION | 2-4s | Fast movement, tension |
+  | TRANSITION | 3-4s | Bridge between scenes |
+  | DETAIL/OBJECT | 3-5s | Symbolic object, hands |
 
-  **❌ AVOID:** Shots under 5 seconds unless absolutely necessary!
-  **✅ PREFER:** 7-8 seconds for most shots!
+  **✅ KEY PRINCIPLE:** Let the CONTENT dictate duration, not rules!
 
-  ## 🎵 RHYTHM - SUBTLE VARIATION, NOT EXTREME!
+  ## 🎵 RHYTHM - LIKE REAL CINEMA!
 
-  **DON'T:** 8s - 3s - 8s - 2s - 8s (too jarring, tiring)
-  **DO:** 8s - 7s - 8s - 6s - 8s (smooth, comfortable)
-
-  **PACING (within 8s limit):**
+  **REAL FILMS use VARIED rhythm:**
   ```
-  NORMAL FLOW:     8s → 7s → 8s → 7s → 8s (consistent, relaxing)
-  BUILD TENSION:   8s → 7s → 6s → 5s → 8s (slight acceleration then release)
-  EMOTIONAL:       8s → 8s → 8s (let audience absorb)
+  Slow emotional: 8s → 7s → 8s (breathing room)
+  Building tension: 6s → 5s → 4s → 3s → 2s (faster!)
+  Action sequence: 3s → 2s → 3s → 2s (quick cuts)
+  Climax release: 2s → 2s → 8s (burst then breathe)
   ```
 
-  ## 📊 SHOT COUNT CALCULATION
+  **EXAMPLES from real films:**
+  - Sad moment: LONG shot on face (7-8s) - let audience feel
+  - Fight scene: QUICK cuts (2-3s each) - energy!
+  - Revelation: Medium → Close → LONG hold (4s → 3s → 8s)
+  - Montage: Quick shots (3-4s each) - show passage of time
 
-  **FORMULA: SRT_duration ÷ 7.5 = approximate shots needed**
+  ## 📊 SHOT COUNT (guideline, not formula!)
 
-  Example:
-  - Part 1: 45 seconds → 45 ÷ 7.5 = 6 shots (average 7.5s each)
-  - Part 2: 60 seconds → 60 ÷ 7.5 = 8 shots
-  - Full 30 min video → 1800 ÷ 7.5 = ~240 shots total
+  **Approximate: SRT_duration ÷ 5 to 6 = shots needed**
+
+  But VARY based on content:
+  - Emotional scene: fewer, longer shots
+  - Action scene: more, shorter shots
+  - Mixed content: varied durations
 
   ## RULES:
   - **Maximum 8 seconds per image** (technical limit)
-  - **Default to 7-8 seconds** - only go shorter when story demands
+  - **Duration serves the story** - short is fine when content needs it!
   - **Minimize image count** - fewer images = less viewer fatigue
   - EVERY image must serve the part's GOAL
   - Total shot durations must match SRT segment length exactly
@@ -794,14 +802,14 @@ directors_shooting_plan: |
           }},
           "time_range": "00:00 - 00:15",
           "duration_seconds": 15,
-          "shots_needed": 2,
+          "shots_needed": 3,
           "shots": [
             {{
               "shot_number": 1,
               "purpose": "Establish loneliness and overwhelming situation",
               "emotional_weight": "HIGH - Opening hook, must grab attention",
-              "planned_duration": 8,
-              "srt_range": "00:00 - 00:08",
+              "planned_duration": 6,
+              "srt_range": "00:00 - 00:06",
               "srt_text": "Tôi ngồi trên bậc thềm tòa án...",
               "shot_type": "WIDE SHOT",
               "camera_angle": "Low angle, 24mm - makes courthouse imposing",
@@ -811,10 +819,23 @@ directors_shooting_plan: |
             }},
             {{
               "shot_number": 2,
-              "purpose": "Show emotional devastation up close",
-              "emotional_weight": "VERY HIGH - Emotional reveal",
-              "planned_duration": 7,
-              "srt_range": "00:08 - 00:15",
+              "purpose": "Quick detail - crumpled legal papers",
+              "emotional_weight": "MEDIUM - Symbolic detail",
+              "planned_duration": 3,
+              "srt_range": "00:06 - 00:09",
+              "srt_text": "",
+              "shot_type": "EXTREME CLOSE-UP",
+              "camera_angle": "Top-down, 100mm - detail",
+              "characters_in_shot": [],
+              "reference_files": [],
+              "img_prompt": "Extreme close-up, 100mm lens, top-down. CRUMPLED legal papers in trembling hands, visible text 'LAWSUIT', teardrops on paper. Cold, desaturated. Cinematic, 4K photorealistic."
+            }},
+            {{
+              "shot_number": 3,
+              "purpose": "Emotional peak - face of devastation",
+              "emotional_weight": "VERY HIGH - Must let audience feel",
+              "planned_duration": 6,
+              "srt_range": "00:09 - 00:15",
               "srt_text": "Mẹ tôi đã kiện tôi...",
               "shot_type": "CLOSE-UP",
               "camera_angle": "Slight low angle, 85mm - dramatic",
@@ -839,11 +860,11 @@ directors_shooting_plan: |
           "duration_seconds": 30,
           "shots": [
             {{
-              "shot_number": 3,
+              "shot_number": 4,
               "purpose": "Establish the poverty but also love",
               "emotional_weight": "HIGH - First sympathy moment",
-              "planned_duration": 8,
-              "srt_range": "00:15 - 00:23",
+              "planned_duration": 7,
+              "srt_range": "00:15 - 00:22",
               "srt_text": "Năm tôi 8 tuổi, ba mẹ ly hôn...",
               "shot_type": "WIDE SHOT",
               "camera_angle": "Eye level, 24mm - intimate establishing",
@@ -899,15 +920,15 @@ directors_shooting_plan: |
   ## CRITICAL INSTRUCTIONS:
 
   1. **MAXIMUM 8 SECONDS per image!** (Technical limit - NEVER exceed!)
-  2. **PREFER 7-8 seconds** for most shots - minimize image count, reduce viewer fatigue
-  3. **ADD planned_duration to each shot** (integer 5-8, default 8)
+  2. **Duration serves CONTENT** - 2-3s for action, 7-8s for emotion, 4-6s for narrative
+  3. **ADD planned_duration to each shot** (integer 2-8, based on content)
   4. **Total shot durations MUST EQUAL SRT segment duration exactly**
-     - Example: 30 second segment → could be 8+8+7+7 = 30s (4 shots)
-  5. VARY camera angles - don't repeat the same shot type consecutively!
-  6. Use characters/locations from the provided lists
-  7. Children (nvc1) should be DESCRIBED in img_prompt, NOT in reference_files
-  8. Every img_prompt MUST end with the global_style
-  9. Make it feel like a FILM with visual variety and RHYTHM!
+     - Example: 30 second segment → could be 8+6+5+4+4+3 = 30s (6 varied shots)
+  5. **THINK LIKE REAL CINEMA** - vary rhythm, use short cuts for tension, long for emotion
+  6. VARY camera angles - don't repeat the same shot type consecutively!
+  7. Use characters/locations from the provided lists
+  8. Children (nvc1) should be DESCRIBED in img_prompt, NOT in reference_files
+  9. Every img_prompt MUST end with the global_style
   10. DO NOT add nationality/ethnicity (Vietnamese, American, etc.) unless EXPLICITLY mentioned in the story
      - If story doesn't mention nationality, just describe features (hair color, skin tone, etc.)
      - Only add nationality when it's RELEVANT to the story
