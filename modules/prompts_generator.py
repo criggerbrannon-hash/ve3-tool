@@ -1649,6 +1649,22 @@ class PromptGenerator:
         """
         from datetime import timedelta
 
+        # === CHECK SRT GAPS trước khi chunking ===
+        self.logger.info(f"[SRT CHECK] Kiểm tra {len(srt_entries)} SRT entries...")
+        if len(srt_entries) >= 2:
+            for i in range(len(srt_entries) - 1):
+                curr_end = srt_entries[i].end_time.total_seconds()
+                next_start = srt_entries[i + 1].start_time.total_seconds()
+                gap = next_start - curr_end
+
+                if gap > 60:  # Gap > 1 phút
+                    self.logger.warning(
+                        f"[SRT CHECK] ⚠️ GAP trong SRT: "
+                        f"{self._format_timedelta(srt_entries[i].end_time)} -> "
+                        f"{self._format_timedelta(srt_entries[i + 1].start_time)} "
+                        f"(gap: {gap:.0f}s = {gap/60:.1f} phút)"
+                    )
+
         # Split SRT entries into chunks based on time
         chunks = []
         current_chunk = []
@@ -1786,6 +1802,59 @@ class PromptGenerator:
         # Calculate totals
         total_shots = sum(len(p.get("shots", [])) for p in all_parts)
         total_duration = srt_entries[-1].end_time.total_seconds() if srt_entries else 0
+
+        # === GAP DETECTION: Kiểm tra và cảnh báo nếu có gap lớn ===
+        all_shots = []
+        for part in all_parts:
+            all_shots.extend(part.get("shots", []))
+
+        if all_shots:
+            self.logger.info("[GAP CHECK] Kiểm tra gaps trong shooting plan...")
+            gaps_found = []
+
+            for i in range(len(all_shots) - 1):
+                current_shot = all_shots[i]
+                next_shot = all_shots[i + 1]
+
+                # Parse thời gian từ srt_range
+                try:
+                    current_range = current_shot.get("srt_range", "")
+                    next_range = next_shot.get("srt_range", "")
+
+                    if " - " in current_range and " - " in next_range:
+                        current_end = current_range.split(" - ")[1].strip()
+                        next_start = next_range.split(" - ")[0].strip()
+
+                        # Parse time (HH:MM:SS hoặc MM:SS)
+                        def parse_time(t):
+                            parts = t.replace(",", ".").split(":")
+                            if len(parts) == 3:
+                                return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+                            elif len(parts) == 2:
+                                return int(parts[0]) * 60 + float(parts[1])
+                            return 0
+
+                        end_sec = parse_time(current_end)
+                        start_sec = parse_time(next_start)
+                        gap_sec = start_sec - end_sec
+
+                        # Cảnh báo nếu gap > 30 giây
+                        if gap_sec > 30:
+                            gap_info = f"Shot {current_shot.get('shot_number')} ({current_end}) -> Shot {next_shot.get('shot_number')} ({next_start}): GAP {gap_sec:.0f}s"
+                            gaps_found.append((gap_sec, gap_info, i))
+                            self.logger.warning(f"[GAP CHECK] ⚠️ {gap_info}")
+                except Exception as e:
+                    pass  # Ignore parsing errors
+
+            if gaps_found:
+                self.logger.error(f"[GAP CHECK] ⚠️ TÌM THẤY {len(gaps_found)} GAPS LỚN!")
+                self.logger.error("[GAP CHECK] Có thể do chunks bị fail hoặc SRT thiếu entries")
+                # Log chi tiết
+                for gap_sec, gap_info, _ in gaps_found:
+                    if gap_sec > 300:  # > 5 phút
+                        self.logger.error(f"[GAP CHECK] 🚨 GAP LỚN: {gap_info}")
+            else:
+                self.logger.info("[GAP CHECK] ✅ Không có gaps lớn")
 
         # Merge all parts into final shooting plan
         merged_plan = {
