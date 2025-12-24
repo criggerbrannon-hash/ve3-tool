@@ -87,7 +87,7 @@ def auto_update_from_git():
         return False, "Not a git repo"
 
     # FIXED: Always pull from the correct branch
-    TARGET_BRANCH = "claude/veo3-tool-review-rdu8g"
+    TARGET_BRANCH = "claude/setup-tool-development-1fwGG"
 
     try:
         # Fetch and reset to target branch
