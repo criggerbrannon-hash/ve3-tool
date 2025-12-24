@@ -1533,91 +1533,255 @@ class PromptGenerator:
                 self.logger.warning("[Director's Shooting Plan] Không tìm thấy prompt template")
                 return None
 
-            # Format SRT segments với timestamps
-            srt_segments = "\n".join([
-                f"[{self._format_timedelta(e.start_time)} - {self._format_timedelta(e.end_time)}] \"{e.text[:200]}\""
-                for e in srt_entries
-            ])
-
-            # Format characters info
-            chars_info = "NHÂN VẬT:\n" + "\n".join([
-                f"- {c.id}: {c.name} - {c.character_lock or ''}"
-                for c in characters
-            ]) if characters else "Không có thông tin nhân vật"
-
-            # Format locations info
-            locs_info = "BỐI CẢNH:\n" + "\n".join([
-                f"- {loc.id}: {loc.name} - {loc.location_lock or ''}"
-                for loc in locations
-            ]) if locations else "Không có thông tin bối cảnh"
-
-            # Build prompt
-            # IMPORTANT: Increased limits to handle longer content (30+ min videos)
-            # Previous limits (10000/15000) were truncating content!
-            story_truncated = story_text[:30000]
-            srt_truncated = srt_segments[:60000]
-
-            if len(story_text) > 30000:
-                self.logger.warning(f"[Director] Story text truncated: {len(story_text)} -> 30000 chars")
-            if len(srt_segments) > 60000:
-                self.logger.warning(f"[Director] SRT segments truncated: {len(srt_segments)} -> 60000 chars")
-
-            prompt = prompt_template.format(
-                story_text=story_truncated,
-                srt_segments=srt_truncated,
-                characters_info=chars_info,
-                locations_info=locs_info,
-                global_style=global_style or get_global_style()
-            )
-
-            self.logger.info("=" * 50)
-            self.logger.info("[Director's Shooting Plan] Đạo diễn đang lên kế hoạch quay...")
-            self.logger.info("=" * 50)
-
-            # Director's Shooting Plan cần response rất dài (nhiều scenes)
-            # DeepSeek bị giới hạn 8192 tokens nên ưu tiên Ollama nếu có
-            response = self._generate_content_large(prompt, temperature=0.4, max_tokens=16000)
-
-            # DEBUG: Log response để xem AI trả về gì
-            self.logger.info(f"[Director's Shooting Plan] Response length: {len(response) if response else 0}")
-            if response:
-                self.logger.info(f"[Director's Shooting Plan] Response preview: {response[:500]}...")
-
-            json_data = self._extract_json(response)
-
-            # DEBUG: Log json_data
-            if json_data:
-                self.logger.info(f"[Director's Shooting Plan] JSON keys: {list(json_data.keys())}")
+            # Calculate total duration from SRT
+            if srt_entries:
+                total_duration_seconds = srt_entries[-1].end_time.total_seconds()
             else:
-                self.logger.warning(f"[Director's Shooting Plan] Failed to extract JSON from response")
+                total_duration_seconds = 0
 
-            if not json_data or "shooting_plan" not in json_data:
-                self.logger.warning("[Director's Shooting Plan] AI không trả về shooting_plan")
-                if json_data:
-                    self.logger.warning(f"[Director's Shooting Plan] Available keys: {list(json_data.keys())}")
-                return None
+            # CHUNKING STRATEGY: For videos > 15 minutes, process in chunks
+            CHUNK_DURATION_SECONDS = 900  # 15 minutes per chunk
 
-            shooting_plan = json_data["shooting_plan"]
+            if total_duration_seconds > CHUNK_DURATION_SECONDS:
+                self.logger.info(f"[Director] Video dài {total_duration_seconds/60:.1f} phút - sử dụng CHUNKING STRATEGY")
+                return self._create_shooting_plan_chunked(
+                    story_text, srt_entries, characters, locations,
+                    global_style, prompt_template, CHUNK_DURATION_SECONDS
+                )
 
-            # Log summary
-            self.logger.info(f"[Director's Shooting Plan] Tổng thời lượng: {shooting_plan.get('total_duration', 'N/A')}")
-            self.logger.info(f"[Director's Shooting Plan] Tổng số ảnh: {shooting_plan.get('total_images', 0)}")
-
-            total_shots = 0
-            for part in shooting_plan.get("story_parts", []):
-                shots_count = len(part.get("shots", []))
-                total_shots += shots_count
-                self.logger.info(f"  Part {part.get('part_number')}: {part.get('part_name')} - {shots_count} shots")
-
-            self.logger.info(f"[Director's Shooting Plan] Tổng shots thực tế: {total_shots}")
-
-            return json_data
+            # Normal processing for shorter videos
+            return self._create_shooting_plan_single(
+                story_text, srt_entries, characters, locations,
+                global_style, prompt_template
+            )
 
         except Exception as e:
             self.logger.error(f"[Director's Shooting Plan] Failed: {e}")
             import traceback
             traceback.print_exc()
             return None
+
+    def _create_shooting_plan_single(
+        self,
+        story_text: str,
+        srt_entries: list,
+        characters: list,
+        locations: list,
+        global_style: str,
+        prompt_template: str
+    ) -> Optional[Dict]:
+        """Create shooting plan for shorter videos (< 15 min) - single call."""
+        # Format SRT segments với timestamps
+        srt_segments = "\n".join([
+            f"[{self._format_timedelta(e.start_time)} - {self._format_timedelta(e.end_time)}] \"{e.text[:200]}\""
+            for e in srt_entries
+        ])
+
+        # Format characters info
+        chars_info = "NHÂN VẬT:\n" + "\n".join([
+            f"- {c.id}: {c.name} - {c.character_lock or ''}"
+            for c in characters
+        ]) if characters else "Không có thông tin nhân vật"
+
+        # Format locations info
+        locs_info = "BỐI CẢNH:\n" + "\n".join([
+            f"- {loc.id}: {loc.name} - {loc.location_lock or ''}"
+            for loc in locations
+        ]) if locations else "Không có thông tin bối cảnh"
+
+        prompt = prompt_template.format(
+            story_text=story_text[:30000],
+            srt_segments=srt_segments[:60000],
+            characters_info=chars_info,
+            locations_info=locs_info,
+            global_style=global_style or get_global_style()
+        )
+
+        self.logger.info("=" * 50)
+        self.logger.info("[Director's Shooting Plan] Đạo diễn đang lên kế hoạch quay...")
+        self.logger.info("=" * 50)
+
+        response = self._generate_content_large(prompt, temperature=0.4, max_tokens=16000)
+
+        self.logger.info(f"[Director's Shooting Plan] Response length: {len(response) if response else 0}")
+        if response:
+            self.logger.info(f"[Director's Shooting Plan] Response preview: {response[:500]}...")
+
+        json_data = self._extract_json(response)
+
+        if json_data:
+            self.logger.info(f"[Director's Shooting Plan] JSON keys: {list(json_data.keys())}")
+        else:
+            self.logger.warning(f"[Director's Shooting Plan] Failed to extract JSON from response")
+
+        if not json_data or "shooting_plan" not in json_data:
+            self.logger.warning("[Director's Shooting Plan] AI không trả về shooting_plan")
+            if json_data:
+                self.logger.warning(f"[Director's Shooting Plan] Available keys: {list(json_data.keys())}")
+            return None
+
+        shooting_plan = json_data["shooting_plan"]
+
+        # Log summary
+        self.logger.info(f"[Director's Shooting Plan] Tổng thời lượng: {shooting_plan.get('total_duration', 'N/A')}")
+        self.logger.info(f"[Director's Shooting Plan] Tổng số ảnh: {shooting_plan.get('total_images', 0)}")
+
+        total_shots = 0
+        for part in shooting_plan.get("story_parts", []):
+            shots_count = len(part.get("shots", []))
+            total_shots += shots_count
+            self.logger.info(f"  Part {part.get('part_number')}: {part.get('part_name')} - {shots_count} shots")
+
+        self.logger.info(f"[Director's Shooting Plan] Tổng shots thực tế: {total_shots}")
+
+        return json_data
+
+    def _create_shooting_plan_chunked(
+        self,
+        story_text: str,
+        srt_entries: list,
+        characters: list,
+        locations: list,
+        global_style: str,
+        prompt_template: str,
+        chunk_duration: int
+    ) -> Optional[Dict]:
+        """
+        Create shooting plan for LONG videos (> 15 min) using chunking strategy.
+
+        Split SRT into chunks, process each chunk, then merge results.
+        """
+        from datetime import timedelta
+
+        # Split SRT entries into chunks based on time
+        chunks = []
+        current_chunk = []
+        chunk_start_time = 0
+
+        for entry in srt_entries:
+            entry_start = entry.start_time.total_seconds()
+
+            # Check if this entry belongs to current chunk or next
+            if entry_start >= chunk_start_time + chunk_duration and current_chunk:
+                chunks.append(current_chunk)
+                current_chunk = []
+                chunk_start_time = entry_start
+
+            current_chunk.append(entry)
+
+        # Don't forget the last chunk
+        if current_chunk:
+            chunks.append(current_chunk)
+
+        self.logger.info(f"[Director CHUNKING] Chia thành {len(chunks)} phần:")
+        for i, chunk in enumerate(chunks):
+            chunk_start = self._format_timedelta(chunk[0].start_time)
+            chunk_end = self._format_timedelta(chunk[-1].end_time)
+            self.logger.info(f"  Chunk {i+1}: {chunk_start} - {chunk_end} ({len(chunk)} segments)")
+
+        # Format shared info (characters, locations)
+        chars_info = "NHÂN VẬT:\n" + "\n".join([
+            f"- {c.id}: {c.name} - {c.character_lock or ''}"
+            for c in characters
+        ]) if characters else "Không có thông tin nhân vật"
+
+        locs_info = "BỐI CẢNH:\n" + "\n".join([
+            f"- {loc.id}: {loc.name} - {loc.location_lock or ''}"
+            for loc in locations
+        ]) if locations else "Không có thông tin bối cảnh"
+
+        # Process each chunk
+        all_parts = []
+        part_number_offset = 0
+        shot_number_offset = 0
+
+        for chunk_idx, chunk_entries in enumerate(chunks):
+            chunk_num = chunk_idx + 1
+            chunk_start = self._format_timedelta(chunk_entries[0].start_time)
+            chunk_end = self._format_timedelta(chunk_entries[-1].end_time)
+
+            self.logger.info("=" * 50)
+            self.logger.info(f"[Director CHUNKING] Xử lý chunk {chunk_num}/{len(chunks)}: {chunk_start} - {chunk_end}")
+            self.logger.info("=" * 50)
+
+            # Format SRT for this chunk
+            srt_segments = "\n".join([
+                f"[{self._format_timedelta(e.start_time)} - {self._format_timedelta(e.end_time)}] \"{e.text[:200]}\""
+                for e in chunk_entries
+            ])
+
+            # Add context about this being a chunk
+            chunk_context = f"""
+**LƯU Ý: Đây là PHẦN {chunk_num}/{len(chunks)} của video dài.**
+- Thời gian: {chunk_start} đến {chunk_end}
+- Hãy tạo shooting plan CHỈ cho phần này.
+- Đánh số part bắt đầu từ {part_number_offset + 1}.
+- Đánh số shot bắt đầu từ {shot_number_offset + 1}.
+
+"""
+
+            prompt = prompt_template.format(
+                story_text=chunk_context + story_text[:20000],  # Shorter story for chunks
+                srt_segments=srt_segments,
+                characters_info=chars_info,
+                locations_info=locs_info,
+                global_style=global_style or get_global_style()
+            )
+
+            response = self._generate_content_large(prompt, temperature=0.4, max_tokens=16000)
+
+            if not response:
+                self.logger.error(f"[Director CHUNKING] Chunk {chunk_num} failed - no response")
+                continue
+
+            json_data = self._extract_json(response)
+
+            if not json_data or "shooting_plan" not in json_data:
+                self.logger.error(f"[Director CHUNKING] Chunk {chunk_num} failed - no shooting_plan")
+                continue
+
+            chunk_plan = json_data["shooting_plan"]
+            chunk_parts = chunk_plan.get("story_parts", [])
+
+            # Adjust part and shot numbers
+            for part in chunk_parts:
+                part_number_offset += 1
+                part["part_number"] = part_number_offset
+
+                for shot in part.get("shots", []):
+                    shot_number_offset += 1
+                    shot["shot_number"] = shot_number_offset
+
+            all_parts.extend(chunk_parts)
+
+            shots_in_chunk = sum(len(p.get("shots", [])) for p in chunk_parts)
+            self.logger.info(f"[Director CHUNKING] Chunk {chunk_num}: {len(chunk_parts)} parts, {shots_in_chunk} shots")
+
+        if not all_parts:
+            self.logger.error("[Director CHUNKING] Không có parts nào được tạo!")
+            return None
+
+        # Calculate totals
+        total_shots = sum(len(p.get("shots", [])) for p in all_parts)
+        total_duration = srt_entries[-1].end_time.total_seconds() if srt_entries else 0
+
+        # Merge all parts into final shooting plan
+        merged_plan = {
+            "shooting_plan": {
+                "total_duration": f"{int(total_duration // 60)}:{int(total_duration % 60):02d}",
+                "total_images": total_shots,
+                "story_parts": all_parts
+            }
+        }
+
+        self.logger.info("=" * 50)
+        self.logger.info(f"[Director CHUNKING] HOÀN THÀNH!")
+        self.logger.info(f"  - Tổng parts: {len(all_parts)}")
+        self.logger.info(f"  - Tổng shots: {total_shots}")
+        self.logger.info(f"  - Thời lượng: {int(total_duration // 60)} phút")
+        self.logger.info("=" * 50)
+
+        return merged_plan
 
     def _format_timedelta(self, td) -> str:
         """Format timedelta thành HH:MM:SS"""
