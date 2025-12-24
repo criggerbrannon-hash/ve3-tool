@@ -14,16 +14,16 @@ where git >nul 2>&1
 if %errorlevel% neq 0 (
     echo [ERROR] Git not found!
     echo Please install git or download ZIP manually:
-    echo https://github.com/criggerbrannon-hash/ve3-tool/archive/refs/heads/claude/veo3-tool-rev-mbowd.zip
+    echo https://github.com/criggerbrannon-hash/ve3-tool/archive/refs/heads/main.zip
     goto :end
 )
 
-echo [*] Fetching new branch...
-git fetch origin claude/veo3-tool-rev-mbowd
+echo [*] Fetching main branch...
+git fetch origin main
 
-echo [*] Switching to new branch...
-git checkout claude/veo3-tool-rev-mbowd
-git reset --hard origin/claude/veo3-tool-rev-mbowd
+echo [*] Switching to main branch...
+git checkout main
+git reset --hard origin/main
 
 echo.
 echo ========================================

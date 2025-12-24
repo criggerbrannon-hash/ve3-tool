@@ -14,7 +14,7 @@ import urllib.request
 from pathlib import Path
 
 # Branch chua code moi nhat
-BRANCH = "claude/veo3-tool-rev-mbowd"
+BRANCH = "main"
 REPO = "criggerbrannon-hash/ve3-tool"
 ZIP_URL = f"https://github.com/{REPO}/archive/refs/heads/{BRANCH}.zip"
 

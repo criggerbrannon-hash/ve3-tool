@@ -87,7 +87,7 @@ def auto_update_from_git():
         return False, "Not a git repo"
 
     # FIXED: Always pull from the correct branch
-    TARGET_BRANCH = "claude/veo3-tool-rev-mbowd"
+    TARGET_BRANCH = "main"
 
     try:
         # Fetch and reset to target branch
