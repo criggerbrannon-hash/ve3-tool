@@ -1785,15 +1785,18 @@ class BrowserFlowGenerator:
         """
         return self.config.get('generation_mode', 'api')
 
-    def _auto_extract_token(self) -> Optional[str]:
+    def _auto_extract_token(self, force_refresh: bool = False) -> Optional[str]:
         """
         Tu dong lay bearer token tu Chrome bang profile hien tai.
         Su dung ChromeAutoToken de mo Chrome, navigate den Flow va capture token.
 
+        Args:
+            force_refresh: True = bo qua cache, luon lay token moi (dung khi API tra 401)
+
         QUAN TRONG:
-        - CHECK CACHE TRUOC - neu co token con valid thi dung luon, khong mo Chrome
+        - KHONG check thoi gian token
+        - Chi refresh khi force_refresh=True (API tra 401)
         - Neu co cached project_url -> mo truc tiep project do -> skip 'Tao du an moi'
-        - Token moi se duoc luu lai vao cache de reuse lan sau
 
         Returns:
             Bearer token (ya29.xxx) hoac None neu that bai
@@ -1808,23 +1811,27 @@ class BrowserFlowGenerator:
             self._load_media_cache()
 
         # =====================================================================
-        # CHECK CACHED TOKEN - KHONG MO CHROME NEU DA CO TOKEN VALID
+        # REUSE CACHED TOKEN (tru khi force_refresh)
+        # Chi refresh khi API tra loi 401 -> caller goi force_refresh=True
         # =====================================================================
-        TOKEN_EXPIRY_SECONDS = 50 * 60  # 50 phut (an toan, token that su 60 phut)
+        if not force_refresh:
+            cached_token = self.config.get('flow_bearer_token', '')
 
-        cached_token = self.config.get('flow_bearer_token', '')
-        cached_token_time = getattr(self, '_cached_token_time', 0)
-
-        if cached_token and cached_token_time:
-            age_seconds = time.time() - cached_token_time
-            age_minutes = age_seconds / 60
-
-            if age_seconds < TOKEN_EXPIRY_SECONDS:
-                self._log(f"=== REUSE CACHED TOKEN (tuoi: {age_minutes:.1f} phut) ===")
+            if cached_token:
+                # Luon dung token da co - khong can biet tuoi
+                # Neu het han, API se tra 401 -> caller goi force_refresh=True
+                cached_token_time = getattr(self, '_cached_token_time', 0)
+                if cached_token_time:
+                    age_minutes = (time.time() - cached_token_time) / 60
+                    self._log(f"=== REUSE CACHED TOKEN (tuoi: {age_minutes:.1f} phut) ===")
+                else:
+                    self._log(f"=== REUSE CACHED TOKEN ===")
                 self._log(f"Token: {cached_token[:20]}...{cached_token[-10:]}")
                 return cached_token
-            else:
-                self._log(f"Cached token het han ({age_minutes:.1f} phut > 50 phut), can lay moi...")
+        else:
+            self._log("=== FORCE REFRESH TOKEN (API tra 401) ===")
+            # Clear cached token
+            self.config['flow_bearer_token'] = ''
 
         self._log("=== TU DONG LAY BEARER TOKEN (mo Chrome) ===")
 
@@ -2446,10 +2453,10 @@ class BrowserFlowGenerator:
                 # Check token expired (401) - auto refresh and retry
                 if not success and error:
                     error_lower = str(error).lower()
-                    is_token_expired = '401' in error_lower or 'expired' in error_lower or 'authentication' in error_lower
+                    is_token_expired = '401' in error_lower or 'expired' in error_lower or 'authentication' in error_lower or 'unauthenticated' in error_lower
                     if is_token_expired:
-                        self._log(f"Token het han! Dang tu dong refresh...", "warn")
-                        new_token = self._auto_extract_token()
+                        self._log(f"Token het han (401)! Dang mo Chrome lay token moi...", "warn")
+                        new_token = self._auto_extract_token(force_refresh=True)  # FORCE lay token moi
                         if new_token:
                             # Update API instance with new token
                             api.bearer_token = new_token
@@ -2901,10 +2908,10 @@ class BrowserFlowGenerator:
                 # Check token expired (401) - auto refresh and retry
                 if not success and error:
                     error_lower = str(error).lower()
-                    is_token_expired = '401' in error_lower or 'expired' in error_lower or 'authentication' in error_lower
+                    is_token_expired = '401' in error_lower or 'expired' in error_lower or 'authentication' in error_lower or 'unauthenticated' in error_lower
                     if is_token_expired:
-                        self._log(f"Token het han! Dang tu dong refresh...", "warn")
-                        new_token = self._auto_extract_token()
+                        self._log(f"Token het han (401)! Dang mo Chrome lay token moi...", "warn")
+                        new_token = self._auto_extract_token(force_refresh=True)  # FORCE lay token moi
                         if new_token:
                             api.bearer_token = new_token
                             bearer_token = new_token
