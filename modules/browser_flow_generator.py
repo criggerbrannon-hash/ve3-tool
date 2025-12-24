@@ -1835,11 +1835,29 @@ class BrowserFlowGenerator:
 
         self._log("=== TU DONG LAY BEARER TOKEN (mo Chrome) ===")
 
-        try:
-            from modules.auto_token import ChromeAutoToken
-        except ImportError:
-            self._log("Khong import duoc ChromeAutoToken", "error")
-            return None
+        # Check headless setting
+        use_headless = self.config.get('browser_headless', True)
+
+        # Chon extractor phu hop:
+        # - Headless ON: dung ChromeTokenExtractor (Selenium/CDP) - chay an
+        # - Headless OFF: dung ChromeAutoToken (PyAutoGUI) - can cua so
+        TokenExtractor = None
+        if use_headless:
+            try:
+                from modules.chrome_token_extractor import ChromeTokenExtractor
+                TokenExtractor = ChromeTokenExtractor
+                self._log("Su dung ChromeTokenExtractor (Selenium - headless)")
+            except ImportError:
+                self._log("ChromeTokenExtractor khong kha dung, fallback sang PyAutoGUI", "warn")
+
+        if TokenExtractor is None:
+            try:
+                from modules.auto_token import ChromeAutoToken
+                TokenExtractor = ChromeAutoToken
+                self._log("Su dung ChromeAutoToken (PyAutoGUI - can cua so)")
+            except ImportError:
+                self._log("Khong import duoc token extractor", "error")
+                return None
 
         # Lay chrome_path tu config
         chrome_path = self.config.get('chrome_path', '')
@@ -1908,13 +1926,9 @@ class BrowserFlowGenerator:
 
         self._log(f"Chrome: {chrome_path}")
         self._log(f"Profile: {profile_path}")
+        self._log(f"Headless: {'ON' if use_headless else 'OFF'}")
 
         try:
-            extractor = ChromeAutoToken(
-                chrome_path=chrome_path,
-                profile_path=profile_path
-            )
-
             # Callback de log
             def log_callback(msg, level="info"):
                 self._log(f"[TokenExtract] {msg}", level)
@@ -1927,17 +1941,37 @@ class BrowserFlowGenerator:
 
             if existing_project_url:
                 self._log(f"  -> Reuse project URL: {existing_project_url[:50]}...")
-                self._log(f"  -> Da trong project -> skip 'Tao du an moi' -> tao anh de lay token!")
             elif existing_project_id:
                 self._log(f"  -> Reuse project_id: {existing_project_id[:20]}...")
             else:
                 self._log(f"  -> Chua co project -> se tao moi")
 
-            token, proj_id, error = extractor.extract_token(
-                project_id=existing_project_id,  # Fallback
-                project_url=existing_project_url,  # Uu tien (full URL)
-                callback=log_callback
-            )
+            # Tao extractor va goi extract_token
+            # ChromeTokenExtractor (Selenium) va ChromeAutoToken (PyAutoGUI) co interface khac nhau
+            from modules.chrome_token_extractor import ChromeTokenExtractor as SeleniumExtractor
+            from modules.auto_token import ChromeAutoToken as PyAutoGUIExtractor
+
+            if TokenExtractor == SeleniumExtractor:
+                # Selenium-based: headless OK, nhung khong co project_id/url param
+                extractor = TokenExtractor(
+                    chrome_path=chrome_path,
+                    profile_path=profile_path,
+                    headless=use_headless,
+                    timeout=90
+                )
+                token, proj_id, error = extractor.extract_token(callback=log_callback)
+            else:
+                # PyAutoGUI-based: can cua so, nhung co project reuse
+                extractor = TokenExtractor(
+                    chrome_path=chrome_path,
+                    profile_path=profile_path,
+                    headless=use_headless
+                )
+                token, proj_id, error = extractor.extract_token(
+                    project_id=existing_project_id,
+                    project_url=existing_project_url,
+                    callback=log_callback
+                )
 
             if token:
                 self._log(f"OK - Da lay duoc token: {token[:20]}...{token[-10:]}", "success")
