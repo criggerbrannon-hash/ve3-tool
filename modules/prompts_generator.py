@@ -1321,17 +1321,28 @@ class PromptGenerator:
                     video_prompt, ref_files, characters, locations
                 )
 
-            # Lấy srt_start/srt_end với fallback sang start_time/end_time
-            srt_start_val = scene_data.get("srt_start") or start_time or ""
-            srt_end_val = scene_data.get("srt_end") or end_time or ""
+            # QUAN TRONG: srt_start/srt_end la timestamps chinh
+            # Fallback sang start_time/end_time neu khong co
+            srt_start_val = scene_data.get("srt_start") or start_time or "00:00:00,000"
+            srt_end_val = scene_data.get("srt_end") or end_time or "00:00:05,000"
+
+            # Tinh duration neu chua co
+            if not duration and srt_start_val and srt_end_val:
+                try:
+                    duration = parse_time_to_seconds(srt_end_val) - parse_time_to_seconds(srt_start_val)
+                except:
+                    duration = 5.0  # Default 5s
+
+            # planned_duration: thoi luong dao dien len ke hoach (mac dinh = duration)
+            # Nguoi dung co the thay doi trong Excel sau
+            planned_duration = scene_data.get("planned_duration", duration)
 
             scene = Scene(
                 scene_id=scene_data["scene_id"],
-                start_time=start_time,          # Thời gian bắt đầu (HH:MM:SS,mmm)
-                end_time=end_time,              # Thời gian kết thúc (HH:MM:SS,mmm)
-                duration=round(duration, 2),    # Độ dài (giây)
-                srt_start=srt_start_val,        # Timestamp từ SRT
-                srt_end=srt_end_val,            # Timestamp từ SRT
+                srt_start=srt_start_val,              # Timestamp bat dau (HH:MM:SS,mmm)
+                srt_end=srt_end_val,                  # Timestamp ket thuc (HH:MM:SS,mmm)
+                duration=round(duration, 2),          # Do dai tu SRT (giay)
+                planned_duration=round(planned_duration, 2),  # Thoi luong dao dien ke hoach
                 srt_text=scene_data.get("text", "")[:500],  # Truncate nếu quá dài
                 img_prompt=img_prompt,
                 video_prompt=video_prompt,
