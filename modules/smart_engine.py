@@ -1470,6 +1470,11 @@ class SmartEngine:
                 "failed": char_results.get("failed", 0) + scene_results.get("failed", 0)
             }
 
+        # === 5.5 IMAGE-TO-VIDEO (I2V) cho 10 ảnh đầu ===
+        i2v_results = self._generate_videos_from_first_images(proj_dir)
+        if i2v_results:
+            results["i2v"] = i2v_results
+
         # === 6. FINAL CHECK ===
         self.log("[STEP 6] Kiem tra ket qua...")
 
@@ -1498,6 +1503,207 @@ class SmartEngine:
         self._close_browser()
 
         return results
+
+    def _generate_videos_from_first_images(self, proj_dir: Path) -> Optional[Dict]:
+        """
+        Tạo video từ N ảnh đầu tiên (Image-to-Video).
+        Đọc settings từ config/settings.yaml:
+        - i2v_first_n_images: Số ảnh tạo video (0 = tắt)
+        - i2v_duration_seconds: Thời lượng video (4, 6, 8)
+        """
+        # Load settings
+        i2v_count = 0
+        i2v_duration = 4
+        proxy_token = ""
+        bearer_token = ""
+
+        try:
+            import yaml
+            config_path = self.config_dir / "settings.yaml"
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    settings = yaml.safe_load(f) or {}
+                i2v_count = settings.get('i2v_first_n_images', 0)
+                i2v_duration = settings.get('i2v_duration_seconds', 4)
+                proxy_token = settings.get('proxy_api_token', '')
+        except Exception as e:
+            self.log(f"Load I2V settings error: {e}", "WARN")
+            return None
+
+        if i2v_count <= 0:
+            return None  # I2V disabled
+
+        self.log(f"[STEP 5.5] Tao video tu {i2v_count} anh dau (I2V)...")
+
+        # Lấy bearer token từ profile đầu tiên có token
+        for profile in self.profiles:
+            if profile.token:
+                bearer_token = profile.token
+                break
+
+        if not bearer_token:
+            # Thử lấy từ browser generator config
+            if self._browser_generator:
+                if hasattr(self._browser_generator, 'config'):
+                    bearer_token = self._browser_generator.config.get('flow_bearer_token', '')
+                if not bearer_token and hasattr(self._browser_generator, 'bearer_token'):
+                    bearer_token = self._browser_generator.bearer_token or ""
+
+        if not bearer_token:
+            # Thử lấy từ settings.yaml
+            try:
+                bearer_token = settings.get('flow_bearer_token', '')
+            except:
+                pass
+
+        if not bearer_token:
+            self.log("  Khong co bearer token cho I2V - chay tool de co token", "WARN")
+            self.log("  -> Neu dung Chrome mode, can mo Flow 1 lan de lay token", "INFO")
+            return None
+
+        if not proxy_token:
+            self.log("  Khong co proxy_api_token - can proxy de bypass captcha", "WARN")
+            return None
+
+        # Load media_names từ cache
+        media_cache_path = proj_dir / "media_names.json"
+        if not media_cache_path.exists():
+            # Thử từ browser cache
+            browser_cache = proj_dir / ".browser_media_cache.json"
+            if browser_cache.exists():
+                media_cache_path = browser_cache
+            else:
+                self.log("  Khong tim thay media_names cache", "WARN")
+                return None
+
+        try:
+            with open(media_cache_path, 'r', encoding='utf-8') as f:
+                media_cache = json.load(f)
+        except Exception as e:
+            self.log(f"  Load media cache error: {e}", "WARN")
+            return None
+
+        # Lấy danh sách scene images (scene_1, scene_2, ...)
+        scene_media = []
+        for key, value in media_cache.items():
+            # Chỉ lấy scene images, bỏ qua nv/loc
+            if key.startswith('scene_') or (key.isdigit() or key.startswith('s')):
+                media_name = value if isinstance(value, str) else value.get('mediaName', '')
+                if media_name:
+                    scene_media.append({
+                        'id': key,
+                        'media_name': media_name
+                    })
+
+        # Sort theo số scene
+        def get_scene_num(item):
+            id_str = item['id']
+            nums = ''.join(filter(str.isdigit, id_str))
+            return int(nums) if nums else 999
+        scene_media.sort(key=get_scene_num)
+
+        # Lấy N ảnh đầu
+        first_n = scene_media[:i2v_count]
+
+        if not first_n:
+            self.log(f"  Khong tim thay scene images trong cache", "WARN")
+            return None
+
+        self.log(f"  Tim thay {len(first_n)} scene images: {[s['id'] for s in first_n]}")
+
+        # Import GoogleFlowAPI
+        try:
+            from modules.google_flow_api import GoogleFlowAPI, VideoAspectRatio, VideoModel
+        except ImportError as e:
+            self.log(f"  Import GoogleFlowAPI error: {e}", "WARN")
+            return None
+
+        # Tạo API client
+        api = GoogleFlowAPI(
+            bearer_token=bearer_token,
+            verbose=True,
+            proxy_api_token=proxy_token,
+            use_proxy=True
+        )
+
+        # Tạo video cho từng ảnh
+        video_dir = proj_dir / "video"
+        video_dir.mkdir(exist_ok=True)
+
+        success_count = 0
+        failed_count = 0
+        results = []
+
+        for item in first_n:
+            if self.stop_flag:
+                self.log("  I2V bi dung boi user", "WARN")
+                break
+
+            scene_id = item['id']
+            media_name = item['media_name']
+
+            self.log(f"  [{scene_id}] Tao video tu anh...")
+
+            # Prompt cho video - mô tả chuyển động đơn giản
+            video_prompt = "smooth camera movement, cinematic"
+
+            try:
+                success, video_result, error = api.generate_video_from_image(
+                    media_name=media_name,
+                    prompt=video_prompt,
+                    duration_seconds=i2v_duration
+                )
+
+                if success:
+                    success_count += 1
+                    self.log(f"  [{scene_id}] Video task started!", "OK")
+
+                    # Nếu có video URL, download
+                    if video_result.video_url:
+                        video_path = api.download_video(video_result, video_dir, scene_id)
+                        if video_path:
+                            self.log(f"  [{scene_id}] Video saved: {video_path.name}", "OK")
+                            results.append({
+                                'scene_id': scene_id,
+                                'video_path': str(video_path),
+                                'status': 'completed'
+                            })
+                    else:
+                        # Async - lưu operation_id để poll sau
+                        results.append({
+                            'scene_id': scene_id,
+                            'operation_id': video_result.operation_id,
+                            'status': 'pending'
+                        })
+                else:
+                    failed_count += 1
+                    self.log(f"  [{scene_id}] I2V failed: {error}", "WARN")
+                    results.append({
+                        'scene_id': scene_id,
+                        'error': error,
+                        'status': 'failed'
+                    })
+
+                # Delay giữa các request
+                time.sleep(2)
+
+            except Exception as e:
+                failed_count += 1
+                self.log(f"  [{scene_id}] I2V error: {e}", "ERROR")
+                results.append({
+                    'scene_id': scene_id,
+                    'error': str(e),
+                    'status': 'failed'
+                })
+
+        self.log(f"  I2V: {success_count} thanh cong, {failed_count} that bai")
+
+        return {
+            'success': success_count,
+            'failed': failed_count,
+            'total': len(first_n),
+            'results': results
+        }
 
     def _close_browser(self):
         """Dong browser generator (giu nguyen working profile)."""
