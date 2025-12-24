@@ -442,6 +442,8 @@ class BrowserFlowGenerator:
         Format moi: {
             "_project_url": "https://...",
             "_project_id": "xxx",
+            "_bearer_token": "ya29.xxx",
+            "_token_time": 1234567890.0,
             "nvc": {mediaName: str, seed: int|null},
             ...
         }
@@ -455,13 +457,30 @@ class BrowserFlowGenerator:
                     # Extract project info
                     project_url = data.pop('_project_url', None)
                     project_id = data.pop('_project_id', None)
+                    bearer_token = data.pop('_bearer_token', None)
+                    token_time = data.pop('_token_time', None)
+
                     if project_url:
                         self._cached_project_url = project_url
-                        self._log(f"Loaded project_url from cache: {project_url[:50]}...")
+                        self._log(f"[CACHE] Project URL: {project_url[:50]}...")
                     if project_id:
                         self._cached_project_id = project_id
-                        self._log(f"Loaded project_id from cache: {project_id[:20]}...")
-                    self._log(f"Loaded {len(data)} media_names from cache")
+                        self.config['flow_project_id'] = project_id  # Set vào config
+                        self._log(f"[CACHE] Project ID: {project_id[:20]}...")
+
+                    # Check token còn valid không (< 50 phút)
+                    if bearer_token and token_time:
+                        import time
+                        age_minutes = (time.time() - token_time) / 60
+                        if age_minutes < 50:
+                            self._cached_bearer_token = bearer_token
+                            self._cached_token_time = token_time
+                            self.config['flow_bearer_token'] = bearer_token  # Set vào config để dùng
+                            self._log(f"[CACHE] Token VALID ({age_minutes:.1f} phút) - REUSE, không cần mở Chrome!")
+                        else:
+                            self._log(f"[CACHE] Token EXPIRED ({age_minutes:.1f} phút > 50) - cần lấy mới")
+
+                    self._log(f"[CACHE] Loaded {len(data)} media_names")
                     return data
             except Exception as e:
                 self._log(f"Error loading cache: {e}", "warn")
@@ -474,13 +493,17 @@ class BrowserFlowGenerator:
         Format: {
             "_project_url": "https://...",
             "_project_id": "xxx",
+            "_bearer_token": "ya29.xxx",
+            "_token_time": 1234567890.0,
             "nvc": {mediaName: str, seed: int|null},
             ...
         }
 
-        QUAN TRONG: Luu project_url de khi tao img co the vao dung project
-        de media_name con valid.
+        QUAN TRONG: Luu project_url VA token de khi tao img co the:
+        1. Vao dung project (giu media_name valid)
+        2. Reuse token (khong can mo Chrome lai)
         """
+        import time
         cache_path = self._get_media_cache_path()
         try:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -491,17 +514,24 @@ class BrowserFlowGenerator:
             # Get project URL from current session or config
             project_url = getattr(self, '_project_url', None)
             project_id = self.config.get('flow_project_id', '')
+            bearer_token = self.config.get('flow_bearer_token', '')
 
             if project_url:
                 cache_data['_project_url'] = project_url
-                self._log(f"Saving project_url: {project_url[:50]}...")
+                self._log(f"[CACHE] Saving project_url: {project_url[:50]}...")
             if project_id:
                 cache_data['_project_id'] = project_id
-                self._log(f"Saving project_id: {project_id[:20]}...")
+                self._log(f"[CACHE] Saving project_id: {project_id[:20]}...")
+
+            # QUAN TRONG: Luu token de reuse (khong can mo Chrome lai)
+            if bearer_token:
+                cache_data['_bearer_token'] = bearer_token
+                cache_data['_token_time'] = time.time()  # Luu thoi diem lay token
+                self._log(f"[CACHE] Saving bearer_token: {bearer_token[:30]}... (de reuse)")
 
             with open(cache_path, 'w', encoding='utf-8') as f:
                 json.dump(cache_data, f, indent=2)
-            self._log(f"Saved {len(media_names)} media_names to cache")
+            self._log(f"[CACHE] Saved {len(media_names)} media_names + token + project")
         except Exception as e:
             self._log(f"Loi save cache: {e}", "warn")
 
