@@ -1791,18 +1791,42 @@ class BrowserFlowGenerator:
         Su dung ChromeAutoToken de mo Chrome, navigate den Flow va capture token.
 
         QUAN TRONG:
+        - CHECK CACHE TRUOC - neu co token con valid thi dung luon, khong mo Chrome
         - Neu co cached project_url -> mo truc tiep project do -> skip 'Tao du an moi'
         - Token moi se duoc luu lai vao cache de reuse lan sau
 
         Returns:
             Bearer token (ya29.xxx) hoac None neu that bai
         """
-        self._log("=== TU DONG LAY BEARER TOKEN ===")
+        import time
 
-        # Load cache de lay _cached_project_url (neu chua load)
+        # =====================================================================
+        # LOAD CACHE TRUOC - de co token va project_url
+        # =====================================================================
         if not hasattr(self, '_cached_project_url') or not self._cached_project_url:
-            self._log("Loading media cache de lay project URL...")
+            self._log("Loading media cache de lay token va project URL...")
             self._load_media_cache()
+
+        # =====================================================================
+        # CHECK CACHED TOKEN - KHONG MO CHROME NEU DA CO TOKEN VALID
+        # =====================================================================
+        TOKEN_EXPIRY_SECONDS = 50 * 60  # 50 phut (an toan, token that su 60 phut)
+
+        cached_token = self.config.get('flow_bearer_token', '')
+        cached_token_time = getattr(self, '_cached_token_time', 0)
+
+        if cached_token and cached_token_time:
+            age_seconds = time.time() - cached_token_time
+            age_minutes = age_seconds / 60
+
+            if age_seconds < TOKEN_EXPIRY_SECONDS:
+                self._log(f"=== REUSE CACHED TOKEN (tuoi: {age_minutes:.1f} phut) ===")
+                self._log(f"Token: {cached_token[:20]}...{cached_token[-10:]}")
+                return cached_token
+            else:
+                self._log(f"Cached token het han ({age_minutes:.1f} phut > 50 phut), can lay moi...")
+
+        self._log("=== TU DONG LAY BEARER TOKEN (mo Chrome) ===")
 
         try:
             from modules.auto_token import ChromeAutoToken
@@ -1821,28 +1845,31 @@ class BrowserFlowGenerator:
                 chrome_path = "/usr/bin/google-chrome"
 
         # Lay profile path
-        # Uu tien: 1. chrome_profile tu settings.yaml
-        #          2. chrome_profiles tu accounts.json (GUI settings)
-        #          3. browser_profiles_dir/profile_name (fallback)
-        chrome_profile = self.config.get('chrome_profile', '')
+        # Uu tien: 1. chrome_profiles tu accounts.json (GUI settings) - CAO NHAT
+        #          2. chrome_profile tu settings.yaml (fallback)
+        #          3. browser_profiles_dir/profile_name (fallback cuoi)
+        chrome_profile = ''
 
-        # Neu khong co trong settings.yaml, thu doc tu accounts.json (GUI settings)
+        # 1. UU TIEN accounts.json (user them profile qua GUI)
+        try:
+            accounts_file = Path(__file__).parent.parent / "config" / "accounts.json"
+            if accounts_file.exists():
+                import json
+                with open(accounts_file, 'r', encoding='utf-8') as f:
+                    accounts = json.load(f)
+                profiles = accounts.get('chrome_profiles', [])
+                for p in profiles:
+                    path = p if isinstance(p, str) else p.get('path', '')
+                    if path and not path.startswith('THAY_BANG') and Path(path).exists():
+                        chrome_profile = path
+                        self._log(f"Got chrome_profile from accounts.json (GUI): {chrome_profile}")
+                        break
+        except Exception as e:
+            self._log(f"[DEBUG] Cannot read accounts.json: {e}")
+
+        # 2. Fallback: settings.yaml (neu accounts.json khong co)
         if not chrome_profile:
-            try:
-                accounts_file = Path(__file__).parent.parent / "config" / "accounts.json"
-                if accounts_file.exists():
-                    import json
-                    with open(accounts_file, 'r', encoding='utf-8') as f:
-                        accounts = json.load(f)
-                    profiles = accounts.get('chrome_profiles', [])
-                    for p in profiles:
-                        path = p if isinstance(p, str) else p.get('path', '')
-                        if path and not path.startswith('THAY_BANG') and Path(path).exists():
-                            chrome_profile = path
-                            self._log(f"Got chrome_profile from accounts.json (GUI): {chrome_profile}")
-                            break
-            except Exception as e:
-                self._log(f"[DEBUG] Cannot read accounts.json: {e}")
+            chrome_profile = self.config.get('chrome_profile', '')
 
         self._log(f"[DEBUG] chrome_profile: '{chrome_profile}'")
 
@@ -1953,26 +1980,29 @@ class BrowserFlowGenerator:
             self._log(f"Khong import duoc ChromeHeadersExtractor: {e}", "error")
             return None
 
-        # Lay profile path - uu tien chrome_profile tu settings hoac accounts.json
-        chrome_profile = self.config.get('chrome_profile', '')
+        # Lay profile path - UU TIEN accounts.json (GUI) truoc settings.yaml
+        chrome_profile = ''
 
-        # Neu khong co trong settings.yaml, thu doc tu accounts.json (GUI)
+        # 1. UU TIEN accounts.json (user them profile qua GUI)
+        try:
+            accounts_file = Path(__file__).parent.parent / "config" / "accounts.json"
+            if accounts_file.exists():
+                import json
+                with open(accounts_file, 'r', encoding='utf-8') as f:
+                    accounts = json.load(f)
+                profiles = accounts.get('chrome_profiles', [])
+                for p in profiles:
+                    path = p if isinstance(p, str) else p.get('path', '')
+                    if path and not path.startswith('THAY_BANG') and Path(path).exists():
+                        chrome_profile = path
+                        self._log(f"Got chrome_profile from accounts.json (GUI): {chrome_profile}")
+                        break
+        except:
+            pass
+
+        # 2. Fallback: settings.yaml
         if not chrome_profile:
-            try:
-                accounts_file = Path(__file__).parent.parent / "config" / "accounts.json"
-                if accounts_file.exists():
-                    import json
-                    with open(accounts_file, 'r', encoding='utf-8') as f:
-                        accounts = json.load(f)
-                    profiles = accounts.get('chrome_profiles', [])
-                    for p in profiles:
-                        path = p if isinstance(p, str) else p.get('path', '')
-                        if path and not path.startswith('THAY_BANG') and Path(path).exists():
-                            chrome_profile = path
-                            self._log(f"Got chrome_profile from accounts.json (GUI): {chrome_profile}")
-                            break
-            except:
-                pass
+            chrome_profile = self.config.get('chrome_profile', '')
 
         if chrome_profile:
             chrome_profile_path = Path(chrome_profile)
