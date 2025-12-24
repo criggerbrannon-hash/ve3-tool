@@ -1789,10 +1789,19 @@ class BrowserFlowGenerator:
         Tu dong lay bearer token tu Chrome bang profile hien tai.
         Su dung ChromeAutoToken de mo Chrome, navigate den Flow va capture token.
 
+        QUAN TRONG:
+        - Neu co cached project_url -> mo truc tiep project do -> skip 'Tao du an moi'
+        - Token moi se duoc luu lai vao cache de reuse lan sau
+
         Returns:
             Bearer token (ya29.xxx) hoac None neu that bai
         """
         self._log("=== TU DONG LAY BEARER TOKEN ===")
+
+        # Load cache de lay _cached_project_url (neu chua load)
+        if not hasattr(self, '_cached_project_url') or not self._cached_project_url:
+            self._log("Loading media cache de lay project URL...")
+            self._load_media_cache()
 
         try:
             from modules.auto_token import ChromeAutoToken
@@ -1875,24 +1884,47 @@ class BrowserFlowGenerator:
             def log_callback(msg, level="info"):
                 self._log(f"[TokenExtract] {msg}", level)
 
-            # QUAN TRONG: Reuse project_id da co de share media_ids giua nv va img
+            # QUAN TRONG: Reuse project URL/ID da co de:
+            # 1. Share media_ids giua nv va img
+            # 2. Skip buoc "Tao du an moi" -> lay token nhanh hon
+            existing_project_url = getattr(self, '_cached_project_url', None)
             existing_project_id = self.config.get('flow_project_id', '')
-            if existing_project_id:
-                self._log(f"  -> Reuse project_id: {existing_project_id[:8]}...")
+
+            if existing_project_url:
+                self._log(f"  -> Reuse project URL: {existing_project_url[:50]}...")
+                self._log(f"  -> Da trong project -> skip 'Tao du an moi' -> tao anh de lay token!")
+            elif existing_project_id:
+                self._log(f"  -> Reuse project_id: {existing_project_id[:20]}...")
             else:
-                self._log(f"  -> Chua co project_id, se tao moi")
+                self._log(f"  -> Chua co project -> se tao moi")
 
             token, proj_id, error = extractor.extract_token(
-                project_id=existing_project_id,  # Reuse existing project
+                project_id=existing_project_id,  # Fallback
+                project_url=existing_project_url,  # Uu tien (full URL)
                 callback=log_callback
             )
 
             if token:
                 self._log(f"OK - Da lay duoc token: {token[:20]}...{token[-10:]}", "success")
-                # Luu project_id neu co gia tri moi
+                # Luu project_id va token vao config
                 if proj_id:
                     self.config['flow_project_id'] = proj_id
-                    self._log(f"  -> Project ID: {proj_id[:8]}...")
+                    self._log(f"  -> Project ID: {proj_id[:20]}...")
+
+                # Luu token vao config va cache
+                import time
+                self.config['flow_bearer_token'] = token
+                self._cached_bearer_token = token
+                self._cached_token_time = time.time()
+
+                # Save vao cache file de reuse lan sau
+                try:
+                    cached_media_names = self._load_media_cache() or {}
+                    self._save_media_cache(cached_media_names)
+                    self._log("  -> Token da luu vao cache")
+                except Exception as e:
+                    self._log(f"  -> Luu cache that bai: {e}")
+
                 return token
             else:
                 self._log(f"FAIL - Khong lay duoc token: {error}", "error")
