@@ -40,6 +40,22 @@ video_model: "fast"
 video_paygate_tier: "PAYGATE_TIER_TWO"
 
 # ============================================================================
+# IMAGE-TO-VIDEO (I2V) Settings
+# ============================================================================
+# Tạo video từ ảnh đã generate (cần media_name từ ảnh)
+# Endpoint: batchAsyncGenerateVideoImage hoặc text-to-video với imageInputs
+
+# Thời lượng video (giây): 4, 6, hoặc 8
+i2v_duration_seconds: 4
+
+# Số ảnh đầu tiên sẽ được tạo video (0 = tắt)
+# Ví dụ: 10 = tạo video cho 10 ảnh đầu tiên
+i2v_first_n_images: 10
+
+# Lưu media_name khi generate ảnh để dùng cho i2v sau này
+i2v_save_media_names: true
+
+# ============================================================================
 # PROXY API Configuration (Bypass Captcha)
 # ============================================================================
 # Sử dụng proxy API để bypass reCAPTCHA khi gọi trực tiếp Google API
