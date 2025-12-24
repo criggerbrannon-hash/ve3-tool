@@ -2811,17 +2811,25 @@ class BrowserFlowGenerator:
             self._log(f"Prompt ({len(prompt)} chars): {prompt[:100]}...")
 
             try:
-                # === PARSE FILENAME ANNOTATIONS VA TAO IMAGE INPUTS ===
-                # Tim cac pattern (xxx.png) trong prompt va map sang cached media_names
+                # === BUILD IMAGE INPUTS TU reference_files VA prompt annotations ===
                 import re
-                image_inputs = []
-                filename_pattern = r'\(([a-zA-Z0-9_]+)\.png\)'
-                matches = re.findall(filename_pattern, prompt)
+                import json as json_mod
+                from modules.google_flow_api import ImageInput, ImageInputType
 
-                if matches and cached_media_names:
-                    from modules.google_flow_api import ImageInput, ImageInputType
-                    for ref_id in matches:
-                        if ref_id in cached_media_names:
+                image_inputs = []
+                ref_ids_added = set()  # Track de tranh duplicate
+
+                # === 1. Uu tien: Lay reference_files tu prompt_data (tu Excel) ===
+                ref_files_str = prompt_data.get('reference_files', '')
+                if ref_files_str and cached_media_names:
+                    try:
+                        ref_files = json_mod.loads(ref_files_str) if ref_files_str.startswith('[') else [f.strip() for f in str(ref_files_str).split(',') if f.strip()]
+                    except:
+                        ref_files = [f.strip() for f in str(ref_files_str).split(',') if f.strip()]
+
+                    for ref_file in ref_files:
+                        ref_id = ref_file.replace('.png', '').replace('.jpg', '')
+                        if ref_id in cached_media_names and ref_id not in ref_ids_added:
                             media_info = cached_media_names[ref_id]
                             media_name = media_info.get('mediaName') if isinstance(media_info, dict) else media_info
                             if media_name:
@@ -2829,9 +2837,28 @@ class BrowserFlowGenerator:
                                     name=media_name,
                                     input_type=ImageInputType.REFERENCE
                                 ))
-                                self._log(f"  [REF] {ref_id} -> mediaName OK")
-                        else:
-                            self._log(f"  [REF] {ref_id} -> NOT in cache!", "warn")
+                                ref_ids_added.add(ref_id)
+                                self._log(f"  [REF:Excel] {ref_id} -> mediaName OK")
+
+                # === 2. Fallback: Parse (xxx.png) tu prompt text ===
+                filename_pattern = r'\(([a-zA-Z0-9_]+)\.png\)'
+                matches = re.findall(filename_pattern, prompt)
+
+                if matches and cached_media_names:
+                    for ref_id in matches:
+                        if ref_id in cached_media_names and ref_id not in ref_ids_added:
+                            media_info = cached_media_names[ref_id]
+                            media_name = media_info.get('mediaName') if isinstance(media_info, dict) else media_info
+                            if media_name:
+                                image_inputs.append(ImageInput(
+                                    name=media_name,
+                                    input_type=ImageInputType.REFERENCE
+                                ))
+                                ref_ids_added.add(ref_id)
+                                self._log(f"  [REF:Prompt] {ref_id} -> mediaName OK")
+
+                if not image_inputs:
+                    self._log(f"  [REF] Khong co reference (ref_files='{ref_files_str[:30]}...' neu co)")
 
                 # Generate - co retry khi token het han
                 success, images, error = api.generate_images(
