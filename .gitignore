@@ -34,6 +34,7 @@ env/
 # Project specific - DO NOT TRACK USER DATA
 PROJECTS/
 config/accounts.json
+config.json
 
 # Keep config template
 !config/accounts.template.json
