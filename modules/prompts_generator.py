@@ -1690,10 +1690,11 @@ class PromptGenerator:
             for loc in locations
         ]) if locations else "Không có thông tin bối cảnh"
 
-        # Process each chunk
+        # Process each chunk with RETRY logic
         all_parts = []
         part_number_offset = 0
         shot_number_offset = 0
+        MAX_RETRIES = 3  # Số lần retry tối đa
 
         for chunk_idx, chunk_entries in enumerate(chunks):
             chunk_num = chunk_idx + 1
@@ -1728,20 +1729,45 @@ class PromptGenerator:
                 global_style=global_style or get_global_style()
             )
 
-            response = self._generate_content_large(prompt, temperature=0.4, max_tokens=16000)
+            # RETRY LOGIC: Thử tối đa MAX_RETRIES lần
+            chunk_parts = None
+            for attempt in range(MAX_RETRIES):
+                if attempt > 0:
+                    self.logger.warning(f"[Director CHUNKING] Retry {attempt}/{MAX_RETRIES-1} for chunk {chunk_num}")
+                    import time
+                    time.sleep(2)  # Đợi 2s trước khi retry
 
-            if not response:
-                self.logger.error(f"[Director CHUNKING] Chunk {chunk_num} failed - no response")
-                continue
+                response = self._generate_content_large(prompt, temperature=0.4, max_tokens=16000)
 
-            json_data = self._extract_json(response)
+                if not response:
+                    self.logger.error(f"[Director CHUNKING] Chunk {chunk_num} attempt {attempt+1} - no response")
+                    continue
 
-            if not json_data or "shooting_plan" not in json_data:
-                self.logger.error(f"[Director CHUNKING] Chunk {chunk_num} failed - no shooting_plan")
-                continue
+                json_data = self._extract_json(response)
 
-            chunk_plan = json_data["shooting_plan"]
-            chunk_parts = chunk_plan.get("story_parts", [])
+                if not json_data or "shooting_plan" not in json_data:
+                    self.logger.error(f"[Director CHUNKING] Chunk {chunk_num} attempt {attempt+1} - no shooting_plan")
+                    continue
+
+                chunk_plan = json_data["shooting_plan"]
+                chunk_parts = chunk_plan.get("story_parts", [])
+
+                if chunk_parts:
+                    self.logger.info(f"[Director CHUNKING] Chunk {chunk_num} succeeded on attempt {attempt+1}")
+                    break
+                else:
+                    self.logger.error(f"[Director CHUNKING] Chunk {chunk_num} attempt {attempt+1} - empty story_parts")
+
+            # FALLBACK: Nếu tất cả retry đều fail, tạo shots cơ bản từ SRT
+            if not chunk_parts:
+                self.logger.warning(f"[Director CHUNKING] ⚠️ Chunk {chunk_num} FAILED after {MAX_RETRIES} attempts!")
+                self.logger.warning(f"[Director CHUNKING] Creating FALLBACK shots from SRT entries...")
+                chunk_parts = self._create_fallback_shots_from_srt(
+                    chunk_entries,
+                    part_number_offset + 1,
+                    shot_number_offset + 1,
+                    global_style
+                )
 
             # Adjust part and shot numbers
             for part in chunk_parts:
@@ -1793,6 +1819,71 @@ class PromptGenerator:
             return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
         return str(td)
 
+    def _create_fallback_shots_from_srt(
+        self,
+        srt_entries: list,
+        start_part_num: int,
+        start_shot_num: int,
+        global_style: str
+    ) -> list:
+        """
+        FALLBACK: Tạo shots cơ bản từ SRT entries khi API fail.
+
+        Đảm bảo không bao giờ bị thiếu content - dù AI fail, vẫn có scenes để render.
+        """
+        self.logger.info(f"[FALLBACK] Creating basic shots from {len(srt_entries)} SRT entries")
+
+        parts = []
+        current_part = {
+            "part_number": start_part_num,
+            "part_name": "FALLBACK SCENE",
+            "location": "",
+            "shots": []
+        }
+
+        shot_num = start_shot_num
+        MAX_ENTRIES_PER_PART = 20  # Nhóm 20 entries thành 1 part
+
+        for i, entry in enumerate(srt_entries):
+            # Tính duration từ SRT
+            duration_seconds = (entry.end_time - entry.start_time).total_seconds()
+            planned_duration = min(max(duration_seconds, 3), 8)  # 3-8s
+
+            shot = {
+                "shot_number": shot_num,
+                "srt_range": f"{self._format_timedelta(entry.start_time)} - {self._format_timedelta(entry.end_time)}",
+                "srt_text": entry.text[:200] if entry.text else "",
+                "planned_duration": int(planned_duration),
+                "img_prompt": f"[FALLBACK] {global_style or 'cinematic'} scene depicting: {entry.text[:100]}",
+                "shot_type": "MEDIUM",
+                "camera_angle": "EYE LEVEL",
+                "emotional_weight": "MEDIUM",
+                "reference_files": [],
+                "characters_in_shot": [],
+                "visual_description": f"Scene based on dialogue: {entry.text[:50]}",
+                "purpose": "Auto-generated fallback shot"
+            }
+
+            current_part["shots"].append(shot)
+            shot_num += 1
+
+            # Nhóm thành parts mới sau mỗi MAX_ENTRIES_PER_PART shots
+            if len(current_part["shots"]) >= MAX_ENTRIES_PER_PART and i < len(srt_entries) - 1:
+                parts.append(current_part)
+                current_part = {
+                    "part_number": start_part_num + len(parts),
+                    "part_name": f"FALLBACK SCENE {len(parts) + 1}",
+                    "location": "",
+                    "shots": []
+                }
+
+        # Đừng quên part cuối
+        if current_part["shots"]:
+            parts.append(current_part)
+
+        self.logger.info(f"[FALLBACK] Created {len(parts)} parts with {shot_num - start_shot_num} total shots")
+        return parts
+
     def _convert_shooting_plan_to_scenes(self, shooting_plan: Dict) -> List[Dict[str, Any]]:
         """
         Chuyển đổi shooting_plan từ đạo diễn thành scenes data.
@@ -1843,6 +1934,22 @@ class PromptGenerator:
 
             return f"{hh}:{mm}:{ss},{ms}"
 
+        # Helper: Parse timestamp to seconds for validation
+        def timestamp_to_seconds(ts: str) -> float:
+            """Convert HH:MM:SS,mmm to seconds"""
+            try:
+                main_part = ts.split(",")[0]
+                parts = main_part.split(":")
+                if len(parts) == 3:
+                    return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+                elif len(parts) == 2:
+                    return int(parts[0]) * 60 + int(parts[1])
+                return 0
+            except:
+                return 0
+
+        prev_end_seconds = 0  # Track previous scene end for gap detection
+
         for part in shooting_plan.get("story_parts", []):
             for shot in part.get("shots", []):
                 # Parse srt_range để lấy timestamps
@@ -1850,6 +1957,34 @@ class PromptGenerator:
                 times = srt_range.split(" - ")
                 start_time = normalize_timestamp(times[0]) if len(times) > 0 else "00:00:00,000"
                 end_time = normalize_timestamp(times[1]) if len(times) > 1 else "00:00:08,000"
+
+                # ============== TIMESTAMP VALIDATION ==============
+                start_secs = timestamp_to_seconds(start_time)
+                end_secs = timestamp_to_seconds(end_time)
+
+                # FIX 1: end_time < start_time (invalid!)
+                if end_secs <= start_secs:
+                    self.logger.warning(
+                        f"[Validation] Shot {scene_id}: end_time ({end_time}) <= start_time ({start_time})! Auto-fixing..."
+                    )
+                    # Set end = start + 5 seconds (default duration)
+                    end_secs = start_secs + 5
+                    hours = int(end_secs // 3600)
+                    minutes = int((end_secs % 3600) // 60)
+                    seconds = int(end_secs % 60)
+                    end_time = f"{hours:02d}:{minutes:02d}:{seconds:02d},000"
+
+                # FIX 2: Gap detection - if this scene starts way after previous ends
+                if prev_end_seconds > 0:
+                    gap = start_secs - prev_end_seconds
+                    if gap > 300:  # Gap > 5 minutes = suspicious
+                        self.logger.warning(
+                            f"[Validation] Shot {scene_id}: GAP of {int(gap)}s detected! "
+                            f"(prev ended at {int(prev_end_seconds)}s, this starts at {int(start_secs)}s)"
+                        )
+
+                prev_end_seconds = end_secs
+                # ============== END VALIDATION ==============
 
                 # === Extract characters_used và location_used từ reference_files ===
                 ref_files = shot.get("reference_files", [])
