@@ -1534,9 +1534,9 @@ class PromptGenerator:
             else:
                 total_duration_seconds = 0
 
-            # CHUNKING STRATEGY: For videos > 5 minutes, process in chunks
-            # DeepSeek có giới hạn 8192 tokens output - chunk nhỏ hơn để tránh truncate
-            CHUNK_DURATION_SECONDS = 300  # 5 minutes per chunk (thay vì 15)
+            # CHUNKING STRATEGY: For videos > 3 minutes, process in chunks
+            # DeepSeek có giới hạn 8192 tokens output - chunk nhỏ = response nhỏ = không bị cắt
+            CHUNK_DURATION_SECONDS = 180  # 3 minutes per chunk (giảm để DeepSeek xử lý được)
 
             if total_duration_seconds > CHUNK_DURATION_SECONDS:
                 self.logger.info(f"[Director] Video dài {total_duration_seconds/60:.1f} phút - sử dụng CHUNKING STRATEGY")
@@ -1649,6 +1649,22 @@ class PromptGenerator:
         """
         from datetime import timedelta
 
+        # === CHECK SRT GAPS trước khi chunking ===
+        self.logger.info(f"[SRT CHECK] Kiểm tra {len(srt_entries)} SRT entries...")
+        if len(srt_entries) >= 2:
+            for i in range(len(srt_entries) - 1):
+                curr_end = srt_entries[i].end_time.total_seconds()
+                next_start = srt_entries[i + 1].start_time.total_seconds()
+                gap = next_start - curr_end
+
+                if gap > 60:  # Gap > 1 phút
+                    self.logger.warning(
+                        f"[SRT CHECK] ⚠️ GAP trong SRT: "
+                        f"{self._format_timedelta(srt_entries[i].end_time)} -> "
+                        f"{self._format_timedelta(srt_entries[i + 1].start_time)} "
+                        f"(gap: {gap:.0f}s = {gap/60:.1f} phút)"
+                    )
+
         # Split SRT entries into chunks based on time
         chunks = []
         current_chunk = []
@@ -1692,6 +1708,10 @@ class PromptGenerator:
         shot_number_offset = 0
         MAX_RETRIES = 3  # Số lần retry tối đa
 
+        # Track previous chunk context for continuity
+        previous_chunk_summary = ""
+        previous_last_shots = []
+
         for chunk_idx, chunk_entries in enumerate(chunks):
             chunk_num = chunk_idx + 1
             chunk_start = self._format_timedelta(chunk_entries[0].start_time)
@@ -1707,6 +1727,23 @@ class PromptGenerator:
                 for e in chunk_entries
             ])
 
+            # Build context from previous chunk for CONTINUITY
+            continuity_context = ""
+            if previous_chunk_summary:
+                continuity_context = f"""
+**CONTEXT TỪ PHẦN TRƯỚC (để đảm bảo liên tục):**
+{previous_chunk_summary}
+
+**3 SHOTS CUỐI CỦA PHẦN TRƯỚC (để transition mượt):**
+{chr(10).join(previous_last_shots) if previous_last_shots else "Đây là phần đầu tiên"}
+
+**YÊU CẦU LIÊN TỤC:**
+- Giữ nguyên trang phục/ngoại hình nhân vật như phần trước
+- Nếu cùng bối cảnh, giữ lighting/mood nhất quán
+- Shot đầu tiên phải transition mượt từ shot cuối phần trước
+
+"""
+
             # Add context about this being a chunk
             chunk_context = f"""
 **LƯU Ý: Đây là PHẦN {chunk_num}/{len(chunks)} của video dài.**
@@ -1714,7 +1751,7 @@ class PromptGenerator:
 - Hãy tạo shooting plan CHỈ cho phần này.
 - Đánh số part bắt đầu từ {part_number_offset + 1}.
 - Đánh số shot bắt đầu từ {shot_number_offset + 1}.
-
+{continuity_context}
 """
 
             prompt = prompt_template.format(
@@ -1725,45 +1762,85 @@ class PromptGenerator:
                 global_style=global_style or get_global_style()
             )
 
-            # RETRY LOGIC: Thử tối đa MAX_RETRIES lần
+            # ============================================================
+            # MULTI-TIER FALLBACK STRATEGY:
+            # 1. DeepSeek (3 retries)
+            # 2. Ollama với timeout dài (nếu có)
+            # 3. SRT Fallback (cuối cùng - luôn hoạt động)
+            # ============================================================
             chunk_parts = None
+
+            # === TIER 1: DeepSeek (3 retries) ===
+            self.logger.info(f"[TIER 1] DeepSeek cho chunk {chunk_num}...")
             for attempt in range(MAX_RETRIES):
                 if attempt > 0:
-                    self.logger.warning(f"[Director CHUNKING] Retry {attempt}/{MAX_RETRIES-1} for chunk {chunk_num}")
+                    self.logger.warning(f"[TIER 1] Retry {attempt}/{MAX_RETRIES-1} for chunk {chunk_num}")
                     import time
-                    time.sleep(2)  # Đợi 2s trước khi retry
+                    time.sleep(2)
 
                 response = self._generate_content_large(prompt, temperature=0.4, max_tokens=16000)
 
                 if not response:
-                    self.logger.error(f"[Director CHUNKING] Chunk {chunk_num} attempt {attempt+1} - no response")
+                    self.logger.error(f"[TIER 1] Chunk {chunk_num} attempt {attempt+1} - no response")
                     continue
 
                 json_data = self._extract_json(response)
 
                 if not json_data or "shooting_plan" not in json_data:
-                    self.logger.error(f"[Director CHUNKING] Chunk {chunk_num} attempt {attempt+1} - no shooting_plan")
+                    self.logger.error(f"[TIER 1] Chunk {chunk_num} attempt {attempt+1} - no shooting_plan")
                     continue
 
                 chunk_plan = json_data["shooting_plan"]
                 chunk_parts = chunk_plan.get("story_parts", [])
 
                 if chunk_parts:
-                    self.logger.info(f"[Director CHUNKING] Chunk {chunk_num} succeeded on attempt {attempt+1}")
+                    self.logger.info(f"[TIER 1] ✅ Chunk {chunk_num} succeeded with DeepSeek!")
                     break
                 else:
-                    self.logger.error(f"[Director CHUNKING] Chunk {chunk_num} attempt {attempt+1} - empty story_parts")
+                    self.logger.error(f"[TIER 1] Chunk {chunk_num} attempt {attempt+1} - empty story_parts")
 
-            # FALLBACK: Nếu tất cả retry đều fail, tạo shots cơ bản từ SRT
+            # === TIER 2: Ollama với timeout dài (nếu DeepSeek fail) ===
             if not chunk_parts:
-                self.logger.warning(f"[Director CHUNKING] ⚠️ Chunk {chunk_num} FAILED after {MAX_RETRIES} attempts!")
-                self.logger.warning(f"[Director CHUNKING] Creating FALLBACK shots from SRT entries...")
+                self.logger.warning(f"[TIER 2] DeepSeek failed, trying Ollama for chunk {chunk_num}...")
+
+                if hasattr(self.ai_client, 'ollama_available') and self.ai_client.ollama_available:
+                    try:
+                        self.logger.info(f"[TIER 2] Gọi Ollama {self.ai_client.ollama_model} (timeout 10 phút)...")
+                        # Ollama có timeout mặc định 600s (10 phút) - đủ cho chunk lớn
+                        response = self.ai_client._call_ollama(prompt, temperature=0.4, max_tokens=32000)
+
+                        if response:
+                            self.logger.info(f"[TIER 2] Ollama trả về {len(response)} ký tự")
+                            json_data = self._extract_json(response)
+
+                            if json_data and "shooting_plan" in json_data:
+                                chunk_plan = json_data["shooting_plan"]
+                                chunk_parts = chunk_plan.get("story_parts", [])
+
+                                if chunk_parts:
+                                    self.logger.info(f"[TIER 2] ✅ Chunk {chunk_num} succeeded with Ollama!")
+                    except Exception as e:
+                        self.logger.warning(f"[TIER 2] Ollama failed: {e}")
+                else:
+                    self.logger.warning(f"[TIER 2] Ollama không khả dụng, skip...")
+
+            # === TIER 3: SRT Fallback (luôn hoạt động) ===
+            if not chunk_parts:
+                self.logger.warning(f"[TIER 3] ⚠️ All AI failed for chunk {chunk_num}, using SRT FALLBACK...")
+                self.logger.warning(f"[TIER 3] Creating shots from {len(chunk_entries)} SRT entries...")
                 chunk_parts = self._create_fallback_shots_from_srt(
                     chunk_entries,
                     part_number_offset + 1,
                     shot_number_offset + 1,
                     global_style
                 )
+                fallback_shots = sum(len(p.get("shots", [])) for p in chunk_parts) if chunk_parts else 0
+                self.logger.info(f"[TIER 3] ✅ FALLBACK created {len(chunk_parts) if chunk_parts else 0} parts, {fallback_shots} shots")
+
+            # Safety check - nếu vẫn không có chunk_parts, tạo empty list để tránh crash
+            if not chunk_parts:
+                self.logger.error(f"[Director CHUNKING] 🚨 CRITICAL: Chunk {chunk_num} has NO parts even after fallback!")
+                chunk_parts = []
 
             # Adjust part and shot numbers
             for part in chunk_parts:
@@ -1779,6 +1856,43 @@ class PromptGenerator:
             shots_in_chunk = sum(len(p.get("shots", [])) for p in chunk_parts)
             self.logger.info(f"[Director CHUNKING] Chunk {chunk_num}: {len(chunk_parts)} parts, {shots_in_chunk} shots")
 
+            # === EXTRACT CONTEXT FOR NEXT CHUNK (Continuity) ===
+            if chunk_parts:
+                # Get all shots from this chunk
+                chunk_all_shots = []
+                for part in chunk_parts:
+                    chunk_all_shots.extend(part.get("shots", []))
+
+                # Extract last 3 shots for visual continuity
+                if chunk_all_shots:
+                    last_shots = chunk_all_shots[-3:] if len(chunk_all_shots) >= 3 else chunk_all_shots
+                    previous_last_shots = []
+                    for shot in last_shots:
+                        shot_desc = f"- Shot {shot.get('shot_number')}: {shot.get('img_prompt', '')[:100]}..."
+                        previous_last_shots.append(shot_desc)
+
+                # Create summary of this chunk for context
+                part_names = [p.get("part_name", "Unknown") for p in chunk_parts[:3]]
+                locations_used = set()
+                characters_used = set()
+                for part in chunk_parts:
+                    if part.get("location"):
+                        locations_used.add(part.get("location"))
+                    for shot in part.get("shots", []):
+                        for char in shot.get("characters_in_shot", []):
+                            if isinstance(char, str):
+                                characters_used.add(char)
+                            elif isinstance(char, dict):
+                                characters_used.add(char.get("id", ""))
+
+                previous_chunk_summary = f"""Phần {chunk_num} ({chunk_start} - {chunk_end}):
+- Các cảnh: {', '.join(part_names)}
+- Bối cảnh: {', '.join(locations_used) if locations_used else 'Không xác định'}
+- Nhân vật xuất hiện: {', '.join(characters_used) if characters_used else 'Không xác định'}
+- Tổng {shots_in_chunk} shots"""
+
+                self.logger.info(f"[CONTINUITY] Saved context for next chunk: {len(previous_last_shots)} shots, summary ready")
+
         if not all_parts:
             self.logger.error("[Director CHUNKING] Không có parts nào được tạo!")
             return None
@@ -1786,6 +1900,59 @@ class PromptGenerator:
         # Calculate totals
         total_shots = sum(len(p.get("shots", [])) for p in all_parts)
         total_duration = srt_entries[-1].end_time.total_seconds() if srt_entries else 0
+
+        # === GAP DETECTION: Kiểm tra và cảnh báo nếu có gap lớn ===
+        all_shots = []
+        for part in all_parts:
+            all_shots.extend(part.get("shots", []))
+
+        if all_shots:
+            self.logger.info("[GAP CHECK] Kiểm tra gaps trong shooting plan...")
+            gaps_found = []
+
+            for i in range(len(all_shots) - 1):
+                current_shot = all_shots[i]
+                next_shot = all_shots[i + 1]
+
+                # Parse thời gian từ srt_range
+                try:
+                    current_range = current_shot.get("srt_range", "")
+                    next_range = next_shot.get("srt_range", "")
+
+                    if " - " in current_range and " - " in next_range:
+                        current_end = current_range.split(" - ")[1].strip()
+                        next_start = next_range.split(" - ")[0].strip()
+
+                        # Parse time (HH:MM:SS hoặc MM:SS)
+                        def parse_time(t):
+                            parts = t.replace(",", ".").split(":")
+                            if len(parts) == 3:
+                                return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+                            elif len(parts) == 2:
+                                return int(parts[0]) * 60 + float(parts[1])
+                            return 0
+
+                        end_sec = parse_time(current_end)
+                        start_sec = parse_time(next_start)
+                        gap_sec = start_sec - end_sec
+
+                        # Cảnh báo nếu gap > 30 giây
+                        if gap_sec > 30:
+                            gap_info = f"Shot {current_shot.get('shot_number')} ({current_end}) -> Shot {next_shot.get('shot_number')} ({next_start}): GAP {gap_sec:.0f}s"
+                            gaps_found.append((gap_sec, gap_info, i))
+                            self.logger.warning(f"[GAP CHECK] ⚠️ {gap_info}")
+                except Exception as e:
+                    pass  # Ignore parsing errors
+
+            if gaps_found:
+                self.logger.error(f"[GAP CHECK] ⚠️ TÌM THẤY {len(gaps_found)} GAPS LỚN!")
+                self.logger.error("[GAP CHECK] Có thể do chunks bị fail hoặc SRT thiếu entries")
+                # Log chi tiết
+                for gap_sec, gap_info, _ in gaps_found:
+                    if gap_sec > 300:  # > 5 phút
+                        self.logger.error(f"[GAP CHECK] 🚨 GAP LỚN: {gap_info}")
+            else:
+                self.logger.info("[GAP CHECK] ✅ Không có gaps lớn")
 
         # Merge all parts into final shooting plan
         merged_plan = {
