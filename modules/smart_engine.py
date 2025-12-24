@@ -1394,8 +1394,23 @@ class SmartEngine:
                 self.log(f"  - {m}", "ERROR")
             return {"error": "missing_requirements", "missing": missing}
 
-        # BROWSER MODE - khong can tokens
-        self.log("  MODE: Browser JS automation (khong can API token)")
+        # === DOC GENERATION MODE TU SETTINGS ===
+        generation_mode = "chrome"  # default
+        try:
+            import yaml
+            config_path = self.config_dir / "settings.yaml"
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    settings = yaml.safe_load(f) or {}
+                generation_mode = settings.get('generation_mode', 'chrome').lower()
+        except Exception as e:
+            self.log(f"Load settings error: {e}", "WARN")
+
+        # Log mode
+        if generation_mode == "api":
+            self.log("  MODE: API (qua proxy bypass captcha)")
+        else:
+            self.log("  MODE: Chrome (Browser JS automation)")
         self.log(f"  AI keys: DeepSeek={len(self.deepseek_keys)}, Groq={len(self.groq_keys)}, Gemini={len(self.gemini_keys)}")
 
         # === 2. TAO SRT + PROMPTS (BROWSER MODE - khong can token) ===
@@ -1420,7 +1435,11 @@ class SmartEngine:
             if not self.make_prompts(proj_dir, name, excel_path):
                 return {"error": "prompts_failed"}
 
-        self.log("BROWSER MODE: Khong can token, su dung JS automation")
+        # Log mode da chon
+        if generation_mode == "api":
+            self.log("API MODE: Su dung proxy de bypass captcha")
+        else:
+            self.log("CHROME MODE: Su dung JS automation, khong can token")
 
         # === 3. DOI CHARACTER GENERATION (PARALLEL) ===
         # Neu character generation dang chay song song, doi no xong
@@ -1458,11 +1477,15 @@ class SmartEngine:
                 "skipped": "all_exist"
             }
         else:
-            # === 5. TAO SCENE IMAGES (BROWSER - khong can token) ===
-            self.log("[STEP 5] Tao scene images bang BROWSER...")
-
-            # CHI DUNG BROWSER - khong dung API
-            scene_results = self.generate_images_browser(prompts, proj_dir)
+            # === 5. TAO SCENE IMAGES ===
+            if generation_mode == "api":
+                # API MODE: Goi truc tiep API qua proxy
+                self.log("[STEP 5] Tao scene images bang API...")
+                scene_results = self.generate_images_parallel(prompts)
+            else:
+                # CHROME MODE: Browser JS automation
+                self.log("[STEP 5] Tao scene images bang BROWSER...")
+                scene_results = self.generate_images_browser(prompts, proj_dir)
 
             # Merge results
             results = {
