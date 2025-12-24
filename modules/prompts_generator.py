@@ -1534,9 +1534,9 @@ class PromptGenerator:
             else:
                 total_duration_seconds = 0
 
-            # CHUNKING STRATEGY: For videos > 5 minutes, process in chunks
-            # DeepSeek có giới hạn 8192 tokens output - chunk nhỏ hơn để tránh truncate
-            CHUNK_DURATION_SECONDS = 300  # 5 minutes per chunk (thay vì 15)
+            # CHUNKING STRATEGY: For videos > 3 minutes, process in chunks
+            # DeepSeek có giới hạn 8192 tokens output - chunk nhỏ = response nhỏ = không bị cắt
+            CHUNK_DURATION_SECONDS = 180  # 3 minutes per chunk (giảm để DeepSeek xử lý được)
 
             if total_duration_seconds > CHUNK_DURATION_SECONDS:
                 self.logger.info(f"[Director] Video dài {total_duration_seconds/60:.1f} phút - sử dụng CHUNKING STRATEGY")
