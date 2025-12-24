@@ -1563,16 +1563,11 @@ class GoogleFlowAPI:
                         continue
 
                     # Check for success/completed status
-                    if op_status in ["MEDIA_GENERATION_STATUS_SUCCEEDED", "MEDIA_GENERATION_STATUS_COMPLETE"]:
-                        # Look for video in media array
-                        media_list = op.get("media", [])
-                        if media_list:
-                            video_info = media_list[0].get("video", {})
-                            video_url = video_info.get("url") or video_info.get("videoUrl")
-                        # Also try direct video field
-                        if not video_url:
-                            video_info = op.get("video", {})
-                            video_url = video_info.get("url") or video_info.get("videoUrl")
+                    if op_status in ["MEDIA_GENERATION_STATUS_SUCCEEDED", "MEDIA_GENERATION_STATUS_COMPLETE", "MEDIA_GENERATION_STATUS_SUCCESSFUL"]:
+                        # Use helper to extract video URL from multiple paths
+                        video_url = self._extract_video_url_from_operation(op)
+                        if video_url:
+                            self._log(f"Found video URL in operation: {video_url[:60]}...")
 
                     # Check for failed status
                     if "FAILED" in op_status or "ERROR" in op_status:
@@ -1648,21 +1643,57 @@ class GoogleFlowAPI:
         max_attempts: int = 100,
         poll_interval: float = 5.0
     ) -> Tuple[bool, VideoGenerationResult, str]:
-        """Poll Google's video status endpoint directly using bearer token."""
+        """Poll Google's video status endpoint directly using bearer token.
+
+        Tries multiple request formats since the exact Google API format is not documented.
+        """
         url = f"{self.BASE_URL}/v1/video:batchCheckAsyncVideoGenerationStatus"
         self._log(f"Direct Google polling: {url}")
 
+        # Multiple payload formats to try (Google API format is undocumented)
+        payload_formats = [
+            # Format 1: operationNames array (most likely based on API naming)
+            {"operationNames": [operation_name]},
+            # Format 2: names array
+            {"names": [operation_name]},
+            # Format 3: operations array with objects
+            {"operations": [{"name": operation_name}]},
+            # Format 4: With full path
+            {"operationNames": [f"projects/{self.project_id}/operations/{operation_name}"]},
+            # Format 5: With clientContext
+            {
+                "clientContext": {
+                    "sessionId": self.session_id,
+                    "projectId": self.project_id,
+                    "tool": self.TOOL_NAME
+                },
+                "operationNames": [operation_name]
+            },
+        ]
+
+        current_format_idx = 0
+
         for attempt in range(max_attempts):
             try:
-                payload = {
-                    "operationNames": [operation_name]
-                }
+                # Rotate through payload formats on first few attempts
+                if attempt < len(payload_formats):
+                    payload = payload_formats[attempt]
+                    self._log(f"Trying format {attempt+1}: {json.dumps(payload)[:100]}")
+                else:
+                    # Stick with first format after trying all
+                    payload = payload_formats[0]
 
                 response = self.session.post(url, json=payload, timeout=30)
                 self._log(f"Google poll {attempt+1}: status={response.status_code}")
 
                 if response.status_code != 200:
-                    self._log(f"Response: {response.text[:200]}")
+                    error_text = response.text[:200]
+                    self._log(f"Response: {error_text}")
+
+                    # If 400/404, try next format
+                    if response.status_code in [400, 404] and attempt < len(payload_formats):
+                        continue
+
                     time.sleep(poll_interval)
                     continue
 
@@ -1683,17 +1714,9 @@ class GoogleFlowAPI:
                     time.sleep(poll_interval)
                     continue
 
-                # Success - extract video URL
-                if op_status in ["MEDIA_GENERATION_STATUS_SUCCEEDED", "MEDIA_GENERATION_STATUS_COMPLETE"]:
-                    video_url = None
-                    media_list = op.get("media", [])
-                    if media_list:
-                        video_info = media_list[0].get("video", {})
-                        video_url = video_info.get("url") or video_info.get("videoUrl")
-
-                    if not video_url:
-                        video_info = op.get("video", {})
-                        video_url = video_info.get("url") or video_info.get("videoUrl")
+                # Success - extract video URL from multiple possible locations
+                if op_status in ["MEDIA_GENERATION_STATUS_SUCCEEDED", "MEDIA_GENERATION_STATUS_COMPLETE", "MEDIA_GENERATION_STATUS_SUCCESSFUL"]:
+                    video_url = self._extract_video_url_from_operation(op)
 
                     if video_url:
                         self._log(f"Video completed! URL: {video_url[:80]}...")
@@ -1705,6 +1728,9 @@ class GoogleFlowAPI:
                             prompt=prompt,
                             seed=seed
                         ), ""
+                    else:
+                        self._log(f"Status is success but no video URL found")
+                        self._log(f"Full operation: {json.dumps(op)[:500]}")
 
                 # Failed
                 if "FAILED" in op_status or "ERROR" in op_status:
@@ -1730,6 +1756,40 @@ class GoogleFlowAPI:
             scene_id=scene_id,
             error="Google polling timeout"
         ), "Google polling timeout"
+
+    def _extract_video_url_from_operation(self, op: Dict[str, Any]) -> Optional[str]:
+        """Extract video URL from operation response, trying multiple paths."""
+        video_url = None
+
+        # Path 1: operation.media[].video.url/fifeUrl
+        media_list = op.get("media", [])
+        if media_list:
+            video_info = media_list[0].get("video", {})
+            video_url = video_info.get("url") or video_info.get("fifeUrl") or video_info.get("videoUrl")
+
+        # Path 2: operation.video.url/fifeUrl
+        if not video_url:
+            video_info = op.get("video", {})
+            video_url = video_info.get("url") or video_info.get("fifeUrl") or video_info.get("videoUrl")
+
+        # Path 3: operation.metadata.video.fifeUrl (documented path)
+        if not video_url:
+            metadata = op.get("metadata", {})
+            video_info = metadata.get("video", {})
+            video_url = video_info.get("fifeUrl") or video_info.get("url") or video_info.get("videoUrl")
+
+        # Path 4: operation.result.videos[]
+        if not video_url:
+            result = op.get("result", {})
+            videos = result.get("videos", [])
+            if videos:
+                video_url = videos[0].get("url") or videos[0].get("fifeUrl")
+
+        # Path 5: Direct videoUrl field
+        if not video_url:
+            video_url = op.get("videoUrl") or op.get("url")
+
+        return video_url
 
     def _parse_video_response(
         self,

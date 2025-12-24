@@ -59,9 +59,34 @@ def headers():
     }
 
 
+def extract_video_url(op):
+    """Extract video URL from operation data, trying multiple paths."""
+    video_url = None
+
+    # Path 1: operation.media[].video.url/fifeUrl
+    media_list = op.get("media", [])
+    if media_list:
+        video_info = media_list[0].get("video", {})
+        video_url = video_info.get("url") or video_info.get("fifeUrl") or video_info.get("videoUrl")
+
+    # Path 2: operation.video.url/fifeUrl
+    if not video_url:
+        video_info = op.get("video", {})
+        video_url = video_info.get("url") or video_info.get("fifeUrl") or video_info.get("videoUrl")
+
+    # Path 3: operation.metadata.video.fifeUrl
+    if not video_url:
+        metadata = op.get("metadata", {})
+        video_info = metadata.get("video", {})
+        video_url = video_info.get("fifeUrl") or video_info.get("url") or video_info.get("videoUrl")
+
+    return video_url
+
+
 def poll_task(task_id, max_attempts=120, interval=3):
     """Poll task status."""
     url = f"{PROXY_BASE}/task-status?taskId={task_id}"
+    google_op_name = None
 
     for i in range(max_attempts):
         try:
@@ -83,10 +108,33 @@ def poll_task(task_id, max_attempts=120, interval=3):
                         err = err.get("message", str(err))
                     return False, None, str(err)
 
+                # Check operations array for video status
+                operations = result.get("operations", [])
+                if operations:
+                    op = operations[0]
+                    status = op.get("status", "")
+
+                    # Extract operation name for direct Google polling
+                    if not google_op_name:
+                        google_op_name = op.get("operation", {}).get("name")
+                        if google_op_name:
+                            log(f"Got operation name: {google_op_name}")
+
+                    # Check if completed
+                    if status in ["MEDIA_GENERATION_STATUS_SUCCEEDED", "MEDIA_GENERATION_STATUS_COMPLETE", "MEDIA_GENERATION_STATUS_SUCCESSFUL"]:
+                        video_url = extract_video_url(op)
+                        if video_url:
+                            result["_video_url"] = video_url
+                        return True, result, None
+
+                    # Check if failed
+                    if "FAILED" in status or "ERROR" in status:
+                        return False, result, f"Video failed: {status}"
+
                 # Success conditions
                 if result.get("success") == True:
                     return True, result, None
-                if "media" in result or "videos" in result or "operations" in result:
+                if "media" in result or "videos" in result:
                     return True, result, None
 
             # Check if failed
@@ -283,26 +331,27 @@ def step2_create_video(media_name):
 
         # Extract video URL
         log("\n--- KẾT QUẢ VIDEO ---")
-        video_url = None
+        video_url = result.get("_video_url")  # From poll_task if extracted
 
-        if "operations" in result:
+        if not video_url and "operations" in result:
             ops = result["operations"]
             if ops:
                 op = ops[0]
                 status = op.get("status", "")
                 log(f"Status: {status}")
 
-                if "SUCCEEDED" in status or "COMPLETE" in status:
-                    if op.get("media"):
-                        video_info = op["media"][0].get("video", {})
-                        video_url = video_info.get("url")
+                # Use helper function to extract URL
+                video_url = extract_video_url(op)
 
         # Fallback formats
         if not video_url:
             if "videos" in result and result["videos"]:
-                video_url = result["videos"][0].get("url")
+                video_url = result["videos"][0].get("url") or result["videos"][0].get("fifeUrl")
             elif "videoUrl" in result:
                 video_url = result["videoUrl"]
+            elif "media" in result and result["media"]:
+                video_info = result["media"][0].get("video", {})
+                video_url = video_info.get("url") or video_info.get("fifeUrl")
 
         if video_url:
             log(f"\n✅ Video URL: {video_url[:100]}...")
