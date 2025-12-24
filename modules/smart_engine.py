@@ -181,6 +181,22 @@ class SmartEngine:
 
     def load_config(self):
         """Load config."""
+        # === LOAD TỪ chrome_profiles/ DIRECTORY (ƯU TIÊN) ===
+        # GUI tạo profiles ở đây, không phải accounts.json
+        root_dir = Path(__file__).parent.parent.resolve()
+        profiles_dir = root_dir / "chrome_profiles"
+
+        if profiles_dir.exists():
+            for profile_path in sorted(profiles_dir.iterdir()):
+                if profile_path.is_dir() and not profile_path.name.startswith('.'):
+                    self.profiles.append(Resource(
+                        type='profile',
+                        value=str(profile_path)
+                    ))
+            if self.profiles:
+                self.log(f"[Config] Loaded {len(self.profiles)} profiles from chrome_profiles/")
+
+        # === LOAD TỪ accounts.json (FALLBACK + API KEYS) ===
         if not self.config_path.exists():
             return
 
@@ -198,13 +214,14 @@ class SmartEngine:
                         value=acc_id
                     ))
 
-            # Load Chrome profiles (backup - khi headless không được)
+            # Load Chrome profiles từ accounts.json (bổ sung nếu chưa có)
+            existing_paths = {p.value for p in self.profiles}
             for i, p in enumerate(data.get('chrome_profiles', [])):
                 path = p if isinstance(p, str) else p.get('path', '')
                 # Skip placeholders
                 if not path or path.startswith('THAY_BANG'):
                     continue
-                if Path(path).exists():
+                if Path(path).exists() and path not in existing_paths:
                     self.profiles.append(Resource(
                         type='profile',
                         value=path
