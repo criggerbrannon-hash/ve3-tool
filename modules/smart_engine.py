@@ -25,6 +25,63 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 
+# ============================================================================
+# GLOBAL TOKEN EXTRACTION LOCK
+# ============================================================================
+# Đảm bảo chỉ 1 thread extract token tại 1 thời điểm
+# Ngăn xung đột khi nhiều SmartEngine chạy song song
+# ============================================================================
+_global_token_lock = threading.Lock()
+_token_extraction_queue = []  # Track waiting threads
+_extraction_in_progress = False
+
+
+def _acquire_token_extraction_slot(profile_name: str, logger=None):
+    """
+    Xin quyền extract token (serialize across all SmartEngine instances).
+
+    Returns:
+        True khi được phép extract
+    """
+    global _extraction_in_progress
+
+    start_time = time.time()
+
+    with _global_token_lock:
+        if _extraction_in_progress:
+            _token_extraction_queue.append(profile_name)
+            if logger:
+                queue_pos = len(_token_extraction_queue)
+                logger(f"[TokenQueue] {profile_name}: Đang đợi ({queue_pos} trong hàng)...")
+
+    # Đợi đến lượt
+    while True:
+        with _global_token_lock:
+            if not _extraction_in_progress:
+                _extraction_in_progress = True
+                if profile_name in _token_extraction_queue:
+                    _token_extraction_queue.remove(profile_name)
+                break
+        time.sleep(0.5)
+
+    wait_time = time.time() - start_time
+    if wait_time > 1 and logger:
+        logger(f"[TokenQueue] {profile_name}: Đã đợi {wait_time:.1f}s")
+
+    return True
+
+
+def _release_token_extraction_slot(profile_name: str, logger=None):
+    """Trả quyền extract token cho thread khác."""
+    global _extraction_in_progress
+
+    with _global_token_lock:
+        _extraction_in_progress = False
+        remaining = len(_token_extraction_queue)
+        if remaining > 0 and logger:
+            logger(f"[TokenQueue] {profile_name}: Xong! ({remaining} thread đang đợi)")
+
+
 @dataclass
 class Resource:
     """Tai nguyen (profile hoac API key)."""
@@ -385,7 +442,9 @@ class SmartEngine:
         Lay token bang HEADLESS mode (chay an).
         Khong mo browser window.
 
-        QUAN TRONG: Reuse project_id da co de share media_ids giua nv va img.
+        QUAN TRONG:
+        - Reuse project_id da co de share media_ids giua nv va img.
+        - Sử dụng global token queue để tránh xung đột.
         """
         try:
             from modules.headless_token import HeadlessTokenExtractor
@@ -393,7 +452,8 @@ class SmartEngine:
             self.log("Chua cai Playwright! Chay: pip install playwright && playwright install chromium", "ERROR")
             return False
 
-        self.log(f"[Headless] Lay token: {account.value}...")
+        account_name = account.value
+        self.log(f"[Headless] Lay token: {account_name}...")
 
         # Log project_id status
         if account.project_id:
@@ -401,13 +461,16 @@ class SmartEngine:
         else:
             self.log(f"  -> Chua co project_id, se tao moi")
 
+        # === ACQUIRE TOKEN EXTRACTION SLOT (Queue) ===
+        _acquire_token_extraction_slot(f"headless_{account_name}", self.log)
+
         try:
             extractor = HeadlessTokenExtractor(account.value)
 
             # Check co cookies chua
             if not extractor.has_valid_cookies():
-                self.log(f"[Headless] {account.value} chua dang nhap!", "WARN")
-                self.log(f"  -> Chay: python -m modules.headless_token login {account.value}", "WARN")
+                self.log(f"[Headless] {account_name} chua dang nhap!", "WARN")
+                self.log(f"  -> Chay: python -m modules.headless_token login {account_name}", "WARN")
                 return False
 
             # Lay token (headless) - truyen project_id de reuse
@@ -423,17 +486,17 @@ class SmartEngine:
                     account.project_id = proj_id
                 account.token_time = time.time()
                 account.status = 'ready'
-                self.log(f"[Headless] OK: {account.value} - Token OK!", "OK")
+                self.log(f"[Headless] OK: {account_name} - Token OK!", "OK")
                 self.log(f"  -> Project ID: {account.project_id[:8]}..." if account.project_id else "  -> No project ID")
                 self.save_cached_tokens()
                 return True
             elif error == "need_login":
-                self.log(f"[Headless] {account.value} can dang nhap lai!", "WARN")
-                self.log(f"  -> Chay: python -m modules.headless_token login {account.value}", "WARN")
+                self.log(f"[Headless] {account_name} can dang nhap lai!", "WARN")
+                self.log(f"  -> Chay: python -m modules.headless_token login {account_name}", "WARN")
                 return False
             else:
                 account.fail_count += 1
-                self.log(f"[Headless] FAIL: {account.value} - {error}", "ERROR")
+                self.log(f"[Headless] FAIL: {account_name} - {error}", "ERROR")
                 return False
 
         except Exception as e:
@@ -441,14 +504,21 @@ class SmartEngine:
             self.log(f"[Headless] ERROR: {e}", "ERROR")
             return False
 
+        finally:
+            # === RELEASE TOKEN EXTRACTION SLOT ===
+            _release_token_extraction_slot(f"headless_{account_name}", self.log)
+
     def get_token_for_profile(self, profile: Resource) -> bool:
         """Lay token cho 1 profile (Chrome visible).
 
-        QUAN TRONG: Reuse project_id da co de share media_ids giua nv va img.
+        QUAN TRONG:
+        - Reuse project_id da co de share media_ids giua nv va img.
+        - Sử dụng global token queue để tránh xung đột khi nhiều thread extract cùng lúc.
         """
         from modules.auto_token import ChromeAutoToken
 
-        self.log(f"[Chrome] Lay token: {Path(profile.value).name}...")
+        profile_name = Path(profile.value).name
+        self.log(f"[Chrome] Lay token: {profile_name}...")
 
         # Log project_id status
         if profile.project_id:
@@ -456,11 +526,19 @@ class SmartEngine:
         else:
             self.log(f"  -> Chua co project_id, se tao moi")
 
+        # === ACQUIRE TOKEN EXTRACTION SLOT (Queue) ===
+        # Đảm bảo chỉ 1 Chrome extract token tại 1 thời điểm
+        _acquire_token_extraction_slot(profile_name, self.log)
+
         try:
+            # Sử dụng headless mode nếu được bật
+            headless_mode = getattr(self, 'use_headless', False)
+
             extractor = ChromeAutoToken(
                 chrome_path=self.chrome_path,
                 profile_path=profile.value,
-                auto_close=True  # Tu dong dong Chrome sau khi lay token
+                auto_close=True,  # Tu dong dong Chrome sau khi lay token
+                headless=headless_mode  # Áp dụng headless setting
             )
 
             # QUAN TRONG: Truyen project_id de reuse project da co
@@ -478,19 +556,23 @@ class SmartEngine:
                     profile.project_id = proj_id
                 profile.token_time = time.time()  # Luu thoi gian lay token
                 profile.status = 'ready'
-                self.log(f"[Chrome] OK: {Path(profile.value).name} - Token OK!", "OK")
+                self.log(f"[Chrome] OK: {profile_name} - Token OK!", "OK")
                 self.log(f"  -> Project ID: {profile.project_id[:8]}..." if profile.project_id else "  -> No project ID")
                 self.save_cached_tokens()  # Luu ngay vao file
                 return True
             else:
                 profile.fail_count += 1
-                self.log(f"[Chrome] FAIL: {Path(profile.value).name} - {error}", "ERROR")
+                self.log(f"[Chrome] FAIL: {profile_name} - {error}", "ERROR")
                 return False
 
         except Exception as e:
             profile.fail_count += 1
             self.log(f"[Chrome] ERROR: {e}", "ERROR")
             return False
+
+        finally:
+            # === RELEASE TOKEN EXTRACTION SLOT ===
+            _release_token_extraction_slot(profile_name, self.log)
 
     def get_all_tokens(self) -> int:
         """
