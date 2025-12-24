@@ -1741,39 +1741,72 @@ class PromptGenerator:
                 global_style=global_style or get_global_style()
             )
 
-            # RETRY LOGIC: Thử tối đa MAX_RETRIES lần
+            # ============================================================
+            # MULTI-TIER FALLBACK STRATEGY:
+            # 1. DeepSeek (3 retries)
+            # 2. Ollama với timeout dài (nếu có)
+            # 3. SRT Fallback (cuối cùng - luôn hoạt động)
+            # ============================================================
             chunk_parts = None
+
+            # === TIER 1: DeepSeek (3 retries) ===
+            self.logger.info(f"[TIER 1] DeepSeek cho chunk {chunk_num}...")
             for attempt in range(MAX_RETRIES):
                 if attempt > 0:
-                    self.logger.warning(f"[Director CHUNKING] Retry {attempt}/{MAX_RETRIES-1} for chunk {chunk_num}")
+                    self.logger.warning(f"[TIER 1] Retry {attempt}/{MAX_RETRIES-1} for chunk {chunk_num}")
                     import time
-                    time.sleep(2)  # Đợi 2s trước khi retry
+                    time.sleep(2)
 
                 response = self._generate_content_large(prompt, temperature=0.4, max_tokens=16000)
 
                 if not response:
-                    self.logger.error(f"[Director CHUNKING] Chunk {chunk_num} attempt {attempt+1} - no response")
+                    self.logger.error(f"[TIER 1] Chunk {chunk_num} attempt {attempt+1} - no response")
                     continue
 
                 json_data = self._extract_json(response)
 
                 if not json_data or "shooting_plan" not in json_data:
-                    self.logger.error(f"[Director CHUNKING] Chunk {chunk_num} attempt {attempt+1} - no shooting_plan")
+                    self.logger.error(f"[TIER 1] Chunk {chunk_num} attempt {attempt+1} - no shooting_plan")
                     continue
 
                 chunk_plan = json_data["shooting_plan"]
                 chunk_parts = chunk_plan.get("story_parts", [])
 
                 if chunk_parts:
-                    self.logger.info(f"[Director CHUNKING] Chunk {chunk_num} succeeded on attempt {attempt+1}")
+                    self.logger.info(f"[TIER 1] ✅ Chunk {chunk_num} succeeded with DeepSeek!")
                     break
                 else:
-                    self.logger.error(f"[Director CHUNKING] Chunk {chunk_num} attempt {attempt+1} - empty story_parts")
+                    self.logger.error(f"[TIER 1] Chunk {chunk_num} attempt {attempt+1} - empty story_parts")
 
-            # FALLBACK: Nếu tất cả retry đều fail, tạo shots cơ bản từ SRT
+            # === TIER 2: Ollama với timeout dài (nếu DeepSeek fail) ===
             if not chunk_parts:
-                self.logger.warning(f"[Director CHUNKING] ⚠️ Chunk {chunk_num} FAILED after {MAX_RETRIES} attempts!")
-                self.logger.warning(f"[Director CHUNKING] Creating FALLBACK shots from {len(chunk_entries)} SRT entries...")
+                self.logger.warning(f"[TIER 2] DeepSeek failed, trying Ollama for chunk {chunk_num}...")
+
+                if hasattr(self.ai_client, 'ollama_available') and self.ai_client.ollama_available:
+                    try:
+                        self.logger.info(f"[TIER 2] Gọi Ollama {self.ai_client.ollama_model} (timeout 10 phút)...")
+                        # Ollama có timeout mặc định 600s (10 phút) - đủ cho chunk lớn
+                        response = self.ai_client._call_ollama(prompt, temperature=0.4, max_tokens=32000)
+
+                        if response:
+                            self.logger.info(f"[TIER 2] Ollama trả về {len(response)} ký tự")
+                            json_data = self._extract_json(response)
+
+                            if json_data and "shooting_plan" in json_data:
+                                chunk_plan = json_data["shooting_plan"]
+                                chunk_parts = chunk_plan.get("story_parts", [])
+
+                                if chunk_parts:
+                                    self.logger.info(f"[TIER 2] ✅ Chunk {chunk_num} succeeded with Ollama!")
+                    except Exception as e:
+                        self.logger.warning(f"[TIER 2] Ollama failed: {e}")
+                else:
+                    self.logger.warning(f"[TIER 2] Ollama không khả dụng, skip...")
+
+            # === TIER 3: SRT Fallback (luôn hoạt động) ===
+            if not chunk_parts:
+                self.logger.warning(f"[TIER 3] ⚠️ All AI failed for chunk {chunk_num}, using SRT FALLBACK...")
+                self.logger.warning(f"[TIER 3] Creating shots from {len(chunk_entries)} SRT entries...")
                 chunk_parts = self._create_fallback_shots_from_srt(
                     chunk_entries,
                     part_number_offset + 1,
@@ -1781,7 +1814,7 @@ class PromptGenerator:
                     global_style
                 )
                 fallback_shots = sum(len(p.get("shots", [])) for p in chunk_parts) if chunk_parts else 0
-                self.logger.warning(f"[Director CHUNKING] FALLBACK created {len(chunk_parts) if chunk_parts else 0} parts, {fallback_shots} shots")
+                self.logger.info(f"[TIER 3] ✅ FALLBACK created {len(chunk_parts) if chunk_parts else 0} parts, {fallback_shots} shots")
 
             # Safety check - nếu vẫn không có chunk_parts, tạo empty list để tránh crash
             if not chunk_parts:
