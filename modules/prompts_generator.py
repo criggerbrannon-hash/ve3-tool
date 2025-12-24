@@ -860,40 +860,35 @@ class PromptGenerator:
 
     def _generate_content_large(self, prompt: str, temperature: float = 0.7, max_tokens: int = 16000) -> str:
         """
-        Generate content với ưu tiên DeepSeek (primary) > Ollama (fallback).
+        Generate content chỉ dùng DeepSeek (theo yêu cầu user).
 
-        DeepSeek có giới hạn max_tokens=8192, có thể bị truncate với Director's Shooting Plan.
-        Ollama không có giới hạn tokens nhưng có thể chậm hoặc timeout.
-
-        Priority (theo yêu cầu user):
-        1. DeepSeek - Primary, nhanh và ổn định
-        2. Ollama - Fallback nếu DeepSeek thất bại
+        DeepSeek có giới hạn max_tokens=8192. Nếu response bị truncate, return empty
+        để trigger retry logic ở layer trên (chunk sẽ được chia nhỏ hơn).
         """
-        # Thử DeepSeek trước (primary)
-        print("[Director] Dùng DeepSeek (primary, nhanh, giới hạn 8192 tokens)")
+        print("[Director] Dùng DeepSeek (giới hạn 8192 tokens)")
         try:
             result = self.ai_client.generate_content(prompt, temperature, min(max_tokens, 8192))
             if result:
                 print(f"[Director] DeepSeek trả về {len(result)} ký tự")
-                # Check if response might be truncated
-                if len(result) > 30000:
-                    print("[Director] Response dài, có thể bị truncate...")
-                return result
-        except Exception as e:
-            self.logger.warning(f"[Director] DeepSeek failed: {e}, falling back to Ollama...")
-            print(f"[Director] DeepSeek thất bại: {e}, chuyển sang Ollama...")
 
-        # Fallback: dùng Ollama (không giới hạn tokens nhưng có thể chậm)
-        if hasattr(self.ai_client, 'ollama_available') and self.ai_client.ollama_available:
-            print(f"[Director] Dùng Ollama {self.ai_client.ollama_model} (fallback, không giới hạn tokens)")
-            try:
-                result = self.ai_client._call_ollama(prompt, temperature, max_tokens)
-                if result:
-                    print(f"[Director] Ollama trả về {len(result)} ký tự")
+                # Check if JSON response is truncated (unclosed braces/brackets)
+                if '{' in result or '[' in result:
+                    open_braces = result.count('{') - result.count('}')
+                    open_brackets = result.count('[') - result.count(']')
+
+                    if open_braces > 0 or open_brackets > 0:
+                        print(f"[Director] ⚠️ JSON BỊ TRUNCATE! Braces: +{open_braces}, Brackets: +{open_brackets}")
+                        print("[Director] Response không hoàn chỉnh - sẽ retry...")
+                        return ""  # Return empty to trigger retry
+                    else:
+                        # JSON looks complete
+                        return result
+                else:
+                    # Not JSON, return as-is
                     return result
-            except Exception as e:
-                self.logger.warning(f"[Director] Ollama also failed: {e}")
-                print(f"[Director] Ollama cũng thất bại: {e}")
+        except Exception as e:
+            self.logger.warning(f"[Director] DeepSeek failed: {e}")
+            print(f"[Director] DeepSeek thất bại: {e}")
 
         return ""
 
@@ -1539,8 +1534,9 @@ class PromptGenerator:
             else:
                 total_duration_seconds = 0
 
-            # CHUNKING STRATEGY: For videos > 15 minutes, process in chunks
-            CHUNK_DURATION_SECONDS = 900  # 15 minutes per chunk
+            # CHUNKING STRATEGY: For videos > 5 minutes, process in chunks
+            # DeepSeek có giới hạn 8192 tokens output - chunk nhỏ hơn để tránh truncate
+            CHUNK_DURATION_SECONDS = 300  # 5 minutes per chunk (thay vì 15)
 
             if total_duration_seconds > CHUNK_DURATION_SECONDS:
                 self.logger.info(f"[Director] Video dài {total_duration_seconds/60:.1f} phút - sử dụng CHUNKING STRATEGY")
