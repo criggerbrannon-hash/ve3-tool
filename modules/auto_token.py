@@ -53,11 +53,26 @@ class ChromeAutoToken:
         try:
             cmd = [self.chrome_path]
             if self.profile_path and Path(self.profile_path).exists():
-                cmd.extend([
-                    f"--user-data-dir={Path(self.profile_path).parent}",
-                    f"--profile-directory={Path(self.profile_path).name}"
-                ])
-            
+                profile_path = Path(self.profile_path)
+
+                # Check neu day la user-data-dir (co folder Default ben trong)
+                # hay la profile folder (nam trong User Data)
+                default_folder = profile_path / "Default"
+
+                if default_folder.exists():
+                    # Day la user-data-dir (e.g., ./chrome_profiles/main)
+                    # Chrome tu dong dung Default profile ben trong
+                    cmd.append(f"--user-data-dir={profile_path}")
+                    self.log(f"Using user-data-dir: {profile_path}")
+                else:
+                    # Day la profile folder (e.g., C:\Users\...\User Data\Profile 1)
+                    # Can tach thanh user-data-dir va profile-directory
+                    cmd.extend([
+                        f"--user-data-dir={profile_path.parent}",
+                        f"--profile-directory={profile_path.name}"
+                    ])
+                    self.log(f"Using profile: {profile_path.parent} / {profile_path.name}")
+
             # Headless/minimized mode
             if self.headless:
                 # Note: True headless won't work with PyAutoGUI

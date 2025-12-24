@@ -49,21 +49,31 @@ class ChromeTokenExtractor:
         self.bearer_token = None
         self.project_id = None
         
-        # Extract profile name from path
-        self.profile_name = Path(profile_path).name  # e.g., "Profile 2"
-        self.user_data_dir = str(Path(profile_path).parent)  # e.g., "C:\Users\...\User Data"
-    
+        # Extract profile info from path
+        profile_path = Path(profile_path)
+        default_folder = profile_path / "Default"
+
+        if default_folder.exists():
+            # Tool's user-data-dir (has Default inside)
+            self.user_data_dir = str(profile_path)
+            self.profile_name = None  # Chrome uses Default automatically
+        else:
+            # System Chrome profile folder
+            self.profile_name = profile_path.name  # e.g., "Profile 2"
+            self.user_data_dir = str(profile_path.parent)  # e.g., "C:\Users\...\User Data"
+
     def _create_driver(self):
         """Tạo Chrome WebDriver với CDP enabled."""
         from selenium import webdriver
         from selenium.webdriver.chrome.service import Service
         from selenium.webdriver.chrome.options import Options
-        
+
         options = Options()
-        
+
         # Use existing Chrome profile
         options.add_argument(f"--user-data-dir={self.user_data_dir}")
-        options.add_argument(f"--profile-directory={self.profile_name}")
+        if self.profile_name:
+            options.add_argument(f"--profile-directory={self.profile_name}")
         
         # Chrome binary location
         options.binary_location = self.chrome_path
