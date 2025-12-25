@@ -1190,15 +1190,6 @@ class UnixVoiceToVideo:
         ttk.Radiobutton(video_model_frame, text="Fast (nhanh)", variable=video_model_var, value="fast").pack(side=tk.LEFT, padx=10)
         ttk.Radiobutton(video_model_frame, text="Quality (chất lượng)", variable=video_model_var, value="quality").pack(side=tk.LEFT)
 
-        # Video prompt setting
-        ttk.Label(video_tab, text="Prompt chuyển động:", font=('Segoe UI', 10)).pack(anchor=tk.W, pady=(10, 5))
-        ttk.Label(video_tab, text="Mô tả chuyển động mong muốn (để trống = mặc định)",
-                  foreground='gray', font=('Segoe UI', 9)).pack(anchor=tk.W)
-
-        video_prompt_var = tk.StringVar(value=self._get_video_prompt_setting())
-        video_prompt_entry = ttk.Entry(video_tab, textvariable=video_prompt_var, width=60)
-        video_prompt_entry.pack(fill=tk.X, pady=(5, 10))
-
         # Replace image option
         replace_var = tk.BooleanVar(value=self._get_video_replace_setting())
         ttk.Checkbutton(video_tab, text="Thay thế ảnh gốc bằng video (backup vào img_backup/)",
@@ -1216,7 +1207,6 @@ class UnixVoiceToVideo:
 
                 settings['video_count'] = video_count_var.get().strip()
                 settings['video_model'] = video_model_var.get()
-                settings['video_prompt'] = video_prompt_var.get().strip()
                 settings['video_replace_image'] = replace_var.get()
 
                 import yaml
@@ -1232,7 +1222,7 @@ class UnixVoiceToVideo:
         ttk.Separator(video_tab, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=15)
 
         ttk.Label(video_tab, text="💡 Lưu ý:", font=('Segoe UI', 10, 'bold')).pack(anchor=tk.W)
-        ttk.Label(video_tab, text="• Cần Bearer Token (lấy từ tab Token)\n• Mỗi video mất 1-3 phút để tạo\n• Video được lưu vào thư mục video/",
+        ttk.Label(video_tab, text="• Cần Bearer Token (lấy từ tab Token)\n• Mỗi video mất 1-3 phút để tạo\n• Video được lưu vào thư mục video/\n• Prompt lấy từ cột 'video_prompt' trong Excel",
                   foreground='gray', justify=tk.LEFT).pack(anchor=tk.W)
 
         # Tab 5: Prompts Template
@@ -1438,19 +1428,6 @@ class UnixVoiceToVideo:
         except:
             pass
         return 'fast'
-
-    def _get_video_prompt_setting(self) -> str:
-        """Get video motion prompt."""
-        try:
-            import yaml
-            config_path = CONFIG_DIR / "settings.yaml"
-            if config_path.exists():
-                with open(config_path, 'r', encoding='utf-8') as f:
-                    config = yaml.safe_load(f) or {}
-                return config.get('video_prompt', '')
-        except:
-            pass
-        return ''
 
     def _get_video_replace_setting(self) -> bool:
         """Get video replace image setting."""
