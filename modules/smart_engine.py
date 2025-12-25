@@ -2778,7 +2778,6 @@ class SmartEngine:
                                 self.log(f"    #{item['id']}: {kb_effect.value}")
                         else:
                             # FAST MODE: Random static zoom + crop (1 lần, không tính từng frame)
-                            # Scale lớn hơn 1920x1080, rồi crop random vị trí
                             import random
 
                             # Random zoom 5-12%
@@ -2786,30 +2785,17 @@ class SmartEngine:
                             scaled_w = int(1920 * zoom)
                             scaled_h = int(1080 * zoom)
 
-                            # Random crop position (9 vị trí)
-                            positions = ['tl', 'tc', 'tr', 'cl', 'cc', 'cr', 'bl', 'bc', 'br']
-                            pos = random.choice(positions)
+                            # Random crop offset (0.0 = left/top, 0.5 = center, 1.0 = right/bottom)
+                            offset_x = random.choice([0.0, 0.25, 0.5, 0.75, 1.0])
+                            offset_y = random.choice([0.0, 0.25, 0.5, 0.75, 1.0])
 
-                            # Tính crop x, y dựa vào position
-                            margin_x = scaled_w - 1920
-                            margin_y = scaled_h - 1080
+                            # Dùng FFmpeg expression để crop an toàn (tự tính dựa trên kích thước thực)
+                            # (in_w-1920)*offset = vị trí x, (in_h-1080)*offset = vị trí y
+                            crop_x_expr = f"(in_w-1920)*{offset_x}"
+                            crop_y_expr = f"(in_h-1080)*{offset_y}"
 
-                            if 'l' in pos:
-                                crop_x = 0
-                            elif 'r' in pos:
-                                crop_x = margin_x
-                            else:
-                                crop_x = margin_x // 2
-
-                            if 't' in pos:
-                                crop_y = 0
-                            elif 'b' in pos:
-                                crop_y = margin_y
-                            else:
-                                crop_y = margin_y // 2
-
-                            # Scale lên + crop về 1920x1080 + fade
-                            vf = f"scale={scaled_w}:{scaled_h}:force_original_aspect_ratio=decrease,pad={scaled_w}:{scaled_h}:(ow-iw)/2:(oh-ih)/2,crop=1920:1080:{crop_x}:{crop_y},{fade_filter}"
+                            # Scale FILL (increase) để đảm bảo >= 1920x1080, rồi crop
+                            vf = f"scale={scaled_w}:{scaled_h}:force_original_aspect_ratio=increase,crop=1920:1080:{crop_x_expr}:{crop_y_expr},{fade_filter}"
 
                         # Build FFmpeg command với GPU acceleration nếu có
                         # Fast mode dùng preset nhanh nhất
