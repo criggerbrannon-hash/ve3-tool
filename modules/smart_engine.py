@@ -1863,6 +1863,29 @@ class SmartEngine:
         self.log(f"OUTPUT: {proj_dir}")
         self.log("="*50)
 
+        # === RESUME CHECK: Kiểm tra đã làm đến bước nào ===
+        final_video = proj_dir / f"{name}_final.mp4"
+
+        # Nếu video cuối đã tồn tại → hoàn thành rồi
+        if final_video.exists():
+            self.log("✅ RESUME: Video đã hoàn thành, skip!", "OK")
+            return {"success": True, "skipped": "video_exists", "video": str(final_video)}
+
+        # Log trạng thái resume
+        resume_status = []
+        if srt_path.exists():
+            resume_status.append("SRT ✓")
+        if excel_path.exists():
+            resume_status.append("Excel ✓")
+
+        img_dir = proj_dir / "img"
+        existing_images = len(list(img_dir.glob("*.png"))) + len(list(img_dir.glob("*.mp4"))) if img_dir.exists() else 0
+        if existing_images > 0:
+            resume_status.append(f"Images: {existing_images} ✓")
+
+        if resume_status:
+            self.log(f"📌 RESUME: {' | '.join(resume_status)}")
+
         # === 1. CHECK REQUIREMENTS ===
         self.log("[STEP 1] Kiem tra yeu cau...")
 
@@ -1877,7 +1900,7 @@ class SmartEngine:
         self.log("  MODE: Browser JS automation (khong can API token)")
         self.log(f"  AI keys: DeepSeek={len(self.deepseek_keys)}, Groq={len(self.groq_keys)}, Gemini={len(self.gemini_keys)}")
 
-        # === 2. TAO SRT + PROMPTS (BROWSER MODE - khong can token) ===
+        # === 2. TAO SRT + PROMPTS ===
         self.log("[STEP 2] Tao SRT + Prompts...")
 
         voice_path = None
@@ -1886,16 +1909,20 @@ class SmartEngine:
             if inp != voice_path:
                 shutil.copy2(inp, voice_path)
 
-            # Tao SRT
-            if not srt_path.exists():
+            # Tao SRT (skip nếu đã có)
+            if srt_path.exists():
+                self.log("  ⏭️ SRT đã tồn tại, skip!")
+            else:
                 if not self.make_srt(voice_path, srt_path):
                     return {"error": "srt_failed"}
 
-        # Tao Prompts
+        # Tao Prompts (skip nếu đã có)
         if ext == '.xlsx':
             if inp != excel_path:
                 shutil.copy2(inp, excel_path)
-        elif not excel_path.exists():
+        elif excel_path.exists():
+            self.log("  ⏭️ Excel đã tồn tại, skip!")
+        else:
             if not self.make_prompts(proj_dir, name, excel_path):
                 return {"error": "prompts_failed"}
 
@@ -1922,14 +1949,18 @@ class SmartEngine:
         if not all_prompts:
             return {"error": "no_prompts"}
 
-        self.log(f"  Tong: {len(all_prompts)} prompts")
-
-        # Filter: chi lay prompts CHUA co anh (characters da duoc tao song song)
+        # Filter: chi lay prompts CHUA co anh
         prompts = [p for p in all_prompts if not Path(p['output_path']).exists()]
-        self.log(f"  Can tao: {len(prompts)} anh (sau khi bo characters da xong)")
+        existing_count = len(all_prompts) - len(prompts)
+
+        if existing_count > 0:
+            self.log(f"  ⏭️ Đã có {existing_count}/{len(all_prompts)} ảnh (resume)")
+            self.log(f"  📌 Còn {len(prompts)} ảnh cần tạo")
+        else:
+            self.log(f"  Tổng: {len(all_prompts)} prompts")
 
         if not prompts:
-            self.log("Tat ca anh da ton tai!", "OK")
+            self.log("  ✅ Tất cả ảnh đã tồn tại, skip tạo ảnh!", "OK")
             # Merge results with character generation
             results = {
                 "success": char_results.get("success", 0),
