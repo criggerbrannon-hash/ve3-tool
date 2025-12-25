@@ -131,6 +131,12 @@ class ChromeAutoToken:
         options.add_argument("--disable-infobars")
         options.add_argument("--disable-popup-blocking")
 
+        # QUAN TRỌNG: Đảm bảo Chrome chạy riêng biệt, không reuse process
+        options.add_argument("--no-first-run")
+        options.add_argument("--new-window")
+        options.add_argument("--disable-background-networking")
+        options.add_argument("--disable-features=ChromeWhatsNewUI")
+
         # Disable images in headless for speed
         if self.headless:
             prefs = {"profile.managed_default_content_settings.images": 2}
@@ -189,6 +195,12 @@ class ChromeAutoToken:
         # Hide automation indicators
         options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
         options.add_experimental_option("useAutomationExtension", False)
+
+        # QUAN TRỌNG: Đảm bảo Chrome chạy riêng biệt, không reuse process
+        options.add_argument("--no-first-run")
+        options.add_argument("--new-window")
+        options.add_argument("--disable-background-networking")
+        options.add_argument("--disable-features=ChromeWhatsNewUI")
 
         # Disable images in headless for speed
         if self.headless:
@@ -566,17 +578,33 @@ class ChromeAutoToken:
         return None, None, error
     
     def _cleanup(self):
-        """Don dep."""
+        """Don dep - ĐÓNG TRÌNH DUYỆT và xóa temp profile."""
+        print("[ChromeAutoToken] Đang đóng trình duyệt...")
+
         if self.driver:
             try:
+                # Đóng tất cả tabs trước
+                try:
+                    self.driver.close()
+                except:
+                    pass
+
+                # Quit để đóng hoàn toàn
                 self.driver.quit()
-            except:
-                pass
-            self.driver = None
-        
+                print("[ChromeAutoToken] ✓ Đã đóng trình duyệt")
+            except Exception as e:
+                print(f"[ChromeAutoToken] Lỗi khi đóng: {e}")
+            finally:
+                self.driver = None
+
+        # Chờ một chút để Chrome process thoát hoàn toàn
+        import time
+        time.sleep(1)
+
         if self.temp_profile_dir and Path(self.temp_profile_dir).exists():
             try:
                 shutil.rmtree(self.temp_profile_dir, ignore_errors=True)
+                print(f"[ChromeAutoToken] ✓ Đã xóa temp profile: {self.temp_profile_dir}")
             except:
                 pass
             self.temp_profile_dir = None

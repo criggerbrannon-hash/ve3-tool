@@ -1833,14 +1833,18 @@ class UnixVoiceToVideo:
                 self.log("❌ Không có Chrome profile! Thêm profile trong Cài đặt.", "ERROR")
                 return
 
-            profile_path = chrome_profiles[0]  # Use first profile for all token extractions
-            self.log(f"   Dùng profile: {profile_path.name}")
+            num_profiles = len(chrome_profiles)
+            self.log(f"   Có {num_profiles} Chrome profile(s)")
+            for idx, p in enumerate(chrome_profiles):
+                self.log(f"     [{idx+1}] {p.name}")
 
             for i in range(actual_workers):
                 if self._stop:
                     break
 
-                self.log(f"   [{i+1}/{actual_workers}] Đang lấy token...")
+                # Dùng profile khác nhau cho mỗi worker (round-robin)
+                profile_path = chrome_profiles[i % num_profiles]
+                self.log(f"   [{i+1}/{actual_workers}] Đang lấy token từ profile: {profile_path.name}...")
 
                 try:
                     # Create engine to get token
@@ -1848,7 +1852,7 @@ class UnixVoiceToVideo:
                     engine.profiles = self.profiles
                     engine.chrome_path = self.chrome_path
 
-                    # Get a new token (opens new project)
+                    # Get a new token (opens new project) - MỖI WORKER DÙNG PROFILE RIÊNG
                     token_data = engine._prefetch_token_for_worker(str(profile_path), i)
 
                     if token_data and token_data.get('token'):
