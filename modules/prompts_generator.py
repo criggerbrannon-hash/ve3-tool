@@ -255,8 +255,8 @@ class MultiAIClient:
         # Determine if prompt expects JSON response
         expects_json = any(kw in prompt.lower() for kw in ['json', 'output format', '{"', "{'"])
 
-        # DeepSeek V3 (deepseek-chat) hỗ trợ đến 16K output tokens
-        deepseek_max_tokens = min(max_tokens, 16000)
+        # DeepSeek API giới hạn max_tokens = 8192
+        deepseek_max_tokens = min(max_tokens, 8192)
 
         data = {
             "model": "deepseek-chat",
@@ -858,14 +858,14 @@ class PromptGenerator:
         """Generate content using available AI providers (DeepSeek + Ollama)."""
         return self.ai_client.generate_content(prompt, temperature, max_tokens)
 
-    def _generate_content_large(self, prompt: str, temperature: float = 0.7, max_tokens: int = 16000) -> str:
+    def _generate_content_large(self, prompt: str, temperature: float = 0.7, max_tokens: int = 8192) -> str:
         """
-        Generate content chỉ dùng DeepSeek (theo yêu cầu user).
+        Generate content dùng DeepSeek (ưu tiên) hoặc Ollama (fallback).
 
-        DeepSeek V3 hỗ trợ max_tokens=16000. Nếu response bị truncate, return empty
+        DeepSeek API giới hạn max_tokens=8192. Nếu response bị truncate, return empty
         để trigger retry logic ở layer trên (chunk sẽ được chia nhỏ hơn).
         """
-        print(f"[Director] Dùng DeepSeek (max_tokens={max_tokens})")
+        print(f"[Director] Dùng DeepSeek (max_tokens={min(max_tokens, 8192)})")
         try:
             result = self.ai_client.generate_content(prompt, temperature, max_tokens)
             if result:
@@ -1384,7 +1384,7 @@ class PromptGenerator:
         try:
             # Dùng _generate_content_large để ưu tiên Ollama (không giới hạn tokens)
             # DeepSeek chỉ có 8192 tokens output, không đủ cho analyze_story phức tạp
-            response = self._generate_content_large(prompt, temperature=0.5, max_tokens=16000)
+            response = self._generate_content_large(prompt, temperature=0.5, max_tokens=8192)
 
             # Parse JSON từ response
             json_data = self._extract_json(response)
@@ -1603,7 +1603,7 @@ class PromptGenerator:
         self.logger.info("[Director's Shooting Plan] Đạo diễn đang lên kế hoạch quay...")
         self.logger.info("=" * 50)
 
-        response = self._generate_content_large(prompt, temperature=0.4, max_tokens=16000)
+        response = self._generate_content_large(prompt, temperature=0.4, max_tokens=8192)
 
         self.logger.info(f"[Director's Shooting Plan] Response length: {len(response) if response else 0}")
         if response:
@@ -2061,7 +2061,7 @@ Estimated Shots: {part_info.get('estimated_shots', 5)}
                     import time
                     time.sleep(2)
 
-                response = self._generate_content_large(prompt, temperature=0.4, max_tokens=16000)
+                response = self._generate_content_large(prompt, temperature=0.4, max_tokens=8192)
 
                 if not response:
                     self.logger.error(f"[TIER 1] Chunk {chunk_num} attempt {attempt+1} - no response")
