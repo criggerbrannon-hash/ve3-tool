@@ -2932,12 +2932,17 @@ class BrowserFlowGenerator:
                 self.stats["skipped"] += 1
                 continue
 
-            # === SANITIZE PROMPT: Remove debug tags ===
+            # === SANITIZE PROMPT: Remove debug tags và problematic patterns ===
             import re as re_sanitize
             prompt = re_sanitize.sub(r'\[FALLBACK\]\s*', '', prompt, flags=re_sanitize.IGNORECASE)
             prompt = re_sanitize.sub(r'\[DEBUG\]\s*', '', prompt, flags=re_sanitize.IGNORECASE)
             prompt = re_sanitize.sub(r'\[TEST\]\s*', '', prompt, flags=re_sanitize.IGNORECASE)
             prompt = re_sanitize.sub(r'\[TIER\s*\d+\]\s*', '', prompt, flags=re_sanitize.IGNORECASE)
+            # === QUAN TRỌNG: Loại bỏ "scene depicting:" và text sau nó ===
+            # Pattern này khiến AI vẽ text lên ảnh hoặc gây INVALID_ARGUMENT
+            prompt = re_sanitize.sub(r'\s*scene depicting:.*$', '', prompt, flags=re_sanitize.IGNORECASE)
+            prompt = re_sanitize.sub(r'\s*depicting:.*$', '', prompt, flags=re_sanitize.IGNORECASE)
+            prompt = prompt.strip()
 
             self._log(f"\n[{i+1}/{len(prompts)}] ID: {pid}")
             self._log(f"Prompt ({len(prompt)} chars): {prompt[:100]}...")
