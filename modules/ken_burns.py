@@ -79,8 +79,8 @@ class KenBurnsGenerator:
     - Không bị cắt viền đen (scale đủ lớn trước khi pan)
     """
 
-    # FPS cho zoompan (càng cao càng mượt nhưng tốn tài nguyên)
-    ZOOMPAN_FPS = 30
+    # FPS cho zoompan (25 đủ mượt, tiết kiệm 17% thời gian so với 30)
+    ZOOMPAN_FPS = 25
 
     def __init__(
         self,
@@ -303,8 +303,8 @@ class KenBurnsGenerator:
         # Scale ảnh lớn hơn trước (để có không gian pan mà không bị viền đen)
         # Sau đó dùng zoompan để tạo hiệu ứng
 
-        # 1. Scale ảnh lên 1.5x resolution ban đầu (để có không gian pan)
-        scale_factor = 1.5
+        # 1. Scale ảnh lên 1.25x (đủ cho pan, tiết kiệm 44% pixels so với 1.5x)
+        scale_factor = 1.25
         scaled_w = int(self.output_width * scale_factor)
         scaled_h = int(self.output_height * scale_factor)
 

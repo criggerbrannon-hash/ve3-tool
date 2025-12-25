@@ -2620,6 +2620,21 @@ class SmartEngine:
                 except Exception:
                     pass
 
+                # Detect GPU encoder (NVENC for NVIDIA)
+                use_gpu = False
+                gpu_encoder = "libx264"  # Default CPU
+                try:
+                    gpu_check = subprocess.run(
+                        ["ffmpeg", "-encoders"],
+                        capture_output=True, text=True, timeout=5
+                    )
+                    if "h264_nvenc" in gpu_check.stdout:
+                        use_gpu = True
+                        gpu_encoder = "h264_nvenc"
+                        self.log(f"  GPU Encoder: NVENC (RTX detected) ⚡")
+                except:
+                    pass
+
                 # Ken Burns generator cho ảnh tĩnh
                 ken_burns = KenBurnsGenerator(1920, 1080, intensity=kb_intensity)
                 last_kb_effect = None  # Tránh lặp hiệu ứng liền kề
@@ -2660,20 +2675,24 @@ class SmartEngine:
                         # Base filter: scale + pad + transitions
                         base_vf = f"scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,{fade_filter}"
 
+                        # Video encoder settings
+                        v_encoder = gpu_encoder if use_gpu else "libx264"
+                        v_preset = ["-preset", "p4"] if use_gpu else ["-preset", "fast"]
+
                         if video_duration > target_duration:
                             # Cắt lấy phần giữa: bỏ đầu và cuối bằng nhau
                             trim_total = video_duration - target_duration
                             trim_start = trim_total / 2
-                            # Sử dụng -ss (seek) và -t (duration)
                             cmd_clip = [
                                 "ffmpeg", "-y",
                                 "-ss", str(trim_start),
                                 "-i", abs_path,
                                 "-t", str(target_duration),
                                 "-vf", base_vf,
-                                "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                                "-c:v", v_encoder, *v_preset,
+                                "-pix_fmt", "yuv420p",
                                 "-an",  # Bỏ audio từ video clip
-                                "-r", "30", str(clip_path)
+                                "-r", "25", str(clip_path)
                             ]
                         else:
                             # Video ngắn hơn target → dùng nguyên video
@@ -2682,9 +2701,10 @@ class SmartEngine:
                                 "-i", abs_path,
                                 "-t", str(target_duration),
                                 "-vf", base_vf,
-                                "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                                "-c:v", v_encoder, *v_preset,
+                                "-pix_fmt", "yuv420p",
                                 "-an",
-                                "-r", "30", str(clip_path)
+                                "-r", "25", str(clip_path)
                             ]
                     else:
                         # === IMAGE: Tạo clip (với hoặc không có Ken Burns) ===
@@ -2703,16 +2723,31 @@ class SmartEngine:
                             # Static image (chỉ scale + fade)
                             vf = f"scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,{fade_filter}"
 
-                        cmd_clip = [
-                            "ffmpeg", "-y",
-                            "-loop", "1", "-t", str(target_duration),
-                            "-i", abs_path,
-                            "-vf", vf,
-                            "-c:v", "libx264", "-pix_fmt", "yuv420p",
-                            "-r", "30", str(clip_path)
-                        ]
+                        # Build FFmpeg command với GPU acceleration nếu có
+                        if use_gpu:
+                            cmd_clip = [
+                                "ffmpeg", "-y",
+                                "-loop", "1", "-t", str(target_duration),
+                                "-i", abs_path,
+                                "-vf", vf,
+                                "-c:v", gpu_encoder,  # h264_nvenc
+                                "-preset", "p4",  # NVENC preset (p1-p7, p4=balanced)
+                                "-pix_fmt", "yuv420p",
+                                "-r", "25", str(clip_path)
+                            ]
+                        else:
+                            cmd_clip = [
+                                "ffmpeg", "-y",
+                                "-loop", "1", "-t", str(target_duration),
+                                "-i", abs_path,
+                                "-vf", vf,
+                                "-c:v", "libx264",
+                                "-preset", "fast",  # Faster CPU encoding
+                                "-pix_fmt", "yuv420p",
+                                "-r", "25", str(clip_path)
+                            ]
 
-                    result = subprocess.run(cmd_clip, capture_output=True, text=True)
+                    result = subprocess.run(cmd_clip, capture_output=True, text=True, timeout=120)
                     if result.returncode != 0:
                         self.log(f"  Clip {i} failed: {result.stderr[-200:]}", "ERROR")
                         continue
