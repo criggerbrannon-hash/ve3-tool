@@ -357,6 +357,8 @@ class ImageToVideoConverter:
             "flow_url": f"{self.GOOGLE_BASE}/v1/video:batchAsyncGenerateVideoReferenceImages"
         }
 
+        self._log(f"[I2V] Calling proxy API...")
+
         response = requests.post(
             f"{self.PROXY_BASE}/create-video-veo3",
             headers=self._proxy_headers(),
@@ -365,15 +367,19 @@ class ImageToVideoConverter:
         )
 
         if response.status_code != 200:
-            self._log(f"Proxy create video failed: {response.status_code}", "error")
+            self._log(f"[I2V] Proxy failed: {response.status_code} - {response.text[:200]}", "error")
             return None, None
 
-        task_id = response.json().get("taskId")
+        resp_json = response.json()
+        task_id = resp_json.get("taskId")
         if not task_id:
+            self._log(f"[I2V] No taskId in response: {resp_json}", "error")
             return None, None
+
+        self._log(f"[I2V] Task created: {task_id}")
 
         # Poll proxy để lấy operations
-        for _ in range(30):
+        for i in range(30):
             status_resp = requests.get(
                 f"{self.PROXY_BASE}/task-status?taskId={task_id}",
                 headers=self._proxy_headers(),
@@ -381,13 +387,27 @@ class ImageToVideoConverter:
             )
 
             if status_resp.status_code == 200:
-                result = status_resp.json().get("result", {})
+                status_json = status_resp.json()
+                result = status_json.get("result", {})
+
+                # Check for error in result
+                if "error" in result:
+                    error_info = result.get("error", {})
+                    self._log(f"[I2V] API Error: {error_info.get('message', 'Unknown')}", "error")
+                    return None, None
+
                 operations = result.get("operations", [])
                 if operations:
+                    self._log(f"[I2V] Got operations, starting video generation...")
                     return None, operations
+
+                # Still processing
+                if i % 5 == 0:
+                    self._log(f"[I2V] Waiting for operations... ({i*3}s)")
 
             time.sleep(3)
 
+        self._log(f"[I2V] Timeout waiting for operations", "error")
         return None, None
 
     def poll_video_status(self, operations: List[Dict], timeout: int = 180) -> Optional[str]:
