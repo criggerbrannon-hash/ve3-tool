@@ -2571,7 +2571,6 @@ class SmartEngine:
                 self._video_settings = {
                     'count': settings.get('video_count', '0'),
                     'model': settings.get('video_model', 'fast'),
-                    'prompt': settings.get('video_prompt', ''),
                     'replace_image': settings.get('video_replace_image', True),
                     'bearer_token': settings.get('flow_bearer_token', ''),
                     'project_id': settings.get('flow_project_id', ''),
@@ -2686,7 +2685,7 @@ class SmartEngine:
 
             image_path = item['image_path']
             image_id = item['image_id']
-            video_prompt = item.get('video_prompt', '') or self._video_settings.get('prompt', '')
+            video_prompt = item.get('video_prompt', '')
 
             self.log(f"[VIDEO] Processing: {image_id}")
 
