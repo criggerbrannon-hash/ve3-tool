@@ -2926,6 +2926,19 @@ class BrowserFlowGenerator:
                 self.stats["skipped"] += 1
                 continue
 
+            # Skip DO_NOT_GENERATE markers
+            if prompt.strip().upper() == "DO_NOT_GENERATE":
+                self._log(f"[{i+1}/{len(prompts)}] ID: {pid} - Skip (DO_NOT_GENERATE)")
+                self.stats["skipped"] += 1
+                continue
+
+            # === SANITIZE PROMPT: Remove debug tags ===
+            import re as re_sanitize
+            prompt = re_sanitize.sub(r'\[FALLBACK\]\s*', '', prompt, flags=re_sanitize.IGNORECASE)
+            prompt = re_sanitize.sub(r'\[DEBUG\]\s*', '', prompt, flags=re_sanitize.IGNORECASE)
+            prompt = re_sanitize.sub(r'\[TEST\]\s*', '', prompt, flags=re_sanitize.IGNORECASE)
+            prompt = re_sanitize.sub(r'\[TIER\s*\d+\]\s*', '', prompt, flags=re_sanitize.IGNORECASE)
+
             self._log(f"\n[{i+1}/{len(prompts)}] ID: {pid}")
             self._log(f"Prompt ({len(prompt)} chars): {prompt[:100]}...")
 

@@ -2704,6 +2704,11 @@ class SmartEngine:
                     continue
 
                 pid_str = str(pid).strip()
+                prompt_str = str(prompt).strip()
+
+                # Skip DO_NOT_GENERATE markers (child characters, placeholders)
+                if prompt_str == "DO_NOT_GENERATE" or prompt_str.upper() == "DO_NOT_GENERATE":
+                    continue
 
                 # Get video_prompt if available (for Image-to-Video)
                 video_prompt = ""
