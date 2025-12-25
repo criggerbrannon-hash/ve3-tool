@@ -1551,14 +1551,8 @@ class GoogleFlowAPI:
                         google_operation_name = operation_id
                         self._log(f"Got Google operation name: {google_operation_name}")
 
-                    # Still pending - after 20 attempts, try direct Google polling
+                    # Still pending - keep polling via proxy (direct Google has different API format)
                     if op_status == "MEDIA_GENERATION_STATUS_PENDING":
-                        if attempt >= 20 and google_operation_name:
-                            self._log(f"Switching to direct Google polling after {attempt} attempts...")
-                            return self._poll_google_video_status(
-                                google_operation_name, prompt, seed, scene_id,
-                                max_attempts - attempt, poll_interval
-                            )
                         time.sleep(poll_interval)
                         continue
 
