@@ -223,23 +223,46 @@ class BrowserFlowGenerator:
             self._log(f"Profile goc: {self.profile_dir}")
             self._log(f"Working profile: {working_profile}")
 
-            # Copy data tu profile goc sang working profile (chi lan dau)
+            # LUÔN sync cookies/login data từ profile gốc (đảm bảo dùng đúng account đã đăng nhập)
             import shutil
             if not working_profile.exists():
                 working_profile.mkdir(parents=True, exist_ok=True)
-                if any(self.profile_dir.iterdir()):  # Neu profile goc co data
-                    for item in self.profile_dir.iterdir():
-                        try:
-                            dest = working_profile / item.name
-                            if item.is_dir():
+
+            # Sync các file quan trọng (cookies, login data) mỗi lần chạy
+            critical_files = [
+                "Cookies", "Login Data", "Web Data",
+                "Network/Cookies", "Network/TransportSecurity"
+            ]
+            critical_dirs = ["Default", "Network"]
+
+            if any(self.profile_dir.iterdir()):
+                # Sync critical dirs first
+                for dir_name in critical_dirs:
+                    src_dir = self.profile_dir / dir_name
+                    if src_dir.exists() and src_dir.is_dir():
+                        dest_dir = working_profile / dir_name
+                        dest_dir.mkdir(parents=True, exist_ok=True)
+                        for item in src_dir.iterdir():
+                            try:
+                                dest = dest_dir / item.name
+                                if item.is_file():
+                                    shutil.copy2(item, dest)
+                            except Exception:
+                                pass  # Skip locked files
+
+                # Sync root level files
+                for item in self.profile_dir.iterdir():
+                    try:
+                        dest = working_profile / item.name
+                        if item.is_file():
+                            shutil.copy2(item, dest)
+                        elif item.is_dir() and item.name not in critical_dirs:
+                            if not dest.exists():
                                 shutil.copytree(item, dest, dirs_exist_ok=True)
-                            else:
-                                shutil.copy2(item, dest)
-                        except Exception:
-                            pass  # Skip locked files
-                    self._log(f"Da copy profile data lan dau")
-            else:
-                self._log(f"Su dung working profile da co (giu settings)")
+                    except Exception:
+                        pass  # Skip locked files
+
+                self._log(f"Da sync profile data tu profile goc")
 
             self._working_profile = str(working_profile)  # Luu de reference
             options.add_argument(f"--user-data-dir={working_profile}")
