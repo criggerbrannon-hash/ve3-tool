@@ -2362,18 +2362,24 @@ Estimated Shots: {part_info.get('estimated_shots', 5)}
             duration_seconds = (entry.end_time - entry.start_time).total_seconds()
             planned_duration = min(max(duration_seconds, 3), 8)  # 3-8s
 
+            # IMPORTANT: KHÔNG đưa dialogue/narration text vào img_prompt!
+            # Điều này sẽ khiến AI vẽ text lên ảnh.
+            # Thay vào đó, tạo prompt mô tả visual chung.
+            base_style = global_style or 'Cinematic, 4K photorealistic, natural lighting'
+            img_prompt = f"{base_style}, medium shot, dramatic scene, subtle film grain"
+
             shot = {
                 "shot_number": shot_num,
                 "srt_range": f"{self._format_timedelta(entry.start_time)} - {self._format_timedelta(entry.end_time)}",
                 "srt_text": entry.text[:200] if entry.text else "",
                 "planned_duration": int(planned_duration),
-                "img_prompt": f"{global_style or 'Cinematic, 4K photorealistic'} scene depicting: {entry.text[:100]}",
+                "img_prompt": img_prompt,
                 "shot_type": "MEDIUM",
                 "camera_angle": "EYE LEVEL",
                 "emotional_weight": "MEDIUM",
                 "reference_files": [],
                 "characters_in_shot": [],
-                "visual_description": f"Scene based on dialogue: {entry.text[:50]}",
+                "visual_description": "Cinematic scene with natural lighting",
                 "purpose": "Auto-generated fallback shot"
             }
 
