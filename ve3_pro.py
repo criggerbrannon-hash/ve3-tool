@@ -2412,7 +2412,8 @@ class UnixVoiceToVideo:
             self.main_tree.focus(first_id)
             self._on_item_selected(first_id)
 
-        self.log(f"Loaded {len(all_items)} items", "OK")
+        # Only log on first load or significant changes (reduce spam)
+        # self.log(f"Loaded {len(all_items)} items", "DEBUG")
     
     def update_thumbnails(self, scene_ids: List[str]):
         """Update scene thumbnails with progress status."""

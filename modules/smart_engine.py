@@ -1072,6 +1072,12 @@ class SmartEngine:
         prompt = re.sub(r'\[TEST\]\s*', '', prompt, flags=re.IGNORECASE)
         prompt = re.sub(r'\[TIER\s*\d+\]\s*', '', prompt, flags=re.IGNORECASE)
 
+        # === LOẠI BỎ "scene depicting:" và text sau nó ===
+        # Pattern "scene depicting: [narration text]" khiến AI vẽ text lên ảnh
+        # Phải loại bỏ toàn bộ phần này
+        prompt = re.sub(r'\s*scene depicting:.*$', '', prompt, flags=re.IGNORECASE)
+        prompt = re.sub(r'\s*depicting:.*$', '', prompt, flags=re.IGNORECASE)
+
         # Các từ/cụm từ cần loại bỏ hoặc thay thế
         sensitive_words = [
             # Violence
@@ -3021,8 +3027,12 @@ class SmartEngine:
                 'media_name': media_name  # Cached media_name to skip re-upload
             })
             self._video_results['pending'] = len(self._video_queue)
-            has_media = " (có media_name)" if media_name else ""
-            self.log(f"[VIDEO] Queued: {image_id}{has_media} (pending: {len(self._video_queue)})")
+
+            # Only log first 3 items to avoid spam
+            queue_len = len(self._video_queue)
+            if queue_len <= 3:
+                has_media = " (có media_name)" if media_name else ""
+                self.log(f"[VIDEO] Queued: {image_id}{has_media} (pending: {queue_len})")
 
     def _video_worker_loop(self, proj_dir: Path):
         """Video generation worker loop."""
