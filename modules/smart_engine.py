@@ -1036,9 +1036,16 @@ class SmartEngine:
     def _sanitize_prompt(self, prompt: str) -> str:
         """
         Điều chỉnh prompt để tránh vi phạm policy.
-        Loại bỏ các từ/cụm từ nhạy cảm.
+        Loại bỏ các từ/cụm từ nhạy cảm và debug tags.
         """
         import re
+
+        # === LOẠI BỎ DEBUG TAGS ===
+        # Các tag như [FALLBACK], [DEBUG], [TEST] không nên gửi đến API
+        prompt = re.sub(r'\[FALLBACK\]\s*', '', prompt, flags=re.IGNORECASE)
+        prompt = re.sub(r'\[DEBUG\]\s*', '', prompt, flags=re.IGNORECASE)
+        prompt = re.sub(r'\[TEST\]\s*', '', prompt, flags=re.IGNORECASE)
+        prompt = re.sub(r'\[TIER\s*\d+\]\s*', '', prompt, flags=re.IGNORECASE)
 
         # Các từ/cụm từ cần loại bỏ hoặc thay thế
         sensitive_words = [
