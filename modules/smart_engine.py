@@ -2777,9 +2777,39 @@ class SmartEngine:
                             if i % 5 == 0:
                                 self.log(f"    #{item['id']}: {kb_effect.value}")
                         else:
-                            # FAST MODE: Chỉ scale + fade (KHÔNG zoompan)
-                            # Nhanh nhất vì không cần tính từng frame
-                            vf = f"scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,{fade_filter}"
+                            # FAST MODE: Random static zoom + crop (1 lần, không tính từng frame)
+                            # Scale lớn hơn 1920x1080, rồi crop random vị trí
+                            import random
+
+                            # Random zoom 5-12%
+                            zoom = random.uniform(1.05, 1.12)
+                            scaled_w = int(1920 * zoom)
+                            scaled_h = int(1080 * zoom)
+
+                            # Random crop position (9 vị trí)
+                            positions = ['tl', 'tc', 'tr', 'cl', 'cc', 'cr', 'bl', 'bc', 'br']
+                            pos = random.choice(positions)
+
+                            # Tính crop x, y dựa vào position
+                            margin_x = scaled_w - 1920
+                            margin_y = scaled_h - 1080
+
+                            if 'l' in pos:
+                                crop_x = 0
+                            elif 'r' in pos:
+                                crop_x = margin_x
+                            else:
+                                crop_x = margin_x // 2
+
+                            if 't' in pos:
+                                crop_y = 0
+                            elif 'b' in pos:
+                                crop_y = margin_y
+                            else:
+                                crop_y = margin_y // 2
+
+                            # Scale lên + crop về 1920x1080 + fade
+                            vf = f"scale={scaled_w}:{scaled_h}:force_original_aspect_ratio=decrease,pad={scaled_w}:{scaled_h}:(ow-iw)/2:(oh-ih)/2,crop=1920:1080:{crop_x}:{crop_y},{fade_filter}"
 
                         # Build FFmpeg command với GPU acceleration nếu có
                         # Fast mode dùng preset nhanh nhất
