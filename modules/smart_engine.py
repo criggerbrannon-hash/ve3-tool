@@ -100,8 +100,9 @@ class SmartEngine:
     Engine thong minh - dam bao output 100%.
     """
 
-    # Token het han sau 50 phut (thuc te la ~1h nhung de an toan)
-    TOKEN_EXPIRY_SECONDS = 50 * 60
+    # Token KHONG het han theo thoi gian
+    # Chi refresh khi API tra loi 401 (authentication error)
+    # Dieu nay toi uu hon vi token thuong valid lau hon 50 phut
 
     def __init__(self, config_path: str = None, assigned_profile: str = None):
         """
@@ -277,27 +278,25 @@ class SmartEngine:
             with open(self.tokens_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
 
-            now = time.time()
             loaded = 0
-            expired = 0
 
             for profile in self.profiles:
                 profile_name = Path(profile.value).name
                 if profile_name in data:
                     token_data = data[profile_name]
-                    token_time = token_data.get('time', 0)
 
-                    # Check het han chua (50 phut)
-                    if now - token_time < self.TOKEN_EXPIRY_SECONDS:
-                        profile.token = token_data.get('token', '')
+                    # KHONG check thoi gian - load tat ca tokens
+                    # Chi refresh khi API tra 401
+                    token = token_data.get('token', '')
+                    if token:
+                        profile.token = token
                         profile.project_id = token_data.get('project_id', '')
-                        profile.token_time = token_time
+                        profile.token_time = token_data.get('time', 0)
+                        profile.token_invalid = False  # Reset invalid flag
                         loaded += 1
-                    else:
-                        expired += 1
 
             if loaded > 0:
-                self.log(f"Loaded {loaded} cached tokens ({expired} expired)")
+                self.log(f"Loaded {loaded} cached tokens (khong check expire, chi refresh khi 401)")
 
         except Exception as e:
             self.log(f"Load cached tokens error: {e}", "WARN")
@@ -368,22 +367,47 @@ class SmartEngine:
             self.log(f"Save tokens error: {e}", "WARN")
 
     def is_token_valid(self, profile: Resource) -> bool:
-        """Check token con valid khong (chua het han + API hoat dong)."""
+        """Check token con valid khong.
+
+        KHONG check theo thoi gian - chi refresh khi API loi 401.
+        Token se duoc danh dau invalid khi API tra 401 -> trigger refresh.
+        """
         if not profile.token:
             return False
 
-        # Check het han chua
-        if profile.token_time:
-            age = time.time() - profile.token_time
-            if age > self.TOKEN_EXPIRY_SECONDS:
-                self.log(f"Token {Path(profile.value).name} het han ({int(age/60)} phut)")
-                profile.token = ""
-                return False
+        # Khong check thoi gian nua - chi refresh khi API that su loi
+        # Token se duoc danh dau invalid khi API tra 401
+        return not getattr(profile, 'token_invalid', False)
 
-        # Quick API test (optional - co the bo qua de nhanh hon)
-        # TODO: Them API test neu can
+    def mark_token_invalid(self, profile: Resource, reason: str = "API 401"):
+        """Danh dau token invalid khi API tra loi 401.
 
-        return True
+        Args:
+            profile: Profile co token loi
+            reason: Ly do (de log)
+        """
+        profile.token_invalid = True
+        self.log(f"[Token] {Path(profile.value).name} bi danh dau INVALID: {reason}", "WARN")
+
+    def refresh_token_on_error(self, profile: Resource) -> bool:
+        """Refresh token khi API loi (401).
+
+        Quan trong: Mo dung project_id cu de giu media_id da tao.
+
+        Args:
+            profile: Profile can refresh
+
+        Returns:
+            True neu refresh thanh cong
+        """
+        self.log(f"[Token] Refresh token cho {Path(profile.value).name} (giu project_id: {profile.project_id[:8] if profile.project_id else 'N/A'}...)")
+
+        # Reset flag
+        profile.token_invalid = False
+        profile.token = ""
+
+        # Lay token moi (se reuse project_id)
+        return self.get_token_for_profile(profile)
 
     def get_valid_token_count(self) -> int:
         """Dem so token con valid."""
@@ -678,33 +702,33 @@ class SmartEngine:
 
     def refresh_expired_tokens(self) -> int:
         """
-        Kiem tra va refresh cac token da het han.
-        Goi khi khoi dong tool.
+        Kiem tra va refresh cac token bi danh dau INVALID.
+        Chi chay khi co token bi mark invalid (do API 401).
 
         Returns:
             So token da refresh thanh cong
         """
         refreshed = 0
-        expired_profiles = []
+        invalid_profiles = []
 
-        # Tim cac profile co token het han
+        # Tim cac profile co token bi mark invalid
         for profile in self.profiles:
             if profile.token and not self.is_token_valid(profile):
-                expired_profiles.append(profile)
-                profile.token = ""  # Clear expired token
+                invalid_profiles.append(profile)
+                profile.token = ""  # Clear invalid token
 
-        if not expired_profiles:
+        if not invalid_profiles:
             return 0
 
-        self.log(f"Tim thay {len(expired_profiles)} token het han, dang refresh...")
+        self.log(f"Tim thay {len(invalid_profiles)} token INVALID, dang refresh...")
 
-        for profile in expired_profiles:
+        for profile in invalid_profiles:
             if self.stop_flag:
                 break
             if self.get_token_for_profile(profile):
                 refreshed += 1
 
-        self.log(f"Da refresh {refreshed}/{len(expired_profiles)} tokens")
+        self.log(f"Da refresh {refreshed}/{len(invalid_profiles)} tokens")
         return refreshed
 
     # ========== SRT PROCESSING ==========
@@ -1146,12 +1170,18 @@ class SmartEngine:
                     self.log(f"Download failed {pid}", "ERROR")
                     return False, False
             else:
-                # Check if token expired
+                # Check if token expired (API 401)
                 error_str = str(error).lower()
                 token_expired = 'expired' in error_str or 'unauthorized' in error_str or '401' in error_str or 'authentication' in error_str
                 if token_expired:
-                    self.log(f"Token het han cho {pid}, can refresh", "WARN")
-                    profile.token = ""  # Clear expired token
+                    self.log(f"Token het han cho {pid} (API 401), thu refresh...", "WARN")
+                    self.mark_token_invalid(profile, f"API 401 - {pid}")
+
+                    # Thu refresh ngay va retry
+                    if retry_count < 2 and self.refresh_token_on_error(profile):
+                        self.log(f"  -> Refresh OK, retry {pid}...", "OK")
+                        return self.generate_single_image(prompt_data, profile, retry_count + 1)
+
                     return False, token_expired
 
                 # Check for 403 Forbidden - could be rate limit or account issue
@@ -1198,8 +1228,13 @@ class SmartEngine:
             error_str = str(e).lower()
             token_expired = 'expired' in error_str or 'unauthorized' in error_str or '401' in error_str or 'authentication' in error_str
             if token_expired:
-                self.log(f"Token het han cho {pid}", "WARN")
-                profile.token = ""
+                self.log(f"Token het han cho {pid} (Exception), thu refresh...", "WARN")
+                self.mark_token_invalid(profile, f"Exception 401 - {pid}")
+
+                # Thu refresh ngay va retry
+                if retry_count < 2 and self.refresh_token_on_error(profile):
+                    self.log(f"  -> Refresh OK, retry {pid}...", "OK")
+                    return self.generate_single_image(prompt_data, profile, retry_count + 1)
             else:
                 self.log(f"Image error {pid}: {e}", "ERROR")
             return False, token_expired
