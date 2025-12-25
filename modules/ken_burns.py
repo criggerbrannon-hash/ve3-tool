@@ -246,7 +246,8 @@ class KenBurnsGenerator:
         self,
         effect: KenBurnsEffect,
         duration: float,
-        fade_duration: float = 0.4
+        fade_duration: float = 0.4,
+        simple_mode: bool = False
     ) -> str:
         """
         Tạo FFmpeg filter string cho hiệu ứng Ken Burns.
@@ -255,11 +256,16 @@ class KenBurnsGenerator:
             effect: Loại hiệu ứng
             duration: Thời lượng clip (giây)
             fade_duration: Thời lượng fade in/out (giây)
+            simple_mode: True = no easing (faster, for balanced mode)
 
         Returns:
             FFmpeg filter string
         """
         config = self.get_config(effect)
+
+        # In simple mode, disable easing for faster rendering
+        if simple_mode:
+            config.use_easing = False
         total_frames = int(duration * self.ZOOMPAN_FPS)
 
         # === ZOOMPAN FILTER ===

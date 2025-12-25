@@ -1990,8 +1990,19 @@ class SmartEngine:
         if not all_prompts:
             return {"error": "no_prompts"}
 
-        # Filter: chi lay prompts CHUA co anh
-        prompts = [p for p in all_prompts if not Path(p['output_path']).exists()]
+        # Helper: check cả .png và .mp4 (sau I2V, ảnh .png chuyển thành .mp4)
+        def _media_exists(output_path: str) -> bool:
+            p = Path(output_path)
+            # Check original path (.png)
+            if p.exists():
+                return True
+            # Check .mp4 variant (sau I2V)
+            if p.with_suffix('.mp4').exists():
+                return True
+            return False
+
+        # Filter: chi lay prompts CHUA co anh (check cả .png và .mp4)
+        prompts = [p for p in all_prompts if not _media_exists(p['output_path'])]
         existing_count = len(all_prompts) - len(prompts)
 
         if existing_count > 0:
@@ -2031,18 +2042,30 @@ class SmartEngine:
             if self._video_worker_running:
                 img_dir = proj_dir / "img"
                 queued = 0
+                skipped_mp4 = 0
                 for p in all_prompts:
                     pid = p.get('id', '')
                     if pid.startswith('nv') or pid.startswith('loc'):
                         continue
+
+                    # Check cả .png và .mp4
                     img_path = img_dir / f"{pid}.png"
-                    if img_path.exists():
+                    mp4_path = img_dir / f"{pid}.mp4"
+
+                    if mp4_path.exists():
+                        # Đã có video rồi (sau I2V), không cần tạo lại
+                        skipped_mp4 += 1
+                    elif img_path.exists():
+                        # Có ảnh PNG, cần tạo video
                         video_prompt = p.get('video_prompt', '')
                         cached_media_name = media_cache.get(pid, '')
                         self._queue_video_generation(img_path, pid, video_prompt, cached_media_name)
                         queued += 1
+
                 if queued > 0:
-                    self.log(f"[VIDEO] Resume: Queue {queued} ảnh đã có để tạo video")
+                    self.log(f"[VIDEO] Resume: Queue {queued} ảnh để tạo video")
+                if skipped_mp4 > 0:
+                    self.log(f"[VIDEO] Resume: Skip {skipped_mp4} video đã tồn tại (.mp4)")
 
             # Merge results with character generation
             results = {
@@ -2080,18 +2103,29 @@ class SmartEngine:
 
                 img_dir = proj_dir / "img"
                 queued = 0
+                skipped_mp4 = 0
                 for p in all_prompts:
                     pid = p.get('id', '')
                     if pid.startswith('nv') or pid.startswith('loc'):
                         continue
+
+                    # Check cả .png và .mp4
                     img_path = img_dir / f"{pid}.png"
-                    if img_path.exists():
+                    mp4_path = img_dir / f"{pid}.mp4"
+
+                    if mp4_path.exists():
+                        # Đã có video (I2V hoàn tất), skip
+                        skipped_mp4 += 1
+                    elif img_path.exists():
                         video_prompt = p.get('video_prompt', '')
                         cached_media_name = media_cache.get(pid, '')
                         self._queue_video_generation(img_path, pid, video_prompt, cached_media_name)
                         queued += 1
+
                 if queued > 0:
                     self.log(f"[VIDEO] Đã queue {queued} ảnh để tạo video")
+                if skipped_mp4 > 0:
+                    self.log(f"[VIDEO] Skip {skipped_mp4} video đã tồn tại")
 
             # Merge results
             results = {
@@ -2220,7 +2254,9 @@ class SmartEngine:
             for p in missing_images:
                 pid = p.get('id', '')
                 img_path = img_dir / f"{pid}.png"
-                if not img_path.exists():
+                mp4_path = img_dir / f"{pid}.mp4"
+                # Skip nếu đã có .png hoặc .mp4
+                if not img_path.exists() and not mp4_path.exists():
                     retry_prompts.append(p)
 
             if not retry_prompts:
@@ -2258,8 +2294,10 @@ class SmartEngine:
                         pid = p.get('id', '')
                         prompt = p.get('img_prompt', '') or p.get('prompt', '')
                         img_path = img_dir / f"{pid}.png"
+                        mp4_path = img_dir / f"{pid}.mp4"
 
-                        if img_path.exists():
+                        # Skip nếu đã có .png hoặc .mp4 (I2V đã tạo video)
+                        if img_path.exists() or mp4_path.exists():
                             results["success"] += 1
                             continue
 
@@ -2607,7 +2645,8 @@ class SmartEngine:
                 self.log(f"  Dang tao {len(media_items)} clips ({video_count} video, {image_count} image)...")
 
                 # Ken Burns settings từ config
-                kb_enabled = True
+                # Video composition mode: quality, balanced, fast
+                compose_mode = "balanced"
                 kb_intensity = "normal"
                 try:
                     import yaml
@@ -2615,10 +2654,17 @@ class SmartEngine:
                     if config_path.exists():
                         with open(config_path, 'r', encoding='utf-8') as f:
                             config = yaml.safe_load(f) or {}
-                        kb_enabled = config.get('ken_burns_enabled', True)
+                        compose_mode = config.get('video_compose_mode', 'balanced').lower()
                         kb_intensity = config.get('ken_burns_intensity', 'normal')
                 except Exception:
                     pass
+
+                # Mode settings:
+                # - quality: Full Ken Burns + easing (slowest, best visual)
+                # - balanced: Ken Burns without easing (good balance)
+                # - fast: No Ken Burns, just fade (fastest)
+                kb_enabled = compose_mode in ["quality", "balanced"]
+                use_simple_kb = compose_mode == "balanced"  # Simplified Ken Burns
 
                 # Detect GPU encoder (NVENC for NVIDIA)
                 use_gpu = False
@@ -2639,10 +2685,17 @@ class SmartEngine:
                 ken_burns = KenBurnsGenerator(1920, 1080, intensity=kb_intensity)
                 last_kb_effect = None  # Tránh lặp hiệu ứng liền kề
 
+                # Log compose mode
+                mode_desc = {
+                    "quality": "Ken Burns + easing (đẹp nhất)",
+                    "balanced": "Ken Burns đơn giản (cân bằng)",
+                    "fast": "Chỉ fade, không zoom/pan (nhanh nhất)"
+                }
+                self.log(f"  Compose mode: {compose_mode.upper()} - {mode_desc.get(compose_mode, 'balanced')}")
                 if kb_enabled:
-                    self.log(f"  Ken Burns: ON (intensity={kb_intensity})")
+                    self.log(f"  Ken Burns: ON (intensity={kb_intensity}, simple={use_simple_kb})")
                 else:
-                    self.log(f"  Ken Burns: OFF (static images)")
+                    self.log(f"  Ken Burns: OFF (static images, fast mode)")
 
                 # Tạo từng clip
                 clip_paths = []
@@ -2714,7 +2767,11 @@ class SmartEngine:
                             last_kb_effect = kb_effect
 
                             # Tạo filter với Ken Burns + fade
-                            vf = ken_burns.generate_filter(kb_effect, target_duration, FADE_DURATION)
+                            # simple_mode=True cho balanced mode (no easing, nhanh hơn)
+                            vf = ken_burns.generate_filter(
+                                kb_effect, target_duration, FADE_DURATION,
+                                simple_mode=use_simple_kb
+                            )
 
                             # Log hiệu ứng đang dùng (mỗi 5 ảnh)
                             if i % 5 == 0:
