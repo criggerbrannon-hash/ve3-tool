@@ -2805,7 +2805,7 @@ class SmartEngine:
                         self.log(f"[VIDEO] Dùng token từ settings.yaml")
 
                 self._video_settings = {
-                    'count': settings.get('video_count', '0'),
+                    'count': settings.get('video_count', '10'),  # Default 10 images → video
                     'model': settings.get('video_model', 'fast'),
                     'replace_image': settings.get('video_replace_image', True),
                     'bearer_token': bearer_token,
@@ -2838,8 +2838,17 @@ class SmartEngine:
             self.log("[VIDEO] Video generation disabled (count = 0)", "INFO")
             return
 
+        # Kiểm tra token: ưu tiên prefetched → settings
+        if not self._video_settings.get('bearer_token'):
+            # Thử dùng prefetched token từ parallel batch mode
+            if hasattr(self, '_prefetched_token') and self._prefetched_token:
+                self._video_settings['bearer_token'] = self._prefetched_token.get('token', '')
+                self._video_settings['project_id'] = self._prefetched_token.get('project_id', '')
+                self.log("[VIDEO] Dùng pre-fetched token cho video generation")
+
         if not self._video_settings.get('bearer_token'):
             self.log("[VIDEO] No bearer token - video generation disabled", "WARN")
+            self.log("[VIDEO] Token sẽ được lấy trong quá trình tạo ảnh, video sẽ được tạo sau", "INFO")
             return
 
         self._video_worker_running = True
