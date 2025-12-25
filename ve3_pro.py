@@ -753,25 +753,34 @@ class UnixVoiceToVideo:
     # ========== CONFIG ==========
     
     def load_config(self):
-        """Load config from accounts.json."""
+        """Load config from chrome_profiles/ and accounts.json."""
+        # Luôn scan thư mục chrome_profiles/ trước (tạo từ GUI)
+        self.profiles = []
+        profiles_dir = ROOT_DIR / "chrome_profiles"
+        if profiles_dir.exists():
+            for item in profiles_dir.iterdir():
+                if item.is_dir() and not item.name.startswith('.'):
+                    self.profiles.append(str(item))
+
         accounts_file = CONFIG_DIR / "accounts.json"
-        
+
         if not accounts_file.exists():
             self.create_default_config()
             return
-        
+
         try:
             with open(accounts_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
             self.chrome_path = data.get('chrome_path', self.chrome_path)
-            
-            # Profiles
-            self.profiles = []
+
+            # Thêm profiles từ accounts.json (nếu chưa có trong chrome_profiles/)
+            existing_paths = set(self.profiles)
             for p in data.get('chrome_profiles', []):
                 path = p if isinstance(p, str) else p.get('path', '')
                 if path and not path.startswith('THAY_BANG') and Path(path).exists():
-                    self.profiles.append(path)
+                    if path not in existing_paths:
+                        self.profiles.append(path)
             
             # API keys (thu tu uu tien: Ollama > Gemini > Groq > DeepSeek)
             api = data.get('api_keys', {})
