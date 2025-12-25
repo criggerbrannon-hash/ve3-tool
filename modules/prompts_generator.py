@@ -255,8 +255,8 @@ class MultiAIClient:
         # Determine if prompt expects JSON response
         expects_json = any(kw in prompt.lower() for kw in ['json', 'output format', '{"', "{'"])
 
-        # DeepSeek max_tokens limit is 8192
-        deepseek_max_tokens = min(max_tokens, 8192)
+        # DeepSeek V3 (deepseek-chat) hỗ trợ đến 16K output tokens
+        deepseek_max_tokens = min(max_tokens, 16000)
 
         data = {
             "model": "deepseek-chat",
@@ -862,12 +862,12 @@ class PromptGenerator:
         """
         Generate content chỉ dùng DeepSeek (theo yêu cầu user).
 
-        DeepSeek có giới hạn max_tokens=8192. Nếu response bị truncate, return empty
+        DeepSeek V3 hỗ trợ max_tokens=16000. Nếu response bị truncate, return empty
         để trigger retry logic ở layer trên (chunk sẽ được chia nhỏ hơn).
         """
-        print("[Director] Dùng DeepSeek (giới hạn 8192 tokens)")
+        print(f"[Director] Dùng DeepSeek (max_tokens={max_tokens})")
         try:
-            result = self.ai_client.generate_content(prompt, temperature, min(max_tokens, 8192))
+            result = self.ai_client.generate_content(prompt, temperature, max_tokens)
             if result:
                 print(f"[Director] DeepSeek trả về {len(result)} ký tự")
 
