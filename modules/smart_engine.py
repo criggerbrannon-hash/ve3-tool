@@ -3114,6 +3114,136 @@ class SmartEngine:
         """Get video generation results."""
         return self._video_results.copy()
 
+    # =========================================================================
+    # PARALLEL VOICE PROCESSING - Xử lý nhiều voice song song
+    # =========================================================================
+
+    def run_batch_parallel(
+        self,
+        voice_files: List[str],
+        output_base_dir: str = None,
+        parallel_voices: int = 3,
+        callback: Callable = None
+    ) -> Dict:
+        """
+        Xử lý nhiều voice files SONG SONG để tối ưu thời gian.
+
+        Thay vì:
+          Voice1 → [SRT 5m] → [Prompts 1m] → [Images 20m] → [Video 60m]
+          Voice2 → ... chờ Voice1 xong ...
+          Voice3 → ... chờ Voice2 xong ...
+          = 3 * 86m = 258 phút
+
+        Với parallel processing:
+          Voice1 → [SRT] → [Prompts] → [Images+Video] ─┐
+          Voice2 → [SRT] → [Prompts] → [Images+Video] ─┼─> ~90 phút cho 3 voices
+          Voice3 → [SRT] → [Prompts] → [Images+Video] ─┘
+
+        Args:
+            voice_files: List các file voice (.mp3, .wav)
+            output_base_dir: Thư mục base cho output (default: PROJECTS)
+            parallel_voices: Số lượng voice xử lý song song (default: 3)
+            callback: Hàm log callback
+
+        Returns:
+            Dict với kết quả tổng hợp
+        """
+        self.callback = callback
+        results = {
+            "total": len(voice_files),
+            "success": 0,
+            "failed": 0,
+            "results": []
+        }
+
+        if not voice_files:
+            self.log("Không có voice files để xử lý!", "WARN")
+            return results
+
+        self.log("=" * 60)
+        self.log(f"PARALLEL VOICE PROCESSING - {len(voice_files)} voices")
+        self.log(f"Parallel workers: {parallel_voices}")
+        self.log("=" * 60)
+
+        # Limit parallel to avoid overload
+        parallel_voices = min(parallel_voices, len(voice_files), 5)
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import threading
+
+        # Lock for thread-safe logging
+        log_lock = threading.Lock()
+
+        def process_voice(voice_path: str, voice_idx: int) -> Dict:
+            """Process a single voice in a thread."""
+            voice_name = Path(voice_path).stem
+
+            def thread_log(msg, level="INFO"):
+                with log_lock:
+                    self.log(f"[Voice {voice_idx+1}/{len(voice_files)}] {msg}", level)
+
+            try:
+                thread_log(f"Bắt đầu: {voice_name}")
+
+                # Create separate engine instance for this thread
+                # to avoid conflicts with shared state
+                engine = SmartEngine(config_dir=self.config_dir)
+                engine.callback = lambda msg, lvl="INFO": thread_log(msg, lvl)
+
+                # Determine output dir
+                if output_base_dir:
+                    out_dir = Path(output_base_dir) / voice_name
+                else:
+                    out_dir = Path("PROJECTS") / voice_name
+
+                # Run the voice processing
+                result = engine.run(voice_path, output_dir=str(out_dir))
+
+                if result.get("error"):
+                    thread_log(f"Lỗi: {result.get('error')}", "ERROR")
+                    return {"voice": voice_name, "success": False, "error": result.get("error")}
+                else:
+                    thread_log(f"Hoàn thành!", "OK")
+                    return {"voice": voice_name, "success": True, "result": result}
+
+            except Exception as e:
+                thread_log(f"Exception: {e}", "ERROR")
+                return {"voice": voice_name, "success": False, "error": str(e)}
+
+        # Process voices in parallel
+        start_time = time.time()
+
+        with ThreadPoolExecutor(max_workers=parallel_voices) as executor:
+            futures = {
+                executor.submit(process_voice, voice, idx): voice
+                for idx, voice in enumerate(voice_files)
+            }
+
+            for future in as_completed(futures):
+                try:
+                    result = future.result()
+                    results["results"].append(result)
+
+                    if result.get("success"):
+                        results["success"] += 1
+                    else:
+                        results["failed"] += 1
+
+                except Exception as e:
+                    results["failed"] += 1
+                    results["results"].append({"error": str(e)})
+
+        elapsed = time.time() - start_time
+        elapsed_min = int(elapsed / 60)
+
+        self.log("=" * 60)
+        self.log(f"HOÀN THÀNH: {results['success']}/{results['total']} voices")
+        self.log(f"Thời gian: {elapsed_min} phút ({elapsed:.0f}s)")
+        self.log(f"Trung bình: {elapsed_min / max(1, results['total']):.1f} phút/voice")
+        self.log("=" * 60)
+
+        return results
+
 
 # ============================================================================
 # SIMPLE API
@@ -3132,6 +3262,41 @@ def run_auto(input_path: str, callback: Callable = None) -> Dict:
     """
     engine = SmartEngine()
     return engine.run(input_path, callback=callback)
+
+
+def run_batch_parallel(
+    voice_files: List[str],
+    parallel_voices: int = 3,
+    callback: Callable = None
+) -> Dict:
+    """
+    Xử lý NHIỀU voice files SONG SONG.
+
+    Ví dụ: 3 voices x 90 phút mỗi voice
+    - Tuần tự: 270 phút
+    - Song song (3 workers): ~100 phút
+
+    Args:
+        voice_files: List các file voice (.mp3, .wav)
+        parallel_voices: Số lượng voice xử lý song song (1-5)
+        callback: Hàm log callback
+
+    Returns:
+        Dict với kết quả tổng hợp
+
+    Usage:
+        from modules.smart_engine import run_batch_parallel
+
+        voices = ["voice1.mp3", "voice2.mp3", "voice3.mp3"]
+        result = run_batch_parallel(voices, parallel_voices=3)
+        print(f"Done: {result['success']}/{result['total']}")
+    """
+    engine = SmartEngine()
+    return engine.run_batch_parallel(
+        voice_files,
+        parallel_voices=parallel_voices,
+        callback=callback
+    )
 
 
 if __name__ == "__main__":
