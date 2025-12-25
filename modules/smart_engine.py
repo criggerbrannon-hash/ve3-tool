@@ -2136,11 +2136,21 @@ class SmartEngine:
         else:
             self.log("[STEP 8] Khong co I2V, skip...")
 
-        # === 9. DONG BROWSER ===
+        # === 9. RETRY FAILED ITEMS ===
+        # Thử lại các ảnh/video bị lỗi để có đủ nguyên liệu cho edit
+        video_res = results.get("video_gen", {})
+        retry_results = self._retry_failed_items(proj_dir, excel_path, all_prompts, results, video_res)
+        if retry_results.get("retried", 0) > 0:
+            self.log(f"[STEP 9] Đã retry: {retry_results['success']} OK, {retry_results['failed']} failed")
+            # Update results
+            results["success"] += retry_results.get("success", 0)
+            results["failed"] = max(0, results.get("failed", 0) - retry_results.get("success", 0))
+
+        # === 10. DONG BROWSER ===
         self._close_browser()
 
-        # === 10. COMPOSE VIDEO (sau khi I2V xong) ===
-        self.log("[STEP 10] Ghep video...")
+        # === 11. COMPOSE VIDEO (sau khi retry xong) ===
+        self.log("[STEP 11] Ghep video...")
         if results.get("failed", 0) > 0:
             self.log(f"  CANH BAO: {results['failed']} anh fail, nhung van ghep video voi anh co san!", "WARN")
 
@@ -2150,6 +2160,150 @@ class SmartEngine:
             results["video"] = str(video_path)
         else:
             self.log("  Video composer khong kha dung hoac thieu file", "WARN")
+
+        return results
+
+    def _retry_failed_items(
+        self,
+        proj_dir: Path,
+        excel_path: Path,
+        all_prompts: List[Dict],
+        image_results: Dict,
+        video_results: Dict,
+        max_retries: int = 2
+    ) -> Dict:
+        """
+        Retry các ảnh/video bị lỗi để có đủ nguyên liệu cho edit.
+
+        Args:
+            proj_dir: Project directory
+            excel_path: Excel prompts file
+            all_prompts: All prompts list
+            image_results: Results from image generation
+            video_results: Results from video generation
+            max_retries: Max retry attempts per item
+
+        Returns:
+            Dict with retry results
+        """
+        results = {"retried": 0, "success": 0, "failed": 0}
+
+        img_dir = proj_dir / "img"
+
+        # === 1. FIND MISSING IMAGES ===
+        missing_images = []
+        for p in all_prompts:
+            pid = p.get('id', '')
+            if pid.startswith('nv') or pid.startswith('loc'):
+                continue  # Skip character prompts
+            img_path = img_dir / f"{pid}.png"
+            video_path = img_dir / f"{pid}.mp4"
+            if not img_path.exists() and not video_path.exists():
+                missing_images.append(p)
+
+        if not missing_images:
+            self.log("[RETRY] Không có ảnh thiếu, skip!", "OK")
+            return results
+
+        self.log(f"[RETRY] Phát hiện {len(missing_images)} ảnh thiếu, đang retry...")
+
+        # === 2. RETRY MISSING IMAGES ===
+        for retry in range(max_retries):
+            if not missing_images:
+                break
+
+            self.log(f"[RETRY] Lần thử {retry + 1}/{max_retries}: {len(missing_images)} ảnh")
+
+            # Try to regenerate using API
+            retry_prompts = []
+            for p in missing_images:
+                pid = p.get('id', '')
+                img_path = img_dir / f"{pid}.png"
+                if not img_path.exists():
+                    retry_prompts.append(p)
+
+            if not retry_prompts:
+                break
+
+            results["retried"] += len(retry_prompts)
+
+            try:
+                # Use API mode to retry
+                from modules.browser_flow_generator import BrowserFlowGenerator
+
+                # Load settings for API
+                import yaml
+                settings_path = self.config_dir / "settings.yaml"
+                settings = {}
+                if settings_path.exists():
+                    with open(settings_path, 'r', encoding='utf-8') as f:
+                        settings = yaml.safe_load(f) or {}
+
+                bearer_token = settings.get('flow_bearer_token', '')
+                proxy_token = settings.get('proxy_api_token', '')
+                project_id = settings.get('flow_project_id', '')
+
+                if bearer_token and proxy_token:
+                    generator = BrowserFlowGenerator(
+                        project_path=str(proj_dir),
+                        flow_bearer_token=bearer_token,
+                        flow_project_id=project_id,
+                        proxy_api_token=proxy_token,
+                        use_api_mode=True
+                    )
+
+                    # Generate missing images
+                    for p in retry_prompts:
+                        pid = p.get('id', '')
+                        prompt = p.get('img_prompt', '') or p.get('prompt', '')
+                        img_path = img_dir / f"{pid}.png"
+
+                        if img_path.exists():
+                            results["success"] += 1
+                            continue
+
+                        try:
+                            self.log(f"  -> Retry: {pid}")
+                            # Use the API to generate
+                            result = generator.generate_from_prompts_api(
+                                prompts=[p],
+                                save_dir=str(img_dir)
+                            )
+                            if result.get("success", 0) > 0:
+                                results["success"] += 1
+                                self.log(f"  -> OK: {pid}", "OK")
+                            else:
+                                results["failed"] += 1
+                                self.log(f"  -> FAIL: {pid}", "ERROR")
+                        except Exception as e:
+                            results["failed"] += 1
+                            self.log(f"  -> Error: {pid} - {e}", "ERROR")
+
+                else:
+                    self.log("[RETRY] Thiếu bearer_token hoặc proxy_token, skip retry", "WARN")
+                    break
+
+            except Exception as e:
+                self.log(f"[RETRY] Error: {e}", "ERROR")
+                break
+
+            # Update missing list
+            missing_images = []
+            for p in all_prompts:
+                pid = p.get('id', '')
+                if pid.startswith('nv') or pid.startswith('loc'):
+                    continue
+                img_path = img_dir / f"{pid}.png"
+                video_path = img_dir / f"{pid}.mp4"
+                if not img_path.exists() and not video_path.exists():
+                    missing_images.append(p)
+
+        # Final status
+        still_missing = len(missing_images)
+        if still_missing > 0:
+            self.log(f"[RETRY] Còn {still_missing} ảnh không thể retry!", "WARN")
+        else:
+            self.log(f"[RETRY] Đã hoàn thành tất cả!", "OK")
 
         return results
 

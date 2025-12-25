@@ -1485,8 +1485,10 @@ class UnixVoiceToVideo:
             if config_path.exists():
                 with open(config_path, 'r', encoding='utf-8') as f:
                     config = yaml.safe_load(f) or {}
-                # Backwards compatible with old key
-                value = config.get('parallel_workers', config.get('parallel_browsers', 3))
+                # Priority: parallel_voices > parallel_workers > parallel_browsers
+                value = config.get('parallel_voices',
+                        config.get('parallel_workers',
+                        config.get('parallel_browsers', 3)))
                 return max(1, min(10, value))
         except:
             pass
@@ -1501,12 +1503,13 @@ class UnixVoiceToVideo:
             if config_path.exists():
                 with open(config_path, 'r', encoding='utf-8') as f:
                     config = yaml.safe_load(f) or {}
-            config['parallel_workers'] = max(1, min(10, num))
+            # Save to parallel_voices (new key)
+            config['parallel_voices'] = max(1, min(10, num))
             with open(config_path, 'w', encoding='utf-8') as f:
                 yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
-            self.log(f"Parallel workers: {num}", "OK")
+            self.log(f"Parallel voices: {num}", "OK")
         except Exception as e:
-            print(f"Save parallel_workers error: {e}")
+            print(f"Save parallel_voices error: {e}")
 
     # ======= VIDEO SETTINGS =======
     def _get_video_count_setting(self) -> str:
