@@ -56,17 +56,23 @@ class ChromeTokenExtractor:
         self.project_id = None
 
         # Extract profile info from path
-        profile_path = Path(profile_path)
-        default_folder = profile_path / "Default"
+        profile_path_obj = Path(profile_path)
+        default_folder = profile_path_obj / "Default"
 
-        if default_folder.exists():
-            # Tool's user-data-dir (has Default inside)
-            self.user_data_dir = str(profile_path)
-            self.profile_name = None  # Chrome uses Default automatically
+        # Kiểm tra xem đây là profile từ chrome_profiles/ (tool tạo) hay system Chrome
+        is_tool_profile = "chrome_profiles" in str(profile_path_obj).lower()
+
+        if is_tool_profile or default_folder.exists() or not (profile_path_obj.parent / "Local State").exists():
+            # Tool's user-data-dir:
+            # - Có "chrome_profiles" trong path
+            # - Có Default folder bên trong
+            # - HOẶC parent không có "Local State" (không phải system Chrome User Data)
+            self.user_data_dir = str(profile_path_obj)
+            self.profile_name = None  # Chrome sẽ tự tạo/dùng Default
         else:
-            # System Chrome profile folder
-            self.profile_name = profile_path.name  # e.g., "Profile 2"
-            self.user_data_dir = str(profile_path.parent)  # e.g., "C:\Users\...\User Data"
+            # System Chrome profile folder (e.g., "Profile 2" trong User Data)
+            self.profile_name = profile_path_obj.name  # e.g., "Profile 2"
+            self.user_data_dir = str(profile_path_obj.parent)  # e.g., "C:\Users\...\User Data"
 
     def _create_driver(self):
         """Tạo Chrome WebDriver với CDP enabled và anti-detection."""
@@ -98,18 +104,24 @@ class ChromeTokenExtractor:
         # Will use JavaScript injection to capture tokens instead
 
         if self.headless:
+            # Use new headless mode (less detectable than old --headless)
             options.add_argument("--headless=new")
+            # CRITICAL: Fake user-agent to hide HeadlessChrome
+            options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
         # Anti-detection flags
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--window-size=1280,800")
+        options.add_argument("--window-size=1920,1080")  # Normal screen size
         options.add_argument(f"--remote-debugging-port={self.debug_port}")
 
         # Additional anti-detection
         options.add_argument("--disable-blink-features=AutomationControlled")
         options.add_argument("--disable-infobars")
         options.add_argument("--disable-popup-blocking")
+        options.add_argument("--disable-extensions")
+        options.add_argument("--disable-default-apps")
+        options.add_argument("--disable-component-update")
 
         self.driver = uc.Chrome(
             options=options,
@@ -142,13 +154,16 @@ class ChromeTokenExtractor:
         # NOTE: Removed goog:loggingPrefs - it's a strong fingerprint!
 
         if self.headless:
+            # Use new headless mode (less detectable)
             options.add_argument("--headless=new")
+            # CRITICAL: Fake user-agent to hide HeadlessChrome
+            options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
         # === ANTI-DETECTION FLAGS ===
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
-        options.add_argument("--window-size=1280,800")
+        options.add_argument("--window-size=1920,1080")  # Normal screen size
         options.add_argument(f"--remote-debugging-port={self.debug_port}")
 
         # Key anti-detection flags
@@ -157,6 +172,8 @@ class ChromeTokenExtractor:
         options.add_argument("--disable-popup-blocking")
         options.add_argument("--ignore-certificate-errors")
         options.add_argument("--allow-running-insecure-content")
+        options.add_argument("--disable-extensions")
+        options.add_argument("--disable-default-apps")
 
         # Hide automation indicators
         options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
@@ -240,38 +257,70 @@ class ChromeTokenExtractor:
     def _inject_stealth_scripts(self):
         """Inject JavaScript to hide automation fingerprints."""
         stealth_js = """
-        // Override navigator.webdriver
+        // Override navigator.webdriver - MUST be first
         Object.defineProperty(navigator, 'webdriver', {
-            get: () => undefined
+            get: () => undefined,
+            configurable: true
         });
 
-        // Override navigator.plugins (non-empty)
+        // Override navigator.plugins (simulate real plugins)
         Object.defineProperty(navigator, 'plugins', {
-            get: () => [1, 2, 3, 4, 5]
+            get: () => {
+                const plugins = [
+                    { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer' },
+                    { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai' },
+                    { name: 'Native Client', filename: 'internal-nacl-plugin' }
+                ];
+                plugins.length = 3;
+                return plugins;
+            }
         });
 
         // Override navigator.languages
         Object.defineProperty(navigator, 'languages', {
-            get: () => ['en-US', 'en']
+            get: () => ['vi-VN', 'vi', 'en-US', 'en']
         });
 
         // Override permissions query
-        const originalQuery = window.navigator.permissions.query;
-        window.navigator.permissions.query = (parameters) => (
-            parameters.name === 'notifications' ?
-                Promise.resolve({ state: Notification.permission }) :
-                originalQuery(parameters)
-        );
+        if (navigator.permissions && navigator.permissions.query) {
+            const originalQuery = navigator.permissions.query.bind(navigator.permissions);
+            navigator.permissions.query = (parameters) => (
+                parameters.name === 'notifications' ?
+                    Promise.resolve({ state: Notification.permission }) :
+                    originalQuery(parameters)
+            );
+        }
 
-        // Override Chrome automation detection
-        window.chrome = {
-            runtime: {}
-        };
+        // Fake Chrome runtime for headless
+        if (!window.chrome) {
+            window.chrome = {};
+        }
+        window.chrome.runtime = window.chrome.runtime || {};
+        window.chrome.loadTimes = function() {};
+        window.chrome.csi = function() {};
+        window.chrome.app = window.chrome.app || { isInstalled: false };
+
+        // Override navigator.platform
+        Object.defineProperty(navigator, 'platform', {
+            get: () => 'Win32'
+        });
+
+        // Override screen properties for headless
+        Object.defineProperty(screen, 'availWidth', { get: () => 1920 });
+        Object.defineProperty(screen, 'availHeight', { get: () => 1040 });
+        Object.defineProperty(screen, 'width', { get: () => 1920 });
+        Object.defineProperty(screen, 'height', { get: () => 1080 });
+        Object.defineProperty(screen, 'colorDepth', { get: () => 24 });
+        Object.defineProperty(screen, 'pixelDepth', { get: () => 24 });
 
         // Remove automation-related properties
         delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
         delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
         delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
+
+        // Hide webdriver in prototype
+        const originalProto = Navigator.prototype;
+        delete originalProto.webdriver;
         """
         try:
             self.driver.execute_script(stealth_js)

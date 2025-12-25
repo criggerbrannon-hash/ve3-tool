@@ -1159,7 +1159,83 @@ class UnixVoiceToVideo:
         ttk.Label(token_tab, text="Tokens đã cache:", font=('Segoe UI', 10, 'bold')).pack(anchor=tk.W)
         self._show_cached_tokens(token_tab)
 
-        # Tab 4: Prompts Template
+        # Tab 4: Video Generation
+        video_tab = ttk.Frame(notebook, padding=15)
+        notebook.add(video_tab, text="  🎬 Video  ")
+
+        ttk.Label(video_tab, text="Chuyển đổi Ảnh sang Video (I2V)",
+                  font=('Segoe UI', 11, 'bold')).pack(anchor=tk.W, pady=(0, 5))
+        ttk.Label(video_tab, text="Sử dụng Google Veo 3 để chuyển ảnh thành video",
+                  foreground='gray').pack(anchor=tk.W, pady=(0, 10))
+
+        # Video count setting
+        video_count_frame = ttk.Frame(video_tab)
+        video_count_frame.pack(fill=tk.X, pady=(5, 10))
+
+        ttk.Label(video_count_frame, text="Số ảnh chuyển video:").pack(side=tk.LEFT)
+
+        video_count_var = tk.StringVar(value=self._get_video_count_setting())
+        video_count_entry = ttk.Entry(video_count_frame, textvariable=video_count_var, width=10)
+        video_count_entry.pack(side=tk.LEFT, padx=5)
+
+        ttk.Label(video_count_frame, text="(số hoặc 'full' = tất cả)", foreground='gray').pack(side=tk.LEFT)
+
+        # Video model setting
+        video_model_frame = ttk.Frame(video_tab)
+        video_model_frame.pack(fill=tk.X, pady=(5, 10))
+
+        ttk.Label(video_model_frame, text="Model video:").pack(side=tk.LEFT)
+
+        video_model_var = tk.StringVar(value=self._get_video_model_setting())
+        ttk.Radiobutton(video_model_frame, text="Fast (nhanh)", variable=video_model_var, value="fast").pack(side=tk.LEFT, padx=10)
+        ttk.Radiobutton(video_model_frame, text="Quality (chất lượng)", variable=video_model_var, value="quality").pack(side=tk.LEFT)
+
+        # Video prompt setting
+        ttk.Label(video_tab, text="Prompt chuyển động:", font=('Segoe UI', 10)).pack(anchor=tk.W, pady=(10, 5))
+        ttk.Label(video_tab, text="Mô tả chuyển động mong muốn (để trống = mặc định)",
+                  foreground='gray', font=('Segoe UI', 9)).pack(anchor=tk.W)
+
+        video_prompt_var = tk.StringVar(value=self._get_video_prompt_setting())
+        video_prompt_entry = ttk.Entry(video_tab, textvariable=video_prompt_var, width=60)
+        video_prompt_entry.pack(fill=tk.X, pady=(5, 10))
+
+        # Replace image option
+        replace_var = tk.BooleanVar(value=self._get_video_replace_setting())
+        ttk.Checkbutton(video_tab, text="Thay thế ảnh gốc bằng video (backup vào img_backup/)",
+                        variable=replace_var).pack(anchor=tk.W, pady=(5, 10))
+
+        def save_video_settings():
+            """Save video generation settings."""
+            try:
+                settings_file = CONFIG_DIR / "settings.yaml"
+                settings = {}
+                if settings_file.exists():
+                    import yaml
+                    with open(settings_file, 'r', encoding='utf-8') as f:
+                        settings = yaml.safe_load(f) or {}
+
+                settings['video_count'] = video_count_var.get().strip()
+                settings['video_model'] = video_model_var.get()
+                settings['video_prompt'] = video_prompt_var.get().strip()
+                settings['video_replace_image'] = replace_var.get()
+
+                import yaml
+                with open(settings_file, 'w', encoding='utf-8') as f:
+                    yaml.dump(settings, f, allow_unicode=True, default_flow_style=False)
+
+                messagebox.showinfo("OK", "Đã lưu cài đặt video!")
+            except Exception as e:
+                messagebox.showerror("Lỗi", f"Không thể lưu: {e}")
+
+        ttk.Button(video_tab, text="💾 Lưu cài đặt Video", command=save_video_settings).pack(anchor=tk.W, pady=(10, 5))
+
+        ttk.Separator(video_tab, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=15)
+
+        ttk.Label(video_tab, text="💡 Lưu ý:", font=('Segoe UI', 10, 'bold')).pack(anchor=tk.W)
+        ttk.Label(video_tab, text="• Cần Bearer Token (lấy từ tab Token)\n• Mỗi video mất 1-3 phút để tạo\n• Video được lưu vào thư mục video/",
+                  foreground='gray', justify=tk.LEFT).pack(anchor=tk.W)
+
+        # Tab 5: Prompts Template
         prompts_tab = ttk.Frame(notebook, padding=15)
         notebook.add(prompts_tab, text="  📝 Prompts  ")
 
@@ -1335,6 +1411,59 @@ class UnixVoiceToVideo:
             self.log(f"Parallel browsers: {num}", "OK")
         except Exception as e:
             print(f"Save generation_mode error: {e}")
+
+    # ======= VIDEO SETTINGS =======
+    def _get_video_count_setting(self) -> str:
+        """Get video count setting (number or 'full')."""
+        try:
+            import yaml
+            config_path = CONFIG_DIR / "settings.yaml"
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+                return str(config.get('video_count', '10'))
+        except:
+            pass
+        return '10'  # Default: 10 images to video
+
+    def _get_video_model_setting(self) -> str:
+        """Get video model setting ('fast' or 'quality')."""
+        try:
+            import yaml
+            config_path = CONFIG_DIR / "settings.yaml"
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+                return config.get('video_model', 'fast')
+        except:
+            pass
+        return 'fast'
+
+    def _get_video_prompt_setting(self) -> str:
+        """Get video motion prompt."""
+        try:
+            import yaml
+            config_path = CONFIG_DIR / "settings.yaml"
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+                return config.get('video_prompt', '')
+        except:
+            pass
+        return ''
+
+    def _get_video_replace_setting(self) -> bool:
+        """Get video replace image setting."""
+        try:
+            import yaml
+            config_path = CONFIG_DIR / "settings.yaml"
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+                return config.get('video_replace_image', True)
+        except:
+            pass
+        return True
 
     def _open_browser_for_login(self, profile_path: str, profile_name: str):
         """Open Chrome browser with profile for Google login."""
