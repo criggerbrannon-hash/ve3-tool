@@ -175,13 +175,26 @@ class SmartEngine:
         self._video_results = {"success": 0, "failed": 0, "pending": 0}
         self._video_settings = {}
 
+        # Log verbosity: set from settings.yaml (verbose_log: true/false)
+        self.verbose_log = False
+
         self.load_config()
         self.load_cached_tokens()  # Load tokens da luu
         self.load_media_name_cache()  # Load media_name cache
 
     def log(self, msg: str, level: str = "INFO"):
+        """Log message. Skip DEBUG level unless verbose_log is enabled."""
+        # Skip DEBUG logs unless verbose mode
+        if level == "DEBUG" and not self.verbose_log:
+            return
+
         ts = datetime.now().strftime("%H:%M:%S")
-        full_msg = f"[{ts}] [{level}] {msg}"
+        # Simplify format - remove redundant level for OK/ERROR
+        if level in ("OK", "ERROR", "WARN"):
+            full_msg = f"[{ts}] {msg}"
+        else:
+            full_msg = f"[{ts}] {msg}"
+
         if self.callback:
             self.callback(full_msg)
         else:
@@ -190,9 +203,21 @@ class SmartEngine:
 
     def load_config(self):
         """Load config."""
+        root_dir = Path(__file__).parent.parent.resolve()
+
+        # === LOAD settings.yaml ===
+        settings_path = root_dir / "config" / "settings.yaml"
+        if settings_path.exists():
+            try:
+                import yaml
+                with open(settings_path, 'r', encoding='utf-8') as f:
+                    settings = yaml.safe_load(f) or {}
+                self.verbose_log = settings.get('verbose_log', False)
+            except:
+                pass
+
         # === LOAD TỪ chrome_profiles/ DIRECTORY (ƯU TIÊN) ===
         # GUI tạo profiles ở đây, không phải accounts.json
-        root_dir = Path(__file__).parent.parent.resolve()
         profiles_dir = root_dir / "chrome_profiles"
 
         if profiles_dir.exists():
@@ -203,7 +228,7 @@ class SmartEngine:
                         value=str(profile_path)
                     ))
             if self.profiles:
-                self.log(f"[Config] Loaded {len(self.profiles)} profiles from chrome_profiles/")
+                self.log(f"[Config] Loaded {len(self.profiles)} profiles", "DEBUG")
 
         # === LOAD TỪ accounts.json (FALLBACK + API KEYS) ===
         if not self.config_path.exists():
@@ -1212,7 +1237,7 @@ class SmartEngine:
             if success and images:
                 # === DEBUG: Xem API tra ve gi ===
                 img = images[0]
-                self.log(f"  -> DEBUG: media_name={img.media_name}, media_id={img.media_id}, workflow_id={img.workflow_id}")
+                self.log(f"  -> media_name={img.media_name}, media_id={img.media_id}, workflow_id={img.workflow_id}", "DEBUG")
 
                 # === LUU MEDIA_NAME neu la nv/loc ===
                 if is_reference_image:
