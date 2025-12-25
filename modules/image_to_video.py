@@ -487,7 +487,8 @@ class ImageToVideoConverter:
         self,
         image_path: Path,
         prompt: str = "",
-        replace_image: bool = True
+        replace_image: bool = True,
+        cached_media_name: str = ""
     ) -> VideoConversionResult:
         """
         Chuyển đổi một ảnh sang video.
@@ -496,6 +497,7 @@ class ImageToVideoConverter:
             image_path: Đường dẫn ảnh
             prompt: Prompt mô tả chuyển động
             replace_image: Thay thế ảnh bằng video
+            cached_media_name: Media name đã cache từ lúc tạo ảnh (bỏ qua upload)
 
         Returns:
             VideoConversionResult
@@ -503,14 +505,21 @@ class ImageToVideoConverter:
         result = VideoConversionResult(image_path=image_path, prompt=prompt)
 
         try:
-            # Step 1: Upload image
-            result.status = "uploading"
-            media_id = self.upload_image_for_media_id(image_path)
+            # Step 1: Get media_id - dùng cached nếu có, không thì upload
+            if cached_media_name:
+                # Dùng media_name đã cache từ lúc tạo ảnh - KHÔNG CẦN UPLOAD LẠI
+                self._log(f"Sử dụng cached media_name: {cached_media_name[:50]}...")
+                result.status = "cached"
+                media_id = cached_media_name
+            else:
+                # Không có cache - phải upload ảnh để lấy media_id mới
+                result.status = "uploading"
+                media_id = self.upload_image_for_media_id(image_path)
 
-            if not media_id:
-                result.status = "failed"
-                result.error = "Failed to upload image"
-                return result
+                if not media_id:
+                    result.status = "failed"
+                    result.error = "Failed to upload image"
+                    return result
 
             result.media_id = media_id
 

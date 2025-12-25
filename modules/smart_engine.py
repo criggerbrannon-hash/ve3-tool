@@ -1441,6 +1441,8 @@ class SmartEngine:
             success_count = result.get("success", 0)
             failed_count = result.get("failed", 0)
 
+            # Video queueing sẽ được thực hiện sau khi tất cả ảnh hoàn thành (trong run())
+
             self.log(f"API mode: {success_count} thanh cong, {failed_count} that bai")
             return {"success": success_count, "failed": failed_count}
 
@@ -1966,8 +1968,50 @@ class SmartEngine:
         else:
             self.log(f"  Tổng: {len(all_prompts)} prompts")
 
+        # === START VIDEO WORKER TRƯỚC (để có thể queue cả ảnh mới và cũ) ===
+        self._start_video_worker(proj_dir)
+
+        # === LOAD CACHED MEDIA_NAMES ===
+        # Dùng để tạo video từ ảnh mà không cần upload lại
+        media_cache = {}
+        cache_path = proj_dir / "prompts" / ".media_cache.json"
+        if cache_path.exists():
+            try:
+                with open(cache_path, 'r', encoding='utf-8') as f:
+                    raw_cache = json.load(f)
+                # Extract media_name for each image_id (skip metadata keys starting with _)
+                for key, value in raw_cache.items():
+                    if key.startswith('_'):
+                        continue
+                    if isinstance(value, dict):
+                        media_cache[key] = value.get('mediaName', '')
+                    elif isinstance(value, str):
+                        media_cache[key] = value
+                if media_cache:
+                    self.log(f"[VIDEO] Loaded {len(media_cache)} cached media_names")
+            except Exception as e:
+                self.log(f"[VIDEO] Lỗi đọc cache: {e}", "WARN")
+
         if not prompts:
             self.log("  ✅ Tất cả ảnh đã tồn tại, skip tạo ảnh!", "OK")
+
+            # Queue video cho các ảnh đã có (resume mode)
+            if self._video_worker_running:
+                img_dir = proj_dir / "img"
+                queued = 0
+                for p in all_prompts:
+                    pid = p.get('id', '')
+                    if pid.startswith('nv') or pid.startswith('loc'):
+                        continue
+                    img_path = img_dir / f"{pid}.png"
+                    if img_path.exists():
+                        video_prompt = p.get('video_prompt', '')
+                        cached_media_name = media_cache.get(pid, '')
+                        self._queue_video_generation(img_path, pid, video_prompt, cached_media_name)
+                        queued += 1
+                if queued > 0:
+                    self.log(f"[VIDEO] Resume: Queue {queued} ảnh đã có để tạo video")
+
             # Merge results with character generation
             results = {
                 "success": char_results.get("success", 0),
@@ -1976,8 +2020,6 @@ class SmartEngine:
             }
         else:
             # === 5. TAO IMAGES - CHON MODE DUA TREN SETTINGS ===
-            # Start video worker (parallel with image generation)
-            self._start_video_worker(proj_dir)
 
             if generation_mode == 'api':
                 self.log("[STEP 5] Tao images bang API MODE...")
@@ -1985,6 +2027,39 @@ class SmartEngine:
             else:
                 self.log("[STEP 5] Tao images bang BROWSER MODE...")
                 scene_results = self.generate_images_browser(prompts, proj_dir)
+
+            # === QUEUE VIDEO GENERATION FOR ALL SCENE IMAGES ===
+            if self._video_worker_running:
+                # Reload cache (có thể đã được cập nhật sau khi tạo ảnh)
+                if cache_path.exists():
+                    try:
+                        with open(cache_path, 'r', encoding='utf-8') as f:
+                            raw_cache = json.load(f)
+                        media_cache = {}
+                        for key, value in raw_cache.items():
+                            if key.startswith('_'):
+                                continue
+                            if isinstance(value, dict):
+                                media_cache[key] = value.get('mediaName', '')
+                            elif isinstance(value, str):
+                                media_cache[key] = value
+                    except:
+                        pass
+
+                img_dir = proj_dir / "img"
+                queued = 0
+                for p in all_prompts:
+                    pid = p.get('id', '')
+                    if pid.startswith('nv') or pid.startswith('loc'):
+                        continue
+                    img_path = img_dir / f"{pid}.png"
+                    if img_path.exists():
+                        video_prompt = p.get('video_prompt', '')
+                        cached_media_name = media_cache.get(pid, '')
+                        self._queue_video_generation(img_path, pid, video_prompt, cached_media_name)
+                        queued += 1
+                if queued > 0:
+                    self.log(f"[VIDEO] Đã queue {queued} ảnh để tạo video")
 
             # Merge results
             results = {
@@ -2890,8 +2965,15 @@ class SmartEngine:
             self._video_worker_thread.join(timeout=5)
             self._video_worker_thread = None
 
-    def _queue_video_generation(self, image_path: Path, image_id: str, video_prompt: str = ""):
-        """Add image to video generation queue."""
+    def _queue_video_generation(self, image_path: Path, image_id: str, video_prompt: str = "", media_name: str = ""):
+        """Add image to video generation queue.
+
+        Args:
+            image_path: Path to the image file
+            image_id: ID of the image (scene_1, scene_2, etc.)
+            video_prompt: Prompt for video generation
+            media_name: Cached media_name from image generation (skip re-upload if available)
+        """
         if not self._video_worker_running:
             return
 
@@ -2910,10 +2992,12 @@ class SmartEngine:
             self._video_queue.append({
                 'image_path': image_path,
                 'image_id': image_id,
-                'video_prompt': video_prompt
+                'video_prompt': video_prompt,
+                'media_name': media_name  # Cached media_name to skip re-upload
             })
             self._video_results['pending'] = len(self._video_queue)
-            self.log(f"[VIDEO] Queued: {image_id} (pending: {len(self._video_queue)})")
+            has_media = " (có media_name)" if media_name else ""
+            self.log(f"[VIDEO] Queued: {image_id}{has_media} (pending: {len(self._video_queue)})")
 
     def _video_worker_loop(self, proj_dir: Path):
         """Video generation worker loop."""
@@ -2952,14 +3036,19 @@ class SmartEngine:
             image_path = item['image_path']
             image_id = item['image_id']
             video_prompt = item.get('video_prompt', '')
+            media_name = item.get('media_name', '')  # Cached media_name from image generation
 
-            self.log(f"[VIDEO] Processing: {image_id}")
+            if media_name:
+                self.log(f"[VIDEO] Processing: {image_id} (sử dụng cached media_name)")
+            else:
+                self.log(f"[VIDEO] Processing: {image_id} (cần upload lại ảnh)")
 
             try:
                 result = converter.convert_image_to_video(
                     image_path=image_path,
                     prompt=video_prompt,
-                    replace_image=self._video_settings.get('replace_image', True)
+                    replace_image=self._video_settings.get('replace_image', True),
+                    cached_media_name=media_name  # Pass cached media_name to skip upload
                 )
 
                 if result.is_completed:
