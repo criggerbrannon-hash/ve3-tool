@@ -2570,12 +2570,31 @@ class SmartEngine:
                 with open(settings_path, 'r', encoding='utf-8') as f:
                     settings = yaml.safe_load(f) or {}
 
+                # Lấy token từ profile đã có (ưu tiên) hoặc settings.yaml (fallback)
+                bearer_token = ''
+                project_id = ''
+
+                # 1. UU TIEN: Token từ profiles đã lấy trong quá trình chạy
+                for profile in self.profiles:
+                    if profile.token and self.is_token_valid(profile):
+                        bearer_token = profile.token
+                        project_id = profile.project_id or ''
+                        self.log(f"[VIDEO] Dùng token từ profile: {Path(profile.value).name}")
+                        break
+
+                # 2. FALLBACK: Token từ settings.yaml
+                if not bearer_token:
+                    bearer_token = settings.get('flow_bearer_token', '')
+                    project_id = settings.get('flow_project_id', '')
+                    if bearer_token:
+                        self.log(f"[VIDEO] Dùng token từ settings.yaml")
+
                 self._video_settings = {
                     'count': settings.get('video_count', '0'),
                     'model': settings.get('video_model', 'fast'),
                     'replace_image': settings.get('video_replace_image', True),
-                    'bearer_token': settings.get('flow_bearer_token', ''),
-                    'project_id': settings.get('flow_project_id', ''),
+                    'bearer_token': bearer_token,
+                    'project_id': project_id,
                     'proxy_token': settings.get('proxy_api_token', '')
                 }
 
