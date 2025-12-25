@@ -455,6 +455,84 @@ directors_treatment: |
   OUTPUT: JSON object with complete director's treatment, NO markdown.
 
 # =============================================================================
+# STEP 2.4: STORY STRUCTURE ANALYSIS (Two-Pass Strategy - Pass 1)
+# =============================================================================
+# Input: {story_text}, {srt_summary}, {characters_info}, {locations_info}
+# Output: Story structure with parts (5-8 parts for 30-60 min video)
+# This is a SMALL response - just structure, no detailed prompts
+# =============================================================================
+
+story_structure_analysis: |
+  You are a FILM DIRECTOR analyzing story structure for a long video (30-60 minutes).
+  Your job is to DIVIDE the story into LOGICAL PARTS based on content and emotional arc.
+
+  ## INPUT:
+
+  STORY TEXT:
+  {story_text}
+
+  SRT SUMMARY (timestamps):
+  {srt_summary}
+
+  CHARACTERS:
+  {characters_info}
+
+  LOCATIONS:
+  {locations_info}
+
+  ## YOUR TASK:
+
+  Divide this story into 5-8 PARTS. Each part should:
+  1. Have a clear NARRATIVE PURPOSE (hook, setup, conflict, climax, resolution)
+  2. Cover a SPECIFIC TIME RANGE from SRT
+  3. Focus on specific CHARACTERS and LOCATIONS
+  4. Have a clear EMOTIONAL GOAL
+
+  ## OUTPUT FORMAT (JSON):
+
+  {{
+    "story_analysis": {{
+      "total_duration": "45:30",
+      "total_parts": 6,
+      "emotional_arc": "Hook → Sympathy → Investment → Conflict → Climax → Resolution"
+    }},
+    "parts": [
+      {{
+        "part_number": 1,
+        "part_name": "HOOK - The Shocking Betrayal",
+        "time_range": "00:00:00 - 00:02:30",
+        "duration_seconds": 150,
+        "narrative_purpose": "HOOK",
+        "content_summary": "Mother sues son for the house he built",
+        "emotional_goal": "SHOCK and CURIOSITY",
+        "key_characters": ["nvc", "nv1"],
+        "key_locations": ["loc1_courthouse"],
+        "visual_tone": "Dark, dramatic, cold lighting",
+        "estimated_shots": 4
+      }},
+      {{
+        "part_number": 2,
+        "part_name": "SETUP - Humble Beginnings",
+        "time_range": "00:02:30 - 00:08:00",
+        "duration_seconds": 330,
+        "narrative_purpose": "SETUP",
+        "content_summary": "Poor childhood, mother worked hard",
+        "emotional_goal": "BUILD SYMPATHY",
+        "key_characters": ["nvc1", "nv1_young"],
+        "key_locations": ["loc2_old_house", "loc3_farm"],
+        "visual_tone": "Warm, nostalgic, golden hour",
+        "estimated_shots": 8
+      }}
+    ]
+  }}
+
+  IMPORTANT:
+  - Keep response SHORT (just structure, ~2000 tokens max)
+  - time_range MUST match SRT timestamps exactly
+  - estimated_shots: aim for 1 shot per 20-30 seconds of content
+  - DO NOT include detailed prompts yet (that's Pass 2)
+
+# =============================================================================
 # STEP 2.5: DIRECTOR'S SHOOTING PLAN (Kế hoạch quay phim chi tiết)
 # =============================================================================
 # Input: {story_text}, {srt_segments}, {characters_info}, {locations_info}, {global_style}

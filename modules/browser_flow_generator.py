@@ -223,23 +223,46 @@ class BrowserFlowGenerator:
             self._log(f"Profile goc: {self.profile_dir}")
             self._log(f"Working profile: {working_profile}")
 
-            # Copy data tu profile goc sang working profile (chi lan dau)
+            # LUÔN sync cookies/login data từ profile gốc (đảm bảo dùng đúng account đã đăng nhập)
             import shutil
             if not working_profile.exists():
                 working_profile.mkdir(parents=True, exist_ok=True)
-                if any(self.profile_dir.iterdir()):  # Neu profile goc co data
-                    for item in self.profile_dir.iterdir():
-                        try:
-                            dest = working_profile / item.name
-                            if item.is_dir():
+
+            # Sync các file quan trọng (cookies, login data) mỗi lần chạy
+            critical_files = [
+                "Cookies", "Login Data", "Web Data",
+                "Network/Cookies", "Network/TransportSecurity"
+            ]
+            critical_dirs = ["Default", "Network"]
+
+            if any(self.profile_dir.iterdir()):
+                # Sync critical dirs first
+                for dir_name in critical_dirs:
+                    src_dir = self.profile_dir / dir_name
+                    if src_dir.exists() and src_dir.is_dir():
+                        dest_dir = working_profile / dir_name
+                        dest_dir.mkdir(parents=True, exist_ok=True)
+                        for item in src_dir.iterdir():
+                            try:
+                                dest = dest_dir / item.name
+                                if item.is_file():
+                                    shutil.copy2(item, dest)
+                            except Exception:
+                                pass  # Skip locked files
+
+                # Sync root level files
+                for item in self.profile_dir.iterdir():
+                    try:
+                        dest = working_profile / item.name
+                        if item.is_file():
+                            shutil.copy2(item, dest)
+                        elif item.is_dir() and item.name not in critical_dirs:
+                            if not dest.exists():
                                 shutil.copytree(item, dest, dirs_exist_ok=True)
-                            else:
-                                shutil.copy2(item, dest)
-                        except Exception:
-                            pass  # Skip locked files
-                    self._log(f"Da copy profile data lan dau")
-            else:
-                self._log(f"Su dung working profile da co (giu settings)")
+                    except Exception:
+                        pass  # Skip locked files
+
+                self._log(f"Da sync profile data tu profile goc")
 
             self._working_profile = str(working_profile)  # Luu de reference
             options.add_argument(f"--user-data-dir={working_profile}")
@@ -1835,12 +1858,13 @@ class BrowserFlowGenerator:
 
         self._log("=== TU DONG LAY BEARER TOKEN (mo Chrome) ===")
 
-        # Check headless setting
-        use_headless = self.config.get('browser_headless', True)
+        # QUAN TRONG: Lay token LUON phai chay Chrome HIEN THI (khong an)
+        # Vi Google Flow detect headless mode va block!
+        # Headless chi dung cho viec TAO ANH, khong dung cho LAY TOKEN.
+        use_headless = False  # LUON False khi lay token
+        self._log("⚠️ Lay token: Chrome se HIEN THI (Google block headless)")
 
         # Chon extractor phu hop:
-        # - Headless ON: dung ChromeTokenExtractor (Selenium/CDP) - chay an
-        # - Headless OFF: dung ChromeAutoToken (PyAutoGUI) - can cua so
         TokenExtractor = None
         extractor_name = None
         if use_headless:
@@ -2901,6 +2925,24 @@ class BrowserFlowGenerator:
                 self._log(f"[{i+1}/{len(prompts)}] ID: {pid} - Skip (prompt rong)", "warn")
                 self.stats["skipped"] += 1
                 continue
+
+            # Skip DO_NOT_GENERATE markers
+            if prompt.strip().upper() == "DO_NOT_GENERATE":
+                self._log(f"[{i+1}/{len(prompts)}] ID: {pid} - Skip (DO_NOT_GENERATE)")
+                self.stats["skipped"] += 1
+                continue
+
+            # === SANITIZE PROMPT: Remove debug tags và problematic patterns ===
+            import re as re_sanitize
+            prompt = re_sanitize.sub(r'\[FALLBACK\]\s*', '', prompt, flags=re_sanitize.IGNORECASE)
+            prompt = re_sanitize.sub(r'\[DEBUG\]\s*', '', prompt, flags=re_sanitize.IGNORECASE)
+            prompt = re_sanitize.sub(r'\[TEST\]\s*', '', prompt, flags=re_sanitize.IGNORECASE)
+            prompt = re_sanitize.sub(r'\[TIER\s*\d+\]\s*', '', prompt, flags=re_sanitize.IGNORECASE)
+            # === QUAN TRỌNG: Loại bỏ "scene depicting:" và text sau nó ===
+            # Pattern này khiến AI vẽ text lên ảnh hoặc gây INVALID_ARGUMENT
+            prompt = re_sanitize.sub(r'\s*scene depicting:.*$', '', prompt, flags=re_sanitize.IGNORECASE)
+            prompt = re_sanitize.sub(r'\s*depicting:.*$', '', prompt, flags=re_sanitize.IGNORECASE)
+            prompt = prompt.strip()
 
             self._log(f"\n[{i+1}/{len(prompts)}] ID: {pid}")
             self._log(f"Prompt ({len(prompt)} chars): {prompt[:100]}...")

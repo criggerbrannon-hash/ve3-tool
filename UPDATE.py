@@ -13,9 +13,15 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-# Branch chua code moi nhat
-BRANCH = "claude/setup-tool-development-1fwGG"
+# Doc branch tu file config (de de dang chuyen session)
+def get_current_branch():
+    branch_file = Path(__file__).parent / "config" / "current_branch.txt"
+    if branch_file.exists():
+        return branch_file.read_text(encoding='utf-8').strip()
+    return "main"  # Fallback to main
+
 REPO = "criggerbrannon-hash/ve3-tool"
+BRANCH = get_current_branch()
 ZIP_URL = f"https://github.com/{REPO}/archive/refs/heads/{BRANCH}.zip"
 
 # Thu muc hien tai

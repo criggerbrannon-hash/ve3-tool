@@ -30,6 +30,11 @@ flow_delay: 3.0
 # Tạo video bằng Veo 3 qua Google Flow API
 # Endpoint: aisandbox-pa.googleapis.com/v1/video:batchAsyncGenerateVideoText
 
+# Số ảnh chuyển thành video (0 = tắt, "full" = tất cả)
+# VD: 10 = chỉ 10 ảnh đầu tiên sẽ được chuyển thành video
+# Nếu đã có đủ số video trong img/, sẽ tự động skip
+video_count: 10
+
 # Video aspect ratio: "landscape" (16:9), "portrait" (9:16), "square" (1:1)
 video_aspect_ratio: "landscape"
 
@@ -82,10 +87,15 @@ groq_api_keys:
 # OLLAMA - LOCAL AI (FALLBACK khi API keys hết)
 # ============================================================================
 # Cài đặt Ollama: https://ollama.ai
-# Pull model: ollama pull qwen2.5:7b (nhanh) hoặc ollama pull qwen2.5:14b (tốt hơn)
+# Pull model: ollama pull qwen2.5:14b
 # Chạy: ollama serve
+#
+# Với RTX 4070 12GB + 64GB RAM:
+# - qwen2.5:14b: Tối ưu nhất (~10GB VRAM, 128K context, JSON xuất sắc)
+# - qwen2.5:7b: Nhanh hơn nhưng chất lượng thấp hơn
+# - gemma3:27b: Quá lớn cho 12GB VRAM, sẽ chạy CPU (chậm)
 
-ollama_model: "qwen2.5:7b"  # Model local - nhanh, 32k context, tốt cho JSON
+ollama_model: "qwen2.5:14b"  # Tối ưu cho RTX 4070 12GB - 128K context, JSON tốt
 ollama_endpoint: "http://localhost:11434"  # Ollama server endpoint
 
 # ============================================================================
@@ -101,12 +111,50 @@ wait_timeout: 30
 min_scene_duration: 3
 max_scene_duration: 8
 
+# ============================================================================
+# VIDEO COMPOSITION - Chế độ ghép video
+# ============================================================================
+
+# Chế độ edit: "quality", "balanced", "fast"
+# - quality: Ken Burns đầy đủ + easing mượt (chậm nhất, đẹp nhất)
+# - balanced: Ken Burns đơn giản hóa (cân bằng tốc độ/chất lượng) [KHUYÊN DÙNG]
+# - fast: Chỉ fade in/out, không zoom/pan (nhanh nhất)
+#
+# Thời gian ước tính cho 100 clips:
+#   RTX 4070/3060: quality ~8 phút, balanced ~3 phút, fast ~1 phút
+#   CPU only:      quality ~30 phút, balanced ~15 phút, fast ~5 phút
+video_compose_mode: "fast"
+
+# ============================================================================
+# KEN BURNS EFFECTS - Hiệu ứng zoom/pan cho ảnh tĩnh
+# ============================================================================
+# Chỉ áp dụng khi video_compose_mode = "quality" hoặc "balanced"
+
+# Cường độ hiệu ứng: "subtle", "normal", "strong"
+# - subtle: Zoom 6%, pan 4% - rất nhẹ, gần như tĩnh
+# - normal: Zoom 12%, pan 8% - cân bằng (mặc định)
+# - strong: Zoom 18%, pan 12% - mạnh hơn, chuyển động rõ ràng
+ken_burns_intensity: "normal"
+
 # Whisper Settings (Voice to SRT)
 whisper_model: "base"
 whisper_language: "vi"
 
 # Logging
 log_level: "INFO"
+
+# ============================================================================
+# PARALLEL PROCESSING Settings - Tối ưu tốc độ xử lý
+# ============================================================================
+
+# Số lượng voice xử lý song song (1-5)
+# Ví dụ: 3 voices x 90 phút = 270 phút (tuần tự) -> ~100 phút (song song)
+# Cần nhiều RAM và CPU khi tăng số này
+parallel_voices: 3
+
+# Số lượng ảnh bắt đầu tạo video ngay (không chờ hết ảnh)
+# VD: 10 = khi có 10 ảnh đầu tiên sẽ bắt đầu tạo video song song với tạo ảnh
+early_video_start: 10
 
 # ============================================================================
 # BROWSER AUTOMATION Settings

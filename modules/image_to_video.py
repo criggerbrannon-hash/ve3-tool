@@ -8,6 +8,9 @@ Flow:
 2. Upload ảnh lên Google Flow để lấy mediaId
 3. Tạo video từ ảnh (I2V) qua API
 4. Download video và thay thế ảnh gốc
+
+IMPORTANT: Uses GoogleFlowAPI internally for video generation
+to ensure same code path as working testvideo.py script.
 """
 
 import os
@@ -20,6 +23,14 @@ from typing import Optional, List, Dict, Any, Tuple, Callable
 from datetime import datetime
 from dataclasses import dataclass
 import base64
+
+# Import GoogleFlowAPI - the working implementation
+from .google_flow_api import (
+    GoogleFlowAPI,
+    VideoAspectRatio,
+    VideoModel,
+    PaygateTier
+)
 
 
 @dataclass
@@ -45,6 +56,9 @@ class VideoConversionResult:
 class ImageToVideoConverter:
     """
     Chuyển đổi ảnh sang video sử dụng Google Veo 3 API.
+
+    IMPORTANT: Uses GoogleFlowAPI internally - same code path as testvideo.py
+    that has been verified to work.
 
     Hỗ trợ:
     - Direct API (cần bearer token)
@@ -92,6 +106,16 @@ class ImageToVideoConverter:
         self.img_dir = self.project_path / "img"
         self.video_dir = self.project_path / "video"
         self.backup_dir = self.project_path / "img_backup"
+
+        # Create GoogleFlowAPI instance - SAME AS TESTVIDEO.PY
+        self._flow_api = GoogleFlowAPI(
+            bearer_token=self.bearer_token,
+            project_id=self.project_id,
+            proxy_api_token=self.proxy_token,
+            use_proxy=self.use_proxy,
+            verbose=True,
+            timeout=300  # 5 minutes timeout
+        )
 
     def _log(self, message: str, level: str = "info"):
         """Log message."""
@@ -296,25 +320,27 @@ class ImageToVideoConverter:
         if not prompt:
             prompt = "Subtle motion, cinematic, slow movement"
 
+        # Build request - KHÔNG có recaptchaToken trong proxy mode
+        request_data = {
+            "aspectRatio": aspect_ratio,
+            "metadata": {"sceneId": scene_id},
+            "referenceImages": [{
+                "imageUsageType": "IMAGE_USAGE_TYPE_ASSET",
+                "mediaId": media_id
+            }],
+            "seed": int(time.time()) % 100000,
+            "textInput": {"prompt": prompt},
+            "videoModelKey": self.video_model
+        }
+
         body_json = {
             "clientContext": {
-                "projectId": self.project_id,
-                "recaptchaToken": "",
                 "sessionId": session_id,
+                "projectId": self.project_id,
                 "tool": "PINHOLE",
                 "userPaygateTier": "PAYGATE_TIER_TWO"
             },
-            "requests": [{
-                "aspectRatio": aspect_ratio,
-                "metadata": {"sceneId": scene_id},
-                "referenceImages": [{
-                    "imageUsageType": "IMAGE_USAGE_TYPE_ASSET",
-                    "mediaId": media_id
-                }],
-                "seed": int(time.time()) % 100000,
-                "textInput": {"prompt": prompt},
-                "videoModelKey": self.video_model
-            }]
+            "requests": [request_data]
         }
 
         try:
@@ -350,12 +376,20 @@ class ImageToVideoConverter:
         return None, None
 
     def _create_video_via_proxy(self, body_json: Dict) -> Tuple[Optional[str], Optional[List[Dict]]]:
-        """Tạo video qua proxy API."""
+        """Tạo video qua proxy API - format giống GoogleFlowAPI."""
+
+        # === DEBUG: Log full request ===
+        self._log(f"[I2V] === REQUEST BODY ===")
+        self._log(f"[I2V] body_json: {json.dumps(body_json)[:800]}")
+
         payload = {
             "body_json": body_json,
             "flow_auth_token": self.bearer_token,
             "flow_url": f"{self.GOOGLE_BASE}/v1/video:batchAsyncGenerateVideoReferenceImages"
         }
+
+        self._log(f"[I2V] Calling proxy API...")
+        self._log(f"[I2V] flow_url: {payload['flow_url']}")
 
         response = requests.post(
             f"{self.PROXY_BASE}/create-video-veo3",
@@ -365,15 +399,19 @@ class ImageToVideoConverter:
         )
 
         if response.status_code != 200:
-            self._log(f"Proxy create video failed: {response.status_code}", "error")
+            self._log(f"[I2V] Proxy failed: {response.status_code} - {response.text[:200]}", "error")
             return None, None
 
-        task_id = response.json().get("taskId")
+        resp_json = response.json()
+        task_id = resp_json.get("taskId")
         if not task_id:
+            self._log(f"[I2V] No taskId in response: {resp_json}", "error")
             return None, None
+
+        self._log(f"[I2V] Task created: {task_id}")
 
         # Poll proxy để lấy operations
-        for _ in range(30):
+        for i in range(30):
             status_resp = requests.get(
                 f"{self.PROXY_BASE}/task-status?taskId={task_id}",
                 headers=self._proxy_headers(),
@@ -381,22 +419,45 @@ class ImageToVideoConverter:
             )
 
             if status_resp.status_code == 200:
-                result = status_resp.json().get("result", {})
+                status_json = status_resp.json()
+                result = status_json.get("result", {})
+
+                # Check for error in result - log full error details
+                if "error" in result:
+                    error_info = result.get("error", {})
+                    if isinstance(error_info, dict):
+                        error_msg = error_info.get("message", str(error_info))
+                        error_code = error_info.get("code", "")
+                        error_status = error_info.get("status", "")
+                        self._log(f"[I2V] API Error: {error_msg}", "error")
+                        self._log(f"[I2V] Error code: {error_code}, status: {error_status}")
+                        # Log full error for debugging
+                        self._log(f"[I2V] Full error: {json.dumps(error_info)[:500]}")
+                    else:
+                        self._log(f"[I2V] API Error: {error_info}", "error")
+                    return None, None
+
                 operations = result.get("operations", [])
                 if operations:
+                    self._log(f"[I2V] Got operations, starting video generation...")
                     return None, operations
+
+                # Still processing
+                if i % 5 == 0:
+                    self._log(f"[I2V] Waiting for operations... ({i*3}s)")
 
             time.sleep(3)
 
+        self._log(f"[I2V] Timeout waiting for operations", "error")
         return None, None
 
-    def poll_video_status(self, operations: List[Dict], timeout: int = 180) -> Optional[str]:
+    def poll_video_status(self, operations: List[Dict], timeout: int = 300) -> Optional[str]:
         """
         Poll Google API để lấy video URL.
 
         Args:
             operations: Operations array từ create video
-            timeout: Timeout (giây)
+            timeout: Timeout (giây) - video cần 3-5 phút
 
         Returns:
             Video URL hoặc None
@@ -406,12 +467,27 @@ class ImageToVideoConverter:
         url = f"{self.GOOGLE_BASE}/v1/video:batchCheckAsyncVideoGenerationStatus"
         start_time = time.time()
 
+        # Extract operation names từ operations array
+        operation_names = []
+        for op in operations:
+            op_obj = op.get("operation", {})
+            op_name = op_obj.get("name")
+            if op_name:
+                operation_names.append(op_name)
+
+        if not operation_names:
+            self._log("No operation names found in operations", "error")
+            return None
+
+        self._log(f"Polling operation: {operation_names[0][:60]}...")
+
         while time.time() - start_time < timeout:
             try:
+                # Dùng operationNames thay vì operations
                 response = requests.post(
                     url,
                     headers=self._google_headers(),
-                    json={"operations": operations},
+                    json={"operationNames": operation_names},
                     timeout=30
                 )
 
@@ -423,24 +499,42 @@ class ImageToVideoConverter:
                         op = ops[0]
                         status = op.get("status", "")
 
-                        if status == "MEDIA_GENERATION_STATUS_SUCCESSFUL":
-                            video_url = op.get("operation", {}).get("metadata", {}).get("video", {}).get("fifeUrl")
+                        # Check for success - API trả về SUCCEEDED không phải SUCCESSFUL
+                        if status in ["MEDIA_GENERATION_STATUS_SUCCEEDED", "MEDIA_GENERATION_STATUS_COMPLETE"]:
+                            # Video URL nằm trong op.media[0].video.url
+                            video_url = None
+                            media_list = op.get("media", [])
+                            if media_list:
+                                video_info = media_list[0].get("video", {})
+                                video_url = video_info.get("url") or video_info.get("videoUrl") or video_info.get("fifeUrl")
+
+                            # Fallback: thử path cũ
+                            if not video_url:
+                                video_url = op.get("operation", {}).get("metadata", {}).get("video", {}).get("fifeUrl")
+
                             if video_url:
                                 self._log("Video generation completed!")
                                 return video_url
+                            else:
+                                self._log(f"Video completed but no URL found in response", "warn")
+                                self._log(f"Response: {json.dumps(op)[:500]}")
 
                         elif "ERROR" in status or "FAILED" in status:
-                            self._log(f"Video generation failed: {status}", "error")
+                            error_msg = op.get("error", status)
+                            self._log(f"Video generation failed: {error_msg}", "error")
                             return None
 
-                        else:
+                        elif status == "MEDIA_GENERATION_STATUS_PENDING":
                             # Still processing
                             elapsed = int(time.time() - start_time)
-                            self._log(f"Video generating... ({elapsed}s)")
+                            if elapsed % 15 == 0:  # Log mỗi 15 giây
+                                self._log(f"Video generating... ({elapsed}s)")
 
                 elif response.status_code == 401:
                     self._log("Token expired!", "error")
                     return None
+                else:
+                    self._log(f"Poll response: {response.status_code}", "warn")
 
             except Exception as e:
                 self._log(f"Poll error: {e}", "warn")
@@ -487,15 +581,20 @@ class ImageToVideoConverter:
         self,
         image_path: Path,
         prompt: str = "",
-        replace_image: bool = True
+        replace_image: bool = True,
+        cached_media_name: str = ""
     ) -> VideoConversionResult:
         """
         Chuyển đổi một ảnh sang video.
+
+        IMPORTANT: Uses GoogleFlowAPI.generate_video() internally
+        - Same code path as testvideo.py that has been verified to work
 
         Args:
             image_path: Đường dẫn ảnh
             prompt: Prompt mô tả chuyển động
             replace_image: Thay thế ảnh bằng video
+            cached_media_name: Media name đã cache từ lúc tạo ảnh (bỏ qua upload)
 
         Returns:
             VideoConversionResult
@@ -503,49 +602,71 @@ class ImageToVideoConverter:
         result = VideoConversionResult(image_path=image_path, prompt=prompt)
 
         try:
-            # Step 1: Upload image
-            result.status = "uploading"
-            media_id = self.upload_image_for_media_id(image_path)
+            # Step 1: Get media_id - dùng cached nếu có, không thì upload
+            if cached_media_name:
+                # Dùng media_name đã cache từ lúc tạo ảnh - KHÔNG CẦN UPLOAD LẠI
+                self._log(f"Sử dụng cached media_name: {cached_media_name[:50]}...")
+                result.status = "cached"
+                media_id = cached_media_name
+            else:
+                # Không có cache - phải upload ảnh để lấy media_id mới
+                result.status = "uploading"
+                media_id = self.upload_image_for_media_id(image_path)
 
-            if not media_id:
-                result.status = "failed"
-                result.error = "Failed to upload image"
-                return result
+                if not media_id:
+                    result.status = "failed"
+                    result.error = "Failed to upload image"
+                    return result
 
             result.media_id = media_id
 
-            # Step 2: Create video
+            # Step 2: Generate video using GoogleFlowAPI (SAME AS TESTVIDEO.PY)
             result.status = "generating"
-            video_url, operations = self.create_video_from_image(media_id, prompt)
 
-            if not operations:
+            # Default prompt if not provided
+            if not prompt:
+                prompt = "Subtle motion, cinematic, slow movement"
+
+            self._log(f"[I2V] Using GoogleFlowAPI.generate_video...")
+            self._log(f"[I2V] reference_image_id: {media_id[:60]}...")
+            self._log(f"[I2V] prompt: {prompt[:80]}...")
+
+            # Call GoogleFlowAPI.generate_video - EXACTLY LIKE TESTVIDEO.PY
+            success, video_result, error = self._flow_api.generate_video(
+                prompt=prompt,
+                aspect_ratio=VideoAspectRatio.LANDSCAPE,
+                reference_image_id=media_id  # Use media_name as reference - SAME AS TESTVIDEO.PY LINE 115
+            )
+
+            if not success:
                 result.status = "failed"
-                result.error = "Failed to start video generation"
+                result.error = f"Video generation failed: {error}"
+                self._log(f"[I2V] Failed: {error}", "error")
                 return result
 
-            # Step 3: Poll for completion
-            video_url = self.poll_video_status(operations)
-
-            if not video_url:
+            if not video_result.video_url:
                 result.status = "failed"
-                result.error = "Video generation failed or timeout"
+                result.error = "Video generation completed but no URL returned"
                 return result
 
-            result.video_url = video_url
+            result.video_url = video_result.video_url
+            self._log(f"[I2V] Video URL: {video_result.video_url[:60]}...")
 
-            # Step 4: Download video
+            # Step 3: Download video
             result.status = "downloading"
             video_filename = image_path.stem + ".mp4"
             video_path = self.video_dir / video_filename
 
-            if not self.download_video(video_url, video_path):
+            # Use GoogleFlowAPI download method
+            downloaded_path = self._flow_api.download_video(video_result, self.video_dir, image_path.stem)
+            if not downloaded_path:
                 result.status = "failed"
                 result.error = "Failed to download video"
                 return result
 
-            result.video_path = video_path
+            result.video_path = downloaded_path
 
-            # Step 5: Replace image with video (optional)
+            # Step 4: Replace image with video (optional)
             if replace_image:
                 # Backup ảnh gốc
                 self.backup_dir.mkdir(parents=True, exist_ok=True)
@@ -557,11 +678,12 @@ class ImageToVideoConverter:
 
                 # Copy video vào thư mục img (với tên giống ảnh nhưng .mp4)
                 img_video_path = self.img_dir / video_filename
-                shutil.copy2(video_path, img_video_path)
+                shutil.copy2(downloaded_path, img_video_path)
 
                 self._log(f"Replaced {image_path.name} with {video_filename}")
 
             result.status = "completed"
+            self._log(f"[I2V] Completed: {video_filename}")
             return result
 
         except Exception as e:

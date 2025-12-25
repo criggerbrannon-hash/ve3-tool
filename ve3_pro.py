@@ -86,8 +86,12 @@ def auto_update_from_git():
     if not git_dir.exists():
         return False, "Not a git repo"
 
-    # FIXED: Always pull from the correct branch
-    TARGET_BRANCH = "claude/setup-tool-development-1fwGG"
+    # Doc branch tu file config (de de dang chuyen session)
+    branch_file = ROOT_DIR / "config" / "current_branch.txt"
+    if branch_file.exists():
+        TARGET_BRANCH = branch_file.read_text(encoding='utf-8').strip()
+    else:
+        TARGET_BRANCH = "main"  # Fallback to main
 
     try:
         # Fetch and reset to target branch
@@ -166,11 +170,17 @@ class UnixVoiceToVideo:
 
         # Config background - dark theme
         self.root.configure(bg=self.COLORS['bg'])
-        
+
         # Variables
         self.input_mode = tk.StringVar(value="file")
         self.input_path = tk.StringVar()
-        
+
+        # Batch mode paths (relative to tool's parent folder)
+        # Tool: D:\AUTO\ve3-tool → Parent: D:\AUTO
+        # Voice: D:\AUTO\voice, Done: D:\AUTO\done
+        self.batch_voice_folder = ROOT_DIR.parent / "voice"
+        self.batch_done_folder = ROOT_DIR.parent / "done"
+
         # Data
         self.profiles: List[str] = []
         self.groq_keys: List[str] = []
@@ -404,14 +414,21 @@ class UnixVoiceToVideo:
         input_frame = ttk.LabelFrame(scrollable_frame, text=" 📁 Đầu vào ", padding=10)
         input_frame.pack(fill=tk.X, pady=(0, 10), padx=5)
 
-        # Mode selection
+        # Mode selection - Row 1
         mode_row = ttk.Frame(input_frame)
-        mode_row.pack(fill=tk.X, pady=(0, 8))
+        mode_row.pack(fill=tk.X, pady=(0, 4))
 
         ttk.Radiobutton(mode_row, text="📄 File đơn", variable=self.input_mode,
                         value="file", command=self.on_mode_change).pack(side=tk.LEFT)
         ttk.Radiobutton(mode_row, text="📂 Thư mục", variable=self.input_mode,
                         value="folder", command=self.on_mode_change).pack(side=tk.LEFT, padx=15)
+
+        # Mode selection - Row 2 (Auto Batch)
+        mode_row2 = ttk.Frame(input_frame)
+        mode_row2.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Radiobutton(mode_row2, text="🔄 Auto Batch (../voice → ../done)", variable=self.input_mode,
+                        value="batch", command=self.on_mode_change).pack(side=tk.LEFT)
 
         # Path row
         path_row = ttk.Frame(input_frame)
@@ -603,11 +620,43 @@ class UnixVoiceToVideo:
     
     def on_mode_change(self):
         """Handle mode change."""
-        self.input_path.set("")
-        if self.input_mode.get() == "folder":
-            self.input_info_label.config(text="Mỗi file voice trong thư mục = 1 dự án")
+        mode = self.input_mode.get()
+
+        if mode == "batch":
+            # Auto Batch mode - show voice folder path
+            self.input_path.set(str(self.batch_voice_folder))
+            pending = self._count_pending_voices()
+            self.input_info_label.config(
+                text=f"📂 voice → done | {pending} file chờ xử lý"
+            )
+            # Disable path entry for batch mode
+            self.path_entry.config(state='disabled')
         else:
-            self.input_info_label.config(text="Hỗ trợ: .mp3, .wav, .xlsx")
+            self.input_path.set("")
+            self.path_entry.config(state='normal')
+            if mode == "folder":
+                self.input_info_label.config(text="Mỗi file voice trong thư mục = 1 dự án")
+            else:
+                self.input_info_label.config(text="Hỗ trợ: .mp3, .wav, .xlsx")
+
+    def _count_pending_voices(self) -> int:
+        """Count pending voice files (in voice folder but not in done folder)."""
+        if not self.batch_voice_folder.exists():
+            return 0
+
+        pending = 0
+        for subfolder in self.batch_voice_folder.iterdir():
+            if subfolder.is_dir():
+                for voice_file in subfolder.glob("*.mp3"):
+                    # Check if video already exists (done/voice_stem/voice_stem_final.mp4)
+                    done_video = self.batch_done_folder / voice_file.stem / f"{voice_file.stem}_final.mp4"
+                    if not done_video.exists():
+                        pending += 1
+                for voice_file in subfolder.glob("*.wav"):
+                    done_video = self.batch_done_folder / voice_file.stem / f"{voice_file.stem}_final.mp4"
+                    if not done_video.exists():
+                        pending += 1
+        return pending
     
     def browse_input(self):
         """Browse for input."""
@@ -749,25 +798,34 @@ class UnixVoiceToVideo:
     # ========== CONFIG ==========
     
     def load_config(self):
-        """Load config from accounts.json."""
+        """Load config from chrome_profiles/ and accounts.json."""
+        # Luôn scan thư mục chrome_profiles/ trước (tạo từ GUI)
+        self.profiles = []
+        profiles_dir = ROOT_DIR / "chrome_profiles"
+        if profiles_dir.exists():
+            for item in profiles_dir.iterdir():
+                if item.is_dir() and not item.name.startswith('.'):
+                    self.profiles.append(str(item))
+
         accounts_file = CONFIG_DIR / "accounts.json"
-        
+
         if not accounts_file.exists():
             self.create_default_config()
             return
-        
+
         try:
             with open(accounts_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
             self.chrome_path = data.get('chrome_path', self.chrome_path)
-            
-            # Profiles
-            self.profiles = []
+
+            # Thêm profiles từ accounts.json (nếu chưa có trong chrome_profiles/)
+            existing_paths = set(self.profiles)
             for p in data.get('chrome_profiles', []):
                 path = p if isinstance(p, str) else p.get('path', '')
                 if path and not path.startswith('THAY_BANG') and Path(path).exists():
-                    self.profiles.append(path)
+                    if path not in existing_paths:
+                        self.profiles.append(path)
             
             # API keys (thu tu uu tien: Ollama > Gemini > Groq > DeepSeek)
             api = data.get('api_keys', {})
@@ -899,32 +957,32 @@ class UnixVoiceToVideo:
                         variable=gen_mode_var, value="api",
                         command=on_mode_change).pack(side=tk.LEFT)
 
-        # Parallel browsers setting
+        # Parallel workers setting (for batch processing)
         ttk.Separator(prof_tab, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(15, 10))
-        ttk.Label(prof_tab, text="Số browser song song (Chrome mode):",
+        ttk.Label(prof_tab, text="Số luồng xử lý song song (Auto Batch):",
                   font=('Segoe UI', 10, 'bold')).pack(anchor=tk.W)
-        ttk.Label(prof_tab, text="Nhiều browser = nhanh hơn, cần nhiều RAM và profile đã đăng nhập",
+        ttk.Label(prof_tab, text="Nhiều luồng = nhanh hơn | Mỗi luồng cần 1 project riêng (token)",
                   foreground='gray', font=('Segoe UI', 9)).pack(anchor=tk.W, pady=(0, 5))
 
         parallel_frame = ttk.Frame(prof_tab)
         parallel_frame.pack(fill=tk.X, pady=(5, 10))
 
-        current_parallel = self._get_parallel_browsers()
+        current_parallel = self._get_parallel_workers()
         parallel_var = tk.IntVar(value=current_parallel)
-        parallel_label = ttk.Label(parallel_frame, text=f"{current_parallel} browsers",
+        parallel_label = ttk.Label(parallel_frame, text=f"{current_parallel} luồng",
                                    font=('Segoe UI', 10, 'bold'), width=12)
 
         def update_parallel(val):
             num = int(float(val))
             parallel_var.set(num)
-            parallel_label.config(text=f"{num} browsers")
-            self._save_parallel_browsers(num)
+            parallel_label.config(text=f"{num} luồng")
+            self._save_parallel_workers(num)
 
         ttk.Label(parallel_frame, text="1").pack(side=tk.LEFT)
-        parallel_scale = ttk.Scale(parallel_frame, from_=1, to=5, orient=tk.HORIZONTAL,
+        parallel_scale = ttk.Scale(parallel_frame, from_=1, to=10, orient=tk.HORIZONTAL,
                                    variable=parallel_var, command=update_parallel, length=180)
         parallel_scale.pack(side=tk.LEFT, padx=5)
-        ttk.Label(parallel_frame, text="5").pack(side=tk.LEFT)
+        ttk.Label(parallel_frame, text="10").pack(side=tk.LEFT)
         parallel_label.pack(side=tk.LEFT, padx=10)
 
         # Buttons row 1
@@ -990,10 +1048,56 @@ class UnixVoiceToVideo:
                 except Exception as e:
                     messagebox.showerror("Lỗi", f"Không thể xóa: {e}")
 
+        def test_token_visible():
+            """Test lấy token với Chrome hiển thị (không ẩn) để debug."""
+            sel = prof_list.curselection()
+            if not sel:
+                messagebox.showwarning("Chọn profile", "Vui lòng chọn 1 profile từ danh sách!")
+                return
+            profile_name = prof_list.get(sel[0])
+            if profile_name.startswith("("):
+                return
+
+            profiles_dir = ROOT_DIR / "chrome_profiles"
+            profile_path = str(profiles_dir / profile_name)
+
+            self.log(f"🔍 Test lấy token (KHÔNG ẨN) cho: {profile_name}")
+
+            def run_test():
+                try:
+                    from modules.chrome_token_extractor import ChromeTokenExtractor
+
+                    extractor = ChromeTokenExtractor(
+                        chrome_path=self.chrome_path,
+                        profile_path=profile_path,
+                        headless=False,  # KHÔNG ẨN để debug
+                        timeout=120
+                    )
+
+                    def log_cb(msg, level="info"):
+                        self.root.after(0, lambda: self.log(f"[Test] {msg}", level.upper()))
+
+                    token, proj_id, error = extractor.extract_token(callback=log_cb)
+
+                    if token:
+                        self.root.after(0, lambda: self.log(f"✅ Token OK! Length: {len(token)}", "OK"))
+                        self.root.after(0, lambda: messagebox.showinfo("Thành công", f"Lấy token thành công!\n\nProfile: {profile_name}\nToken length: {len(token)}\nProject ID: {proj_id[:20] if proj_id else 'N/A'}..."))
+                    else:
+                        self.root.after(0, lambda: self.log(f"❌ Lỗi: {error}", "ERROR"))
+                        self.root.after(0, lambda: messagebox.showerror("Lỗi", f"Không lấy được token!\n\nLỗi: {error}\n\nHãy thử:\n1. Mở đăng nhập lại\n2. Làm theo hướng dẫn allow pasting"))
+
+                except Exception as e:
+                    self.root.after(0, lambda: self.log(f"❌ Exception: {e}", "ERROR"))
+                    self.root.after(0, lambda: messagebox.showerror("Lỗi", str(e)))
+
+            import threading
+            threading.Thread(target=run_test, daemon=True).start()
+
         ttk.Button(prof_btn_row1, text="➕ Thêm mới", command=add_new_profile).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(prof_btn_row1, text="🔓 Mở đăng nhập", command=open_profile_login).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(prof_btn_row1, text="🗑️ Xóa", command=delete_profile).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(prof_btn_row1, text="🔄", command=refresh_profile_list, width=3).pack(side=tk.LEFT)
+        ttk.Button(prof_btn_row1, text="🧪 Test", command=test_token_visible).pack(side=tk.LEFT, padx=(5, 0))
 
         # Info
         ttk.Label(prof_tab, text="💡 Mỗi voice sẽ dùng 1 profile khác nhau khi chạy song song",
@@ -1221,6 +1325,51 @@ class UnixVoiceToVideo:
 
         ttk.Separator(video_tab, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=15)
 
+        # === VIDEO COMPOSE MODE (Ghép video cuối) ===
+        ttk.Label(video_tab, text="Chế độ ghép video (Edit cuối):",
+                  font=('Segoe UI', 11, 'bold')).pack(anchor=tk.W, pady=(0, 5))
+        ttk.Label(video_tab, text="Chọn tốc độ/chất lượng khi ghép ảnh+video+voice thành video final",
+                  foreground='gray').pack(anchor=tk.W, pady=(0, 5))
+
+        compose_mode_frame = ttk.Frame(video_tab)
+        compose_mode_frame.pack(fill=tk.X, pady=(5, 10))
+
+        compose_mode_var = tk.StringVar(value=self._get_compose_mode_setting())
+
+        # Radio buttons với mô tả
+        modes_frame = ttk.Frame(video_tab)
+        modes_frame.pack(fill=tk.X, pady=(0, 5))
+
+        ttk.Radiobutton(modes_frame, text="⚡ Fast (Ảnh tĩnh, không chuyển động - nhanh nhất)",
+                        variable=compose_mode_var, value="fast").pack(anchor=tk.W)
+        ttk.Radiobutton(modes_frame, text="⚖️ Balanced (Có chuyển động zoom/pan)",
+                        variable=compose_mode_var, value="balanced").pack(anchor=tk.W)
+        ttk.Radiobutton(modes_frame, text="✨ Quality (Chuyển động mượt + easing)",
+                        variable=compose_mode_var, value="quality").pack(anchor=tk.W)
+
+        def save_compose_mode():
+            try:
+                settings_file = CONFIG_DIR / "settings.yaml"
+                settings = {}
+                if settings_file.exists():
+                    import yaml
+                    with open(settings_file, 'r', encoding='utf-8') as f:
+                        settings = yaml.safe_load(f) or {}
+
+                settings['video_compose_mode'] = compose_mode_var.get()
+
+                import yaml
+                with open(settings_file, 'w', encoding='utf-8') as f:
+                    yaml.dump(settings, f, allow_unicode=True, default_flow_style=False)
+
+                self.log(f"✓ Compose mode: {compose_mode_var.get()}", "OK")
+            except Exception as e:
+                messagebox.showerror("Lỗi", f"Không thể lưu: {e}")
+
+        ttk.Button(video_tab, text="💾 Lưu Compose Mode", command=save_compose_mode).pack(anchor=tk.W, pady=(5, 10))
+
+        ttk.Separator(video_tab, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
+
         ttk.Label(video_tab, text="💡 Lưu ý:", font=('Segoe UI', 10, 'bold')).pack(anchor=tk.W)
         ttk.Label(video_tab, text="• Cần Bearer Token (lấy từ tab Token)\n• Mỗi video mất 1-3 phút để tạo\n• Video được lưu vào thư mục video/\n• Prompt lấy từ cột 'video_prompt' trong Excel",
                   foreground='gray', justify=tk.LEFT).pack(anchor=tk.W)
@@ -1373,21 +1522,25 @@ class UnixVoiceToVideo:
         except Exception as e:
             print(f"Save generation_mode error: {e}")
 
-    def _get_parallel_browsers(self) -> int:
-        """Get number of parallel browsers from config."""
+    def _get_parallel_workers(self) -> int:
+        """Get number of parallel workers from config."""
         try:
             import yaml
             config_path = CONFIG_DIR / "settings.yaml"
             if config_path.exists():
                 with open(config_path, 'r', encoding='utf-8') as f:
                     config = yaml.safe_load(f) or {}
-                return max(1, min(5, config.get('parallel_browsers', 3)))
+                # Priority: parallel_voices > parallel_workers > parallel_browsers
+                value = config.get('parallel_voices',
+                        config.get('parallel_workers',
+                        config.get('parallel_browsers', 3)))
+                return max(1, min(10, value))
         except:
             pass
-        return 3  # Default: 3 browsers
+        return 3  # Default: 3 workers
 
-    def _save_parallel_browsers(self, num: int):
-        """Save number of parallel browsers to config."""
+    def _save_parallel_workers(self, num: int):
+        """Save number of parallel workers to config."""
         try:
             import yaml
             config_path = CONFIG_DIR / "settings.yaml"
@@ -1395,12 +1548,13 @@ class UnixVoiceToVideo:
             if config_path.exists():
                 with open(config_path, 'r', encoding='utf-8') as f:
                     config = yaml.safe_load(f) or {}
-            config['parallel_browsers'] = max(1, min(5, num))
+            # Save to parallel_voices (new key)
+            config['parallel_voices'] = max(1, min(10, num))
             with open(config_path, 'w', encoding='utf-8') as f:
                 yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
-            self.log(f"Parallel browsers: {num}", "OK")
+            self.log(f"Parallel voices: {num}", "OK")
         except Exception as e:
-            print(f"Save generation_mode error: {e}")
+            print(f"Save parallel_voices error: {e}")
 
     # ======= VIDEO SETTINGS =======
     def _get_video_count_setting(self) -> str:
@@ -1442,6 +1596,19 @@ class UnixVoiceToVideo:
             pass
         return True
 
+    def _get_compose_mode_setting(self) -> str:
+        """Get video compose mode setting (fast/balanced/quality)."""
+        try:
+            import yaml
+            config_path = CONFIG_DIR / "settings.yaml"
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+                return config.get('video_compose_mode', 'fast')
+        except:
+            pass
+        return 'fast'
+
     def _open_browser_for_login(self, profile_path: str, profile_name: str):
         """Open Chrome browser with profile for Google login."""
         FLOW_URL = "https://labs.google/fx/vi/tools/flow"
@@ -1476,14 +1643,19 @@ class UnixVoiceToVideo:
             self.log("Trình duyệt đã mở - Hãy đăng nhập Google!", "OK")
             self.log("Đóng trình duyệt khi hoàn tất đăng nhập.")
 
-            # Show message
+            # Show message with detailed instructions
             messagebox.showinfo(
-                "Đăng nhập Google",
+                "Đăng nhập Google + Kích hoạt Token",
                 f"Trình duyệt đã mở cho profile '{profile_name}'.\n\n"
-                "1. Đăng nhập tài khoản Google\n"
-                "2. Đợi trang Google Flow hiện lên\n"
-                "3. Đóng trình duyệt khi xong\n\n"
-                "Session sẽ được lưu tự động."
+                "📋 LÀM THEO CÁC BƯỚC SAU:\n\n"
+                "1️⃣ Đăng nhập tài khoản Google\n"
+                "2️⃣ Đợi trang Google Flow hiện lên\n"
+                "3️⃣ Nhấn F12 để mở DevTools\n"
+                "4️⃣ Chọn tab 'Console'\n"
+                "5️⃣ Gõ: allow pasting  rồi Enter\n"
+                "6️⃣ Paste lệnh: console.log('OK')  rồi Enter\n"
+                "7️⃣ Đóng trình duyệt khi xong\n\n"
+                "⚠️ Bước 5-6 cần làm 1 LẦN để cho phép paste code!"
             )
 
         except Exception as e:
@@ -1494,19 +1666,42 @@ class UnixVoiceToVideo:
     
     def start_processing(self):
         """Start main processing."""
-        path = self.input_path.get()
-        
-        if not path:
-            messagebox.showerror("Lỗi", "Vui lòng chọn file hoặc thư mục đầu vào!")
-            return
-        
-        if not Path(path).exists():
-            messagebox.showerror("Lỗi", f"Không tìm thấy:\n{path}")
-            return
-        
+        mode = self.input_mode.get()
+
+        # Batch mode validation
+        if mode == "batch":
+            if not self.batch_voice_folder.exists():
+                messagebox.showerror(
+                    "Lỗi",
+                    f"Không tìm thấy thư mục voice:\n{self.batch_voice_folder}\n\n"
+                    "Vui lòng tạo thư mục này và thêm các file voice cần xử lý."
+                )
+                return
+
+            pending = self._count_pending_voices()
+            if pending == 0:
+                messagebox.showinfo(
+                    "Thông báo",
+                    "Không có file voice mới cần xử lý!\n\n"
+                    f"Thư mục voice: {self.batch_voice_folder}\n"
+                    f"Thư mục done: {self.batch_done_folder}"
+                )
+                return
+        else:
+            # Normal mode validation
+            path = self.input_path.get()
+
+            if not path:
+                messagebox.showerror("Lỗi", "Vui lòng chọn file hoặc thư mục đầu vào!")
+                return
+
+            if not Path(path).exists():
+                messagebox.showerror("Lỗi", f"Không tìm thấy:\n{path}")
+                return
+
         # Reload config
         self.load_config()
-        
+
         if not self.profiles:
             result = messagebox.askyesno(
                 "Thiếu Chrome Profile",
@@ -1517,21 +1712,35 @@ class UnixVoiceToVideo:
             if result:
                 self.open_config_file()
             return
-        
-        # Check AI keys for voice
-        ext = Path(path).suffix.lower() if Path(path).is_file() else ""
-        has_ai_keys = self.gemini_keys or self.groq_keys or self.deepseek_keys
-        if ext in ['.mp3', '.wav'] and not has_ai_keys:
-            result = messagebox.askyesno(
-                "Thieu AI API Key",
-                "Can Gemini, Groq hoac DeepSeek API key de xu ly voice!\n\n"
-                "Thu tu uu tien: Gemini > Groq (FREE) > DeepSeek\n\n"
-                "Mo Cai dat de nhap API keys?"
-            )
-            if result:
-                self.open_settings()
-            return
-        
+
+        # Check AI keys for voice (for non-batch modes)
+        if mode != "batch":
+            path = self.input_path.get()
+            ext = Path(path).suffix.lower() if Path(path).is_file() else ""
+            has_ai_keys = self.gemini_keys or self.groq_keys or self.deepseek_keys
+            if ext in ['.mp3', '.wav'] and not has_ai_keys:
+                result = messagebox.askyesno(
+                    "Thieu AI API Key",
+                    "Can Gemini, Groq hoac DeepSeek API key de xu ly voice!\n\n"
+                    "Thu tu uu tien: Gemini > Groq (FREE) > DeepSeek\n\n"
+                    "Mo Cai dat de nhap API keys?"
+                )
+                if result:
+                    self.open_settings()
+                return
+        else:
+            # Batch mode also needs AI keys
+            has_ai_keys = self.gemini_keys or self.groq_keys or self.deepseek_keys
+            if not has_ai_keys:
+                result = messagebox.askyesno(
+                    "Thieu AI API Key",
+                    "Can Gemini, Groq hoac DeepSeek API key de xu ly voice!\n\n"
+                    "Mo Cai dat de nhap API keys?"
+                )
+                if result:
+                    self.open_settings()
+                return
+
         # Start
         self._running = True
         self._stop = False
@@ -1545,8 +1754,13 @@ class UnixVoiceToVideo:
         self.log("=" * 50)
         self.log("🚀 BẮT ĐẦU XỬ LÝ")
         self.log("=" * 50)
-        
-        if self.input_mode.get() == "folder":
+
+        if mode == "batch":
+            self.log(f"📂 Mode: Auto Batch")
+            self.log(f"   Voice: {self.batch_voice_folder}")
+            self.log(f"   Done: {self.batch_done_folder}")
+            threading.Thread(target=self._process_batch, daemon=True).start()
+        elif mode == "folder":
             threading.Thread(target=self._process_folder, daemon=True).start()
         else:
             threading.Thread(target=self._process_single, daemon=True).start()
@@ -1593,7 +1807,249 @@ class UnixVoiceToVideo:
         finally:
             self._running = False
             self.root.after(0, self._reset_ui)
-    
+
+    def _process_batch(self):
+        """
+        Process all pending voice files from batch_voice_folder.
+        PARALLEL PROCESSING with pre-fetched tokens.
+
+        Structure:
+        - voice/AR16-T1/AR16-0035.mp3  →  done/AR16-T1/AR16-0035/...
+        - voice/AR16-T1/AR16-0036.mp3  →  done/AR16-T1/AR16-0036/...
+
+        Flow:
+        1. Scan pending files
+        2. Pre-fetch N tokens (1 per worker, serialized)
+        3. Run N workers in parallel (each worker processes voices sequentially)
+        """
+        try:
+            from modules.smart_engine import SmartEngine
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            import queue
+            import threading
+
+            # Create done folder if not exists
+            self.batch_done_folder.mkdir(parents=True, exist_ok=True)
+
+            # Get settings
+            num_workers = self._get_parallel_workers()
+
+            # Scan for pending voice files
+            pending_files = []
+            for subfolder in sorted(self.batch_voice_folder.iterdir()):
+                if not subfolder.is_dir():
+                    continue
+
+                for voice_file in sorted(subfolder.glob("*.mp3")) + sorted(subfolder.glob("*.wav")):
+                    # Output folder = done/voice_stem (không có subfolder)
+                    # Ví dụ: voice/ar34-t1/ar34-0023.mp3 → done/ar34-0023/
+                    output_folder = self.batch_done_folder / voice_file.stem
+
+                    # Check if video already exists
+                    final_video = output_folder / f"{voice_file.stem}_final.mp4"
+                    if final_video.exists():
+                        continue
+
+                    pending_files.append({
+                        'voice_path': voice_file,
+                        'output_folder': output_folder,
+                        'subfolder': subfolder.name
+                    })
+
+            if not pending_files:
+                self.root.after(0, lambda: self.log("✅ Không có file mới cần xử lý!", "OK"))
+                return
+
+            total = len(pending_files)
+            actual_workers = min(num_workers, total)
+
+            self.log(f"📋 Tìm thấy {total} file cần xử lý")
+            self.log(f"⚡ Chế độ song song: {actual_workers} luồng")
+            for i, f in enumerate(pending_files[:5]):
+                self.log(f"   {i+1}. {f['subfolder']}/{f['voice_path'].name}")
+            if total > 5:
+                self.log(f"   ... và {total - 5} file khác")
+
+            # ================================================================
+            # STEP 1: PRE-FETCH TOKENS (serialized - 1 Chrome at a time)
+            # ================================================================
+            self.log("")
+            self.log("=" * 50)
+            self.log(f"🔑 PRE-FETCH {actual_workers} TOKENS...")
+            self.log("=" * 50)
+
+            prefetched_tokens = []
+            token_lock = threading.Lock()
+
+            # Get first profile for token extraction
+            profiles_dir = ROOT_DIR / "chrome_profiles"
+            chrome_profiles = []
+            if profiles_dir.exists():
+                chrome_profiles = [p for p in profiles_dir.iterdir() if p.is_dir()]
+
+            if not chrome_profiles:
+                self.log("❌ Không có Chrome profile! Thêm profile trong Cài đặt.", "ERROR")
+                return
+
+            num_profiles = len(chrome_profiles)
+            self.log(f"   Có {num_profiles} Chrome profile(s)")
+            for idx, p in enumerate(chrome_profiles):
+                self.log(f"     [{idx+1}] {p.name}")
+
+            for i in range(actual_workers):
+                if self._stop:
+                    break
+
+                # Dùng profile khác nhau cho mỗi worker (round-robin)
+                profile_path = chrome_profiles[i % num_profiles]
+                self.log(f"   [{i+1}/{actual_workers}] Đang lấy token từ profile: {profile_path.name}...")
+
+                try:
+                    # Create engine to get token
+                    engine = SmartEngine()
+                    engine.profiles = self.profiles
+                    engine.chrome_path = self.chrome_path
+
+                    # Get a new token (opens new project) - MỖI WORKER DÙNG PROFILE RIÊNG
+                    token_data = engine._prefetch_token_for_worker(str(profile_path), i)
+
+                    if token_data and token_data.get('token'):
+                        prefetched_tokens.append(token_data)
+                        self.log(f"   [{i+1}/{actual_workers}] ✅ Token OK (project: {token_data.get('project_id', 'N/A')[:8]}...)")
+                    else:
+                        self.log(f"   [{i+1}/{actual_workers}] ⚠️ Token FAILED", "WARN")
+                        prefetched_tokens.append(None)
+
+                except Exception as e:
+                    self.log(f"   [{i+1}/{actual_workers}] ❌ Error: {e}", "ERROR")
+                    prefetched_tokens.append(None)
+
+            valid_tokens = [t for t in prefetched_tokens if t]
+            self.log(f"🔑 Pre-fetched: {len(valid_tokens)}/{actual_workers} tokens OK")
+
+            if not valid_tokens:
+                self.log("❌ Không lấy được token nào! Kiểm tra Chrome profile.", "ERROR")
+                return
+
+            # ================================================================
+            # STEP 2: PARALLEL PROCESSING
+            # ================================================================
+            self.log("")
+            self.log("=" * 50)
+            self.log(f"🚀 BẮT ĐẦU XỬ LÝ SONG SONG ({len(valid_tokens)} luồng)")
+            self.log("=" * 50)
+
+            # Create work queue
+            work_queue = queue.Queue()
+            for f in pending_files:
+                work_queue.put(f)
+
+            # Results tracking
+            results_lock = threading.Lock()
+            results = {"success": 0, "failed": 0, "processed": 0}
+
+            def worker_func(worker_id: int, token_data: dict):
+                """Worker function - processes voices from queue."""
+                while not self._stop:
+                    try:
+                        file_info = work_queue.get_nowait()
+                    except queue.Empty:
+                        break
+
+                    voice_path = file_info['voice_path']
+                    output_folder = file_info['output_folder']
+
+                    self.root.after(0, lambda wp=voice_path, wid=worker_id:
+                        self.log(f"[W{wid}] 🎙️ {wp.name}"))
+
+                    try:
+                        output_folder.mkdir(parents=True, exist_ok=True)
+
+                        engine = SmartEngine()
+
+                        # Pass pre-fetched token to engine
+                        if token_data:
+                            engine._prefetched_token = token_data
+
+                        def log_cb(msg, wid=worker_id):
+                            level = "INFO"
+                            if "[OK]" in msg or "OK!" in msg:
+                                level = "OK"
+                            elif "[ERROR]" in msg or "ERROR" in msg:
+                                level = "ERROR"
+                            elif "[WARN]" in msg:
+                                level = "WARN"
+                            self.root.after(0, lambda: self.log(f"[W{wid}] {msg}", level))
+
+                        result = engine.run(
+                            str(voice_path),
+                            output_dir=str(output_folder),
+                            callback=log_cb
+                        )
+
+                        with results_lock:
+                            results["processed"] += 1
+                            if result and result.get('success'):
+                                results["success"] += 1
+                            else:
+                                results["failed"] += 1
+
+                            # Update progress
+                            progress = (results["processed"] / total) * 100
+                            self.root.after(0, lambda p=progress: self.progress_var.set(p))
+                            self.root.after(0, lambda: self.progress_label.config(
+                                text=f"Xong: {results['processed']}/{total} | OK: {results['success']} | Fail: {results['failed']}"
+                            ))
+
+                    except Exception as e:
+                        with results_lock:
+                            results["processed"] += 1
+                            results["failed"] += 1
+                        self.root.after(0, lambda err=e, wid=worker_id:
+                            self.log(f"[W{wid}] ❌ {err}", "ERROR"))
+
+                    work_queue.task_done()
+
+            # Start workers
+            with ThreadPoolExecutor(max_workers=len(valid_tokens)) as executor:
+                futures = []
+                for i, token_data in enumerate(valid_tokens):
+                    future = executor.submit(worker_func, i, token_data)
+                    futures.append(future)
+
+                # Wait for all workers to complete
+                for future in as_completed(futures):
+                    try:
+                        future.result()
+                    except Exception as e:
+                        self.log(f"Worker error: {e}", "ERROR")
+
+            # ================================================================
+            # SUMMARY
+            # ================================================================
+            self.log("")
+            self.log("=" * 50)
+            self.log("🏁 HOÀN THÀNH BATCH")
+            self.log(f"   Tổng: {total} | ✅ OK: {results['success']} | ❌ Fail: {results['failed']}")
+            self.log(f"   Luồng: {len(valid_tokens)} workers")
+            self.log("=" * 50)
+
+            self.root.after(0, lambda: self.progress_var.set(100))
+            self.root.after(0, lambda: self.progress_label.config(text="Hoàn thành!"))
+
+            new_pending = self._count_pending_voices()
+            self.root.after(0, lambda: self.input_info_label.config(
+                text=f"📂 voice → done | {new_pending} file chờ xử lý"
+            ))
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.root.after(0, lambda err=e: self.log(f"Lỗi batch: {err}", "ERROR"))
+        finally:
+            self._running = False
+            self.root.after(0, self._reset_ui)
+
     def _process_folder(self):
         """Process folder with multiple voice files - PARALLEL with headless Chrome."""
         try:
@@ -1610,7 +2066,7 @@ class UnixVoiceToVideo:
             self.log(f"📁 Tìm thấy {len(voices)} file voice")
 
             # Get settings
-            num_parallel = self._get_parallel_browsers()
+            num_parallel = self._get_parallel_workers()
             use_headless = self._get_headless_setting()
 
             # Get Chrome profiles from chrome_profiles/ directory (GUI creates profiles here)
@@ -2021,7 +2477,8 @@ class UnixVoiceToVideo:
             self.main_tree.focus(first_id)
             self._on_item_selected(first_id)
 
-        self.log(f"Loaded {len(all_items)} items", "OK")
+        # Only log on first load or significant changes (reduce spam)
+        # self.log(f"Loaded {len(all_items)} items", "DEBUG")
     
     def update_thumbnails(self, scene_ids: List[str]):
         """Update scene thumbnails with progress status."""
