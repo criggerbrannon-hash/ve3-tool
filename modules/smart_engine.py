@@ -166,6 +166,14 @@ class SmartEngine:
         # QUAN TRONG: media_name chi valid cho token da tao ra no
         self.media_name_cache = {}
 
+        # Video generation queue (parallel with image gen)
+        self._video_queue = []
+        self._video_queue_lock = threading.Lock()
+        self._video_worker_thread = None
+        self._video_worker_running = False
+        self._video_results = {"success": 0, "failed": 0, "pending": 0}
+        self._video_settings = {}
+
         self.load_config()
         self.load_cached_tokens()  # Load tokens da luu
         self.load_media_name_cache()  # Load media_name cache
@@ -1121,10 +1129,16 @@ class SmartEngine:
                 downloaded = api.download_image(images[0], Path(output).parent, pid)
                 if downloaded:
                     # Rename to correct filename if needed
+                    final_path = Path(output)
                     if downloaded.exists() and str(downloaded) != output:
-                        if Path(output).exists():
-                            Path(output).unlink()
+                        if final_path.exists():
+                            final_path.unlink()
                         downloaded.rename(output)
+
+                    # Queue video generation if enabled (parallel)
+                    video_prompt = prompt_data.get('video_prompt', '')
+                    self._queue_video_generation(final_path, pid, video_prompt)
+
                     return True, False
                 else:
                     self.log(f"Download failed {pid}", "ERROR")
@@ -1800,6 +1814,9 @@ class SmartEngine:
             }
         else:
             # === 5. TAO IMAGES - CHON MODE DUA TREN SETTINGS ===
+            # Start video worker (parallel with image generation)
+            self._start_video_worker(proj_dir)
+
             if generation_mode == 'api':
                 self.log("[STEP 5] Tao images bang API MODE...")
                 scene_results = self.generate_images_api(prompts, proj_dir)
@@ -1839,6 +1856,24 @@ class SmartEngine:
 
         # === 9. DONG BROWSER ===
         self._close_browser()
+
+        # === 10. WAIT FOR VIDEO GENERATION (if running) ===
+        if self._video_worker_running:
+            self.log("[STEP 10] Doi video generation hoan thanh...")
+            # Wait for queue to empty (with timeout)
+            wait_start = time.time()
+            max_wait = 600  # 10 minutes max
+            while self._video_worker_running and time.time() - wait_start < max_wait:
+                with self._video_queue_lock:
+                    if not self._video_queue:
+                        break
+                time.sleep(2)
+
+            # Stop worker and get results
+            self._stop_video_worker()
+            video_results = self.get_video_results()
+            self.log(f"[VIDEO] Ket qua: {video_results['success']} OK, {video_results['failed']} failed")
+            results["video_gen"] = video_results
 
         return results
 
@@ -2379,9 +2414,10 @@ class SmartEngine:
                 self.log(f"  -> Skip: no headers")
                 continue
 
-            # Tim cot ID, Prompt, va reference_files
+            # Tim cot ID, Prompt, video_prompt va reference_files
             id_col = None
             prompt_col = None
+            video_prompt_col = None  # video_prompt column for I2V
             ref_col = None  # reference_files column
             chars_col = None  # characters_used column
             loc_col = None  # location_used column
@@ -2397,6 +2433,10 @@ class SmartEngine:
                         id_col = i
                     elif 'id' in h_lower and ('scene' in h_lower or 'nv' in h_lower or 'char' in h_lower):
                         id_col = i
+
+                # Tim cot video_prompt (cho Image-to-Video)
+                if 'video' in h_lower and 'prompt' in h_lower:
+                    video_prompt_col = i
 
                 # Tim cot Prompt - uu tien english_prompt, sau do img_prompt
                 if 'english' in h_lower and 'prompt' in h_lower:
@@ -2448,6 +2488,11 @@ class SmartEngine:
 
                 pid_str = str(pid).strip()
 
+                # Get video_prompt if available (for Image-to-Video)
+                video_prompt = ""
+                if video_prompt_col is not None and video_prompt_col < len(row):
+                    video_prompt = row[video_prompt_col] or ""
+
                 # Get reference_files if available
                 reference_files = ""
                 if ref_col is not None and ref_col < len(row):
@@ -2495,7 +2540,8 @@ class SmartEngine:
                     'output_path': str(out_path),
                     'sheet': sheet_name,
                     'reference_files': str(reference_files).strip() if reference_files else "",
-                    'nv_path': str(proj_dir / "nv")  # Path to reference images folder
+                    'nv_path': str(proj_dir / "nv"),  # Path to reference images folder
+                    'video_prompt': str(video_prompt).strip() if video_prompt else ""  # For I2V
                 })
                 count += 1
 
@@ -2507,6 +2553,169 @@ class SmartEngine:
     def stop(self):
         """Dung."""
         self.stop_flag = True
+        self._stop_video_worker()
+
+    # =========================================================================
+    # VIDEO GENERATION (Parallel with Image Gen)
+    # =========================================================================
+
+    def _load_video_settings(self):
+        """Load video generation settings from config."""
+        try:
+            import yaml
+            settings_path = self.config_dir / "settings.yaml"
+            if settings_path.exists():
+                with open(settings_path, 'r', encoding='utf-8') as f:
+                    settings = yaml.safe_load(f) or {}
+
+                self._video_settings = {
+                    'count': settings.get('video_count', '0'),
+                    'model': settings.get('video_model', 'fast'),
+                    'prompt': settings.get('video_prompt', ''),
+                    'replace_image': settings.get('video_replace_image', True),
+                    'bearer_token': settings.get('flow_bearer_token', ''),
+                    'project_id': settings.get('flow_project_id', ''),
+                    'proxy_token': settings.get('proxy_api_token', '')
+                }
+
+                # Parse count
+                count_str = str(self._video_settings['count']).strip().lower()
+                if count_str == 'full':
+                    self._video_settings['count_num'] = -1  # -1 = full
+                else:
+                    try:
+                        self._video_settings['count_num'] = int(count_str)
+                    except ValueError:
+                        self._video_settings['count_num'] = 0
+
+                return self._video_settings['count_num'] != 0
+        except Exception as e:
+            self.log(f"Load video settings error: {e}", "WARN")
+
+        return False
+
+    def _start_video_worker(self, proj_dir: Path):
+        """Start video generation worker thread."""
+        if self._video_worker_running:
+            return
+
+        if not self._load_video_settings():
+            self.log("[VIDEO] Video generation disabled (count = 0)", "INFO")
+            return
+
+        if not self._video_settings.get('bearer_token'):
+            self.log("[VIDEO] No bearer token - video generation disabled", "WARN")
+            return
+
+        self._video_worker_running = True
+        self._video_results = {"success": 0, "failed": 0, "pending": 0}
+
+        self._video_worker_thread = threading.Thread(
+            target=self._video_worker_loop,
+            args=(proj_dir,),
+            daemon=True
+        )
+        self._video_worker_thread.start()
+        self.log("[VIDEO] Video worker started (parallel with image gen)")
+
+    def _stop_video_worker(self):
+        """Stop video generation worker."""
+        self._video_worker_running = False
+        if self._video_worker_thread:
+            self._video_worker_thread.join(timeout=5)
+            self._video_worker_thread = None
+
+    def _queue_video_generation(self, image_path: Path, image_id: str, video_prompt: str = ""):
+        """Add image to video generation queue."""
+        if not self._video_worker_running:
+            return
+
+        # Only queue scene images (not nv/loc)
+        if image_id.startswith('nv') or image_id.startswith('loc'):
+            return
+
+        with self._video_queue_lock:
+            # Check count limit
+            count_num = self._video_settings.get('count_num', 0)
+            current_queued = len(self._video_queue) + self._video_results['success'] + self._video_results['failed']
+
+            if count_num != -1 and current_queued >= count_num:
+                return  # Limit reached
+
+            self._video_queue.append({
+                'image_path': image_path,
+                'image_id': image_id,
+                'video_prompt': video_prompt
+            })
+            self._video_results['pending'] = len(self._video_queue)
+            self.log(f"[VIDEO] Queued: {image_id} (pending: {len(self._video_queue)})")
+
+    def _video_worker_loop(self, proj_dir: Path):
+        """Video generation worker loop."""
+        from modules.image_to_video import ImageToVideoConverter
+
+        self.log("[VIDEO] Worker loop started")
+
+        # Create converter
+        try:
+            converter = ImageToVideoConverter(
+                project_path=str(proj_dir),
+                bearer_token=self._video_settings['bearer_token'],
+                project_id=self._video_settings['project_id'] or 'default',
+                proxy_token=self._video_settings.get('proxy_token'),
+                use_proxy=bool(self._video_settings.get('proxy_token')),
+                video_model=self._video_settings.get('model', 'fast'),
+                log_callback=lambda msg, lvl: self.log(f"[VIDEO] {msg}", lvl.upper())
+            )
+        except Exception as e:
+            self.log(f"[VIDEO] Failed to create converter: {e}", "ERROR")
+            self._video_worker_running = False
+            return
+
+        while self._video_worker_running and not self.stop_flag:
+            # Get next item from queue
+            item = None
+            with self._video_queue_lock:
+                if self._video_queue:
+                    item = self._video_queue.pop(0)
+                    self._video_results['pending'] = len(self._video_queue)
+
+            if not item:
+                time.sleep(1)  # Wait for new items
+                continue
+
+            image_path = item['image_path']
+            image_id = item['image_id']
+            video_prompt = item.get('video_prompt', '') or self._video_settings.get('prompt', '')
+
+            self.log(f"[VIDEO] Processing: {image_id}")
+
+            try:
+                result = converter.convert_image_to_video(
+                    image_path=image_path,
+                    prompt=video_prompt,
+                    replace_image=self._video_settings.get('replace_image', True)
+                )
+
+                if result.is_completed:
+                    self._video_results['success'] += 1
+                    self.log(f"[VIDEO] OK: {image_id} -> {result.video_path.name}")
+                else:
+                    self._video_results['failed'] += 1
+                    self.log(f"[VIDEO] FAILED: {image_id} - {result.error}", "ERROR")
+
+            except Exception as e:
+                self._video_results['failed'] += 1
+                self.log(f"[VIDEO] Error {image_id}: {e}", "ERROR")
+
+            # Delay between videos
+            time.sleep(2)
+
+        self.log(f"[VIDEO] Worker stopped. Results: {self._video_results['success']} OK, {self._video_results['failed']} failed")
+
+    def get_video_results(self) -> Dict:
+        """Get video generation results."""
+        return self._video_results.copy()
 
 
 # ============================================================================

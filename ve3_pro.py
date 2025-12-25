@@ -1421,10 +1421,10 @@ class UnixVoiceToVideo:
             if config_path.exists():
                 with open(config_path, 'r', encoding='utf-8') as f:
                     config = yaml.safe_load(f) or {}
-                return str(config.get('video_count', '0'))
+                return str(config.get('video_count', '10'))
         except:
             pass
-        return '0'
+        return '10'  # Default: 10 images to video
 
     def _get_video_model_setting(self) -> str:
         """Get video model setting ('fast' or 'quality')."""
