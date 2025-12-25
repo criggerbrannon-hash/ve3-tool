@@ -101,6 +101,21 @@ wait_timeout: 30
 min_scene_duration: 3
 max_scene_duration: 8
 
+# ============================================================================
+# KEN BURNS EFFECTS - Hiệu ứng zoom/pan cho ảnh tĩnh
+# ============================================================================
+# Chất lượng như CapCut - mượt mà, không giật, không chóng mặt
+# Chỉ áp dụng cho ảnh, video có chuyển động sẵn nên không cần
+
+# Bật/tắt Ken Burns effects (true/false)
+ken_burns_enabled: true
+
+# Cường độ hiệu ứng: "subtle", "normal", "strong"
+# - subtle: Zoom 6%, pan 4% - rất nhẹ, gần như tĩnh
+# - normal: Zoom 12%, pan 8% - cân bằng (mặc định)
+# - strong: Zoom 18%, pan 12% - mạnh hơn, chuyển động rõ ràng
+ken_burns_intensity: "normal"
+
 # Whisper Settings (Voice to SRT)
 whisper_model: "base"
 whisper_language: "vi"

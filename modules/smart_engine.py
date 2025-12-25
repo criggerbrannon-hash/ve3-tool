@@ -24,6 +24,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime
 
+# Ken Burns effects for static images
+from .ken_burns import KenBurnsGenerator, KenBurnsEffect, KenBurnsIntensity, get_ken_burns_filter
+
 
 # ============================================================================
 # GLOBAL TOKEN EXTRACTION LOCK
@@ -2596,6 +2599,29 @@ class SmartEngine:
                 FADE_DURATION = 0.4  # 0.4 giây fade
                 self.log(f"  Dang tao {len(media_items)} clips ({video_count} video, {image_count} image)...")
 
+                # Ken Burns settings từ config
+                kb_enabled = True
+                kb_intensity = "normal"
+                try:
+                    import yaml
+                    config_path = Path(__file__).parent.parent / "config" / "settings.yaml"
+                    if config_path.exists():
+                        with open(config_path, 'r', encoding='utf-8') as f:
+                            config = yaml.safe_load(f) or {}
+                        kb_enabled = config.get('ken_burns_enabled', True)
+                        kb_intensity = config.get('ken_burns_intensity', 'normal')
+                except Exception:
+                    pass
+
+                # Ken Burns generator cho ảnh tĩnh
+                ken_burns = KenBurnsGenerator(1920, 1080, intensity=kb_intensity)
+                last_kb_effect = None  # Tránh lặp hiệu ứng liền kề
+
+                if kb_enabled:
+                    self.log(f"  Ken Burns: ON (intensity={kb_intensity})")
+                else:
+                    self.log(f"  Ken Burns: OFF (static images)")
+
                 # Tạo từng clip
                 clip_paths = []
                 for i, item in enumerate(media_items):
@@ -2654,8 +2680,21 @@ class SmartEngine:
                                 "-r", "30", str(clip_path)
                             ]
                     else:
-                        # === IMAGE: Tạo static clip với transitions ===
-                        vf = f"scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,{fade_filter}"
+                        # === IMAGE: Tạo clip (với hoặc không có Ken Burns) ===
+                        if kb_enabled:
+                            # Ken Burns effect (zoom/pan mượt mà)
+                            kb_effect = ken_burns.get_random_effect(exclude_last=last_kb_effect)
+                            last_kb_effect = kb_effect
+
+                            # Tạo filter với Ken Burns + fade
+                            vf = ken_burns.generate_filter(kb_effect, target_duration, FADE_DURATION)
+
+                            # Log hiệu ứng đang dùng (mỗi 5 ảnh)
+                            if i % 5 == 0:
+                                self.log(f"    #{item['id']}: {kb_effect.value}")
+                        else:
+                            # Static image (chỉ scale + fade)
+                            vf = f"scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,{fade_filter}"
 
                         cmd_clip = [
                             "ffmpeg", "-y",
