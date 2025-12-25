@@ -2297,13 +2297,29 @@ class SmartEngine:
                     abs_path = str(Path(item['path']).resolve()).replace('\\', '/')
                     target_duration = item['duration']
 
+                    # === TRANSITION EFFECTS ===
+                    # Chọn ngẫu nhiên hiệu ứng: mix (crossfade) hoặc tối dần (fade to black)
+                    # Đơn giản và phù hợp với thời lượng ngắn của mỗi clip
+                    transition_type = random.choice(['fade_black', 'fade_black', 'mix'])  # 2/3 fade to black
+                    fade_out_start = max(0, target_duration - FADE_DURATION)
+
+                    if transition_type == 'fade_black':
+                        # Tối dần: fade in/out to black
+                        fade_filter = f"fade=t=in:st=0:d={FADE_DURATION},fade=t=out:st={fade_out_start}:d={FADE_DURATION}"
+                    else:
+                        # Mix: fade với alpha (crossfade effect khi concat)
+                        fade_filter = f"fade=t=in:st=0:d={FADE_DURATION}:alpha=1,fade=t=out:st={fade_out_start}:d={FADE_DURATION}:alpha=1"
+
                     if item['is_video']:
-                        # === VIDEO CLIP: Cắt lấy phần giữa ===
+                        # === VIDEO CLIP: Cắt lấy phần giữa + thêm transitions ===
                         # Lấy duration của video gốc
                         probe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration",
                                     "-of", "default=noprint_wrappers=1:nokey=1", abs_path]
                         probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
                         video_duration = float(probe_result.stdout.strip()) if probe_result.stdout.strip() else 8.0
+
+                        # Base filter: scale + pad + transitions
+                        base_vf = f"scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,{fade_filter}"
 
                         if video_duration > target_duration:
                             # Cắt lấy phần giữa: bỏ đầu và cuối bằng nhau
@@ -2315,7 +2331,7 @@ class SmartEngine:
                                 "-ss", str(trim_start),
                                 "-i", abs_path,
                                 "-t", str(target_duration),
-                                "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2",
+                                "-vf", base_vf,
                                 "-c:v", "libx264", "-pix_fmt", "yuv420p",
                                 "-an",  # Bỏ audio từ video clip
                                 "-r", "30", str(clip_path)
@@ -2326,22 +2342,13 @@ class SmartEngine:
                                 "ffmpeg", "-y",
                                 "-i", abs_path,
                                 "-t", str(target_duration),
-                                "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2",
+                                "-vf", base_vf,
                                 "-c:v", "libx264", "-pix_fmt", "yuv420p",
                                 "-an",
                                 "-r", "30", str(clip_path)
                             ]
                     else:
-                        # === IMAGE: Tạo static clip với fade ===
-                        use_black = random.choice([True, False])
-
-                        if use_black:
-                            fade_out_start = max(0, target_duration - FADE_DURATION)
-                            fade_filter = f"fade=t=in:st=0:d={FADE_DURATION},fade=t=out:st={fade_out_start}:d={FADE_DURATION}"
-                        else:
-                            fade_out_start = max(0, target_duration - FADE_DURATION)
-                            fade_filter = f"fade=t=in:st=0:d={FADE_DURATION}:alpha=1,fade=t=out:st={fade_out_start}:d={FADE_DURATION}:alpha=1"
-
+                        # === IMAGE: Tạo static clip với transitions ===
                         vf = f"scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,{fade_filter}"
 
                         cmd_clip = [
