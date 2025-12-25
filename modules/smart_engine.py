@@ -2777,29 +2777,34 @@ class SmartEngine:
                             if i % 5 == 0:
                                 self.log(f"    #{item['id']}: {kb_effect.value}")
                         else:
-                            # Static image (chỉ scale + fade)
-                            vf = f"scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,{fade_filter}"
+                            # FAST MODE: Static zoom nhẹ (1.02x) + fade
+                            # Không dùng zoompan → rất nhanh, không giật
+                            # Zoom nhẹ để ảnh không trông quá tĩnh
+                            vf = f"scale=1958:1102:force_original_aspect_ratio=decrease,crop=1920:1080,{fade_filter}"
 
                         # Build FFmpeg command với GPU acceleration nếu có
+                        # Fast mode dùng preset nhanh nhất
                         if use_gpu:
+                            nvenc_preset = "p1" if compose_mode == "fast" else "p4"  # p1=fastest
                             cmd_clip = [
                                 "ffmpeg", "-y",
                                 "-loop", "1", "-t", str(target_duration),
                                 "-i", abs_path,
                                 "-vf", vf,
                                 "-c:v", gpu_encoder,  # h264_nvenc
-                                "-preset", "p4",  # NVENC preset (p1-p7, p4=balanced)
+                                "-preset", nvenc_preset,
                                 "-pix_fmt", "yuv420p",
                                 "-r", "25", str(clip_path)
                             ]
                         else:
+                            cpu_preset = "ultrafast" if compose_mode == "fast" else "fast"
                             cmd_clip = [
                                 "ffmpeg", "-y",
                                 "-loop", "1", "-t", str(target_duration),
                                 "-i", abs_path,
                                 "-vf", vf,
                                 "-c:v", "libx264",
-                                "-preset", "fast",  # Faster CPU encoding
+                                "-preset", cpu_preset,
                                 "-pix_fmt", "yuv420p",
                                 "-r", "25", str(clip_path)
                             ]
