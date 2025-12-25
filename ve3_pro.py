@@ -1325,6 +1325,51 @@ class UnixVoiceToVideo:
 
         ttk.Separator(video_tab, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=15)
 
+        # === VIDEO COMPOSE MODE (Ghép video cuối) ===
+        ttk.Label(video_tab, text="Chế độ ghép video (Edit cuối):",
+                  font=('Segoe UI', 11, 'bold')).pack(anchor=tk.W, pady=(0, 5))
+        ttk.Label(video_tab, text="Chọn tốc độ/chất lượng khi ghép ảnh+video+voice thành video final",
+                  foreground='gray').pack(anchor=tk.W, pady=(0, 5))
+
+        compose_mode_frame = ttk.Frame(video_tab)
+        compose_mode_frame.pack(fill=tk.X, pady=(5, 10))
+
+        compose_mode_var = tk.StringVar(value=self._get_compose_mode_setting())
+
+        # Radio buttons với mô tả
+        modes_frame = ttk.Frame(video_tab)
+        modes_frame.pack(fill=tk.X, pady=(0, 5))
+
+        ttk.Radiobutton(modes_frame, text="⚡ Fast (Nhanh nhất - chỉ fade, ~30s/100 clips)",
+                        variable=compose_mode_var, value="fast").pack(anchor=tk.W)
+        ttk.Radiobutton(modes_frame, text="⚖️ Balanced (Cân bằng - Ken Burns nhẹ, ~3 phút)",
+                        variable=compose_mode_var, value="balanced").pack(anchor=tk.W)
+        ttk.Radiobutton(modes_frame, text="✨ Quality (Đẹp nhất - Ken Burns mượt, ~8 phút)",
+                        variable=compose_mode_var, value="quality").pack(anchor=tk.W)
+
+        def save_compose_mode():
+            try:
+                settings_file = CONFIG_DIR / "settings.yaml"
+                settings = {}
+                if settings_file.exists():
+                    import yaml
+                    with open(settings_file, 'r', encoding='utf-8') as f:
+                        settings = yaml.safe_load(f) or {}
+
+                settings['video_compose_mode'] = compose_mode_var.get()
+
+                import yaml
+                with open(settings_file, 'w', encoding='utf-8') as f:
+                    yaml.dump(settings, f, allow_unicode=True, default_flow_style=False)
+
+                self.log(f"✓ Compose mode: {compose_mode_var.get()}", "OK")
+            except Exception as e:
+                messagebox.showerror("Lỗi", f"Không thể lưu: {e}")
+
+        ttk.Button(video_tab, text="💾 Lưu Compose Mode", command=save_compose_mode).pack(anchor=tk.W, pady=(5, 10))
+
+        ttk.Separator(video_tab, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
+
         ttk.Label(video_tab, text="💡 Lưu ý:", font=('Segoe UI', 10, 'bold')).pack(anchor=tk.W)
         ttk.Label(video_tab, text="• Cần Bearer Token (lấy từ tab Token)\n• Mỗi video mất 1-3 phút để tạo\n• Video được lưu vào thư mục video/\n• Prompt lấy từ cột 'video_prompt' trong Excel",
                   foreground='gray', justify=tk.LEFT).pack(anchor=tk.W)
@@ -1550,6 +1595,19 @@ class UnixVoiceToVideo:
         except:
             pass
         return True
+
+    def _get_compose_mode_setting(self) -> str:
+        """Get video compose mode setting (fast/balanced/quality)."""
+        try:
+            import yaml
+            config_path = CONFIG_DIR / "settings.yaml"
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+                return config.get('video_compose_mode', 'balanced')
+        except:
+            pass
+        return 'balanced'
 
     def _open_browser_for_login(self, profile_path: str, profile_name: str):
         """Open Chrome browser with profile for Google login."""
