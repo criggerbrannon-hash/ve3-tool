@@ -2778,24 +2778,22 @@ class SmartEngine:
                                 self.log(f"    #{item['id']}: {kb_effect.value}")
                         else:
                             # FAST MODE: Random static zoom + crop (1 lần, không tính từng frame)
+                            # Ảnh nhỏ (VD: 1368x768) sẽ được upscale lên >= 1920x1080
                             import random
 
-                            # Random zoom 5-12%
-                            zoom = random.uniform(1.05, 1.12)
-                            scaled_w = int(1920 * zoom)
-                            scaled_h = int(1080 * zoom)
+                            # Random crop position (5 vị trí: 4 góc + center)
+                            positions = [
+                                ("0", "0"),                                    # top-left
+                                ("(iw-1920)", "0"),                           # top-right
+                                ("0", "(ih-1080)"),                           # bottom-left
+                                ("(iw-1920)", "(ih-1080)"),                   # bottom-right
+                                ("(iw-1920)/2", "(ih-1080)/2"),              # center
+                            ]
+                            crop_x, crop_y = random.choice(positions)
 
-                            # Random crop offset (0.0 = left/top, 0.5 = center, 1.0 = right/bottom)
-                            offset_x = random.choice([0.0, 0.25, 0.5, 0.75, 1.0])
-                            offset_y = random.choice([0.0, 0.25, 0.5, 0.75, 1.0])
-
-                            # Dùng FFmpeg expression để crop an toàn (tự tính dựa trên kích thước thực)
-                            # (in_w-1920)*offset = vị trí x, (in_h-1080)*offset = vị trí y
-                            crop_x_expr = f"(in_w-1920)*{offset_x}"
-                            crop_y_expr = f"(in_h-1080)*{offset_y}"
-
-                            # Scale FILL (increase) để đảm bảo >= 1920x1080, rồi crop
-                            vf = f"scale={scaled_w}:{scaled_h}:force_original_aspect_ratio=increase,crop=1920:1080:{crop_x_expr}:{crop_y_expr},{fade_filter}"
+                            # Scale: upscale ảnh nhỏ lên >= 2100x1181 (thêm margin để crop)
+                            # Sau đó crop về 1920x1080
+                            vf = f"scale=2100:-2:force_original_aspect_ratio=increase,crop=1920:1080:{crop_x}:{crop_y},{fade_filter}"
 
                         # Build FFmpeg command với GPU acceleration nếu có
                         # Fast mode dùng preset nhanh nhất
