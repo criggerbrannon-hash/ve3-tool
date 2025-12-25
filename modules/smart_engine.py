@@ -3315,6 +3315,26 @@ class SmartEngine:
             self.log("[VIDEO] Video generation disabled (count = 0)", "INFO")
             return
 
+        # Đếm số video .mp4 đã có trong img/ để không làm thừa
+        img_dir = proj_dir / "img"
+        existing_videos = 0
+        if img_dir.exists():
+            # Chỉ đếm video từ scene (không đếm nv/loc)
+            for mp4 in img_dir.glob("*.mp4"):
+                name = mp4.stem
+                if not name.startswith('nv') and not name.startswith('loc'):
+                    existing_videos += 1
+
+        self._video_existing_count = existing_videos
+        count_num = self._video_settings.get('count_num', 0)
+
+        if count_num != -1 and existing_videos >= count_num:
+            self.log(f"[VIDEO] Đã có đủ {existing_videos}/{count_num} video, skip!", "OK")
+            return
+
+        if existing_videos > 0:
+            self.log(f"[VIDEO] Đã có {existing_videos} video, còn cần tạo {count_num - existing_videos if count_num != -1 else 'full'}")
+
         # Kiểm tra token: ưu tiên prefetched → đã load từ cache
         if not self._video_settings.get('bearer_token'):
             # Thử dùng prefetched token từ parallel batch mode
@@ -3362,12 +3382,13 @@ class SmartEngine:
             return
 
         with self._video_queue_lock:
-            # Check count limit
+            # Check count limit (bao gồm video đã có sẵn)
             count_num = self._video_settings.get('count_num', 0)
-            current_queued = len(self._video_queue) + self._video_results['success'] + self._video_results['failed']
+            existing = getattr(self, '_video_existing_count', 0)
+            current_total = existing + len(self._video_queue) + self._video_results['success'] + self._video_results['failed']
 
-            if count_num != -1 and current_queued >= count_num:
-                return  # Limit reached
+            if count_num != -1 and current_total >= count_num:
+                return  # Limit reached (đã đủ số video)
 
             self._video_queue.append({
                 'image_path': image_path,
