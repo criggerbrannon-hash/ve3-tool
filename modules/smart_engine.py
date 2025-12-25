@@ -2776,28 +2776,44 @@ class SmartEngine:
     # VIDEO GENERATION (Parallel with Image Gen)
     # =========================================================================
 
-    def _load_video_settings(self):
-        """Load video generation settings from config."""
+    def _load_video_settings(self, proj_dir: Path = None):
+        """Load video generation settings from config + project cache."""
         try:
             import yaml
+            import json
             settings_path = self.config_dir / "settings.yaml"
             if settings_path.exists():
                 with open(settings_path, 'r', encoding='utf-8') as f:
                     settings = yaml.safe_load(f) or {}
 
-                # Lấy token từ profile đã có (ưu tiên) hoặc settings.yaml (fallback)
                 bearer_token = ''
                 project_id = ''
 
-                # 1. UU TIEN: Token từ profiles đã lấy trong quá trình chạy
-                for profile in self.profiles:
-                    if profile.token and self.is_token_valid(profile):
-                        bearer_token = profile.token
-                        project_id = profile.project_id or ''
-                        self.log(f"[VIDEO] Dùng token từ profile: {Path(profile.value).name}")
-                        break
+                # 1. ƯU TIÊN: Token từ project cache (.media_cache.json)
+                # Đây là token đã được cache khi tạo ảnh, dùng chung cho video
+                if proj_dir:
+                    cache_path = proj_dir / "prompts" / ".media_cache.json"
+                    if cache_path.exists():
+                        try:
+                            with open(cache_path, 'r', encoding='utf-8') as f:
+                                cache_data = json.load(f)
+                            bearer_token = cache_data.get('_bearer_token', '')
+                            project_id = cache_data.get('_project_id', '')
+                            if bearer_token:
+                                self.log(f"[VIDEO] Dùng token từ project cache")
+                        except:
+                            pass
 
-                # 2. FALLBACK: Token từ settings.yaml
+                # 2. FALLBACK: Token từ profiles
+                if not bearer_token:
+                    for profile in self.profiles:
+                        if profile.token and self.is_token_valid(profile):
+                            bearer_token = profile.token
+                            project_id = profile.project_id or ''
+                            self.log(f"[VIDEO] Dùng token từ profile: {Path(profile.value).name}")
+                            break
+
+                # 3. FALLBACK: Token từ settings.yaml
                 if not bearer_token:
                     bearer_token = settings.get('flow_bearer_token', '')
                     project_id = settings.get('flow_project_id', '')
@@ -2834,11 +2850,12 @@ class SmartEngine:
         if self._video_worker_running:
             return
 
-        if not self._load_video_settings():
+        # Load settings với proj_dir để đọc được project cache
+        if not self._load_video_settings(proj_dir):
             self.log("[VIDEO] Video generation disabled (count = 0)", "INFO")
             return
 
-        # Kiểm tra token: ưu tiên prefetched → settings
+        # Kiểm tra token: ưu tiên prefetched → đã load từ cache
         if not self._video_settings.get('bearer_token'):
             # Thử dùng prefetched token từ parallel batch mode
             if hasattr(self, '_prefetched_token') and self._prefetched_token:
@@ -2847,8 +2864,7 @@ class SmartEngine:
                 self.log("[VIDEO] Dùng pre-fetched token cho video generation")
 
         if not self._video_settings.get('bearer_token'):
-            self.log("[VIDEO] No bearer token - video generation disabled", "WARN")
-            self.log("[VIDEO] Token sẽ được lấy trong quá trình tạo ảnh, video sẽ được tạo sau", "INFO")
+            self.log("[VIDEO] Chưa có token - sẽ tạo video sau khi có ảnh", "INFO")
             return
 
         self._video_worker_running = True
