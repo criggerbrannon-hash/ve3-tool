@@ -648,12 +648,12 @@ class UnixVoiceToVideo:
         for subfolder in self.batch_voice_folder.iterdir():
             if subfolder.is_dir():
                 for voice_file in subfolder.glob("*.mp3"):
-                    # Check if video already exists (done/subfolder/voice_stem.mp4)
-                    done_video = self.batch_done_folder / subfolder.name / f"{voice_file.stem}.mp4"
+                    # Check if video already exists (done/voice_stem/voice_stem_final.mp4)
+                    done_video = self.batch_done_folder / voice_file.stem / f"{voice_file.stem}_final.mp4"
                     if not done_video.exists():
                         pending += 1
                 for voice_file in subfolder.glob("*.wav"):
-                    done_video = self.batch_done_folder / subfolder.name / f"{voice_file.stem}.mp4"
+                    done_video = self.batch_done_folder / voice_file.stem / f"{voice_file.stem}_final.mp4"
                     if not done_video.exists():
                         pending += 1
         return pending
@@ -1780,12 +1780,12 @@ class UnixVoiceToVideo:
                     continue
 
                 for voice_file in sorted(subfolder.glob("*.mp3")) + sorted(subfolder.glob("*.wav")):
-                    # Output folder = done/subfolder_name (không thêm voice_file.stem)
-                    # Ví dụ: voice/ar31-t1/ar31-t1.mp3 → done/ar31-t1/ar31-t1.srt
-                    output_folder = self.batch_done_folder / subfolder.name
+                    # Output folder = done/voice_stem (không có subfolder)
+                    # Ví dụ: voice/ar34-t1/ar34-0023.mp3 → done/ar34-0023/
+                    output_folder = self.batch_done_folder / voice_file.stem
 
-                    # Check if video already exists (không check folder exists vì nhiều file chung folder)
-                    final_video = output_folder / f"{voice_file.stem}.mp4"
+                    # Check if video already exists
+                    final_video = output_folder / f"{voice_file.stem}_final.mp4"
                     if final_video.exists():
                         continue
 
