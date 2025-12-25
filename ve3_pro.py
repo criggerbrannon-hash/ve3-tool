@@ -1340,11 +1340,11 @@ class UnixVoiceToVideo:
         modes_frame = ttk.Frame(video_tab)
         modes_frame.pack(fill=tk.X, pady=(0, 5))
 
-        ttk.Radiobutton(modes_frame, text="⚡ Fast (Nhanh nhất - chỉ fade, ~30s/100 clips)",
+        ttk.Radiobutton(modes_frame, text="⚡ Fast (Ảnh tĩnh, không chuyển động - nhanh nhất)",
                         variable=compose_mode_var, value="fast").pack(anchor=tk.W)
-        ttk.Radiobutton(modes_frame, text="⚖️ Balanced (Cân bằng - Ken Burns nhẹ, ~3 phút)",
+        ttk.Radiobutton(modes_frame, text="⚖️ Balanced (Có chuyển động zoom/pan)",
                         variable=compose_mode_var, value="balanced").pack(anchor=tk.W)
-        ttk.Radiobutton(modes_frame, text="✨ Quality (Đẹp nhất - Ken Burns mượt, ~8 phút)",
+        ttk.Radiobutton(modes_frame, text="✨ Quality (Chuyển động mượt + easing)",
                         variable=compose_mode_var, value="quality").pack(anchor=tk.W)
 
         def save_compose_mode():

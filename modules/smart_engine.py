@@ -2687,15 +2687,15 @@ class SmartEngine:
 
                 # Log compose mode
                 mode_desc = {
-                    "quality": "Ken Burns + easing (đẹp nhất)",
-                    "balanced": "Ken Burns đơn giản (cân bằng)",
-                    "fast": "Chỉ fade, không zoom/pan (nhanh nhất)"
+                    "quality": "Ken Burns + easing (có chuyển động mượt)",
+                    "balanced": "Ken Burns (có chuyển động)",
+                    "fast": "Tĩnh, chỉ scale + fade (nhanh nhất)"
                 }
                 self.log(f"  Compose mode: {compose_mode.upper()} - {mode_desc.get(compose_mode, 'balanced')}")
                 if kb_enabled:
-                    self.log(f"  Ken Burns: ON (intensity={kb_intensity}, simple={use_simple_kb})")
+                    self.log(f"  Ken Burns: ON (có chuyển động)")
                 else:
-                    self.log(f"  Ken Burns: OFF (static images, fast mode)")
+                    self.log(f"  Ken Burns: OFF (ảnh tĩnh)")
 
                 # Tạo từng clip
                 clip_paths = []
@@ -2782,45 +2782,12 @@ class SmartEngine:
                             if i % 5 == 0:
                                 self.log(f"    #{item['id']}: {kb_effect.value}")
                         else:
-                            # FAST MODE: Random static zoom + crop (1 lần, không tính từng frame)
-                            # Đa dạng hiệu ứng để không nhàm chán
-                            import random
-
-                            # Danh sách hiệu ứng: (tên, scale_width, crop_x, crop_y)
-                            # Scale lớn hơn = zoom in nhiều hơn
-                            effects = [
-                                # Zoom in các góc (scale lớn, crop góc)
-                                ("zoom_in_center", 2200, "(iw-1920)/2", "(ih-1080)/2"),
-                                ("zoom_in_top_left", 2200, "0", "0"),
-                                ("zoom_in_top_right", 2200, "(iw-1920)", "0"),
-                                ("zoom_in_bottom_left", 2200, "0", "(ih-1080)"),
-                                ("zoom_in_bottom_right", 2200, "(iw-1920)", "(ih-1080)"),
-
-                                # Zoom out nhẹ (scale nhỏ hơn, crop center)
-                                ("zoom_out_center", 2016, "(iw-1920)/2", "(ih-1080)/2"),
-
-                                # Pan trái/phải (crop lệch sang 1 bên)
-                                ("pan_left", 2100, "(iw-1920)", "(ih-1080)/2"),      # Hiện bên phải ảnh
-                                ("pan_right", 2100, "0", "(ih-1080)/2"),              # Hiện bên trái ảnh
-
-                                # Pan trên/dưới
-                                ("pan_up", 2100, "(iw-1920)/2", "(ih-1080)"),         # Hiện phần dưới
-                                ("pan_down", 2100, "(iw-1920)/2", "0"),               # Hiện phần trên
-
-                                # Góc chéo
-                                ("corner_top_left", 2150, "0", "0"),
-                                ("corner_top_right", 2150, "(iw-1920)", "0"),
-                                ("corner_bottom_left", 2150, "0", "(ih-1080)"),
-                                ("corner_bottom_right", 2150, "(iw-1920)", "(ih-1080)"),
-                            ]
-
-                            effect_name, scale_w, crop_x, crop_y = random.choice(effects)
-
-                            # Build filter: scale + crop + fade (nếu có)
+                            # FAST MODE: Chỉ scale về 1920x1080, không zoom/crop
+                            # Nhanh nhất, ảnh giữ nguyên tỷ lệ
                             if fade_filter:
-                                vf = f"scale={scale_w}:-2:force_original_aspect_ratio=increase,crop=1920:1080:{crop_x}:{crop_y},{fade_filter}"
+                                vf = f"scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,{fade_filter}"
                             else:
-                                vf = f"scale={scale_w}:-2:force_original_aspect_ratio=increase,crop=1920:1080:{crop_x}:{crop_y}"
+                                vf = f"scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2"
 
                         # Build FFmpeg command với GPU acceleration nếu có
                         # Fast mode dùng preset nhanh nhất
