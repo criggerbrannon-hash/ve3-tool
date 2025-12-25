@@ -2490,22 +2490,31 @@ class SmartEngine:
             headers = [cell.value for cell in scenes_sheet[1]]
             self.log(f"  Headers: {headers[:5]}...")
 
-            # Tìm cột cần thiết (chỉ cần ID và Start Time)
+            # Tìm cột cần thiết (ID và srt_start)
             id_col = start_col = None
             for i, h in enumerate(headers):
                 if h is None:
                     continue
-                h_lower = str(h).lower()
-                if 'id' in h_lower and id_col is None:
+                h_lower = str(h).lower().strip()
+
+                # Tìm cột ID (scene_id hoặc id)
+                if h_lower in ['scene_id', 'id'] and id_col is None:
                     id_col = i
-                if 'start' in h_lower and 'time' in h_lower:
+
+                # Tìm cột thời gian: ưu tiên srt_start, fallback start_time
+                if h_lower == 'srt_start':
+                    start_col = i
+                elif 'start' in h_lower and 'time' in h_lower and start_col is None:
                     start_col = i
 
             if id_col is None:
                 self.log("  Khong tim thay cot ID!", "ERROR")
                 return None
 
-            self.log(f"  Columns: ID={id_col}, Start={start_col}")
+            # Log cột đã tìm thấy
+            id_header = headers[id_col] if id_col is not None else "N/A"
+            start_header = headers[start_col] if start_col is not None else "N/A"
+            self.log(f"  Columns: ID='{id_header}'(col {id_col}), Start='{start_header}'(col {start_col})")
 
             # 2. Load media (video clips hoặc images) với timestamps
             # Ưu tiên: video clip (.mp4) > image (.png)
