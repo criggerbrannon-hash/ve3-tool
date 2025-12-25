@@ -263,10 +263,14 @@ class KenBurnsGenerator:
         """
         config = self.get_config(effect)
 
-        # In simple mode, disable easing for faster rendering
+        # In simple mode, disable easing AND use lower FPS for faster rendering
         if simple_mode:
             config.use_easing = False
-        total_frames = int(duration * self.ZOOMPAN_FPS)
+            fps = 15  # Balanced mode: 15fps (40% faster than 25fps)
+        else:
+            fps = self.ZOOMPAN_FPS  # Quality mode: 25fps
+
+        total_frames = int(duration * fps)
 
         # === ZOOMPAN FILTER ===
         # Công thức với easing (ease-in-out) để mượt mà
@@ -322,7 +326,7 @@ class KenBurnsGenerator:
             f"y='{y_expr}':"
             f"d={total_frames}:"
             f"s={self.output_width}x{self.output_height}:"
-            f"fps={self.ZOOMPAN_FPS}"
+            f"fps={fps}"
         )
 
         # 3. Fade in/out
