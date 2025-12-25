@@ -625,6 +625,73 @@ class SmartEngine:
             # === RELEASE TOKEN EXTRACTION SLOT ===
             _release_token_extraction_slot(profile_name, self.log)
 
+    def _prefetch_token_for_worker(self, profile_path: str, worker_id: int) -> Optional[Dict]:
+        """
+        Pre-fetch token cho 1 worker (parallel batch processing).
+
+        QUAN TRỌNG:
+        - Mỗi worker cần 1 project RIÊNG (không reuse) vì media_ids unique per project
+        - Token extraction phải serialized (1 Chrome tại 1 thời điểm)
+        - Return dict với token + project_id để worker dùng
+
+        Args:
+            profile_path: Đường dẫn Chrome profile
+            worker_id: ID của worker (0, 1, 2, ...)
+
+        Returns:
+            Dict {'token': str, 'project_id': str} hoặc None nếu fail
+        """
+        from modules.auto_token import ChromeAutoToken
+
+        profile_name = Path(profile_path).name
+        self.log(f"[Worker{worker_id}] Pre-fetch token từ profile: {profile_name}")
+
+        # === ACQUIRE TOKEN EXTRACTION SLOT (Queue) ===
+        # Đảm bảo chỉ 1 Chrome extract token tại 1 thời điểm
+        _acquire_token_extraction_slot(f"worker_{worker_id}", self.log)
+
+        try:
+            # QUAN TRỌNG: Chrome HIỂN THỊ vì Google block headless
+            self.log(f"[Worker{worker_id}] Mở Chrome HIỂN THỊ để lấy token...")
+
+            extractor = ChromeAutoToken(
+                chrome_path=self.chrome_path,
+                profile_path=profile_path,
+                auto_close=True,  # Tự động đóng sau khi lấy token
+                headless=False  # LUÔN False - Google block headless
+            )
+
+            # QUAN TRỌNG: project_id=None để TẠO MỚI project
+            # Mỗi worker cần project riêng vì media_ids unique per project
+            token, project_id, error = extractor.extract_token(
+                project_id=None,  # TẠO MỚI - không reuse
+                callback=self.callback
+            )
+
+            if token:
+                self.log(f"[Worker{worker_id}] ✅ Token OK!", "OK")
+                if project_id:
+                    self.log(f"[Worker{worker_id}]   Project: {project_id[:8]}...")
+
+                return {
+                    'token': token,
+                    'project_id': project_id,
+                    'profile_path': profile_path,
+                    'worker_id': worker_id,
+                    'timestamp': time.time()
+                }
+            else:
+                self.log(f"[Worker{worker_id}] ❌ Token FAIL: {error}", "ERROR")
+                return None
+
+        except Exception as e:
+            self.log(f"[Worker{worker_id}] ❌ Exception: {e}", "ERROR")
+            return None
+
+        finally:
+            # === RELEASE TOKEN EXTRACTION SLOT ===
+            _release_token_extraction_slot(f"worker_{worker_id}", self.log)
+
     def get_all_tokens(self) -> int:
         """
         Lay token cho tat ca accounts.
@@ -1294,14 +1361,28 @@ class SmartEngine:
         # Config path - dung settings.yaml, khong phai accounts.json
         settings_path = self.config_dir / "settings.yaml"
 
-        # Check bearer token trong settings
+        # Check bearer token - ưu tiên pre-fetched token (parallel batch mode)
         bearer_token = ""
         proxy_token = ""
+        prefetched_project_id = None
+
+        # === CHECK PRE-FETCHED TOKEN (parallel batch mode) ===
+        if hasattr(self, '_prefetched_token') and self._prefetched_token:
+            prefetch = self._prefetched_token
+            bearer_token = prefetch.get('token', '')
+            prefetched_project_id = prefetch.get('project_id', '')
+            worker_id = prefetch.get('worker_id', -1)
+            if bearer_token:
+                self.log(f"[Worker{worker_id}] Dùng pre-fetched token (project: {prefetched_project_id[:8] if prefetched_project_id else 'N/A'}...)")
+
+        # Load settings.yaml for proxy_token và fallback
         try:
             with open(settings_path, 'r', encoding='utf-8') as f:
                 cfg = yaml.safe_load(f) or {}
-            bearer_token = cfg.get('flow_bearer_token', '')
             proxy_token = cfg.get('proxy_api_token', '')
+            # Only use settings.yaml bearer_token if no pre-fetched token
+            if not bearer_token:
+                bearer_token = cfg.get('flow_bearer_token', '')
         except:
             pass
 
@@ -1324,6 +1405,12 @@ class SmartEngine:
                 verbose=True,
                 config_path=str(settings_path)
             )
+
+            # === INJECT PRE-FETCHED PROJECT_ID nếu có ===
+            # Quan trọng: mỗi worker cần project riêng để tránh conflict media_ids
+            if prefetched_project_id:
+                generator.config['flow_project_id'] = prefetched_project_id
+                self.log(f"  -> Inject project_id: {prefetched_project_id[:8]}...")
 
             # Goi generate_from_prompts_auto - tu dong chon API hoac Chrome
             result = generator.generate_from_prompts_auto(
