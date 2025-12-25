@@ -2349,7 +2349,7 @@ Estimated Shots: {part_info.get('estimated_shots', 5)}
         parts = []
         current_part = {
             "part_number": start_part_num,
-            "part_name": "FALLBACK SCENE",
+            "part_name": "AUTO SCENE",
             "location": "",
             "shots": []
         }
@@ -2367,7 +2367,7 @@ Estimated Shots: {part_info.get('estimated_shots', 5)}
                 "srt_range": f"{self._format_timedelta(entry.start_time)} - {self._format_timedelta(entry.end_time)}",
                 "srt_text": entry.text[:200] if entry.text else "",
                 "planned_duration": int(planned_duration),
-                "img_prompt": f"[FALLBACK] {global_style or 'cinematic'} scene depicting: {entry.text[:100]}",
+                "img_prompt": f"{global_style or 'Cinematic, 4K photorealistic'} scene depicting: {entry.text[:100]}",
                 "shot_type": "MEDIUM",
                 "camera_angle": "EYE LEVEL",
                 "emotional_weight": "MEDIUM",
@@ -2385,7 +2385,7 @@ Estimated Shots: {part_info.get('estimated_shots', 5)}
                 parts.append(current_part)
                 current_part = {
                     "part_number": start_part_num + len(parts),
-                    "part_name": f"FALLBACK SCENE {len(parts) + 1}",
+                    "part_name": f"AUTO SCENE {len(parts) + 1}",
                     "location": "",
                     "shots": []
                 }
