@@ -123,7 +123,7 @@ max_scene_duration: 8
 # Thời gian ước tính cho 100 clips:
 #   RTX 4070/3060: quality ~8 phút, balanced ~3 phút, fast ~1 phút
 #   CPU only:      quality ~30 phút, balanced ~15 phút, fast ~5 phút
-video_compose_mode: "balanced"
+video_compose_mode: "fast"
 
 # ============================================================================
 # KEN BURNS EFFECTS - Hiệu ứng zoom/pan cho ảnh tĩnh

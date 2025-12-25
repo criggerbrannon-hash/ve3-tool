@@ -1604,10 +1604,10 @@ class UnixVoiceToVideo:
             if config_path.exists():
                 with open(config_path, 'r', encoding='utf-8') as f:
                     config = yaml.safe_load(f) or {}
-                return config.get('video_compose_mode', 'balanced')
+                return config.get('video_compose_mode', 'fast')
         except:
             pass
-        return 'balanced'
+        return 'fast'
 
     def _open_browser_for_login(self, profile_path: str, profile_name: str):
         """Open Chrome browser with profile for Google login."""

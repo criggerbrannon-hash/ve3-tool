@@ -256,92 +256,98 @@ class KenBurnsGenerator:
             effect: Loại hiệu ứng
             duration: Thời lượng clip (giây)
             fade_duration: Thời lượng fade in/out (giây)
-            simple_mode: True = no easing (faster, for balanced mode)
+            simple_mode: True = use fast crop method (for balanced mode)
 
         Returns:
             FFmpeg filter string
         """
         config = self.get_config(effect)
-
-        # In simple mode, disable easing AND use lower FPS for faster rendering
-        if simple_mode:
-            config.use_easing = False
-            fps = 15  # Balanced mode: 15fps (40% faster than 25fps)
-        else:
-            fps = self.ZOOMPAN_FPS  # Quality mode: 25fps
-
-        total_frames = int(duration * fps)
-
-        # === ZOOMPAN FILTER ===
-        # Công thức với easing (ease-in-out) để mượt mà
-        # t = on/d (0 đến 1)
-        # eased_t = 0.5 - 0.5 * cos(PI * t)  (smooth)
-
-        # Zoom expression với easing
-        # on = frame hiện tại, d = tổng số frame
-        zoom_diff = config.zoom_end - config.zoom_start
-        if config.use_easing:
-            # Smooth ease-in-out: 0.5 - 0.5*cos(PI * on/d)
-            zoom_expr = f"{config.zoom_start}+{zoom_diff}*(0.5-0.5*cos(PI*on/{total_frames}))"
-        else:
-            # Linear
-            zoom_expr = f"{config.zoom_start}+{zoom_diff}*on/{total_frames}"
-
-        # Pan X expression (vị trí X của góc trên trái viewport)
-        # x = (iw - iw/zoom)/2 + offset
-        # offset_ratio đi từ pan_x_start đến pan_x_end
-        pan_x_diff = config.pan_x_end - config.pan_x_start
-        if config.use_easing:
-            pan_x_ratio = f"{config.pan_x_start}+{pan_x_diff}*(0.5-0.5*cos(PI*on/{total_frames}))"
-        else:
-            pan_x_ratio = f"{config.pan_x_start}+{pan_x_diff}*on/{total_frames}"
-
-        # X offset: khi ratio=0.5 thì ở giữa, <0.5 thì sang trái, >0.5 thì sang phải
-        # x = (iw - iw/zoom) * ratio
-        x_expr = f"(iw-iw/zoom)*({pan_x_ratio})"
-
-        # Pan Y expression (tương tự X)
-        pan_y_diff = config.pan_y_end - config.pan_y_start
-        if config.use_easing:
-            pan_y_ratio = f"{config.pan_y_start}+{pan_y_diff}*(0.5-0.5*cos(PI*on/{total_frames}))"
-        else:
-            pan_y_ratio = f"{config.pan_y_start}+{pan_y_diff}*on/{total_frames}"
-
-        y_expr = f"(ih-ih/zoom)*({pan_y_ratio})"
-
-        # Build zoompan filter
-        # Scale ảnh lớn hơn trước (để có không gian pan mà không bị viền đen)
-        # Sau đó dùng zoompan để tạo hiệu ứng
-
-        # 1. Scale ảnh lên 1.25x (đủ cho pan, tiết kiệm 44% pixels so với 1.5x)
-        scale_factor = 1.25
-        scaled_w = int(self.output_width * scale_factor)
-        scaled_h = int(self.output_height * scale_factor)
-
-        # 2. Zoompan filter
-        zoompan = (
-            f"zoompan="
-            f"z='{zoom_expr}':"
-            f"x='{x_expr}':"
-            f"y='{y_expr}':"
-            f"d={total_frames}:"
-            f"s={self.output_width}x{self.output_height}:"
-            f"fps={fps}"
-        )
-
-        # 3. Fade in/out
         fade_out_start = max(0, duration - fade_duration)
         fade = f"fade=t=in:st=0:d={fade_duration},fade=t=out:st={fade_out_start}:d={fade_duration}"
 
-        # Full filter chain:
-        # 1. Scale ảnh lớn hơn (để có không gian cho zoom/pan)
-        # 2. Zoompan (tạo hiệu ứng Ken Burns)
-        # 3. Fade in/out
-        full_filter = (
-            f"scale={scaled_w}:{scaled_h}:force_original_aspect_ratio=increase,"
-            f"crop={scaled_w}:{scaled_h},"
-            f"{zoompan},"
-            f"{fade}"
+        if simple_mode:
+            # === BALANCED MODE: Dùng crop với 't' expression (NHANH HƠN zoompan) ===
+            # Scale ảnh lên lớn, dùng crop animated thay vì zoompan
+            # Crop chỉ cắt vùng, không scale từng frame → nhanh hơn nhiều
+
+            # Scale lớn hơn output để có không gian pan
+            margin = 200  # pixels margin for panning
+            scaled_w = self.output_width + margin
+            scaled_h = self.output_height + int(margin * 9 / 16)
+
+            # Tính crop animation dựa trên effect
+            # t = thời gian hiện tại, duration = tổng thời gian
+            if effect in [KenBurnsEffect.ZOOM_IN, KenBurnsEffect.ZOOM_IN_CENTER]:
+                # Zoom in: crop từ lớn về nhỏ (shrink crop area)
+                # Bắt đầu từ full, kết thúc ở center
+                x_expr = f"({margin}/2)*(t/{duration})"
+                y_expr = f"({int(margin * 9 / 32)})*(t/{duration})"
+            elif effect in [KenBurnsEffect.ZOOM_OUT, KenBurnsEffect.ZOOM_OUT_CENTER]:
+                # Zoom out: crop từ nhỏ ra lớn
+                x_expr = f"({margin}/2)*(1-t/{duration})"
+                y_expr = f"({int(margin * 9 / 32)})*(1-t/{duration})"
+            elif effect == KenBurnsEffect.PAN_LEFT:
+                # Pan left: x đi từ phải sang trái
+                x_expr = f"{margin}*(1-t/{duration})"
+                y_expr = f"{int(margin * 9 / 32) // 2}"
+            elif effect == KenBurnsEffect.PAN_RIGHT:
+                # Pan right: x đi từ trái sang phải
+                x_expr = f"{margin}*(t/{duration})"
+                y_expr = f"{int(margin * 9 / 32) // 2}"
+            elif effect == KenBurnsEffect.PAN_UP:
+                # Pan up: y đi từ dưới lên
+                x_expr = f"{margin // 2}"
+                y_expr = f"{int(margin * 9 / 16)}*(1-t/{duration})"
+            elif effect == KenBurnsEffect.PAN_DOWN:
+                # Pan down: y đi từ trên xuống
+                x_expr = f"{margin // 2}"
+                y_expr = f"{int(margin * 9 / 16)}*(t/{duration})"
+            else:
+                # Default: subtle drift
+                x_expr = f"({margin}/2)*(0.5+0.5*sin(t/{duration}*PI))"
+                y_expr = f"({int(margin * 9 / 32)})*(0.5+0.5*cos(t/{duration}*PI))"
+
+            full_filter = (
+                f"scale={scaled_w}:{scaled_h}:force_original_aspect_ratio=increase,"
+                f"crop={self.output_width}:{self.output_height}:{x_expr}:{y_expr},"
+                f"{fade}"
+            )
+        else:
+            # === QUALITY MODE: Dùng zoompan (mượt hơn nhưng chậm hơn) ===
+            fps = self.ZOOMPAN_FPS
+            total_frames = int(duration * fps)
+
+            zoom_diff = config.zoom_end - config.zoom_start
+            # Smooth ease-in-out
+            zoom_expr = f"{config.zoom_start}+{zoom_diff}*(0.5-0.5*cos(PI*on/{total_frames}))"
+
+            pan_x_diff = config.pan_x_end - config.pan_x_start
+            pan_x_ratio = f"{config.pan_x_start}+{pan_x_diff}*(0.5-0.5*cos(PI*on/{total_frames}))"
+            x_expr = f"(iw-iw/zoom)*({pan_x_ratio})"
+
+            pan_y_diff = config.pan_y_end - config.pan_y_start
+            pan_y_ratio = f"{config.pan_y_start}+{pan_y_diff}*(0.5-0.5*cos(PI*on/{total_frames}))"
+            y_expr = f"(ih-ih/zoom)*({pan_y_ratio})"
+
+            scale_factor = 1.25
+            scaled_w = int(self.output_width * scale_factor)
+            scaled_h = int(self.output_height * scale_factor)
+
+            zoompan = (
+                f"zoompan="
+                f"z='{zoom_expr}':"
+                f"x='{x_expr}':"
+                f"y='{y_expr}':"
+                f"d={total_frames}:"
+                f"s={self.output_width}x{self.output_height}:"
+                f"fps={fps}"
+            )
+
+            full_filter = (
+                f"scale={scaled_w}:{scaled_h}:force_original_aspect_ratio=increase,"
+                f"crop={scaled_w}:{scaled_h},"
+                f"{zoompan},"
+                f"{fade}"
         )
 
         return full_filter
