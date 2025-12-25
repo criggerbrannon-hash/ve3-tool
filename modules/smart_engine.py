@@ -2113,8 +2113,12 @@ class SmartEngine:
 
             self.log(f"  Columns: ID={id_col}, Start={start_col}")
 
-            # 2. Load images với timestamps
-            images = []
+            # 2. Load media (video clips hoặc images) với timestamps
+            # Ưu tiên: video clip (.mp4) > image (.png)
+            media_items = []
+            video_count = 0
+            image_count = 0
+
             for row in scenes_sheet.iter_rows(min_row=2, values_only=True):
                 if row[id_col] is None:
                     continue
@@ -2125,9 +2129,19 @@ class SmartEngine:
                 if not scene_id.isdigit():
                     continue
 
-                # Tìm ảnh
+                # Ưu tiên video clip (.mp4), fallback to image (.png)
+                video_path = img_dir / f"{scene_id}.mp4"
                 img_path = img_dir / f"{scene_id}.png"
-                if not img_path.exists():
+
+                if video_path.exists():
+                    media_path = video_path
+                    is_video = True
+                    video_count += 1
+                elif img_path.exists():
+                    media_path = img_path
+                    is_video = False
+                    image_count += 1
+                else:
                     continue
 
                 # Parse start_time
@@ -2135,21 +2149,22 @@ class SmartEngine:
                 if start_col is not None and row[start_col]:
                     start_time = self._parse_timestamp(str(row[start_col]))
 
-                images.append({
+                media_items.append({
                     'id': scene_id,
-                    'path': str(img_path),
-                    'start': start_time
+                    'path': str(media_path),
+                    'start': start_time,
+                    'is_video': is_video
                 })
 
-            if not images:
-                self.log("  Khong tim thay anh nao trong img/ folder!", "ERROR")
+            if not media_items:
+                self.log("  Khong tim thay media nao trong img/ folder!", "ERROR")
                 return None
 
             # Sắp xếp theo start_time
-            images.sort(key=lambda x: x['start'])
-            self.log(f"  Tim thay {len(images)} anh")
+            media_items.sort(key=lambda x: x['start'])
+            self.log(f"  Tim thay {len(media_items)} media: {video_count} video clips, {image_count} images")
 
-            # 3. Tính duration cho mỗi ảnh (CHỈ dựa vào start_time)
+            # 3. Tính duration cho mỗi media (CHỈ dựa vào start_time)
             # Lấy tổng thời lượng từ voice
             probe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration",
                         "-of", "default=noprint_wrappers=1:nokey=1", str(voice_path)]
@@ -2157,77 +2172,110 @@ class SmartEngine:
             total_duration = float(result.stdout.strip()) if result.stdout.strip() else 60.0
             self.log(f"  Voice duration: {total_duration:.1f}s")
 
-            # Tính duration mỗi ảnh = start_time[i+1] - start_time[i]
-            # Nếu thiếu ảnh, ảnh trước sẽ tự động kéo dài đến ảnh tiếp theo
-            for i, img in enumerate(images):
-                if i < len(images) - 1:
-                    # Duration = thời điểm ảnh tiếp theo bắt đầu - thời điểm ảnh này bắt đầu
-                    img['duration'] = images[i + 1]['start'] - img['start']
+            # Tính duration mỗi media = start_time[i+1] - start_time[i]
+            for i, item in enumerate(media_items):
+                if i < len(media_items) - 1:
+                    item['duration'] = media_items[i + 1]['start'] - item['start']
                 else:
-                    # Ảnh cuối: kéo dài đến hết voice
-                    img['duration'] = total_duration - img['start']
+                    # Media cuối: kéo dài đến hết voice
+                    item['duration'] = total_duration - item['start']
 
                 # Đảm bảo duration hợp lệ (tối thiểu 0.5s)
-                if img['duration'] <= 0:
-                    img['duration'] = max(0.5, (total_duration - img['start']) / max(1, len(images) - i))
+                if item['duration'] <= 0:
+                    item['duration'] = max(0.5, (total_duration - item['start']) / max(1, len(media_items) - i))
 
             # 4. Tạo video với FFmpeg + Fade Transitions
             # Windows fix: Don't use context manager - manual cleanup with retry
             temp_dir = tempfile.mkdtemp()
             try:
-                # Debug: show first few images
-                self.log(f"  First image: {Path(images[0]['path']).resolve()}")
-                for i in range(min(3, len(images))):
-                    self.log(f"    #{images[i]['id']}: start={images[i]['start']:.1f}s, dur={images[i]['duration']:.1f}s")
+                # Debug: show first few media items
+                self.log(f"  First media: {Path(media_items[0]['path']).resolve()}")
+                for i in range(min(3, len(media_items))):
+                    item = media_items[i]
+                    media_type = "🎬" if item['is_video'] else "🖼️"
+                    self.log(f"    {media_type} #{item['id']}: start={item['start']:.1f}s, dur={item['duration']:.1f}s")
 
                 # Video không có audio
                 temp_video = Path(temp_dir) / "temp_video.mp4"
 
-                # Fade in/out cho mỗi clip (đơn giản, timing chính xác)
+                # Fade in/out cho mỗi clip
                 import random
                 FADE_DURATION = 0.4  # 0.4 giây fade
-                self.log(f"  Dang tao {len(images)} clips voi fade transitions...")
+                self.log(f"  Dang tao {len(media_items)} clips ({video_count} video, {image_count} image)...")
 
-                # Tạo từng clip với fade in/out
+                # Tạo từng clip
                 clip_paths = []
-                for i, img in enumerate(images):
+                for i, item in enumerate(media_items):
                     clip_path = Path(temp_dir) / f"clip_{i:03d}.mp4"
-                    abs_path = str(Path(img['path']).resolve()).replace('\\', '/')
-                    duration = img['duration']
+                    abs_path = str(Path(item['path']).resolve()).replace('\\', '/')
+                    target_duration = item['duration']
 
-                    # Random: fadeblack (tối dần) hoặc fade thường
-                    use_black = random.choice([True, False])
+                    if item['is_video']:
+                        # === VIDEO CLIP: Cắt lấy phần giữa ===
+                        # Lấy duration của video gốc
+                        probe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                                    "-of", "default=noprint_wrappers=1:nokey=1", abs_path]
+                        probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
+                        video_duration = float(probe_result.stdout.strip()) if probe_result.stdout.strip() else 8.0
 
-                    if use_black:
-                        # Fade to/from black
-                        fade_out_start = max(0, duration - FADE_DURATION)
-                        fade_filter = f"fade=t=in:st=0:d={FADE_DURATION},fade=t=out:st={fade_out_start}:d={FADE_DURATION}"
+                        if video_duration > target_duration:
+                            # Cắt lấy phần giữa: bỏ đầu và cuối bằng nhau
+                            trim_total = video_duration - target_duration
+                            trim_start = trim_total / 2
+                            # Sử dụng -ss (seek) và -t (duration)
+                            cmd_clip = [
+                                "ffmpeg", "-y",
+                                "-ss", str(trim_start),
+                                "-i", abs_path,
+                                "-t", str(target_duration),
+                                "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2",
+                                "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                                "-an",  # Bỏ audio từ video clip
+                                "-r", "30", str(clip_path)
+                            ]
+                        else:
+                            # Video ngắn hơn target → dùng nguyên video
+                            cmd_clip = [
+                                "ffmpeg", "-y",
+                                "-i", abs_path,
+                                "-t", str(target_duration),
+                                "-vf", "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2",
+                                "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                                "-an",
+                                "-r", "30", str(clip_path)
+                            ]
                     else:
-                        # Chỉ fade nhẹ (không về đen hoàn toàn - giả lập crossfade)
-                        fade_out_start = max(0, duration - FADE_DURATION)
-                        fade_filter = f"fade=t=in:st=0:d={FADE_DURATION}:alpha=1,fade=t=out:st={fade_out_start}:d={FADE_DURATION}:alpha=1"
+                        # === IMAGE: Tạo static clip với fade ===
+                        use_black = random.choice([True, False])
 
-                    # Scale + Fade filter
-                    vf = f"scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,{fade_filter}"
+                        if use_black:
+                            fade_out_start = max(0, target_duration - FADE_DURATION)
+                            fade_filter = f"fade=t=in:st=0:d={FADE_DURATION},fade=t=out:st={fade_out_start}:d={FADE_DURATION}"
+                        else:
+                            fade_out_start = max(0, target_duration - FADE_DURATION)
+                            fade_filter = f"fade=t=in:st=0:d={FADE_DURATION}:alpha=1,fade=t=out:st={fade_out_start}:d={FADE_DURATION}:alpha=1"
 
-                    cmd_clip = [
-                        "ffmpeg", "-y",
-                        "-loop", "1", "-t", str(duration),
-                        "-i", abs_path,
-                        "-vf", vf,
-                        "-c:v", "libx264", "-pix_fmt", "yuv420p",
-                        "-r", "30", str(clip_path)
-                    ]
+                        vf = f"scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,{fade_filter}"
+
+                        cmd_clip = [
+                            "ffmpeg", "-y",
+                            "-loop", "1", "-t", str(target_duration),
+                            "-i", abs_path,
+                            "-vf", vf,
+                            "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                            "-r", "30", str(clip_path)
+                        ]
+
                     result = subprocess.run(cmd_clip, capture_output=True, text=True)
                     if result.returncode != 0:
-                        self.log(f"  Clip {i} failed: {result.stderr[-100:]}", "ERROR")
+                        self.log(f"  Clip {i} failed: {result.stderr[-200:]}", "ERROR")
                         continue
 
                     clip_paths.append(clip_path)
 
                     # Progress log mỗi 10 clips
                     if (i + 1) % 10 == 0:
-                        self.log(f"  ... {i + 1}/{len(images)} clips")
+                        self.log(f"  ... {i + 1}/{len(media_items)} clips")
 
                 if not clip_paths:
                     self.log("  Khong tao duoc clip nao!", "ERROR")
