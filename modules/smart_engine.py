@@ -556,14 +556,16 @@ class SmartEngine:
         _acquire_token_extraction_slot(profile_name, self.log)
 
         try:
-            # Sử dụng headless mode nếu được bật
-            headless_mode = getattr(self, 'use_headless', False)
+            # QUAN TRONG: Lay token LUON phai chay Chrome HIEN THI
+            # Vi Google Flow detect headless mode va block!
+            # Headless chi dung cho TAO ANH, khong dung cho LAY TOKEN
+            self.log(f"[Chrome] ⚠️ Mo Chrome HIEN THI de lay token (Google block headless)")
 
             extractor = ChromeAutoToken(
                 chrome_path=self.chrome_path,
                 profile_path=profile.value,
                 auto_close=True,  # Tu dong dong Chrome sau khi lay token
-                headless=headless_mode  # Áp dụng headless setting
+                headless=False  # LUON False - Google block headless khi lay token
             )
 
             # QUAN TRONG: Truyen project_id de reuse project da co

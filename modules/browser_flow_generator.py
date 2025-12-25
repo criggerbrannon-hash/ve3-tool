@@ -1858,12 +1858,13 @@ class BrowserFlowGenerator:
 
         self._log("=== TU DONG LAY BEARER TOKEN (mo Chrome) ===")
 
-        # Check headless setting
-        use_headless = self.config.get('browser_headless', True)
+        # QUAN TRONG: Lay token LUON phai chay Chrome HIEN THI (khong an)
+        # Vi Google Flow detect headless mode va block!
+        # Headless chi dung cho viec TAO ANH, khong dung cho LAY TOKEN.
+        use_headless = False  # LUON False khi lay token
+        self._log("⚠️ Lay token: Chrome se HIEN THI (Google block headless)")
 
         # Chon extractor phu hop:
-        # - Headless ON: dung ChromeTokenExtractor (Selenium/CDP) - chay an
-        # - Headless OFF: dung ChromeAutoToken (PyAutoGUI) - can cua so
         TokenExtractor = None
         extractor_name = None
         if use_headless:
