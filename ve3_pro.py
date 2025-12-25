@@ -87,7 +87,7 @@ def auto_update_from_git():
         return False, "Not a git repo"
 
     # FIXED: Always pull from the correct branch
-    TARGET_BRANCH = "claude/setup-tool-development-1fwGG"
+    TARGET_BRANCH = "claude/ve3-tool-development-XDmJH"
 
     try:
         # Fetch and reset to target branch

@@ -14,8 +14,8 @@ where git >nul 2>&1
 if %errorlevel% equ 0 (
     if exist ".git" (
         echo [*] Git found, updating...
-        git fetch origin claude/setup-tool-development-1fwGG 2>nul
-        git reset --hard origin/claude/setup-tool-development-1fwGG 2>nul
+        git fetch origin claude/ve3-tool-development-XDmJH 2>nul
+        git reset --hard origin/claude/ve3-tool-development-XDmJH 2>nul
         if %errorlevel% equ 0 (
             echo [OK] Updated via git
             goto :run
