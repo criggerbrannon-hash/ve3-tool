@@ -1052,11 +1052,7 @@ class UnixVoiceToVideo:
         ttk.Button(prof_btn_row1, text="🔓 Mở đăng nhập", command=open_profile_login).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(prof_btn_row1, text="🗑️ Xóa", command=delete_profile).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(prof_btn_row1, text="🔄", command=refresh_profile_list, width=3).pack(side=tk.LEFT)
-
-        # Row 2: Test button
-        prof_btn_row2 = ttk.Frame(prof_tab)
-        prof_btn_row2.pack(fill=tk.X, pady=(5, 0))
-        ttk.Button(prof_btn_row2, text="🧪 Test Token (không ẩn)", command=test_token_visible).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(prof_btn_row1, text="🧪 Test", command=test_token_visible).pack(side=tk.LEFT, padx=(5, 0))
 
         # Info
         ttk.Label(prof_tab, text="💡 Mỗi voice sẽ dùng 1 profile khác nhau khi chạy song song",
