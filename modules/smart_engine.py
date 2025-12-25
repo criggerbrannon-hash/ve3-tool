@@ -2110,8 +2110,37 @@ class SmartEngine:
         self.log("[STEP 7] Xuat TXT & SRT...")
         self._export_scenes(excel_path, proj_dir, name)
 
-        # === 8. COMPOSE VIDEO (LUON chay - du co vai anh fail) ===
-        self.log("[STEP 8] Ghep video...")
+        # === 8. WAIT FOR VIDEO GENERATION (I2V) ===
+        # Phải đợi tạo video từ ảnh xong trước khi compose
+        if self._video_worker_running:
+            self.log("[STEP 8] Doi tao video tu anh (I2V)...")
+            # Wait for queue to empty (with timeout)
+            wait_start = time.time()
+            max_wait = 3600  # 60 minutes max (I2V mất thời gian)
+            while self._video_worker_running and time.time() - wait_start < max_wait:
+                with self._video_queue_lock:
+                    pending = len(self._video_queue)
+                    if not self._video_queue:
+                        break
+                # Log progress every 30 seconds
+                elapsed = int(time.time() - wait_start)
+                if elapsed > 0 and elapsed % 30 == 0:
+                    self.log(f"  -> Đang đợi I2V: {pending} pending, {self._video_results['success']} OK, {self._video_results['failed']} failed ({elapsed}s)")
+                time.sleep(2)
+
+            # Stop worker and get results
+            self._stop_video_worker()
+            video_results = self.get_video_results()
+            self.log(f"[VIDEO] Ket qua I2V: {video_results['success']} OK, {video_results['failed']} failed")
+            results["video_gen"] = video_results
+        else:
+            self.log("[STEP 8] Khong co I2V, skip...")
+
+        # === 9. DONG BROWSER ===
+        self._close_browser()
+
+        # === 10. COMPOSE VIDEO (sau khi I2V xong) ===
+        self.log("[STEP 10] Ghep video...")
         if results.get("failed", 0) > 0:
             self.log(f"  CANH BAO: {results['failed']} anh fail, nhung van ghep video voi anh co san!", "WARN")
 
@@ -2121,27 +2150,6 @@ class SmartEngine:
             results["video"] = str(video_path)
         else:
             self.log("  Video composer khong kha dung hoac thieu file", "WARN")
-
-        # === 9. DONG BROWSER ===
-        self._close_browser()
-
-        # === 10. WAIT FOR VIDEO GENERATION (if running) ===
-        if self._video_worker_running:
-            self.log("[STEP 10] Doi video generation hoan thanh...")
-            # Wait for queue to empty (with timeout)
-            wait_start = time.time()
-            max_wait = 600  # 10 minutes max
-            while self._video_worker_running and time.time() - wait_start < max_wait:
-                with self._video_queue_lock:
-                    if not self._video_queue:
-                        break
-                time.sleep(2)
-
-            # Stop worker and get results
-            self._stop_video_worker()
-            video_results = self.get_video_results()
-            self.log(f"[VIDEO] Ket qua: {video_results['success']} OK, {video_results['failed']} failed")
-            results["video_gen"] = video_results
 
         return results
 
