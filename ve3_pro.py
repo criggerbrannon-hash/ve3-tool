@@ -170,11 +170,17 @@ class UnixVoiceToVideo:
 
         # Config background - dark theme
         self.root.configure(bg=self.COLORS['bg'])
-        
+
         # Variables
         self.input_mode = tk.StringVar(value="file")
         self.input_path = tk.StringVar()
-        
+
+        # Batch mode paths (relative to tool's parent folder)
+        # Tool: D:\AUTO\ve3-tool → Parent: D:\AUTO
+        # Voice: D:\AUTO\voice, Done: D:\AUTO\done
+        self.batch_voice_folder = ROOT_DIR.parent / "voice"
+        self.batch_done_folder = ROOT_DIR.parent / "done"
+
         # Data
         self.profiles: List[str] = []
         self.groq_keys: List[str] = []
@@ -408,14 +414,21 @@ class UnixVoiceToVideo:
         input_frame = ttk.LabelFrame(scrollable_frame, text=" 📁 Đầu vào ", padding=10)
         input_frame.pack(fill=tk.X, pady=(0, 10), padx=5)
 
-        # Mode selection
+        # Mode selection - Row 1
         mode_row = ttk.Frame(input_frame)
-        mode_row.pack(fill=tk.X, pady=(0, 8))
+        mode_row.pack(fill=tk.X, pady=(0, 4))
 
         ttk.Radiobutton(mode_row, text="📄 File đơn", variable=self.input_mode,
                         value="file", command=self.on_mode_change).pack(side=tk.LEFT)
         ttk.Radiobutton(mode_row, text="📂 Thư mục", variable=self.input_mode,
                         value="folder", command=self.on_mode_change).pack(side=tk.LEFT, padx=15)
+
+        # Mode selection - Row 2 (Auto Batch)
+        mode_row2 = ttk.Frame(input_frame)
+        mode_row2.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Radiobutton(mode_row2, text="🔄 Auto Batch (../voice → ../done)", variable=self.input_mode,
+                        value="batch", command=self.on_mode_change).pack(side=tk.LEFT)
 
         # Path row
         path_row = ttk.Frame(input_frame)
@@ -607,11 +620,43 @@ class UnixVoiceToVideo:
     
     def on_mode_change(self):
         """Handle mode change."""
-        self.input_path.set("")
-        if self.input_mode.get() == "folder":
-            self.input_info_label.config(text="Mỗi file voice trong thư mục = 1 dự án")
+        mode = self.input_mode.get()
+
+        if mode == "batch":
+            # Auto Batch mode - show voice folder path
+            self.input_path.set(str(self.batch_voice_folder))
+            pending = self._count_pending_voices()
+            self.input_info_label.config(
+                text=f"📂 voice → done | {pending} file chờ xử lý"
+            )
+            # Disable path entry for batch mode
+            self.path_entry.config(state='disabled')
         else:
-            self.input_info_label.config(text="Hỗ trợ: .mp3, .wav, .xlsx")
+            self.input_path.set("")
+            self.path_entry.config(state='normal')
+            if mode == "folder":
+                self.input_info_label.config(text="Mỗi file voice trong thư mục = 1 dự án")
+            else:
+                self.input_info_label.config(text="Hỗ trợ: .mp3, .wav, .xlsx")
+
+    def _count_pending_voices(self) -> int:
+        """Count pending voice files (in voice folder but not in done folder)."""
+        if not self.batch_voice_folder.exists():
+            return 0
+
+        pending = 0
+        for subfolder in self.batch_voice_folder.iterdir():
+            if subfolder.is_dir():
+                for voice_file in subfolder.glob("*.mp3"):
+                    # Check if already processed
+                    done_path = self.batch_done_folder / subfolder.name / voice_file.stem
+                    if not done_path.exists():
+                        pending += 1
+                for voice_file in subfolder.glob("*.wav"):
+                    done_path = self.batch_done_folder / subfolder.name / voice_file.stem
+                    if not done_path.exists():
+                        pending += 1
+        return pending
     
     def browse_input(self):
         """Browse for input."""
@@ -1558,19 +1603,42 @@ class UnixVoiceToVideo:
     
     def start_processing(self):
         """Start main processing."""
-        path = self.input_path.get()
-        
-        if not path:
-            messagebox.showerror("Lỗi", "Vui lòng chọn file hoặc thư mục đầu vào!")
-            return
-        
-        if not Path(path).exists():
-            messagebox.showerror("Lỗi", f"Không tìm thấy:\n{path}")
-            return
-        
+        mode = self.input_mode.get()
+
+        # Batch mode validation
+        if mode == "batch":
+            if not self.batch_voice_folder.exists():
+                messagebox.showerror(
+                    "Lỗi",
+                    f"Không tìm thấy thư mục voice:\n{self.batch_voice_folder}\n\n"
+                    "Vui lòng tạo thư mục này và thêm các file voice cần xử lý."
+                )
+                return
+
+            pending = self._count_pending_voices()
+            if pending == 0:
+                messagebox.showinfo(
+                    "Thông báo",
+                    "Không có file voice mới cần xử lý!\n\n"
+                    f"Thư mục voice: {self.batch_voice_folder}\n"
+                    f"Thư mục done: {self.batch_done_folder}"
+                )
+                return
+        else:
+            # Normal mode validation
+            path = self.input_path.get()
+
+            if not path:
+                messagebox.showerror("Lỗi", "Vui lòng chọn file hoặc thư mục đầu vào!")
+                return
+
+            if not Path(path).exists():
+                messagebox.showerror("Lỗi", f"Không tìm thấy:\n{path}")
+                return
+
         # Reload config
         self.load_config()
-        
+
         if not self.profiles:
             result = messagebox.askyesno(
                 "Thiếu Chrome Profile",
@@ -1581,21 +1649,35 @@ class UnixVoiceToVideo:
             if result:
                 self.open_config_file()
             return
-        
-        # Check AI keys for voice
-        ext = Path(path).suffix.lower() if Path(path).is_file() else ""
-        has_ai_keys = self.gemini_keys or self.groq_keys or self.deepseek_keys
-        if ext in ['.mp3', '.wav'] and not has_ai_keys:
-            result = messagebox.askyesno(
-                "Thieu AI API Key",
-                "Can Gemini, Groq hoac DeepSeek API key de xu ly voice!\n\n"
-                "Thu tu uu tien: Gemini > Groq (FREE) > DeepSeek\n\n"
-                "Mo Cai dat de nhap API keys?"
-            )
-            if result:
-                self.open_settings()
-            return
-        
+
+        # Check AI keys for voice (for non-batch modes)
+        if mode != "batch":
+            path = self.input_path.get()
+            ext = Path(path).suffix.lower() if Path(path).is_file() else ""
+            has_ai_keys = self.gemini_keys or self.groq_keys or self.deepseek_keys
+            if ext in ['.mp3', '.wav'] and not has_ai_keys:
+                result = messagebox.askyesno(
+                    "Thieu AI API Key",
+                    "Can Gemini, Groq hoac DeepSeek API key de xu ly voice!\n\n"
+                    "Thu tu uu tien: Gemini > Groq (FREE) > DeepSeek\n\n"
+                    "Mo Cai dat de nhap API keys?"
+                )
+                if result:
+                    self.open_settings()
+                return
+        else:
+            # Batch mode also needs AI keys
+            has_ai_keys = self.gemini_keys or self.groq_keys or self.deepseek_keys
+            if not has_ai_keys:
+                result = messagebox.askyesno(
+                    "Thieu AI API Key",
+                    "Can Gemini, Groq hoac DeepSeek API key de xu ly voice!\n\n"
+                    "Mo Cai dat de nhap API keys?"
+                )
+                if result:
+                    self.open_settings()
+                return
+
         # Start
         self._running = True
         self._stop = False
@@ -1609,8 +1691,13 @@ class UnixVoiceToVideo:
         self.log("=" * 50)
         self.log("🚀 BẮT ĐẦU XỬ LÝ")
         self.log("=" * 50)
-        
-        if self.input_mode.get() == "folder":
+
+        if mode == "batch":
+            self.log(f"📂 Mode: Auto Batch")
+            self.log(f"   Voice: {self.batch_voice_folder}")
+            self.log(f"   Done: {self.batch_done_folder}")
+            threading.Thread(target=self._process_batch, daemon=True).start()
+        elif mode == "folder":
             threading.Thread(target=self._process_folder, daemon=True).start()
         else:
             threading.Thread(target=self._process_single, daemon=True).start()
@@ -1657,7 +1744,141 @@ class UnixVoiceToVideo:
         finally:
             self._running = False
             self.root.after(0, self._reset_ui)
-    
+
+    def _process_batch(self):
+        """
+        Process all pending voice files from batch_voice_folder.
+
+        Structure:
+        - voice/AR16-T1/AR16-0035.mp3  →  done/AR16-T1/AR16-0035/...
+        - voice/AR16-T1/AR16-0036.mp3  →  done/AR16-T1/AR16-0036/...
+
+        Skips files that already have output in done folder.
+        """
+        try:
+            from modules.smart_engine import SmartEngine
+
+            # Create done folder if not exists
+            self.batch_done_folder.mkdir(parents=True, exist_ok=True)
+
+            # Scan for pending voice files
+            pending_files = []
+            for subfolder in sorted(self.batch_voice_folder.iterdir()):
+                if not subfolder.is_dir():
+                    continue
+
+                for voice_file in sorted(subfolder.glob("*.mp3")) + sorted(subfolder.glob("*.wav")):
+                    # Output folder: done/subfolder_name/voice_stem/
+                    output_folder = self.batch_done_folder / subfolder.name / voice_file.stem
+
+                    # Skip if already processed (output folder exists)
+                    if output_folder.exists():
+                        continue
+
+                    pending_files.append({
+                        'voice_path': voice_file,
+                        'output_folder': output_folder,
+                        'subfolder': subfolder.name
+                    })
+
+            if not pending_files:
+                self.root.after(0, lambda: self.log("✅ Không có file mới cần xử lý!", "OK"))
+                return
+
+            self.log(f"📋 Tìm thấy {len(pending_files)} file cần xử lý:")
+            for i, f in enumerate(pending_files[:10]):  # Show first 10
+                self.log(f"   {i+1}. {f['subfolder']}/{f['voice_path'].name}")
+            if len(pending_files) > 10:
+                self.log(f"   ... và {len(pending_files) - 10} file khác")
+
+            # Process each file
+            total = len(pending_files)
+            success = 0
+            failed = 0
+
+            for idx, file_info in enumerate(pending_files):
+                if self._stop:
+                    self.log("⏹️ Đã dừng!", "WARN")
+                    break
+
+                voice_path = file_info['voice_path']
+                output_folder = file_info['output_folder']
+
+                self.log("")
+                self.log("=" * 50)
+                self.log(f"[{idx + 1}/{total}] 🎙️ {voice_path.name}")
+                self.log(f"   Output: {output_folder}")
+                self.log("=" * 50)
+
+                # Update progress
+                progress = (idx / total) * 100
+                self.root.after(0, lambda p=progress: self.progress_var.set(p))
+                self.root.after(0, lambda i=idx, t=total: self.progress_label.config(
+                    text=f"Đang xử lý: {i + 1}/{t}"
+                ))
+
+                try:
+                    # Create output folder
+                    output_folder.mkdir(parents=True, exist_ok=True)
+
+                    # Create engine with output dir
+                    engine = SmartEngine()
+                    self._engine = engine
+
+                    def log_cb(msg):
+                        level = "INFO"
+                        if "[OK]" in msg or "OK!" in msg:
+                            level = "OK"
+                        elif "[ERROR]" in msg or "ERROR" in msg:
+                            level = "ERROR"
+                        elif "[WARN]" in msg:
+                            level = "WARN"
+                        self.root.after(0, lambda: self.log(msg, level))
+
+                    # Run engine
+                    results = engine.run(
+                        str(voice_path),
+                        output_dir=str(output_folder),
+                        callback=log_cb
+                    )
+
+                    if results and results.get('success'):
+                        success += 1
+                        self.log(f"✅ XONG: {voice_path.name}", "OK")
+                    else:
+                        failed += 1
+                        self.log(f"⚠️ FAIL: {voice_path.name}", "WARN")
+
+                except Exception as e:
+                    failed += 1
+                    self.log(f"❌ LỖI {voice_path.name}: {e}", "ERROR")
+                    import traceback
+                    traceback.print_exc()
+
+            # Summary
+            self.log("")
+            self.log("=" * 50)
+            self.log("🏁 HOÀN THÀNH BATCH")
+            self.log(f"   Tổng: {total} | ✅ OK: {success} | ❌ Fail: {failed}")
+            self.log("=" * 50)
+
+            self.root.after(0, lambda: self.progress_var.set(100))
+            self.root.after(0, lambda: self.progress_label.config(text="Hoàn thành!"))
+
+            # Update pending count
+            new_pending = self._count_pending_voices()
+            self.root.after(0, lambda: self.input_info_label.config(
+                text=f"📂 voice → done | {new_pending} file chờ xử lý"
+            ))
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.root.after(0, lambda err=e: self.log(f"Lỗi batch: {err}", "ERROR"))
+        finally:
+            self._running = False
+            self.root.after(0, self._reset_ui)
+
     def _process_folder(self):
         """Process folder with multiple voice files - PARALLEL with headless Chrome."""
         try:
