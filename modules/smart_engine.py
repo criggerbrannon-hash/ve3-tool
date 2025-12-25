@@ -2705,12 +2705,14 @@ class SmartEngine:
                     target_duration = item['duration']
 
                     # === TRANSITION EFFECTS ===
-                    # Chọn ngẫu nhiên hiệu ứng: mix (crossfade) hoặc tối dần (fade to black)
-                    # Đơn giản và phù hợp với thời lượng ngắn của mỗi clip
-                    transition_type = random.choice(['fade_black', 'fade_black', 'mix'])  # 2/3 fade to black
+                    # 3 loại chuyển cảnh random: none, fade_black, mix
+                    transition_type = random.choice(['none', 'fade_black', 'fade_black', 'mix'])  # 50% fade, 25% none, 25% mix
                     fade_out_start = max(0, target_duration - FADE_DURATION)
 
-                    if transition_type == 'fade_black':
+                    if transition_type == 'none':
+                        # Không có hiệu ứng chuyển cảnh
+                        fade_filter = ""
+                    elif transition_type == 'fade_black':
                         # Tối dần: fade in/out to black
                         fade_filter = f"fade=t=in:st=0:d={FADE_DURATION},fade=t=out:st={fade_out_start}:d={FADE_DURATION}"
                     else:
@@ -2725,8 +2727,11 @@ class SmartEngine:
                         probe_result = subprocess.run(probe_cmd, capture_output=True, text=True)
                         video_duration = float(probe_result.stdout.strip()) if probe_result.stdout.strip() else 8.0
 
-                        # Base filter: scale + pad + transitions
-                        base_vf = f"scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,{fade_filter}"
+                        # Base filter: scale + pad + transitions (nếu có)
+                        if fade_filter:
+                            base_vf = f"scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,{fade_filter}"
+                        else:
+                            base_vf = f"scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2"
 
                         # Video encoder settings
                         v_encoder = gpu_encoder if use_gpu else "libx264"
@@ -2778,22 +2783,44 @@ class SmartEngine:
                                 self.log(f"    #{item['id']}: {kb_effect.value}")
                         else:
                             # FAST MODE: Random static zoom + crop (1 lần, không tính từng frame)
-                            # Ảnh nhỏ (VD: 1368x768) sẽ được upscale lên >= 1920x1080
+                            # Đa dạng hiệu ứng để không nhàm chán
                             import random
 
-                            # Random crop position (5 vị trí: 4 góc + center)
-                            positions = [
-                                ("0", "0"),                                    # top-left
-                                ("(iw-1920)", "0"),                           # top-right
-                                ("0", "(ih-1080)"),                           # bottom-left
-                                ("(iw-1920)", "(ih-1080)"),                   # bottom-right
-                                ("(iw-1920)/2", "(ih-1080)/2"),              # center
-                            ]
-                            crop_x, crop_y = random.choice(positions)
+                            # Danh sách hiệu ứng: (tên, scale_width, crop_x, crop_y)
+                            # Scale lớn hơn = zoom in nhiều hơn
+                            effects = [
+                                # Zoom in các góc (scale lớn, crop góc)
+                                ("zoom_in_center", 2200, "(iw-1920)/2", "(ih-1080)/2"),
+                                ("zoom_in_top_left", 2200, "0", "0"),
+                                ("zoom_in_top_right", 2200, "(iw-1920)", "0"),
+                                ("zoom_in_bottom_left", 2200, "0", "(ih-1080)"),
+                                ("zoom_in_bottom_right", 2200, "(iw-1920)", "(ih-1080)"),
 
-                            # Scale: upscale ảnh nhỏ lên >= 2100x1181 (thêm margin để crop)
-                            # Sau đó crop về 1920x1080
-                            vf = f"scale=2100:-2:force_original_aspect_ratio=increase,crop=1920:1080:{crop_x}:{crop_y},{fade_filter}"
+                                # Zoom out nhẹ (scale nhỏ hơn, crop center)
+                                ("zoom_out_center", 2016, "(iw-1920)/2", "(ih-1080)/2"),
+
+                                # Pan trái/phải (crop lệch sang 1 bên)
+                                ("pan_left", 2100, "(iw-1920)", "(ih-1080)/2"),      # Hiện bên phải ảnh
+                                ("pan_right", 2100, "0", "(ih-1080)/2"),              # Hiện bên trái ảnh
+
+                                # Pan trên/dưới
+                                ("pan_up", 2100, "(iw-1920)/2", "(ih-1080)"),         # Hiện phần dưới
+                                ("pan_down", 2100, "(iw-1920)/2", "0"),               # Hiện phần trên
+
+                                # Góc chéo
+                                ("corner_top_left", 2150, "0", "0"),
+                                ("corner_top_right", 2150, "(iw-1920)", "0"),
+                                ("corner_bottom_left", 2150, "0", "(ih-1080)"),
+                                ("corner_bottom_right", 2150, "(iw-1920)", "(ih-1080)"),
+                            ]
+
+                            effect_name, scale_w, crop_x, crop_y = random.choice(effects)
+
+                            # Build filter: scale + crop + fade (nếu có)
+                            if fade_filter:
+                                vf = f"scale={scale_w}:-2:force_original_aspect_ratio=increase,crop=1920:1080:{crop_x}:{crop_y},{fade_filter}"
+                            else:
+                                vf = f"scale={scale_w}:-2:force_original_aspect_ratio=increase,crop=1920:1080:{crop_x}:{crop_y}"
 
                         # Build FFmpeg command với GPU acceleration nếu có
                         # Fast mode dùng preset nhanh nhất
