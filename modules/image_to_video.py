@@ -296,25 +296,27 @@ class ImageToVideoConverter:
         if not prompt:
             prompt = "Subtle motion, cinematic, slow movement"
 
+        # Build request - KHÔNG có recaptchaToken trong proxy mode
+        request_data = {
+            "aspectRatio": aspect_ratio,
+            "metadata": {"sceneId": scene_id},
+            "referenceImages": [{
+                "imageUsageType": "IMAGE_USAGE_TYPE_ASSET",
+                "mediaId": media_id
+            }],
+            "seed": int(time.time()) % 100000,
+            "textInput": {"prompt": prompt},
+            "videoModelKey": self.video_model
+        }
+
         body_json = {
             "clientContext": {
-                "projectId": self.project_id,
-                "recaptchaToken": "",
                 "sessionId": session_id,
+                "projectId": self.project_id,
                 "tool": "PINHOLE",
                 "userPaygateTier": "PAYGATE_TIER_TWO"
             },
-            "requests": [{
-                "aspectRatio": aspect_ratio,
-                "metadata": {"sceneId": scene_id},
-                "referenceImages": [{
-                    "imageUsageType": "IMAGE_USAGE_TYPE_ASSET",
-                    "mediaId": media_id
-                }],
-                "seed": int(time.time()) % 100000,
-                "textInput": {"prompt": prompt},
-                "videoModelKey": self.video_model
-            }]
+            "requests": [request_data]
         }
 
         try:
@@ -410,13 +412,13 @@ class ImageToVideoConverter:
         self._log(f"[I2V] Timeout waiting for operations", "error")
         return None, None
 
-    def poll_video_status(self, operations: List[Dict], timeout: int = 180) -> Optional[str]:
+    def poll_video_status(self, operations: List[Dict], timeout: int = 300) -> Optional[str]:
         """
         Poll Google API để lấy video URL.
 
         Args:
             operations: Operations array từ create video
-            timeout: Timeout (giây)
+            timeout: Timeout (giây) - video cần 3-5 phút
 
         Returns:
             Video URL hoặc None
@@ -426,12 +428,27 @@ class ImageToVideoConverter:
         url = f"{self.GOOGLE_BASE}/v1/video:batchCheckAsyncVideoGenerationStatus"
         start_time = time.time()
 
+        # Extract operation names từ operations array
+        operation_names = []
+        for op in operations:
+            op_obj = op.get("operation", {})
+            op_name = op_obj.get("name")
+            if op_name:
+                operation_names.append(op_name)
+
+        if not operation_names:
+            self._log("No operation names found in operations", "error")
+            return None
+
+        self._log(f"Polling operation: {operation_names[0][:60]}...")
+
         while time.time() - start_time < timeout:
             try:
+                # Dùng operationNames thay vì operations
                 response = requests.post(
                     url,
                     headers=self._google_headers(),
-                    json={"operations": operations},
+                    json={"operationNames": operation_names},
                     timeout=30
                 )
 
@@ -443,24 +460,42 @@ class ImageToVideoConverter:
                         op = ops[0]
                         status = op.get("status", "")
 
-                        if status == "MEDIA_GENERATION_STATUS_SUCCESSFUL":
-                            video_url = op.get("operation", {}).get("metadata", {}).get("video", {}).get("fifeUrl")
+                        # Check for success - API trả về SUCCEEDED không phải SUCCESSFUL
+                        if status in ["MEDIA_GENERATION_STATUS_SUCCEEDED", "MEDIA_GENERATION_STATUS_COMPLETE"]:
+                            # Video URL nằm trong op.media[0].video.url
+                            video_url = None
+                            media_list = op.get("media", [])
+                            if media_list:
+                                video_info = media_list[0].get("video", {})
+                                video_url = video_info.get("url") or video_info.get("videoUrl") or video_info.get("fifeUrl")
+
+                            # Fallback: thử path cũ
+                            if not video_url:
+                                video_url = op.get("operation", {}).get("metadata", {}).get("video", {}).get("fifeUrl")
+
                             if video_url:
                                 self._log("Video generation completed!")
                                 return video_url
+                            else:
+                                self._log(f"Video completed but no URL found in response", "warn")
+                                self._log(f"Response: {json.dumps(op)[:500]}")
 
                         elif "ERROR" in status or "FAILED" in status:
-                            self._log(f"Video generation failed: {status}", "error")
+                            error_msg = op.get("error", status)
+                            self._log(f"Video generation failed: {error_msg}", "error")
                             return None
 
-                        else:
+                        elif status == "MEDIA_GENERATION_STATUS_PENDING":
                             # Still processing
                             elapsed = int(time.time() - start_time)
-                            self._log(f"Video generating... ({elapsed}s)")
+                            if elapsed % 15 == 0:  # Log mỗi 15 giây
+                                self._log(f"Video generating... ({elapsed}s)")
 
                 elif response.status_code == 401:
                     self._log("Token expired!", "error")
                     return None
+                else:
+                    self._log(f"Poll response: {response.status_code}", "warn")
 
             except Exception as e:
                 self._log(f"Poll error: {e}", "warn")
