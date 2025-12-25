@@ -108,8 +108,22 @@ class ParallelFlowGenerator:
         # Stats
         self.stats = ParallelStats()
 
-        # Chrome profiles - mỗi browser dùng 1 profile
-        self.profiles_dir = Path(self.config.get("browser_profiles_dir", "./chrome_profiles"))
+        # Chrome profiles - load từ chrome_profiles/ (đã đăng nhập từ GUI)
+        root_dir = Path(__file__).parent.parent
+        self.profiles_dir = root_dir / "chrome_profiles"
+
+        # Load danh sách profile đã có
+        self.available_profiles = []
+        if self.profiles_dir.exists():
+            for item in sorted(self.profiles_dir.iterdir()):
+                if item.is_dir() and not item.name.startswith('.'):
+                    self.available_profiles.append(item.name)
+
+        if not self.available_profiles:
+            # Tạo profile mặc định nếu chưa có
+            default_profile = self.profiles_dir / "main"
+            default_profile.mkdir(parents=True, exist_ok=True)
+            self.available_profiles = ["main"]
 
         # Lock cho thread-safe
         self._lock = threading.Lock()
@@ -187,17 +201,21 @@ class ParallelFlowGenerator:
 
     def _get_profile_name(self, browser_idx: int) -> str:
         """
-        Lấy tên profile RIÊNG cho mỗi browser.
+        Lấy tên profile cho browser từ danh sách đã đăng nhập.
 
-        QUAN TRỌNG: Mỗi browser PHẢI dùng profile riêng, không thể share
-        vì Chrome không cho phép 2 instance dùng chung 1 profile directory.
+        QUAN TRỌNG:
+        - Dùng profile từ chrome_profiles/ (đã đăng nhập từ GUI)
+        - Round-robin nếu có nhiều browser hơn profile
+        - BrowserFlowGenerator sẽ tạo working copy để tránh conflict
 
         Returns:
-            Tên profile duy nhất cho browser này (e.g., "parallel_0", "parallel_1")
+            Tên profile từ chrome_profiles/ (e.g., "Default", "account1")
         """
-        # LUÔN tạo profile riêng cho mỗi browser trong parallel mode
-        # Không dùng round-robin vì Chrome crash khi 2+ browsers share 1 profile
-        return f"parallel_{browser_idx}"
+        # Round-robin qua danh sách profile đã có
+        profile_idx = browser_idx % len(self.available_profiles)
+        profile_name = self.available_profiles[profile_idx]
+        self._log(f"Browser-{browser_idx} dùng profile: {profile_name}")
+        return profile_name
 
     def _worker_generate(
         self,
