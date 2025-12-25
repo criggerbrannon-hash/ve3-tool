@@ -86,8 +86,12 @@ def auto_update_from_git():
     if not git_dir.exists():
         return False, "Not a git repo"
 
-    # FIXED: Always pull from the correct branch
-    TARGET_BRANCH = "claude/ve3-tool-development-XDmJH"
+    # Doc branch tu file config (de de dang chuyen session)
+    branch_file = ROOT_DIR / "config" / "current_branch.txt"
+    if branch_file.exists():
+        TARGET_BRANCH = branch_file.read_text(encoding='utf-8').strip()
+    else:
+        TARGET_BRANCH = "main"  # Fallback to main
 
     try:
         # Fetch and reset to target branch

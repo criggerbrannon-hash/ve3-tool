@@ -9,13 +9,19 @@ echo   VE3 Tool - Browser JS Mode
 echo ========================================
 echo.
 
+:: Doc branch tu config file
+set BRANCH=main
+if exist "config\current_branch.txt" (
+    set /p BRANCH=<config\current_branch.txt
+)
+
 :: Thu update bang git truoc (neu co)
 where git >nul 2>&1
 if %errorlevel% equ 0 (
     if exist ".git" (
-        echo [*] Git found, updating...
-        git fetch origin claude/ve3-tool-development-XDmJH 2>nul
-        git reset --hard origin/claude/ve3-tool-development-XDmJH 2>nul
+        echo [*] Git found, updating from %BRANCH%...
+        git fetch origin %BRANCH% 2>nul
+        git reset --hard origin/%BRANCH% 2>nul
         if %errorlevel% equ 0 (
             echo [OK] Updated via git
             goto :run
