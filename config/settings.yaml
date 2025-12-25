@@ -82,10 +82,15 @@ groq_api_keys:
 # OLLAMA - LOCAL AI (FALLBACK khi API keys hết)
 # ============================================================================
 # Cài đặt Ollama: https://ollama.ai
-# Pull model: ollama pull qwen2.5:7b (nhanh) hoặc ollama pull qwen2.5:14b (tốt hơn)
+# Pull model: ollama pull qwen2.5:14b
 # Chạy: ollama serve
+#
+# Với RTX 4070 12GB + 64GB RAM:
+# - qwen2.5:14b: Tối ưu nhất (~10GB VRAM, 128K context, JSON xuất sắc)
+# - qwen2.5:7b: Nhanh hơn nhưng chất lượng thấp hơn
+# - gemma3:27b: Quá lớn cho 12GB VRAM, sẽ chạy CPU (chậm)
 
-ollama_model: "qwen2.5:7b"  # Model local - nhanh, 32k context, tốt cho JSON
+ollama_model: "qwen2.5:14b"  # Tối ưu cho RTX 4070 12GB - 128K context, JSON tốt
 ollama_endpoint: "http://localhost:11434"  # Ollama server endpoint
 
 # ============================================================================
