@@ -56,17 +56,23 @@ class ChromeTokenExtractor:
         self.project_id = None
 
         # Extract profile info from path
-        profile_path = Path(profile_path)
-        default_folder = profile_path / "Default"
+        profile_path_obj = Path(profile_path)
+        default_folder = profile_path_obj / "Default"
 
-        if default_folder.exists():
-            # Tool's user-data-dir (has Default inside)
-            self.user_data_dir = str(profile_path)
-            self.profile_name = None  # Chrome uses Default automatically
+        # Kiểm tra xem đây là profile từ chrome_profiles/ (tool tạo) hay system Chrome
+        is_tool_profile = "chrome_profiles" in str(profile_path_obj).lower()
+
+        if is_tool_profile or default_folder.exists() or not (profile_path_obj.parent / "Local State").exists():
+            # Tool's user-data-dir:
+            # - Có "chrome_profiles" trong path
+            # - Có Default folder bên trong
+            # - HOẶC parent không có "Local State" (không phải system Chrome User Data)
+            self.user_data_dir = str(profile_path_obj)
+            self.profile_name = None  # Chrome sẽ tự tạo/dùng Default
         else:
-            # System Chrome profile folder
-            self.profile_name = profile_path.name  # e.g., "Profile 2"
-            self.user_data_dir = str(profile_path.parent)  # e.g., "C:\Users\...\User Data"
+            # System Chrome profile folder (e.g., "Profile 2" trong User Data)
+            self.profile_name = profile_path_obj.name  # e.g., "Profile 2"
+            self.user_data_dir = str(profile_path_obj.parent)  # e.g., "C:\Users\...\User Data"
 
     def _create_driver(self):
         """Tạo Chrome WebDriver với CDP enabled và anti-detection."""

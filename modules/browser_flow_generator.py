@@ -1879,29 +1879,41 @@ class BrowserFlowGenerator:
                 chrome_path = "/usr/bin/google-chrome"
 
         # Lay profile path
-        # Uu tien: 1. chrome_profiles tu accounts.json (GUI settings) - CAO NHAT
-        #          2. chrome_profile tu settings.yaml (fallback)
-        #          3. browser_profiles_dir/profile_name (fallback cuoi)
+        # Uu tien: 1. chrome_profiles/ directory (GUI tao)
+        #          2. chrome_profiles tu accounts.json
+        #          3. chrome_profile tu settings.yaml (fallback)
+        #          4. browser_profiles_dir/profile_name (fallback cuoi)
         chrome_profile = ''
+        root_dir = Path(__file__).parent.parent
 
-        # 1. UU TIEN accounts.json (user them profile qua GUI)
-        try:
-            accounts_file = Path(__file__).parent.parent / "config" / "accounts.json"
-            if accounts_file.exists():
-                import json
-                with open(accounts_file, 'r', encoding='utf-8') as f:
-                    accounts = json.load(f)
-                profiles = accounts.get('chrome_profiles', [])
-                for p in profiles:
-                    path = p if isinstance(p, str) else p.get('path', '')
-                    if path and not path.startswith('THAY_BANG') and Path(path).exists():
-                        chrome_profile = path
-                        self._log(f"Got chrome_profile from accounts.json (GUI): {chrome_profile}")
-                        break
-        except Exception as e:
-            self._log(f"[DEBUG] Cannot read accounts.json: {e}")
+        # 1. UU TIEN NHAT: chrome_profiles/ directory (tao tu GUI)
+        profiles_dir = root_dir / "chrome_profiles"
+        if profiles_dir.exists():
+            for profile_path in sorted(profiles_dir.iterdir()):
+                if profile_path.is_dir() and not profile_path.name.startswith('.'):
+                    chrome_profile = str(profile_path)
+                    self._log(f"Got chrome_profile from chrome_profiles/ dir: {chrome_profile}")
+                    break
 
-        # 2. Fallback: settings.yaml (neu accounts.json khong co)
+        # 2. Fallback: accounts.json
+        if not chrome_profile:
+            try:
+                accounts_file = root_dir / "config" / "accounts.json"
+                if accounts_file.exists():
+                    import json
+                    with open(accounts_file, 'r', encoding='utf-8') as f:
+                        accounts = json.load(f)
+                    profiles = accounts.get('chrome_profiles', [])
+                    for p in profiles:
+                        path = p if isinstance(p, str) else p.get('path', '')
+                        if path and not path.startswith('THAY_BANG') and Path(path).exists():
+                            chrome_profile = path
+                            self._log(f"Got chrome_profile from accounts.json: {chrome_profile}")
+                            break
+            except Exception as e:
+                self._log(f"[DEBUG] Cannot read accounts.json: {e}")
+
+        # 3. Fallback: settings.yaml
         if not chrome_profile:
             chrome_profile = self.config.get('chrome_profile', '')
 
