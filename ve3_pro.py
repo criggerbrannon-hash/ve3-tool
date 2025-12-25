@@ -1003,10 +1003,60 @@ class UnixVoiceToVideo:
                 except Exception as e:
                     messagebox.showerror("Lỗi", f"Không thể xóa: {e}")
 
+        def test_token_visible():
+            """Test lấy token với Chrome hiển thị (không ẩn) để debug."""
+            sel = prof_list.curselection()
+            if not sel:
+                messagebox.showwarning("Chọn profile", "Vui lòng chọn 1 profile từ danh sách!")
+                return
+            profile_name = prof_list.get(sel[0])
+            if profile_name.startswith("("):
+                return
+
+            profiles_dir = ROOT_DIR / "chrome_profiles"
+            profile_path = str(profiles_dir / profile_name)
+
+            self.log(f"🔍 Test lấy token (KHÔNG ẨN) cho: {profile_name}")
+
+            def run_test():
+                try:
+                    from modules.chrome_token_extractor import ChromeTokenExtractor
+
+                    extractor = ChromeTokenExtractor(
+                        chrome_path=self.chrome_path,
+                        profile_path=profile_path,
+                        headless=False,  # KHÔNG ẨN để debug
+                        timeout=120
+                    )
+
+                    def log_cb(msg, level="info"):
+                        self.root.after(0, lambda: self.log(f"[Test] {msg}", level.upper()))
+
+                    token, proj_id, error = extractor.extract_token(callback=log_cb)
+
+                    if token:
+                        self.root.after(0, lambda: self.log(f"✅ Token OK! Length: {len(token)}", "OK"))
+                        self.root.after(0, lambda: messagebox.showinfo("Thành công", f"Lấy token thành công!\n\nProfile: {profile_name}\nToken length: {len(token)}\nProject ID: {proj_id[:20] if proj_id else 'N/A'}..."))
+                    else:
+                        self.root.after(0, lambda: self.log(f"❌ Lỗi: {error}", "ERROR"))
+                        self.root.after(0, lambda: messagebox.showerror("Lỗi", f"Không lấy được token!\n\nLỗi: {error}\n\nHãy thử:\n1. Mở đăng nhập lại\n2. Làm theo hướng dẫn allow pasting"))
+
+                except Exception as e:
+                    self.root.after(0, lambda: self.log(f"❌ Exception: {e}", "ERROR"))
+                    self.root.after(0, lambda: messagebox.showerror("Lỗi", str(e)))
+
+            import threading
+            threading.Thread(target=run_test, daemon=True).start()
+
         ttk.Button(prof_btn_row1, text="➕ Thêm mới", command=add_new_profile).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(prof_btn_row1, text="🔓 Mở đăng nhập", command=open_profile_login).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(prof_btn_row1, text="🗑️ Xóa", command=delete_profile).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(prof_btn_row1, text="🔄", command=refresh_profile_list, width=3).pack(side=tk.LEFT)
+
+        # Row 2: Test button
+        prof_btn_row2 = ttk.Frame(prof_tab)
+        prof_btn_row2.pack(fill=tk.X, pady=(5, 0))
+        ttk.Button(prof_btn_row2, text="🧪 Test Token (không ẩn)", command=test_token_visible).pack(side=tk.LEFT, padx=(0, 5))
 
         # Info
         ttk.Label(prof_tab, text="💡 Mỗi voice sẽ dùng 1 profile khác nhau khi chạy song song",
@@ -1489,14 +1539,19 @@ class UnixVoiceToVideo:
             self.log("Trình duyệt đã mở - Hãy đăng nhập Google!", "OK")
             self.log("Đóng trình duyệt khi hoàn tất đăng nhập.")
 
-            # Show message
+            # Show message with detailed instructions
             messagebox.showinfo(
-                "Đăng nhập Google",
+                "Đăng nhập Google + Kích hoạt Token",
                 f"Trình duyệt đã mở cho profile '{profile_name}'.\n\n"
-                "1. Đăng nhập tài khoản Google\n"
-                "2. Đợi trang Google Flow hiện lên\n"
-                "3. Đóng trình duyệt khi xong\n\n"
-                "Session sẽ được lưu tự động."
+                "📋 LÀM THEO CÁC BƯỚC SAU:\n\n"
+                "1️⃣ Đăng nhập tài khoản Google\n"
+                "2️⃣ Đợi trang Google Flow hiện lên\n"
+                "3️⃣ Nhấn F12 để mở DevTools\n"
+                "4️⃣ Chọn tab 'Console'\n"
+                "5️⃣ Gõ: allow pasting  rồi Enter\n"
+                "6️⃣ Paste lệnh: console.log('OK')  rồi Enter\n"
+                "7️⃣ Đóng trình duyệt khi xong\n\n"
+                "⚠️ Bước 5-6 cần làm 1 LẦN để cho phép paste code!"
             )
 
         except Exception as e:
