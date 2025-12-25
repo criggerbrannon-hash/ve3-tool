@@ -1505,11 +1505,16 @@ class PromptGenerator:
         srt_entries: List,
         characters: List,
         locations: List,
-        global_style: str
+        global_style: str,
+        on_part_complete: Callable = None  # Callback for progressive save
     ) -> Optional[Dict]:
         """
         Tạo Director's Shooting Plan - Kế hoạch quay phim chi tiết.
         ĐÂY LÀ BƯỚC QUAN TRỌNG NHẤT - Đạo diễn quyết định tạo bao nhiêu ảnh và ảnh gì!
+
+        TWO-PASS STRATEGY cho video dài (> 5 phút):
+        - Pass 1: Phân tích story structure (1 API call, response nhỏ)
+        - Pass 2: Generate chi tiết cho từng part (N API calls, mỗi call nhỏ)
 
         Args:
             story_text: Toàn bộ nội dung câu chuyện
@@ -1517,6 +1522,7 @@ class PromptGenerator:
             characters: List các Character đã phân tích
             locations: List các Location đã phân tích
             global_style: Global style string
+            on_part_complete: Callback(part_data) gọi sau mỗi part hoàn thành (progressive save)
 
         Returns:
             Dict với shooting_plan chứa tất cả shots đã lên kế hoạch
@@ -1534,18 +1540,18 @@ class PromptGenerator:
             else:
                 total_duration_seconds = 0
 
-            # CHUNKING STRATEGY: For videos > 3 minutes, process in chunks
-            # DeepSeek có giới hạn 8192 tokens output - chunk nhỏ = response nhỏ = không bị cắt
-            CHUNK_DURATION_SECONDS = 180  # 3 minutes per chunk (giảm để DeepSeek xử lý được)
+            # TWO-PASS STRATEGY: For videos > 5 minutes
+            # Ưu điểm: Context liền mạch, không bị truncate, progressive save
+            TWO_PASS_THRESHOLD = 300  # 5 minutes
 
-            if total_duration_seconds > CHUNK_DURATION_SECONDS:
-                self.logger.info(f"[Director] Video dài {total_duration_seconds/60:.1f} phút - sử dụng CHUNKING STRATEGY")
-                return self._create_shooting_plan_chunked(
+            if total_duration_seconds > TWO_PASS_THRESHOLD:
+                self.logger.info(f"[Director] Video dài {total_duration_seconds/60:.1f} phút - sử dụng TWO-PASS STRATEGY")
+                return self._create_shooting_plan_two_pass(
                     story_text, srt_entries, characters, locations,
-                    global_style, prompt_template, CHUNK_DURATION_SECONDS
+                    global_style, prompt_template, on_part_complete
                 )
 
-            # Normal processing for shorter videos
+            # Normal processing for shorter videos (< 5 min)
             return self._create_shooting_plan_single(
                 story_text, srt_entries, characters, locations,
                 global_style, prompt_template
@@ -1631,6 +1637,282 @@ class PromptGenerator:
         self.logger.info(f"[Director's Shooting Plan] Tổng shots thực tế: {total_shots}")
 
         return json_data
+
+    def _create_shooting_plan_two_pass(
+        self,
+        story_text: str,
+        srt_entries: list,
+        characters: list,
+        locations: list,
+        global_style: str,
+        prompt_template: str,
+        on_part_complete: Callable = None
+    ) -> Optional[Dict]:
+        """
+        TWO-PASS STRATEGY cho video dài (30-60 phút).
+
+        Pass 1: Phân tích story structure → 5-8 parts (1 API call, ~2000 tokens)
+        Pass 2: Generate chi tiết cho từng part (N API calls, mỗi call ~4000 tokens)
+
+        Ưu điểm:
+        - Context liền mạch (Pass 1 nhìn toàn bộ story)
+        - Không bị truncate (mỗi call nhỏ)
+        - Progressive save (lưu ngay sau mỗi part)
+        - Fallback per-part (nếu 1 part fail, không ảnh hưởng parts khác)
+        """
+        from datetime import timedelta
+
+        self.logger.info("=" * 60)
+        self.logger.info("[TWO-PASS] BẮT ĐẦU TWO-PASS STRATEGY")
+        self.logger.info("=" * 60)
+
+        # ===================================================================
+        # PASS 1: STORY STRUCTURE ANALYSIS
+        # ===================================================================
+        self.logger.info("[TWO-PASS] PASS 1: Phân tích cấu trúc story...")
+
+        # Load story_structure_analysis prompt
+        structure_template = self._load_prompt_template("story_structure_analysis")
+        if not structure_template:
+            self.logger.warning("[TWO-PASS] Không tìm thấy story_structure_analysis template, fallback to chunked")
+            return self._create_shooting_plan_chunked(
+                story_text, srt_entries, characters, locations,
+                global_style, prompt_template, 300  # 5 min chunks
+            )
+
+        # Format characters info
+        chars_info = "NHÂN VẬT:\n" + "\n".join([
+            f"- {c.id}: {c.name} ({c.role}) - {c.character_lock or 'No lock'}"
+            for c in characters
+        ]) if characters else "Không có thông tin nhân vật"
+
+        # Format locations info
+        locs_info = "BỐI CẢNH:\n" + "\n".join([
+            f"- {loc.id}: {loc.name} - {loc.location_lock or 'No lock'}"
+            for loc in locations
+        ]) if locations else "Không có thông tin bối cảnh"
+
+        # Create SRT summary (just time ranges, not full text)
+        srt_summary = []
+        for i, entry in enumerate(srt_entries):
+            if i % 10 == 0 or i == len(srt_entries) - 1:  # Every 10th entry
+                srt_summary.append(
+                    f"[{self._format_timedelta(entry.start_time)}] {entry.text[:100]}..."
+                )
+        srt_summary_text = "\n".join(srt_summary)
+
+        # Build Pass 1 prompt
+        pass1_prompt = structure_template.format(
+            story_text=story_text[:40000],
+            srt_summary=srt_summary_text,
+            characters_info=chars_info,
+            locations_info=locs_info
+        )
+
+        self.logger.info(f"[TWO-PASS] Pass 1 prompt: {len(pass1_prompt)} chars")
+
+        # Call API for Pass 1 (small response expected)
+        MAX_RETRIES = 3
+        structure_data = None
+
+        for attempt in range(MAX_RETRIES):
+            if attempt > 0:
+                self.logger.warning(f"[TWO-PASS] Pass 1 retry {attempt}/{MAX_RETRIES-1}")
+                import time
+                time.sleep(2)
+
+            response = self._generate_content_large(pass1_prompt, temperature=0.3, max_tokens=4000)
+
+            if response:
+                json_data = self._extract_json(response)
+                if json_data and "parts" in json_data:
+                    structure_data = json_data
+                    self.logger.info(f"[TWO-PASS] Pass 1 OK: {len(structure_data['parts'])} parts")
+                    break
+                else:
+                    self.logger.warning(f"[TWO-PASS] Pass 1 attempt {attempt+1}: Invalid JSON")
+            else:
+                self.logger.warning(f"[TWO-PASS] Pass 1 attempt {attempt+1}: No response")
+
+        if not structure_data:
+            self.logger.error("[TWO-PASS] Pass 1 FAILED, fallback to chunked strategy")
+            return self._create_shooting_plan_chunked(
+                story_text, srt_entries, characters, locations,
+                global_style, prompt_template, 300
+            )
+
+        # Log structure
+        self.logger.info("[TWO-PASS] Story Structure:")
+        for part in structure_data.get("parts", []):
+            self.logger.info(f"  Part {part.get('part_number')}: {part.get('part_name')} ({part.get('time_range')})")
+
+        # ===================================================================
+        # PASS 2: DETAIL GENERATION (per part)
+        # ===================================================================
+        self.logger.info("=" * 60)
+        self.logger.info("[TWO-PASS] PASS 2: Generate chi tiết cho từng part...")
+        self.logger.info("=" * 60)
+
+        all_parts = []
+        total_shots = 0
+        previous_summary = ""
+
+        for part_idx, part_info in enumerate(structure_data.get("parts", [])):
+            part_num = part_info.get("part_number", part_idx + 1)
+            part_name = part_info.get("part_name", f"Part {part_num}")
+            time_range = part_info.get("time_range", "")
+
+            self.logger.info(f"[TWO-PASS] Processing Part {part_num}/{len(structure_data['parts'])}: {part_name}")
+
+            # Parse time range to filter SRT entries
+            part_srt_entries = self._filter_srt_by_time_range(srt_entries, time_range)
+
+            if not part_srt_entries:
+                self.logger.warning(f"[TWO-PASS] Part {part_num}: No SRT entries, using fallback")
+                # Use estimated time range
+                part_srt_entries = srt_entries[part_idx * 20:(part_idx + 1) * 20]
+
+            # Format SRT for this part
+            srt_segments = "\n".join([
+                f"[{self._format_timedelta(e.start_time)} - {self._format_timedelta(e.end_time)}] \"{e.text[:200]}\""
+                for e in part_srt_entries
+            ])
+
+            # Build Pass 2 prompt for this part
+            part_context = f"""
+=== PART {part_num}: {part_name} ===
+Time Range: {time_range}
+Narrative Purpose: {part_info.get('narrative_purpose', 'N/A')}
+Content Summary: {part_info.get('content_summary', 'N/A')}
+Emotional Goal: {part_info.get('emotional_goal', 'N/A')}
+Visual Tone: {part_info.get('visual_tone', 'N/A')}
+Key Characters: {', '.join(part_info.get('key_characters', []))}
+Key Locations: {', '.join(part_info.get('key_locations', []))}
+Estimated Shots: {part_info.get('estimated_shots', 5)}
+
+{f'PREVIOUS PART SUMMARY: {previous_summary}' if previous_summary else ''}
+"""
+
+            pass2_prompt = prompt_template.format(
+                story_text=part_context + "\n\nFULL STORY CONTEXT:\n" + story_text[:15000],
+                srt_segments=srt_segments,
+                characters_info=chars_info,
+                locations_info=locs_info,
+                global_style=global_style or "Cinematic, 4K photorealistic"
+            )
+
+            # Call API for Pass 2 (this part only)
+            part_data = None
+
+            for attempt in range(MAX_RETRIES):
+                if attempt > 0:
+                    self.logger.warning(f"[TWO-PASS] Part {part_num} retry {attempt}/{MAX_RETRIES-1}")
+                    import time
+                    time.sleep(2)
+
+                response = self._generate_content_large(pass2_prompt, temperature=0.4, max_tokens=8000)
+
+                if response:
+                    json_data = self._extract_json(response)
+                    if json_data and "shooting_plan" in json_data:
+                        part_data = json_data["shooting_plan"]
+                        break
+                    else:
+                        self.logger.warning(f"[TWO-PASS] Part {part_num} attempt {attempt+1}: Invalid JSON")
+
+            # Fallback: Create simple shots from SRT
+            if not part_data:
+                self.logger.warning(f"[TWO-PASS] Part {part_num} FAILED, using SRT fallback")
+                part_data = {
+                    "story_parts": self._create_fallback_shots_from_srt(
+                        part_srt_entries, part_num, part_num, global_style
+                    )
+                }
+
+            # Extract story_parts from this part
+            part_story_parts = part_data.get("story_parts", [])
+
+            if not part_story_parts:
+                self.logger.warning(f"[TWO-PASS] Part {part_num}: No story_parts, creating fallback")
+                part_story_parts = self._create_fallback_shots_from_srt(
+                    part_srt_entries, part_num, part_num, global_style
+                )
+
+            # Renumber parts and shots
+            for sp in part_story_parts:
+                shots = sp.get("shots", [])
+                total_shots += len(shots)
+                self.logger.info(f"  → {sp.get('part_name', 'Unknown')}: {len(shots)} shots")
+
+            all_parts.extend(part_story_parts)
+
+            # Update previous summary for continuity
+            if part_story_parts:
+                last_shots = []
+                for sp in part_story_parts[-1:]:
+                    last_shots.extend(sp.get("shots", [])[-2:])
+                if last_shots:
+                    previous_summary = f"Last scene: {last_shots[-1].get('prompt', '')[:200]}"
+
+            # Progressive Save callback
+            if on_part_complete and part_story_parts:
+                try:
+                    on_part_complete({
+                        "part_number": part_num,
+                        "part_name": part_name,
+                        "story_parts": part_story_parts
+                    })
+                    self.logger.info(f"[TWO-PASS] Part {part_num} saved (progressive)")
+                except Exception as e:
+                    self.logger.warning(f"[TWO-PASS] Progressive save failed: {e}")
+
+        # ===================================================================
+        # FINALIZE
+        # ===================================================================
+        self.logger.info("=" * 60)
+        self.logger.info(f"[TWO-PASS] HOÀN THÀNH: {len(all_parts)} parts, {total_shots} shots")
+        self.logger.info("=" * 60)
+
+        # Build final result
+        total_duration = self._format_timedelta(srt_entries[-1].end_time) if srt_entries else "00:00:00"
+
+        return {
+            "shooting_plan": {
+                "total_duration": total_duration,
+                "total_images": total_shots,
+                "story_parts": all_parts
+            }
+        }
+
+    def _filter_srt_by_time_range(self, srt_entries: list, time_range: str) -> list:
+        """Filter SRT entries by time range string (e.g., '00:02:30 - 00:08:00')."""
+        try:
+            if not time_range or " - " not in time_range:
+                return []
+
+            start_str, end_str = time_range.split(" - ")
+
+            def parse_time(t: str) -> float:
+                parts = t.strip().split(":")
+                if len(parts) == 3:
+                    h, m, s = parts
+                    return int(h) * 3600 + int(m) * 60 + float(s)
+                elif len(parts) == 2:
+                    m, s = parts
+                    return int(m) * 60 + float(s)
+                return 0
+
+            start_sec = parse_time(start_str)
+            end_sec = parse_time(end_str)
+
+            return [
+                e for e in srt_entries
+                if e.start_time.total_seconds() >= start_sec - 5 and
+                   e.start_time.total_seconds() <= end_sec + 5
+            ]
+        except Exception as e:
+            self.logger.warning(f"[TWO-PASS] Parse time range failed: {e}")
+            return []
 
     def _create_shooting_plan_chunked(
         self,
