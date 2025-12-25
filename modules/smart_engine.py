@@ -616,7 +616,6 @@ class SmartEngine:
             extractor = ChromeAutoToken(
                 chrome_path=self.chrome_path,
                 profile_path=profile.value,
-                auto_close=True,  # Tu dong dong Chrome sau khi lay token
                 headless=False  # LUON False - Google block headless khi lay token
             )
 
@@ -685,7 +684,6 @@ class SmartEngine:
             extractor = ChromeAutoToken(
                 chrome_path=self.chrome_path,
                 profile_path=profile_path,
-                auto_close=True,  # Tự động đóng sau khi lấy token
                 headless=False  # LUÔN False - Google block headless
             )
 
