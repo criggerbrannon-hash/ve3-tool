@@ -1842,21 +1842,30 @@ class BrowserFlowGenerator:
         # - Headless ON: dung ChromeTokenExtractor (Selenium/CDP) - chay an
         # - Headless OFF: dung ChromeAutoToken (PyAutoGUI) - can cua so
         TokenExtractor = None
+        extractor_name = None
         if use_headless:
             try:
                 from modules.chrome_token_extractor import ChromeTokenExtractor
                 TokenExtractor = ChromeTokenExtractor
+                extractor_name = "ChromeTokenExtractor"
                 self._log("Su dung ChromeTokenExtractor (Selenium - headless)")
-            except ImportError:
-                self._log("ChromeTokenExtractor khong kha dung, fallback sang PyAutoGUI", "warn")
+            except ImportError as e:
+                self._log(f"ChromeTokenExtractor khong kha dung: {e}", "warn")
+                self._log("Fallback sang PyAutoGUI...", "warn")
+            except Exception as e:
+                self._log(f"Loi import ChromeTokenExtractor: {e}", "error")
 
         if TokenExtractor is None:
             try:
                 from modules.auto_token import ChromeAutoToken
                 TokenExtractor = ChromeAutoToken
+                extractor_name = "ChromeAutoToken"
                 self._log("Su dung ChromeAutoToken (PyAutoGUI - can cua so)")
-            except ImportError:
-                self._log("Khong import duoc token extractor", "error")
+            except ImportError as e:
+                self._log(f"Khong import duoc token extractor: {e}", "error")
+                return None
+            except Exception as e:
+                self._log(f"Loi import ChromeAutoToken: {e}", "error")
                 return None
 
         # Lay chrome_path tu config
@@ -1948,25 +1957,28 @@ class BrowserFlowGenerator:
 
             # Tao extractor va goi extract_token
             # ChromeTokenExtractor (Selenium) va ChromeAutoToken (PyAutoGUI) co interface khac nhau
-            from modules.chrome_token_extractor import ChromeTokenExtractor as SeleniumExtractor
-            from modules.auto_token import ChromeAutoToken as PyAutoGUIExtractor
+            self._log(f"Creating extractor: {extractor_name}...")
 
-            if TokenExtractor == SeleniumExtractor:
+            if extractor_name == "ChromeTokenExtractor":
                 # Selenium-based: headless OK, nhung khong co project_id/url param
+                self._log("Khoi tao Selenium extractor...")
                 extractor = TokenExtractor(
                     chrome_path=chrome_path,
                     profile_path=profile_path,
                     headless=use_headless,
                     timeout=90
                 )
+                self._log("Goi extract_token (Selenium)...")
                 token, proj_id, error = extractor.extract_token(callback=log_callback)
             else:
                 # PyAutoGUI-based: can cua so, nhung co project reuse
+                self._log("Khoi tao PyAutoGUI extractor...")
                 extractor = TokenExtractor(
                     chrome_path=chrome_path,
                     profile_path=profile_path,
                     headless=use_headless
                 )
+                self._log("Goi extract_token (PyAutoGUI)...")
                 token, proj_id, error = extractor.extract_token(
                     project_id=existing_project_id,
                     project_url=existing_project_url,
