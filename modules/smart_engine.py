@@ -2777,54 +2777,9 @@ class SmartEngine:
                             if i % 5 == 0:
                                 self.log(f"    #{item['id']}: {kb_effect.value}")
                         else:
-                            # FAST MODE: Zoom/pan đơn giản với ít frames hơn
-                            # Dùng zoompan nhưng: FPS thấp (15), linear (no easing)
-                            # Nhanh hơn balanced ~3x, vẫn có chuyển động
-
-                            # Random effect: zoom in, zoom out, hoặc pan
-                            import random
-                            fast_effects = ['zoom_in', 'zoom_out', 'pan_left', 'pan_right']
-                            effect = random.choice(fast_effects)
-
-                            fps_fast = 15  # Lower FPS = faster
-                            total_frames = int(target_duration * fps_fast)
-                            fade_frames = int(FADE_DURATION * fps_fast)
-
-                            # Scale ảnh lên 1.15x (nhỏ hơn balanced = nhanh hơn)
-                            scaled_w, scaled_h = 2208, 1242
-
-                            if effect == 'zoom_in':
-                                # Zoom từ 1.0 đến 1.1 (linear)
-                                zoom_expr = f"1+0.1*on/{total_frames}"
-                                x_expr = "(iw-iw/zoom)/2"
-                                y_expr = "(ih-ih/zoom)/2"
-                            elif effect == 'zoom_out':
-                                # Zoom từ 1.1 về 1.0
-                                zoom_expr = f"1.1-0.1*on/{total_frames}"
-                                x_expr = "(iw-iw/zoom)/2"
-                                y_expr = "(ih-ih/zoom)/2"
-                            elif effect == 'pan_left':
-                                # Pan từ phải sang trái
-                                zoom_expr = "1.05"
-                                x_expr = f"(iw-iw/zoom)*(1-on/{total_frames})"
-                                y_expr = "(ih-ih/zoom)/2"
-                            else:  # pan_right
-                                # Pan từ trái sang phải
-                                zoom_expr = "1.05"
-                                x_expr = f"(iw-iw/zoom)*on/{total_frames}"
-                                y_expr = "(ih-ih/zoom)/2"
-
-                            # Build zoompan filter (đơn giản hơn, ít frames hơn)
-                            zoompan = f"zoompan=z='{zoom_expr}':x='{x_expr}':y='{y_expr}':d={total_frames}:s=1920x1080:fps={fps_fast}"
-
-                            # Fade
-                            fade_out_start = max(0, target_duration - FADE_DURATION)
-                            fade = f"fade=t=in:st=0:d={FADE_DURATION},fade=t=out:st={fade_out_start}:d={FADE_DURATION}"
-
-                            vf = f"scale={scaled_w}:{scaled_h}:force_original_aspect_ratio=decrease,pad={scaled_w}:{scaled_h}:(ow-iw)/2:(oh-ih)/2,{zoompan},{fade}"
-
-                            if i % 10 == 0:
-                                self.log(f"    #{item['id']}: {effect} (fast)")
+                            # FAST MODE: Chỉ scale + fade (KHÔNG zoompan)
+                            # Nhanh nhất vì không cần tính từng frame
+                            vf = f"scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,{fade_filter}"
 
                         # Build FFmpeg command với GPU acceleration nếu có
                         # Fast mode dùng preset nhanh nhất
