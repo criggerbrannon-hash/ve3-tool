@@ -313,17 +313,67 @@ class BatchGenerator:
                 print(f"    ❌ Lỗi nhập prompt: {e}")
                 return False, []
 
-            # Find and click Generate button
-            gen_btn = self.find_generate_button()
-            if not gen_btn:
-                print("    ❌ Không tìm thấy nút Generate!")
-                return False, []
+            # Try multiple methods to submit
+            submitted = False
 
+            # Method 1: Press Enter in textarea
             try:
-                gen_btn.click()
-                print("    → Đã click Generate")
-            except Exception as e:
-                print(f"    ❌ Lỗi click: {e}")
+                # Press Ctrl+Enter to submit
+                textarea.input('\n')  # Sometimes Enter submits
+                time.sleep(0.5)
+
+                # Check if payload was captured
+                check = self.driver.run_js("return window.__capturedPayload !== null;")
+                if check:
+                    submitted = True
+                    print("    → Đã submit bằng Enter")
+            except:
+                pass
+
+            # Method 2: Find and click Generate button
+            if not submitted:
+                gen_btn = self.find_generate_button()
+                if gen_btn:
+                    try:
+                        # Try JS click first (more reliable)
+                        self.driver.run_js("arguments[0].click();", gen_btn)
+                        time.sleep(0.5)
+
+                        check = self.driver.run_js("return window.__capturedPayload !== null;")
+                        if check:
+                            submitted = True
+                            print("    → Đã click Generate (JS)")
+                    except:
+                        pass
+
+                    if not submitted:
+                        try:
+                            gen_btn.click()
+                            print("    → Đã click Generate")
+                            submitted = True
+                        except Exception as e:
+                            print(f"    ⚠️ Click warning: {e}")
+
+            # Method 3: Click using keyboard shortcut or action
+            if not submitted:
+                try:
+                    # Try clicking any visible button with "Tạo" or "Generate"
+                    self.driver.run_js('''
+                        const btns = document.querySelectorAll('button');
+                        for (const btn of btns) {
+                            if (btn.textContent.includes('Tạo') || btn.textContent.includes('Generate')) {
+                                btn.click();
+                                break;
+                            }
+                        }
+                    ''')
+                    print("    → Đã click button qua JS querySelectorAll")
+                    submitted = True
+                except:
+                    pass
+
+            if not submitted:
+                print("    ❌ Không thể submit!")
                 return False, []
 
             # Wait for payload to be captured
