@@ -24,15 +24,15 @@ from datetime import datetime
 
 # Bearer token (bắt đầu bằng "ya29.")
 # Lấy từ header "Authorization: Bearer ya29.xxxxx"
-BEARER_TOKEN = ""
+BEARER_TOKEN = ""  # <-- ĐIỀN TOKEN CỦA BẠN VÀO ĐÂY
 
 # x-browser-validation (optional - thử không có trước)
 # Lấy từ header "x-browser-validation: eyJxxxxx"
-X_BROWSER_VALIDATION = ""
+X_BROWSER_VALIDATION = ""  # <-- ĐIỀN VÀO ĐÂY
 
 # Project ID (optional - tự tạo nếu không có)
 # Lấy từ URL: https://labs.google/fx/tools/flow/project/{PROJECT_ID}
-PROJECT_ID = ""
+PROJECT_ID = ""  # <-- ĐIỀN VÀO ĐÂY
 
 # =============================================================================
 # CONFIG
@@ -72,19 +72,28 @@ def test_api():
     project_id = PROJECT_ID or "test-" + datetime.now().strftime("%Y%m%d%H%M%S")
     print(f"📁 Project ID: {project_id}")
 
-    # Build headers
+    # Build headers - copy đầy đủ từ Chrome
     headers = {
         "Authorization": f"Bearer {BEARER_TOKEN}",
         "Content-Type": "text/plain;charset=UTF-8",
         "Accept": "*/*",
         "Origin": "https://labs.google",
         "Referer": "https://labs.google/",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
+        "sec-ch-ua": '"Google Chrome";v="143", "Chromium";v="143", "Not A(Brand";v="24"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "cross-site",
     }
 
     if X_BROWSER_VALIDATION:
         headers["x-browser-validation"] = X_BROWSER_VALIDATION
         headers["x-browser-channel"] = "stable"
+        headers["x-browser-copyright"] = "Copyright 2025 Google LLC. All Rights reserved."
         headers["x-browser-year"] = "2025"
+        headers["x-client-data"] = "CIDsygE="
 
     # Build payload
     import random
