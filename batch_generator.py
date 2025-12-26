@@ -148,9 +148,17 @@ class BatchGenerator:
             print(f"    ❌ Lỗi: {e}")
             return False
 
-        # Go to labs.google
-        print("\n[4] ĐI TỚI labs.google...")
-        self.driver.get("https://labs.google/fx/tools/image-fx")
+        # URL
+        print("\n[4] NHẬP URL")
+        print("    Mặc định: https://labs.google/fx/tools/image-fx")
+        print("    Hoặc nhập URL project của bạn")
+        url_input = input("    URL (Enter=mặc định): ").strip()
+
+        if not url_input:
+            url_input = "https://labs.google/fx/tools/image-fx"
+
+        print(f"    → Đi tới: {url_input}")
+        self.driver.get(url_input)
         time.sleep(3)
 
         # Check login
@@ -169,15 +177,22 @@ class BatchGenerator:
     def find_prompt_input(self):
         """Find the prompt input element."""
         selectors = [
-            "textarea",
+            # Flow project page
+            "tag:textarea",
+            "css:textarea",
+            # Image-FX page
             "[contenteditable='true']",
-            "input[type='text']",
+            "css:[contenteditable='true']",
+            # Fallback
+            "tag:input@@type=text",
+            "css:input[type='text']",
         ]
 
         for sel in selectors:
             try:
                 el = self.driver.ele(sel, timeout=2)
                 if el:
+                    print(f"    → Found input: {sel}")
                     return el
             except:
                 continue
@@ -186,16 +201,27 @@ class BatchGenerator:
     def find_generate_button(self):
         """Find the Generate button."""
         selectors = [
+            # English
             "@@text():Generate",
+            "tag:button@@text():Generate",
+            # Vietnamese
             "@@text():Tạo",
-            "button@@text():Generate",
-            "button@@text():Tạo",
+            "tag:button@@text():Tạo",
+            # By aria-label
+            "css:[aria-label*='Generate']",
+            "css:[aria-label*='Tạo']",
+            # By class containing generate
+            "css:button[class*='generate']",
+            # Any button with Generate text
+            "xpath://button[contains(text(),'Generate')]",
+            "xpath://button[contains(text(),'Tạo')]",
         ]
 
         for sel in selectors:
             try:
                 el = self.driver.ele(sel, timeout=2)
                 if el:
+                    print(f"    → Found button: {sel}")
                     return el
             except:
                 continue
