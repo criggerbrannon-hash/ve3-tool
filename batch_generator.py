@@ -51,11 +51,28 @@ DEFAULT_PROMPTS = [
     "a vintage car on route 66 at sunset",
 ]
 
-# Simple JS to call API directly (không cần full VE3 script)
+# Simple JS to call API directly - with Bearer token capture
 JS_API_CALLER = '''
 (function(){
     if(window.__batchApiReady) return 'ALREADY_READY';
     window.__batchApiReady = true;
+    window.__capturedBearer = null;
+
+    // Intercept fetch to capture Bearer token
+    if (!window.__origFetch) {
+        window.__origFetch = window.fetch;
+        window.fetch = async function(url, opts) {
+            // Capture Bearer from any request
+            if (opts && opts.headers) {
+                const auth = opts.headers['Authorization'] || opts.headers['authorization'];
+                if (auth && auth.startsWith('Bearer ')) {
+                    window.__capturedBearer = auth;
+                    console.log('[BATCH] Captured Bearer token');
+                }
+            }
+            return window.__origFetch.apply(this, arguments);
+        };
+    }
 
     // Get project ID from URL
     window.__getProjectId = function() {
@@ -99,10 +116,16 @@ JS_API_CALLER = '''
     };
 
     // Call API and return result
-    window.__generateImages = async function(prompt, count) {
+    window.__generateImages = async function(prompt, count, bearerToken) {
         const projectId = window.__getProjectId();
         if (!projectId) {
             return { success: false, error: 'No projectId in URL' };
+        }
+
+        // Use provided bearer or captured one
+        const bearer = bearerToken || window.__capturedBearer;
+        if (!bearer) {
+            return { success: false, error: 'No Bearer token. Click Generate once in UI first!' };
         }
 
         const url = 'https://aisandbox-pa.googleapis.com/v1/projects/' + projectId + '/flowMedia:batchGenerateImages';
@@ -113,8 +136,10 @@ JS_API_CALLER = '''
         try {
             const response = await fetch(url, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': bearer
+                },
                 body: JSON.stringify(payload)
             });
 
@@ -147,6 +172,7 @@ JS_API_CALLER = '''
     };
 
     console.log('[BATCH] API Ready. ProjectId:', window.__getProjectId());
+    console.log('[BATCH] Bearer captured:', !!window.__capturedBearer);
     return 'READY';
 })();
 '''
@@ -238,6 +264,38 @@ class BatchGenerator:
         except Exception as e:
             print(f"    ❌ JS error: {e}")
             return False
+
+        # Check for Bearer token
+        print("\n[4] BEARER TOKEN")
+        bearer = self.driver.run_js("return window.__capturedBearer;")
+
+        if not bearer:
+            print("    ⚠️ Chưa có Bearer token!")
+            print("    → Click nút 'Generate' một lần trong Chrome để bắt token")
+            print("    → Hoặc nhập Bearer token thủ công (copy từ Network tab)")
+
+            manual_bearer = input("\n    Bearer token (Enter để chờ capture): ").strip()
+
+            if manual_bearer:
+                if manual_bearer.startswith("Bearer "):
+                    self.bearer = manual_bearer
+                else:
+                    self.bearer = f"Bearer {manual_bearer}"
+                self.driver.run_js(f'window.__capturedBearer = "{self.bearer}";')
+                print("    ✓ Bearer token đã set")
+            else:
+                print("    → Click Generate trong Chrome rồi nhấn Enter...")
+                input()
+
+                # Check again
+                bearer = self.driver.run_js("return window.__capturedBearer;")
+                if bearer:
+                    print(f"    ✓ Đã capture Bearer token ({len(bearer)} chars)")
+                else:
+                    print("    ❌ Không capture được Bearer token!")
+                    return False
+        else:
+            print(f"    ✓ Bearer token sẵn sàng ({len(bearer)} chars)")
 
         return True
 
