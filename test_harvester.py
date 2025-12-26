@@ -32,9 +32,9 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 # Site key của labs.google (từ anchor URL trước đó)
 SITE_KEY = "6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV"
 
-# JS để lấy token
+# JS để lấy token - dùng callback thay vì async/await
 JS_GET_TOKEN = """
-(async function() {
+(function() {
     // Check if grecaptcha exists
     if (typeof grecaptcha === 'undefined') {
         return {error: 'grecaptcha undefined'};
@@ -43,14 +43,38 @@ JS_GET_TOKEN = """
         return {error: 'grecaptcha.enterprise not found'};
     }
 
-    try {
-        const token = await grecaptcha.enterprise.execute('%s', {action: 'submit'});
-        return {token: token, time: Date.now()};
-    } catch(e) {
-        return {error: e.toString()};
-    }
+    // Lưu token vào window để lấy sau
+    window.__recaptchaToken = null;
+    window.__recaptchaError = null;
+
+    grecaptcha.enterprise.execute('%s', {action: 'submit'})
+        .then(function(token) {
+            window.__recaptchaToken = token;
+        })
+        .catch(function(e) {
+            window.__recaptchaError = e.toString();
+        });
+
+    return {status: 'pending'};
 })();
 """ % SITE_KEY
+
+# JS để check token đã sẵn sàng chưa
+JS_GET_TOKEN_RESULT = """
+(function() {
+    if (window.__recaptchaToken) {
+        var token = window.__recaptchaToken;
+        window.__recaptchaToken = null;
+        return {token: token};
+    }
+    if (window.__recaptchaError) {
+        var err = window.__recaptchaError;
+        window.__recaptchaError = null;
+        return {error: err};
+    }
+    return {status: 'waiting'};
+})();
+"""
 
 # JS để check grecaptcha status
 JS_CHECK_RECAPTCHA = """
@@ -153,18 +177,34 @@ class TokenHarvester:
     def get_token(self):
         """Lấy token mới từ grecaptcha"""
         try:
+            # Bước 1: Trigger execute
             result = self.driver.run_js(JS_GET_TOKEN)
+            print(f"    Trigger: {result}")
 
-            if isinstance(result, dict):
-                if 'token' in result:
-                    token = result['token']
-                    self.tokens.append({
-                        'token': token,
-                        'time': time.time()
-                    })
-                    return token
-                elif 'error' in result:
-                    print(f"    JS Error: {result['error']}")
+            if isinstance(result, dict) and result.get('error'):
+                print(f"    JS Error: {result['error']}")
+                return None
+
+            # Bước 2: Chờ và lấy kết quả
+            for i in range(20):  # Chờ tối đa 2 giây
+                time.sleep(0.1)
+                result = self.driver.run_js(JS_GET_TOKEN_RESULT)
+
+                if isinstance(result, dict):
+                    if 'token' in result:
+                        token = result['token']
+                        self.tokens.append({
+                            'token': token,
+                            'time': time.time()
+                        })
+                        return token
+                    elif 'error' in result:
+                        print(f"    JS Error: {result['error']}")
+                        return None
+                    elif result.get('status') == 'waiting':
+                        continue
+
+            print("    Timeout waiting for token")
             return None
         except Exception as e:
             print(f"    Exception: {e}")
