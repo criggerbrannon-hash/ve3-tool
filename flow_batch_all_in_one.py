@@ -444,8 +444,29 @@ class BatchGenerator:
 
     def setup_interceptor(self):
         print("[BATCH] Setting up interceptor...")
-        result = self.driver.run_js(JS_INTERCEPTOR)
-        return result == 'READY'
+
+        # Wait for page to be ready
+        for attempt in range(5):
+            try:
+                # Check if page is ready
+                time.sleep(1)
+                url = self.driver.url
+                if not url or url == "about:blank":
+                    print(f"    Đợi page load... ({attempt+1}/5)")
+                    time.sleep(2)
+                    continue
+
+                # Try to run interceptor
+                result = self.driver.run_js(JS_INTERCEPTOR)
+                if result == 'READY':
+                    print("[BATCH] Interceptor ready!")
+                    return True
+
+            except Exception as e:
+                print(f"    Retry {attempt+1}/5: {e}")
+                time.sleep(2)
+
+        return False
 
     def find_textarea(self):
         for sel in ["tag:textarea", "css:textarea"]:
@@ -600,13 +621,27 @@ def main():
     if not generator.connect_chrome():
         return
 
-    if "/project/" not in generator.driver.url:
-        print("[WARN] Hãy mở một project trong Flow trước!")
-        print("[INFO] Nhấn ENTER khi đã sẵn sàng...")
-        input()
+    # Wait for user to be on project page
+    while True:
+        try:
+            url = generator.driver.url
+            if "/project/" in url:
+                print(f"[OK] Đang ở project page: {url[:60]}...")
+                break
+            else:
+                print(f"[WAIT] URL hiện tại: {url[:60]}...")
+                print("[INFO] Hãy mở một project trong Flow, rồi nhấn ENTER...")
+                input()
+        except Exception as e:
+            print(f"[WARN] {e}")
+            print("[INFO] Nhấn ENTER để thử lại...")
+            input()
 
+    # Setup interceptor with retry
+    time.sleep(2)  # Wait for page to fully load
     if not generator.setup_interceptor():
         print("[ERROR] Không thể setup interceptor")
+        print("[TIP] Thử refresh page (F5) rồi chạy lại script")
         return
 
     # Run batch
