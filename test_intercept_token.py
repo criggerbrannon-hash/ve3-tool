@@ -111,45 +111,68 @@ def kill_chrome():
     time.sleep(2)
 
 
+def wait_for_debug_port(port=9222, timeout=30):
+    """Đợi cho đến khi Chrome debug port sẵn sàng."""
+    import urllib.request
+    import urllib.error
+
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        try:
+            response = urllib.request.urlopen(f"http://127.0.0.1:{port}/json/version", timeout=2)
+            data = json.loads(response.read().decode())
+            print(f"✅ Debug port sẵn sàng! Chrome {data.get('Browser', 'unknown')}")
+            return True
+        except (urllib.error.URLError, Exception):
+            print(f"   Đợi debug port... ({int(time.time() - start_time)}s)")
+            time.sleep(2)
+
+    return False
+
+
 def start_chrome_debug():
     """Start Chrome với remote debugging."""
     print("🚀 Đang khởi động Chrome...")
 
-    # Build command
+    # Build command - thêm các flags để đảm bảo debug port hoạt động
     cmd = [
         CHROME_PATH,
         f"--user-data-dir={CHROME_USER_DATA}",
         f"--profile-directory={CHROME_PROFILE}",
         "--remote-debugging-port=9222",
+        "--remote-allow-origins=*",
+        "--no-first-run",
+        "--no-default-browser-check",
         "https://labs.google/fx/tools/flow"
     ]
 
     # Start Chrome
-    subprocess.Popen(cmd, shell=False)
-    print("✅ Chrome đã mở với debug port 9222")
-    print("⏳ Đợi Chrome khởi động...")
-    time.sleep(10)  # Đợi lâu hơn
+    subprocess.Popen(cmd, shell=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    print("✅ Chrome đang khởi động...")
+
+    # Đợi debug port sẵn sàng
+    if not wait_for_debug_port():
+        print("❌ Chrome không mở được debug port!")
+        print("💡 Thử đóng tất cả Chrome và chạy lại")
+        return False
+
+    return True
 
 
 def connect_to_chrome():
-    """Connect Selenium to running Chrome với retry."""
-    print("🔗 Đang kết nối đến Chrome...")
+    """Connect Selenium to running Chrome."""
+    print("🔗 Đang kết nối Selenium...")
 
     options = Options()
     options.add_experimental_option("debuggerAddress", "127.0.0.1:9222")
 
-    # Retry nhiều lần
-    for attempt in range(5):
-        try:
-            driver = webdriver.Chrome(options=options)
-            print(f"✅ Đã kết nối! Title: {driver.title}")
-            return driver
-        except Exception as e:
-            print(f"   Lần {attempt + 1}/5: Chưa kết nối được, đợi thêm...")
-            time.sleep(3)
-
-    print("❌ Không thể kết nối sau 5 lần thử")
-    return None
+    try:
+        driver = webdriver.Chrome(options=options)
+        print(f"✅ Đã kết nối! Title: {driver.title}")
+        return driver
+    except Exception as e:
+        print(f"❌ Lỗi kết nối Selenium: {e}")
+        return None
 
 
 def inject_interceptor(driver):
@@ -331,7 +354,8 @@ def main():
         kill_chrome()
 
         # Start Chrome with debug port
-        start_chrome_debug()
+        if not start_chrome_debug():
+            return False
 
         # Connect Selenium
         driver = connect_to_chrome()
