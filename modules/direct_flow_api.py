@@ -148,10 +148,11 @@ class DirectFlowAPI:
         if not pag or not pyperclip:
             return False
 
-        self.log("Inject capture script (bearer + recaptcha)...")
+        self.log("Inject capture script (bearer + recaptcha + BLOCK request)...")
 
-        # Script capture CẢ bearer VÀ recaptchaToken từ body
-        capture_script = '''window._tk=null;window._pj=null;window._rc=null;window._payload=null;(function(){var f=window.fetch;window.fetch=function(u,o){var s=u?u.toString():'';if(s.includes('flowMedia')||s.includes('aisandbox')||s.includes('batchGenerateImages')){var h=o&&o.headers?o.headers:{};var a=h.Authorization||h.authorization||'';if(a.startsWith('Bearer ')){window._tk=a.substring(7);var m=s.match(/\\/projects\\/([^\\/]+)\\//);if(m)window._pj=m[1];console.log('BEARER CAPTURED!');}if(o&&o.body){try{var body=JSON.parse(o.body);if(body.clientContext&&body.clientContext.recaptchaToken){window._rc=body.clientContext.recaptchaToken;window._payload=body;console.log('RECAPTCHA TOKEN CAPTURED!');}}catch(e){}}}return f.apply(this,arguments);};console.log('Capture ready (bearer+recaptcha)');})();'''
+        # Script capture CẢ bearer VÀ recaptchaToken, rồi CHẶN request (không gửi thật)
+        # Trả về fake response để browser không lỗi
+        capture_script = '''window._tk=null;window._pj=null;window._rc=null;window._blocked=0;(function(){var f=window.fetch;window.fetch=function(u,o){var s=u?u.toString():'';if(s.includes('batchGenerateImages')){var h=o&&o.headers?o.headers:{};var a=h.Authorization||h.authorization||'';if(a.startsWith('Bearer ')){window._tk=a.substring(7);var m=s.match(/\\/projects\\/([^\\/]+)\\//);if(m)window._pj=m[1];console.log('✓ BEARER CAPTURED!');}if(o&&o.body){try{var body=JSON.parse(o.body);if(body.clientContext&&body.clientContext.recaptchaToken){window._rc=body.clientContext.recaptchaToken;window._blocked++;console.log('✓ RECAPTCHA CAPTURED! (request #'+window._blocked+' BLOCKED)');return Promise.resolve(new Response(JSON.stringify({media:[]}),{status:200,headers:{'Content-Type':'application/json'}}));}}catch(e){}}}return f.apply(this,arguments);};console.log('[DirectFlow] Capture + Block ready!');})();'''
 
         try:
             pag.hotkey("ctrl", "shift", "j")
