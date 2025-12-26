@@ -65,6 +65,7 @@ def print_result(success: bool, message: str):
 def capture_headers_from_chrome(
     profile_path: str = None,
     profile_directory: str = None,
+    chrome_binary: str = None,
     headless: bool = False
 ) -> CapturedHeaders:
     """
@@ -73,6 +74,7 @@ def capture_headers_from_chrome(
     Args:
         profile_path: Path to Chrome User Data folder
         profile_directory: Profile folder name (e.g., "Profile 2")
+        chrome_binary: Path to Chrome executable
         headless: Chạy ẩn (không hiện cửa sổ Chrome)
 
     Returns:
@@ -111,6 +113,7 @@ def capture_headers_from_chrome(
     extractor = ChromeHeadersExtractor(
         chrome_profile_path=profile_path,
         profile_directory=profile_directory,
+        chrome_binary=chrome_binary,
         headless=headless,
         verbose=True
     )
@@ -317,6 +320,10 @@ def main():
         help="Chrome profile directory name (e.g., 'Profile 2', 'Default')"
     )
     parser.add_argument(
+        "--chrome", "-c",
+        help="Path to Chrome executable (e.g., 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe')"
+    )
+    parser.add_argument(
         "--headless",
         action="store_true",
         help="Run Chrome in headless mode"
@@ -354,6 +361,7 @@ def main():
     headers = capture_headers_from_chrome(
         profile_path=args.profile,
         profile_directory=getattr(args, 'profile_dir', None),
+        chrome_binary=args.chrome,
         headless=args.headless
     )
 

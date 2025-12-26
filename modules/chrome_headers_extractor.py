@@ -74,6 +74,7 @@ class ChromeHeadersExtractor:
         self,
         chrome_profile_path: str = None,
         profile_directory: str = None,
+        chrome_binary: str = None,
         headless: bool = False,
         verbose: bool = True
     ):
@@ -82,11 +83,13 @@ class ChromeHeadersExtractor:
             chrome_profile_path: Path to Chrome User Data folder
                                  (e.g., C:\\Users\\admin\\AppData\\Local\\Google\\Chrome\\User Data)
             profile_directory: Profile folder name (e.g., "Profile 2", "Default")
+            chrome_binary: Path to Chrome executable (e.g., C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe)
             headless: Run Chrome headless
             verbose: Print debug logs
         """
         self.chrome_profile_path = chrome_profile_path
         self.profile_directory = profile_directory
+        self.chrome_binary = chrome_binary
         self.headless = headless
         self.verbose = verbose
 
@@ -113,18 +116,23 @@ class ChromeHeadersExtractor:
 
             options = Options()
 
-            # Tim Chrome binary (giong browser_flow_generator)
-            chrome_paths = [
-                r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-                r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-                "/usr/bin/google-chrome",
-                "/usr/bin/chromium-browser",
-            ]
-            for chrome_path in chrome_paths:
-                if os.path.exists(chrome_path):
-                    options.binary_location = chrome_path
-                    self._log(f"Chrome binary: {chrome_path}")
-                    break
+            # Set Chrome binary - use specified path or find automatically
+            if self.chrome_binary and os.path.exists(self.chrome_binary):
+                options.binary_location = self.chrome_binary
+                self._log(f"Chrome binary (specified): {self.chrome_binary}")
+            else:
+                # Find Chrome binary automatically
+                chrome_paths = [
+                    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+                    "/usr/bin/google-chrome",
+                    "/usr/bin/chromium-browser",
+                ]
+                for chrome_path in chrome_paths:
+                    if os.path.exists(chrome_path):
+                        options.binary_location = chrome_path
+                        self._log(f"Chrome binary (auto): {chrome_path}")
+                        break
 
             # Setup Chrome profile
             if self.chrome_profile_path:
