@@ -46,14 +46,35 @@ JS_INTERCEPTOR = '''
         if (urlStr.includes('batchGenerateImages') && opts?.body) {
             try {
                 const body = JSON.parse(opts.body);
+
+                // Lấy Authorization từ headers (có thể là object hoặc Headers)
+                let bearer = null;
+                if (opts.headers) {
+                    if (opts.headers.Authorization) {
+                        bearer = opts.headers.Authorization;
+                    } else if (opts.headers.get) {
+                        bearer = opts.headers.get('Authorization');
+                    } else if (typeof opts.headers === 'object') {
+                        for (let key in opts.headers) {
+                            if (key.toLowerCase() === 'authorization') {
+                                bearer = opts.headers[key];
+                                break;
+                            }
+                        }
+                    }
+                }
+
                 window.__tokens = {
-                    bearer: opts.headers?.Authorization || null,
+                    bearer: bearer,
                     recaptchaToken: body.recaptchaToken || null,
                     projectId: body.requests?.[0]?.clientContext?.projectId || null,
                     timestamp: Date.now()
                 };
-                console.log('[CAPTURED] Got tokens!');
-            } catch(e) {}
+                console.log('[CAPTURED] Bearer:', bearer ? 'YES' : 'NO');
+                console.log('[CAPTURED] recaptchaToken:', body.recaptchaToken ? 'YES' : 'NO');
+            } catch(e) {
+                console.log('[CAPTURE ERROR]', e);
+            }
         }
         return origFetch.apply(this, arguments);
     };
