@@ -1905,7 +1905,7 @@ class SmartEngine:
         self.log("="*50)
 
         # === RESUME CHECK: Kiểm tra đã làm đến bước nào ===
-        final_video = proj_dir / f"{name}_final.mp4"
+        final_video = proj_dir / f"{name}.mp4"
 
         # Nếu video cuối đã tồn tại → hoàn thành rồi
         if final_video.exists():
@@ -2499,10 +2499,10 @@ class SmartEngine:
 
         # Xử lý SRT: tách dòng dài (max 50 ký tự)
         if srt_path:
-            processed_srt = proj_dir / f"{name}_video.srt"
+            processed_srt = proj_dir / f"{name}.srt"
             srt_path = self._process_srt_for_video(srt_path, processed_srt, max_chars=50)
 
-        output_path = proj_dir / f"{name}_final.mp4"
+        output_path = proj_dir / f"{name}.mp4"
         img_dir = proj_dir / "img"
 
         self.log(f"  Voice: {voice_path.name}")
@@ -2967,7 +2967,7 @@ class SmartEngine:
         import subprocess
         import shutil
 
-        output_path = proj_dir / f"{name}_final.mp4"
+        output_path = proj_dir / f"{name}.mp4"
         temp_video = Path(temp_dir) / "temp_video.mp4"
         temp_with_audio = Path(temp_dir) / "with_audio.mp4"
 

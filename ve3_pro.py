@@ -179,7 +179,7 @@ class UnixVoiceToVideo:
         # Tool: D:\AUTO\ve3-tool → Parent: D:\AUTO
         # Voice: D:\AUTO\voice, Done: D:\AUTO\done
         self.batch_voice_folder = ROOT_DIR.parent / "voice"
-        self.batch_done_folder = ROOT_DIR.parent / "done"
+        self.batch_done_folder = ROOT_DIR / "PROJECTS"
 
         # Data
         self.profiles: List[str] = []
@@ -648,12 +648,12 @@ class UnixVoiceToVideo:
         for subfolder in self.batch_voice_folder.iterdir():
             if subfolder.is_dir():
                 for voice_file in subfolder.glob("*.mp3"):
-                    # Check if video already exists (done/voice_stem/voice_stem_final.mp4)
-                    done_video = self.batch_done_folder / voice_file.stem / f"{voice_file.stem}_final.mp4"
+                    # Check if video already exists (PROJECTS/voice_stem/voice_stem.mp4)
+                    done_video = self.batch_done_folder / voice_file.stem / f"{voice_file.stem}.mp4"
                     if not done_video.exists():
                         pending += 1
                 for voice_file in subfolder.glob("*.wav"):
-                    done_video = self.batch_done_folder / voice_file.stem / f"{voice_file.stem}_final.mp4"
+                    done_video = self.batch_done_folder / voice_file.stem / f"{voice_file.stem}.mp4"
                     if not done_video.exists():
                         pending += 1
         return pending
@@ -1846,7 +1846,7 @@ class UnixVoiceToVideo:
                     output_folder = self.batch_done_folder / voice_file.stem
 
                     # Check if video already exists
-                    final_video = output_folder / f"{voice_file.stem}_final.mp4"
+                    final_video = output_folder / f"{voice_file.stem}.mp4"
                     if final_video.exists():
                         continue
 
