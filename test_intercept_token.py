@@ -25,7 +25,16 @@ JS_CODE = '''
   const orig = fetch;
   window.fetch = async (url, opts) => {
     if (url.includes('batchGenerateImages')) {
-      const data = btoa(JSON.stringify({url, headers: opts.headers, body: opts.body}));
+      // Convert Headers object to plain object
+      let h = {};
+      if (opts.headers) {
+        if (opts.headers.forEach) {
+          opts.headers.forEach((v,k) => h[k]=v);
+        } else {
+          h = opts.headers;
+        }
+      }
+      const data = btoa(unescape(encodeURIComponent(JSON.stringify({url, headers: h, body: opts.body}))));
       console.log("=== COPY THIS ===");
       console.log(data);
       console.log("=================");
