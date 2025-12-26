@@ -1,22 +1,17 @@
 #!/usr/bin/env python3
 """
-Google Flow API - Batch Image Generator (UI Automation)
-========================================================
-Tự động tạo nhiều ảnh bằng DrissionPage - click Generate trong UI.
+Google Flow API - Batch Image Generator (Semi-Auto)
+====================================================
+Script nhập prompt tự động, user click Generate, script download ảnh.
 
-Vì API yêu cầu reCAPTCHA token từ user interaction,
-script này sẽ tự động click nút Generate và download ảnh.
-
-Workflow:
-1. Mở Chrome, đăng nhập Google, vào project Flow
-2. Với mỗi prompt: nhập prompt -> click Generate -> chờ ảnh -> download
-3. Lưu ảnh và thống kê
+Đây là cách đã test thành công với test_debug.py:
+1. Script inject interceptor và nhập prompt
+2. User click Generate (trigger reCAPTCHA thật)
+3. Script bắt payload và gọi API
+4. Script download ảnh
 
 Cài đặt:
     pip install DrissionPage requests
-
-Sử dụng:
-    python batch_generator.py
 """
 
 import json
@@ -25,7 +20,6 @@ import requests
 from pathlib import Path
 from datetime import datetime
 import random
-import re
 
 try:
     from DrissionPage import ChromiumPage, ChromiumOptions
@@ -51,59 +45,41 @@ DEFAULT_PROMPTS = [
     "a vintage car on route 66 at sunset",
 ]
 
-# JS to intercept API REQUEST and capture payload (including recaptchaToken)
-JS_REQUEST_INTERCEPTOR = '''
+# JS interceptor - giống test_debug.py
+JS_INTERCEPTOR = '''
 (function(){
-    if(window.__requestInterceptorReady) return 'ALREADY_READY';
-    window.__requestInterceptorReady = true;
-    window.__capturedPayload = null;
-    window.__capturedBearer = null;
-    window.__capturedTime = 0;
+    if(window.__batchReady) return 'ALREADY_READY';
+    window.__batchReady = true;
+    window.__payload = null;
+    window.__bearer = null;
+    window.__payloadTime = 0;
 
-    // Intercept fetch to capture payload BEFORE sending
-    if (!window.__origFetch) {
-        window.__origFetch = window.fetch;
-    }
-
+    const origFetch = window.fetch;
     window.fetch = async function(url, opts) {
         const urlStr = typeof url === 'string' ? url : url.url;
 
-        // Capture Bearer from any request
+        // Capture Bearer
         if (opts && opts.headers) {
             const auth = opts.headers['Authorization'] || opts.headers['authorization'];
             if (auth && auth.startsWith('Bearer ')) {
-                window.__capturedBearer = auth;
+                window.__bearer = auth;
             }
         }
 
+        // Capture payload for batchGenerateImages
         if (urlStr.includes('batchGenerateImages')) {
-            // Capture the payload
-            window.__capturedPayload = opts.body;
-            window.__capturedTime = Date.now();
-            console.log('[BATCH] Captured payload at', new Date().toISOString());
-
-            // BLOCK the original request - we'll send it via Python
-            return new Response(JSON.stringify({blocked: true}), {status: 200});
+            window.__payload = opts.body;
+            window.__payloadTime = Date.now();
+            console.log('[BATCH] Payload captured!');
+            // Block original - we send via Python
+            return new Response('{"blocked":true}', {status: 200});
         }
 
-        return window.__origFetch.apply(this, arguments);
+        return origFetch.apply(this, arguments);
     };
 
-    console.log('[BATCH] Request interceptor ready');
+    console.log('[BATCH] Interceptor ready');
     return 'READY';
-})();
-'''
-
-# JS to get captured payload
-JS_GET_PAYLOAD = '''
-(function(){
-    const payload = window.__capturedPayload;
-    const bearer = window.__capturedBearer;
-    const time = window.__capturedTime;
-    // Clear after reading
-    window.__capturedPayload = null;
-    window.__capturedTime = 0;
-    return { payload: payload, bearer: bearer, time: time };
 })();
 '''
 
@@ -111,377 +87,184 @@ JS_GET_PAYLOAD = '''
 class BatchGenerator:
     def __init__(self):
         self.driver = None
-        self.stats = {
-            "total": 0,
-            "success": 0,
-            "failed": 0,
-            "errors": []
-        }
+        self.stats = {"total": 0, "success": 0, "failed": 0}
 
     def setup(self):
-        """Setup browser."""
         print("=" * 60)
-        print("  BATCH IMAGE GENERATOR (UI Automation)")
+        print("  BATCH GENERATOR (Semi-Auto)")
+        print("  Script nhập prompt, bạn click Generate")
         print("=" * 60)
 
         # Chrome
-        print("\n[1] MỞ CHROME...")
+        print("\n[1] CHROME")
         print("    1 = Mở Chrome mới")
-        print("    2 = Kết nối Chrome đang chạy (port 9222)")
-        choice = input("    Chọn (Enter=1): ").strip()
+        print("    2 = Kết nối port 9222")
+        choice = input("    Chọn (Enter=2): ").strip() or "2"
 
         options = ChromiumOptions()
-        options.set_argument("--start-maximized")
-
         try:
             if choice == "2":
                 options.set_local_port(9222)
                 self.driver = ChromiumPage(addr_or_opts=options)
-                print("    ✓ Kết nối Chrome port 9222")
+                print("    ✓ Kết nối port 9222")
             else:
                 self.driver = ChromiumPage(options)
-                print("    ✓ Chrome mới đã mở")
+                print("    ✓ Chrome mới")
         except Exception as e:
             print(f"    ❌ Lỗi: {e}")
             return False
 
         # URL
-        print("\n[2] URL")
-        print(f"    URL hiện tại: {self.driver.url}")
-        print("\n    Nhập URL project Flow (phải có /project/xxx):")
-        print("    - Enter = giữ nguyên")
-        print("    - Hoặc paste URL project")
-        url_input = input("    URL: ").strip()
-
-        if url_input:
-            print(f"    → Đi tới: {url_input}")
-            self.driver.get(url_input)
-            print("    → Đang chờ trang load...")
-            time.sleep(5)
-
-        # Debug: show current URL
-        print(f"    → URL hiện tại: {self.driver.url}")
-
-        # Check project URL
+        print(f"\n[2] URL hiện tại: {self.driver.url}")
         if "/project/" not in self.driver.url:
-            print("    ⚠️ URL không có /project/xxx!")
-            print("    Cần mở project Flow trước")
-            return False
+            print("    ⚠️ Cần mở project Flow trước!")
+            url = input("    Nhập URL (hoặc Enter để tiếp tục): ").strip()
+            if url:
+                self.driver.get(url)
+                time.sleep(3)
 
-        # Check login
-        if "accounts.google" in self.driver.url:
-            print("    ⚠️ Cần đăng nhập Google!")
-            input("    Đăng nhập xong nhấn Enter...")
-            time.sleep(2)
-
-        # Wait for user to confirm page is ready
-        input("\n    Trang đã load xong? Nhấn Enter để tiếp tục...")
-
-        # Inject request interceptor
-        print("\n[3] INJECT REQUEST INTERCEPTOR...")
-        try:
-            result = self.driver.run_js(JS_REQUEST_INTERCEPTOR)
-            print(f"    ✓ Result: {result}")
-        except Exception as e:
-            print(f"    ⚠️ JS warning: {e}")
-
-        # Find UI elements
-        print("\n[4] KIỂM TRA UI ELEMENTS...")
-        textarea = self.find_prompt_input()
-        gen_btn = self.find_generate_button()
-
-        if textarea:
-            print("    ✓ Tìm thấy textarea")
-        else:
-            print("    ❌ Không tìm thấy textarea!")
-            return False
-
-        if gen_btn:
-            print("    ✓ Tìm thấy nút Generate")
-        else:
-            print("    ❌ Không tìm thấy nút Generate!")
-            return False
+        # Inject
+        print("\n[3] INJECT INTERCEPTOR...")
+        result = self.driver.run_js(JS_INTERCEPTOR)
+        print(f"    ✓ {result}")
 
         return True
 
-    def find_prompt_input(self):
-        """Find the prompt input element."""
-        selectors = [
-            "tag:textarea",
-            "css:textarea",
-            "css:[contenteditable='true']",
-        ]
-
-        for sel in selectors:
-            try:
-                el = self.driver.ele(sel, timeout=3)
-                if el:
-                    return el
-            except:
-                continue
-        return None
-
-    def find_generate_button(self):
-        """Find the Generate button."""
-        selectors = [
-            "@@text():Tạo",
-            "@@text():Generate",
-            "tag:button@@text():Tạo",
-            "tag:button@@text():Generate",
-        ]
-
-        for sel in selectors:
-            try:
-                el = self.driver.ele(sel, timeout=3)
-                if el:
-                    return el
-            except:
-                continue
-        return None
-
-    def wait_for_payload(self, timeout=30):
-        """Wait for payload to be captured from intercepted request."""
-        start_time = time.time()
-
-        while time.time() - start_time < timeout:
-            result = self.driver.run_js(JS_GET_PAYLOAD)
-
-            if result and result.get("payload"):
-                return result
-
-            time.sleep(0.5)
-
-        return None
+    def get_payload(self):
+        """Get captured payload."""
+        result = self.driver.run_js('''
+            return {
+                payload: window.__payload,
+                bearer: window.__bearer,
+                time: window.__payloadTime
+            };
+        ''')
+        # Clear after reading
+        self.driver.run_js('window.__payload = null; window.__payloadTime = 0;')
+        return result
 
     def call_api(self, payload_str, bearer):
-        """Call API with captured payload."""
+        """Call API - giống test_debug.py"""
         try:
             payload = json.loads(payload_str)
-        except Exception as e:
-            print(f"    ❌ JSON parse error: {e}")
+        except:
             return None
 
-        # Get project ID from payload
         project_id = payload.get("requests", [{}])[0].get("clientContext", {}).get("projectId", "")
-
-        if not project_id:
-            print("    ❌ No projectId in payload!")
-            return None
-
         url = f"https://aisandbox-pa.googleapis.com/v1/projects/{project_id}/flowMedia:batchGenerateImages"
 
         headers = {
             "Authorization": bearer,
             "Content-Type": "text/plain;charset=UTF-8",
-            "Accept": "*/*",
             "Origin": "https://labs.google",
             "Referer": "https://labs.google/",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         }
 
-        try:
-            resp = requests.post(url, headers=headers, data=json.dumps(payload), timeout=120)
-
-            if resp.status_code == 200:
-                return resp.json()
-            else:
-                print(f"    ❌ API {resp.status_code}: {resp.text[:100]}")
-                return None
-        except Exception as e:
-            print(f"    ❌ API error: {e}")
+        resp = requests.post(url, headers=headers, data=json.dumps(payload), timeout=120)
+        if resp.status_code == 200:
+            return resp.json()
+        else:
+            print(f"    ❌ API {resp.status_code}")
             return None
 
-    def generate_one(self, prompt, idx):
-        """Generate one image with given prompt using UI automation + API call."""
-        print(f"\n[{idx+1}] {prompt[:50]}...")
-
-        try:
-            # Find textarea
-            textarea = self.find_prompt_input()
-            if not textarea:
-                print("    ❌ Không tìm thấy textarea!")
-                return False, []
-
-            # Clear and enter prompt
-            try:
-                textarea.clear()
-                time.sleep(0.3)
-                textarea.input(prompt)
-                time.sleep(0.5)
-                print("    → Đã nhập prompt")
-            except Exception as e:
-                print(f"    ❌ Lỗi nhập prompt: {e}")
-                return False, []
-
-            # Try multiple methods to submit
-            submitted = False
-
-            # Method 1: Press Enter in textarea
-            try:
-                # Press Ctrl+Enter to submit
-                textarea.input('\n')  # Sometimes Enter submits
-                time.sleep(0.5)
-
-                # Check if payload was captured
-                check = self.driver.run_js("return window.__capturedPayload !== null;")
-                if check:
-                    submitted = True
-                    print("    → Đã submit bằng Enter")
-            except:
-                pass
-
-            # Method 2: Find and click Generate button
-            if not submitted:
-                gen_btn = self.find_generate_button()
-                if gen_btn:
+    def download_images(self, result, idx):
+        """Download images from result."""
+        saved = []
+        if "media" in result:
+            for i, m in enumerate(result["media"]):
+                img_url = m.get("image", {}).get("generatedImage", {}).get("fifeUrl")
+                if img_url:
                     try:
-                        # Try JS click first (more reliable)
-                        self.driver.run_js("arguments[0].click();", gen_btn)
-                        time.sleep(0.5)
-
-                        check = self.driver.run_js("return window.__capturedPayload !== null;")
-                        if check:
-                            submitted = True
-                            print("    → Đã click Generate (JS)")
-                    except:
-                        pass
-
-                    if not submitted:
-                        try:
-                            gen_btn.click()
-                            print("    → Đã click Generate")
-                            submitted = True
-                        except Exception as e:
-                            print(f"    ⚠️ Click warning: {e}")
-
-            # Method 3: Click using keyboard shortcut or action
-            if not submitted:
-                try:
-                    # Try clicking any visible button with "Tạo" or "Generate"
-                    self.driver.run_js('''
-                        const btns = document.querySelectorAll('button');
-                        for (const btn of btns) {
-                            if (btn.textContent.includes('Tạo') || btn.textContent.includes('Generate')) {
-                                btn.click();
-                                break;
-                            }
-                        }
-                    ''')
-                    print("    → Đã click button qua JS querySelectorAll")
-                    submitted = True
-                except:
-                    pass
-
-            if not submitted:
-                print("    ❌ Không thể submit!")
-                return False, []
-
-            # Wait for payload to be captured
-            print("    → Đang chờ payload...")
-            captured = self.wait_for_payload(timeout=15)
-
-            if not captured or not captured.get("payload"):
-                print("    ❌ Timeout - không bắt được payload!")
-                return False, []
-
-            payload_str = captured.get("payload")
-            bearer = captured.get("bearer")
-
-            if not bearer:
-                print("    ❌ Không có Bearer token!")
-                return False, []
-
-            print(f"    → Payload captured, calling API...")
-
-            # Call API with captured payload
-            result = self.call_api(payload_str, bearer)
-
-            if not result:
-                return False, []
-
-            # Extract and download images
-            images = []
-            if "media" in result:
-                for m in result["media"]:
-                    img_url = m.get("image", {}).get("generatedImage", {}).get("fifeUrl")
-                    if img_url:
-                        images.append({"url": img_url, "seed": m.get("seed", "unknown")})
-
-            if not images:
-                print("    ❌ No images in response!")
-                return False, []
-
-            print(f"    ✓ Got {len(images)} images")
-
-            # Download images
-            saved = []
-            for i, img in enumerate(images):
-                url = img.get("url")
-                if url:
-                    try:
-                        resp = requests.get(url, timeout=60)
+                        resp = requests.get(img_url, timeout=60)
                         if resp.status_code == 200:
                             filename = f"batch_{idx:03d}_{i+1}.png"
                             (OUTPUT_DIR / filename).write_bytes(resp.content)
                             saved.append(filename)
-                            print(f"      ✓ Saved: {filename}")
-                    except Exception as e:
-                        print(f"      ❌ Download error: {e}")
+                    except:
+                        pass
+        return saved
 
-            return len(saved) > 0, saved
-
-        except Exception as e:
-            print(f"    ❌ Exception: {e}")
-            return False, []
+    def find_textarea(self):
+        """Find textarea."""
+        for sel in ["tag:textarea", "css:textarea"]:
+            try:
+                el = self.driver.ele(sel, timeout=2)
+                if el:
+                    return el
+            except:
+                pass
+        return None
 
     def run_batch(self, prompts):
-        """Run batch generation."""
         print(f"\n{'=' * 60}")
-        print(f"  BATCH GENERATION: {len(prompts)} prompts")
+        print(f"  SẼ TẠO {len(prompts)} ẢNH")
+        print(f"  Mỗi prompt: script nhập → bạn click Generate → script download")
         print(f"{'=' * 60}")
 
         self.stats["total"] = len(prompts)
 
         for i, prompt in enumerate(prompts):
-            try:
-                success, saved = self.generate_one(prompt, i)
+            print(f"\n[{i+1}/{len(prompts)}] {prompt[:50]}...")
 
-                if success:
-                    self.stats["success"] += 1
-                else:
-                    self.stats["failed"] += 1
-                    self.stats["errors"].append(f"Prompt {i+1}: Failed")
+            # Find and fill textarea
+            textarea = self.find_textarea()
+            if textarea:
+                try:
+                    textarea.clear()
+                    time.sleep(0.2)
+                    textarea.input(prompt)
+                    print("    ✓ Đã nhập prompt")
+                except Exception as e:
+                    print(f"    ⚠️ Không nhập được: {e}")
+            else:
+                print("    ⚠️ Không tìm thấy textarea")
 
-            except Exception as e:
+            # Wait for user to click Generate
+            print("    → BẠN CLICK 'Generate' TRONG CHROME...")
+
+            # Poll for payload
+            start = time.time()
+            payload_data = None
+            while time.time() - start < 120:  # 2 minutes timeout
+                data = self.get_payload()
+                if data and data.get("payload"):
+                    payload_data = data
+                    break
+                time.sleep(0.5)
+
+            if not payload_data:
+                print("    ❌ Timeout - bạn chưa click Generate?")
                 self.stats["failed"] += 1
-                self.stats["errors"].append(f"Prompt {i+1}: {str(e)}")
+                continue
 
-            # Delay between requests
+            print("    ✓ Payload captured!")
+
+            # Call API
+            result = self.call_api(payload_data["payload"], payload_data["bearer"])
+            if not result:
+                self.stats["failed"] += 1
+                continue
+
+            # Download
+            saved = self.download_images(result, i)
+            if saved:
+                print(f"    ✓ Saved: {', '.join(saved)}")
+                self.stats["success"] += 1
+            else:
+                print("    ❌ Không download được ảnh")
+                self.stats["failed"] += 1
+
+            # Small delay
             if i < len(prompts) - 1:
-                delay = random.uniform(2, 4)
-                print(f"    ... chờ {delay:.1f}s")
-                time.sleep(delay)
+                time.sleep(1)
 
-        # Print stats
+        # Stats
         print(f"\n{'=' * 60}")
-        print(f"  BATCH COMPLETE")
-        print(f"{'=' * 60}")
-        print(f"  Total: {self.stats['total']}")
-        print(f"  Success: {self.stats['success']}")
+        print(f"  HOÀN THÀNH!")
+        print(f"  Success: {self.stats['success']}/{self.stats['total']}")
         print(f"  Failed: {self.stats['failed']}")
-        if self.stats['total'] > 0:
-            print(f"  Success rate: {self.stats['success']/self.stats['total']*100:.1f}%")
         print(f"  Output: {OUTPUT_DIR.absolute()}")
-
-        if self.stats["errors"]:
-            print(f"\n  Errors:")
-            for err in self.stats["errors"][:10]:
-                print(f"    - {err}")
-
-    def cleanup(self):
-        if self.driver:
-            # Don't quit - keep browser open
-            pass
+        print(f"{'=' * 60}")
 
 
 def main():
@@ -490,62 +273,39 @@ def main():
     if not gen.setup():
         return
 
-    # Menu
+    # Prompts
     print(f"\n{'=' * 60}")
-    print("  OPTIONS:")
-    print("    1. Test với 10 prompts mặc định")
-    print("    2. Test với N prompts tùy chọn")
-    print("    3. Load prompts từ file")
-    print("    4. Nhập prompts thủ công")
+    print("  CHỌN PROMPTS:")
+    print("    1 = 10 prompts mặc định")
+    print("    2 = Nhập số lượng")
+    print("    3 = Load từ file")
     print(f"{'=' * 60}")
 
     choice = input("\nChọn (Enter=1): ").strip() or "1"
 
-    prompts = []
-
     if choice == "1":
         prompts = DEFAULT_PROMPTS
-
     elif choice == "2":
-        n = int(input("Số lượng prompts (1-100): ") or "10")
-        n = min(max(1, n), 100)
-        prompts = (DEFAULT_PROMPTS * (n // len(DEFAULT_PROMPTS) + 1))[:n]
-
+        n = int(input("Số lượng (1-100): ") or "10")
+        prompts = (DEFAULT_PROMPTS * 10)[:n]
     elif choice == "3":
-        file_path = input("Path to prompts file: ").strip()
+        path = input("Path file: ").strip()
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                prompts = [line.strip() for line in f if line.strip()]
-        except Exception as e:
-            print(f"Error reading file: {e}")
+            prompts = [l.strip() for l in open(path, encoding='utf-8') if l.strip()]
+        except:
             prompts = DEFAULT_PROMPTS
-
-    elif choice == "4":
-        print("Nhập prompts (mỗi dòng 1 prompt, dòng trống để kết thúc):")
-        while True:
-            p = input("> ").strip()
-            if not p:
-                break
-            prompts.append(p)
-
-    if not prompts:
+    else:
         prompts = DEFAULT_PROMPTS
 
-    print(f"\n→ Sẽ tạo {len(prompts)} ảnh")
-    confirm = input("Tiếp tục? (Enter=yes, n=no): ").strip().lower()
-
-    if confirm == 'n':
-        print("Cancelled.")
-        gen.cleanup()
-        return
+    print(f"\n→ {len(prompts)} prompts")
+    input("Nhấn Enter để bắt đầu...")
 
     try:
         gen.run_batch(prompts)
     except KeyboardInterrupt:
-        print("\n\nInterrupted!")
-    finally:
-        input("\nNhấn Enter để kết thúc...")
-        gen.cleanup()
+        print("\n\nDừng!")
+
+    input("\nNhấn Enter để kết thúc...")
 
 
 if __name__ == "__main__":
