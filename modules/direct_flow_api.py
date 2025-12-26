@@ -152,11 +152,10 @@ class DirectFlowAPI:
 
         self.log("Inject capture script (bearer + recaptcha + sessionId + BLOCK)...")
 
-        # Script capture: bearer, recaptchaToken, sessionId, projectId + FULL BODY từ payload
-        # QUAN TRỌNG: Lưu toàn bộ body để có thể replay chính xác!
-        # Rồi CHẶN request (không gửi thật), trả về fake response
-        # v3: Capture full body for debugging
-        capture_script = '''window._tk=null;window._pj=null;window._rc=null;window._sid=null;window._body=null;window._blocked=0;(function(){var f=window.fetch;window.fetch=function(u,o){var s=u?u.toString():'';if(s.includes('batchGenerateImages')){console.log('[DirectFlow v3] URL: '+s.substring(0,100));var h=o&&o.headers?o.headers:{};var getH=function(k){if(h.get)return h.get(k);return h[k]||'';};var a=getH('Authorization')||getH('authorization')||'';if(a.startsWith('Bearer ')){window._tk=a.substring(7);var m=s.match(/\\/projects\\/([^\\/]+)\\//);if(m){window._pj=m[1];console.log('✓ PROJECT_ID: '+window._pj);}console.log('✓ BEARER!');}if(o&&o.body){try{var body=JSON.parse(o.body);window._body=o.body;console.log('✓ FULL BODY SAVED ('+o.body.length+' chars)');if(body.clientContext){if(body.clientContext.sessionId){window._sid=body.clientContext.sessionId;console.log('✓ SESSION_ID: '+window._sid);}if(body.clientContext.projectId&&!window._pj){window._pj=body.clientContext.projectId;console.log('✓ PROJECT_ID (from body): '+window._pj);}if(body.clientContext.recaptchaToken){window._rc=body.clientContext.recaptchaToken;window._blocked++;console.log('✓ RECAPTCHA! (blocked #'+window._blocked+')');return Promise.resolve(new Response(JSON.stringify({media:[]}),{status:200,headers:{'Content-Type':'application/json'}}));}}}catch(e){console.log('Parse error: '+e);}}}return f.apply(this,arguments);};console.log('[DirectFlow] Capture ready v3!');})();'''
+        # Script capture: bearer, recaptchaToken, sessionId, projectId + FULL BODY + x-browser-validation
+        # QUAN TRỌNG: Lưu toàn bộ body + headers để có thể replay chính xác!
+        # v4: Also capture x-browser-validation header (REQUIRED!)
+        capture_script = '''window._tk=null;window._pj=null;window._rc=null;window._sid=null;window._body=null;window._xbv=null;window._blocked=0;(function(){var f=window.fetch;window.fetch=function(u,o){var s=u?u.toString():'';if(s.includes('batchGenerateImages')){console.log('[DirectFlow v4] URL: '+s.substring(0,100));var h=o&&o.headers?o.headers:{};var getH=function(k){if(h.get)return h.get(k);if(typeof h==='object'){for(var key in h){if(key.toLowerCase()===k.toLowerCase())return h[key];}}return '';};var a=getH('Authorization')||getH('authorization')||'';if(a.startsWith('Bearer ')){window._tk=a.substring(7);var m=s.match(/\\/projects\\/([^\\/]+)\\//);if(m){window._pj=m[1];console.log('✓ PROJECT_ID: '+window._pj);}console.log('✓ BEARER!');}var xbv=getH('x-browser-validation');if(xbv){window._xbv=xbv;console.log('✓ X-BROWSER-VALIDATION: '+xbv.substring(0,30)+'...');}if(o&&o.body){try{var body=JSON.parse(o.body);window._body=o.body;console.log('✓ FULL BODY SAVED ('+o.body.length+' chars)');if(body.clientContext){if(body.clientContext.sessionId){window._sid=body.clientContext.sessionId;console.log('✓ SESSION_ID: '+window._sid);}if(body.clientContext.projectId&&!window._pj){window._pj=body.clientContext.projectId;console.log('✓ PROJECT_ID (from body): '+window._pj);}if(body.clientContext.recaptchaToken){window._rc=body.clientContext.recaptchaToken;window._blocked++;console.log('✓ RECAPTCHA! (blocked #'+window._blocked+')');return Promise.resolve(new Response(JSON.stringify({media:[]}),{status:200,headers:{'Content-Type':'application/json'}}));}}}catch(e){console.log('Parse error: '+e);}}}return f.apply(this,arguments);};console.log('[DirectFlow] Capture ready v4!');})();'''
 
         try:
             pag.hotkey("ctrl", "shift", "j")
@@ -272,10 +271,10 @@ class DirectFlowAPI:
             pag.hotkey("ctrl", "shift", "j")
             time.sleep(1.2)
 
-            # Lấy tất cả: token, project, recaptcha, sessionId, full_body
+            # Lấy tất cả: token, project, recaptcha, sessionId, full_body, x-browser-validation
             # QUAN TRỌNG: sessionId phải match với recaptcha (bound together)
-            # v3: Also get full body for exact replay
-            js = 'copy(JSON.stringify({t:window._tk,p:window._pj,r:window._rc,s:window._sid,b:window._body}))'
+            # v4: Also get x-browser-validation (REQUIRED!)
+            js = 'copy(JSON.stringify({t:window._tk,p:window._pj,r:window._rc,s:window._sid,b:window._body,x:window._xbv}))'
             pyperclip.copy(js)
             time.sleep(0.2)
             pag.hotkey("ctrl", "v")
@@ -295,7 +294,8 @@ class DirectFlowAPI:
                         'project_id': data.get('p'),
                         'recaptcha': data.get('r'),
                         'session_id': data.get('s'),  # QUAN TRỌNG: sessionId bound với recaptcha
-                        'full_body': data.get('b')  # v3: Full Chrome payload for exact replay
+                        'full_body': data.get('b'),  # Full Chrome payload for exact replay
+                        'x_browser_validation': data.get('x')  # v4: REQUIRED header!
                     }
             except:
                 pass
@@ -345,7 +345,7 @@ class DirectFlowAPI:
             self.log("Đợi request gửi đi (3s)...")
             time.sleep(3)
 
-            # Capture recaptcha + sessionId + full_body từ request (nhanh!)
+            # Capture recaptcha + sessionId + full_body + x-browser-validation từ request
             for i in range(3):
                 time.sleep(1)
                 tokens = self._get_tokens_from_devtools()
@@ -359,10 +359,15 @@ class DirectFlowAPI:
                         self._session_id = tokens['session_id']
                         self.log(f"✓ Fresh sessionId: {self._session_id}")
 
-                    # v3: Capture full body for exact replay
+                    # v4: Capture full body for exact replay
                     if tokens.get('full_body'):
                         self._full_body = tokens['full_body']
                         self.log(f"✓ Fresh full_body: {len(self._full_body)} chars")
+
+                    # v4: Capture x-browser-validation (REQUIRED!)
+                    if tokens.get('x_browser_validation'):
+                        self._x_browser_validation = tokens['x_browser_validation']
+                        self.log(f"✓ Fresh x-browser-validation: {self._x_browser_validation[:30]}...")
 
                     return self._recaptcha_token
 
@@ -514,6 +519,11 @@ class DirectFlowAPI:
                     self._x_browser_validation = tokens['x_browser_validation']
                     self.log(f"✓ x-browser-validation: {self._x_browser_validation[:30]}...")
 
+                # v4: Capture full body for exact replay
+                if tokens.get('full_body'):
+                    self._full_body = tokens['full_body']
+                    self.log(f"✓ full_body: {len(self._full_body)} chars")
+
                 # Cần cả bearer VÀ recaptcha
                 if tokens.get('bearer') and tokens.get('recaptcha'):
                     self.log("=== ĐÃ LẤY ĐƯỢC TOKENS! ===")
@@ -659,7 +669,7 @@ class DirectFlowAPI:
 
     def replay_chrome_payload(self) -> Tuple[bool, List[GeneratedImage], str]:
         """
-        v3: Gửi CHÍNH XÁC payload từ Chrome để test.
+        v4: Gửi CHÍNH XÁC payload từ Chrome để test.
 
         Nếu method này thành công mà generate_images_direct thất bại,
         nghĩa là payload structure của ta khác với Chrome.
@@ -675,6 +685,7 @@ class DirectFlowAPI:
         self.log(f"Bearer: {self._bearer_token[:20]}...")
         self.log(f"Project: {self._project_id}")
         self.log(f"Body length: {len(self._full_body)} chars")
+        self.log(f"x-browser-validation: {self._x_browser_validation[:30] if self._x_browser_validation else 'NOT CAPTURED!'}")
 
         url = f"{self.BASE_URL}/v1/projects/{self._project_id}/flowMedia:batchGenerateImages"
 
@@ -683,7 +694,17 @@ class DirectFlowAPI:
             "Content-Type": "text/plain;charset=UTF-8",
             "Origin": "https://labs.google",
             "Referer": "https://labs.google/",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
         }
+
+        # v4: Add x-browser-validation header (REQUIRED!)
+        if self._x_browser_validation:
+            headers["x-browser-validation"] = self._x_browser_validation
+            headers["x-browser-channel"] = "stable"
+            headers["x-browser-year"] = "2025"
+            self.log("✓ Added x-browser-validation headers")
+        else:
+            self.log("⚠️ WARNING: No x-browser-validation - may fail!")
 
         self.log(f"POST {url}")
         self.log(f"Body preview: {self._full_body[:200]}...")
