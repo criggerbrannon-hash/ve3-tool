@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
-Google Flow API - Batch Image Generator (Full Auto)
-====================================================
-Script nhập prompt, tự click Generate, download ảnh.
+Google Flow API - Direct API Batch Generator
+=============================================
+Chặn request Chrome để lấy Bearer + recaptchaToken, rồi gọi API trực tiếp.
 """
 
 import json
 import time
 import requests
 from pathlib import Path
+from datetime import datetime
 
 try:
     from DrissionPage import ChromiumPage, ChromiumOptions
@@ -32,95 +33,136 @@ DEFAULT_PROMPTS = [
     "a vintage car on route 66 at sunset",
 ]
 
-# JS interceptor - bắt response
-JS_INTERCEPTOR = '''
-(function(){
-    if(window.__batchReady) return 'ALREADY_READY';
-    window.__batchReady = true;
-    window.__images = [];
-    window.__imageTime = 0;
+# JS để chặn REQUEST và lấy tokens
+JS_CAPTURE_REQUEST = '''
+(function() {
+    if (window.__captureReady) return 'ALREADY_READY';
+    window.__captureReady = true;
+
+    window.__captured = {
+        bearer: null,
+        recaptchaToken: null,
+        projectId: null,
+        xBrowserValidation: null,
+        timestamp: 0
+    };
 
     const origFetch = window.fetch;
     window.fetch = async function(url, opts) {
-        const response = await origFetch.apply(this, arguments);
         const urlStr = typeof url === 'string' ? url : url.url;
 
         if (urlStr.includes('batchGenerateImages')) {
-            try {
-                const clone = response.clone();
-                const data = await clone.json();
-                if (data.media && data.media.length > 0) {
-                    window.__images = [];
-                    for (const m of data.media) {
-                        const imgUrl = m.image?.generatedImage?.fifeUrl;
-                        if (imgUrl) window.__images.push(imgUrl);
-                    }
-                    window.__imageTime = Date.now();
-                    console.log('[BATCH] Got', window.__images.length, 'images');
+            // Lấy headers
+            if (opts?.headers) {
+                if (opts.headers.Authorization) {
+                    window.__captured.bearer = opts.headers.Authorization;
                 }
-            } catch(e) {}
+                if (opts.headers['x-browser-validation']) {
+                    window.__captured.xBrowserValidation = opts.headers['x-browser-validation'];
+                }
+            }
+
+            // Lấy body (chứa recaptchaToken)
+            if (opts?.body) {
+                try {
+                    const body = JSON.parse(opts.body);
+                    if (body.recaptchaToken) {
+                        window.__captured.recaptchaToken = body.recaptchaToken;
+                    }
+                    if (body.requests?.[0]?.clientContext?.projectId) {
+                        window.__captured.projectId = body.requests[0].clientContext.projectId;
+                    }
+                    window.__captured.timestamp = Date.now();
+                    console.log('[CAPTURED] Got tokens!');
+                } catch(e) {}
+            }
         }
-        return response;
+
+        return origFetch.apply(this, arguments);
     };
-    console.log('[BATCH] Ready');
+
+    console.log('[INTERCEPTOR] Ready');
     return 'READY';
 })();
 '''
 
 
-class BatchGenerator:
-    def __init__(self):
-        self.driver = None
+class DirectAPIGenerator:
+    """Gọi API trực tiếp với tokens từ Chrome"""
+
+    BASE_URL = "https://aisandbox-pa.googleapis.com"
+
+    def __init__(self, bearer: str, recaptcha_token: str, project_id: str, x_browser: str = None):
+        self.bearer = bearer
+        self.recaptcha_token = recaptcha_token
+        self.project_id = project_id
+        self.x_browser = x_browser
+        self.session_id = f"session_{int(time.time())}"
         self.stats = {"total": 0, "success": 0, "failed": 0}
 
-    def setup(self):
-        print("=" * 60)
-        print("  BATCH GENERATOR (Full Auto)")
-        print("=" * 60)
+    def generate_images(self, prompt: str, count: int = 4):
+        """Gọi API trực tiếp"""
+        url = f"{self.BASE_URL}/v1/projects/{self.project_id}/flowMedia:batchGenerateImages"
 
-        print("\n[1] Kết nối Chrome port 9222...")
-        options = ChromiumOptions()
+        headers = {
+            "Authorization": self.bearer,
+            "Content-Type": "text/plain;charset=UTF-8",
+            "Accept": "*/*",
+            "Origin": "https://aisandbox.google.com",
+            "Referer": "https://aisandbox.google.com/",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/131.0.0.0",
+        }
+
+        if self.x_browser:
+            headers["x-browser-validation"] = self.x_browser
+
+        # Build payload giống Chrome
+        requests_data = []
+        for i in range(count):
+            requests_data.append({
+                "clientContext": {
+                    "sessionId": self.session_id,
+                    "projectId": self.project_id,
+                    "tool": "IMAGE_FX"
+                },
+                "seed": int(time.time() * 1000) + i,
+                "imageModelName": "GEM_PIX_2",
+                "imageAspectRatio": "IMAGE_ASPECT_RATIO_LANDSCAPE",
+                "prompt": prompt,
+                "imageInputs": []
+            })
+
+        payload = {
+            "requests": requests_data,
+            "recaptchaToken": self.recaptcha_token
+        }
+
         try:
-            options.set_local_port(9222)
-            self.driver = ChromiumPage(addr_or_opts=options)
-            print("    ✓ OK")
+            resp = requests.post(url, headers=headers, data=json.dumps(payload), timeout=120)
+
+            if resp.status_code == 200:
+                data = resp.json()
+                images = []
+                if data.get("media"):
+                    for m in data["media"]:
+                        img_url = m.get("image", {}).get("generatedImage", {}).get("fifeUrl")
+                        if img_url:
+                            images.append(img_url)
+                return images, None
+
+            elif resp.status_code == 401:
+                return [], "401 - Bearer token hết hạn"
+
+            elif resp.status_code == 403:
+                if "recaptcha" in resp.text.lower():
+                    return [], "403 - recaptchaToken hết hạn"
+                return [], f"403 - {resp.text[:100]}"
+
+            else:
+                return [], f"{resp.status_code} - {resp.text[:100]}"
+
         except Exception as e:
-            print(f"    ❌ Lỗi: {e}")
-            return False
-
-        print(f"[2] URL: {self.driver.url}")
-        if "/project/" not in self.driver.url:
-            print("    ⚠️ Hãy mở project Flow trong Chrome!")
-            return False
-
-        print("[3] Inject interceptor...")
-        self.driver.run_js(JS_INTERCEPTOR)
-        print("    ✓ OK")
-
-        return True
-
-    def find_textarea(self):
-        for sel in ["tag:textarea", "css:textarea"]:
-            try:
-                el = self.driver.ele(sel, timeout=2)
-                if el:
-                    return el
-            except:
-                pass
-        return None
-
-    def wait_for_images(self, timeout=120):
-        start = time.time()
-        last_time = self.driver.run_js("return window.__imageTime || 0;")
-
-        while time.time() - start < timeout:
-            current = self.driver.run_js("return window.__imageTime || 0;")
-            if current > last_time:
-                images = self.driver.run_js("return window.__images || [];")
-                self.driver.run_js("window.__images = []; window.__imageTime = 0;")
-                return images
-            time.sleep(0.5)
-        return []
+            return [], str(e)
 
     def download_images(self, urls, idx):
         saved = []
@@ -137,81 +179,98 @@ class BatchGenerator:
 
     def run_batch(self, prompts):
         print(f"\n{'=' * 60}")
-        print(f"  TẠO {len(prompts)} ẢNH (Full Auto)")
+        print(f"  DIRECT API - {len(prompts)} PROMPTS")
         print(f"{'=' * 60}")
 
-        self.stats["total"] = len(prompts)
+        for idx, prompt in enumerate(prompts, 1):
+            self.stats["total"] += 1
+            print(f"\n[{idx}/{len(prompts)}] {prompt[:50]}...")
 
-        for i, prompt in enumerate(prompts):
-            print(f"\n[{i+1}/{len(prompts)}] {prompt[:50]}...")
+            images, error = self.generate_images(prompt)
 
-            # Nhập prompt
-            textarea = self.find_textarea()
-            if textarea:
-                try:
-                    textarea.clear()
-                    time.sleep(0.3)
-                    textarea.input(prompt)
-                    print("    ✓ Đã nhập prompt")
-
-                    # Nhấn Enter để gửi
-                    time.sleep(0.3)
-                    textarea.input('\n')
-                    print("    ✓ Đã nhấn Enter")
-                except Exception as e:
-                    print(f"    ⚠️ Lỗi: {e}")
-
-            # Chờ ảnh
-            images = self.wait_for_images(timeout=120)
-
-            if not images:
-                print("    ❌ Timeout!")
+            if error:
+                print(f"    ✗ {error}")
                 self.stats["failed"] += 1
+
+                if "recaptcha" in error.lower() or "401" in error:
+                    print("\n[STOP] Token hết hạn. Cần lấy token mới.")
+                    break
                 continue
 
-            # Download
-            saved = self.download_images(images, i)
-            if saved:
-                print(f"    ✓ Saved: {', '.join(saved)}")
+            if images:
+                saved = self.download_images(images, idx)
+                print(f"    ✓ Saved {len(saved)} images")
                 self.stats["success"] += 1
             else:
-                print("    ❌ Download thất bại")
+                print("    ✗ No images")
                 self.stats["failed"] += 1
 
-            time.sleep(2)
+            time.sleep(1)
 
         print(f"\n{'=' * 60}")
-        print(f"  HOÀN THÀNH: {self.stats['success']}/{self.stats['total']}")
+        print(f"  Done: {self.stats['success']}/{self.stats['total']} success")
         print(f"  Output: {OUTPUT_DIR.absolute()}")
-        print(f"{'=' * 60}")
 
 
 def main():
-    import sys
-    gen = BatchGenerator()
+    print("=" * 60)
+    print("  BATCH GENERATOR - DIRECT API")
+    print("  Chặn Chrome request → Lấy tokens → Gọi API")
+    print("=" * 60)
 
-    if not gen.setup():
-        return
-
-    prompts = DEFAULT_PROMPTS
-    if len(sys.argv) > 1:
-        arg = sys.argv[1]
-        if arg.isdigit():
-            prompts = (DEFAULT_PROMPTS * 10)[:int(arg)]
-        else:
-            try:
-                prompts = [l.strip() for l in open(arg, encoding='utf-8') if l.strip()]
-            except:
-                pass
-
-    print(f"\n→ {len(prompts)} prompts")
+    # Connect Chrome
+    print("\n[1] Kết nối Chrome port 9222...")
+    options = ChromiumOptions()
+    options.set_local_port(9222)
 
     try:
-        gen.run_batch(prompts)
-    except KeyboardInterrupt:
-        print("\n\nDừng!")
+        driver = ChromiumPage(addr_or_opts=options)
+        print(f"    ✓ URL: {driver.url}")
+    except Exception as e:
+        print(f"    ✗ {e}")
+        print("\n    Mở Chrome với proxy trước:")
+        print('    chrome.exe --proxy-server="socks5://127.0.0.1:1080" --remote-debugging-port=9222')
+        return
 
-    print("\nXong!")
+    if "/project/" not in driver.url:
+        print("\n    ⚠ Hãy mở project Flow trước!")
+        input("    Nhấn ENTER khi đã sẵn sàng...")
+
+    # Inject interceptor
+    print("\n[2] Inject interceptor...")
+    driver.run_js(JS_CAPTURE_REQUEST)
+    print("    ✓ OK")
+
+    # Wait for user to generate once
+    print("\n[3] Click 'Generate' trong Chrome để lấy tokens...")
+    print("    (Script sẽ chặn request và lấy Bearer + recaptchaToken)")
+
+    captured = None
+    for i in range(120):
+        time.sleep(1)
+        data = driver.run_js("return window.__captured;")
+        if data and data.get("recaptchaToken") and data.get("bearer"):
+            captured = data
+            print(f"\n    ✓ Captured!")
+            print(f"      Bearer: {data['bearer'][:50]}...")
+            print(f"      recaptchaToken: {data['recaptchaToken'][:40]}...")
+            break
+        print(f"    Waiting... {i+1}s", end="\r")
+
+    if not captured:
+        print("\n    ✗ Timeout! Không lấy được tokens.")
+        return
+
+    # Run batch with API
+    print("\n[4] Gọi API trực tiếp...")
+    generator = DirectAPIGenerator(
+        captured["bearer"],
+        captured["recaptchaToken"],
+        captured.get("projectId", driver.url.split("/project/")[1].split("/")[0]),
+        captured.get("xBrowserValidation")
+    )
+
+    generator.run_batch(DEFAULT_PROMPTS)
 
 
 if __name__ == "__main__":
