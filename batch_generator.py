@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """
-Google Flow API - Batch Image Generator (Semi-Auto)
-====================================================
-Script nhập prompt, bạn click Generate, script download ảnh.
+Google Flow API - Batch Generator (Full Auto)
+==============================================
+Nhập prompt → Enter → Chặn request lấy tokens → Gọi API cho batch còn lại
 """
 
 import json
 import time
 import requests
 from pathlib import Path
-import random
 
 try:
     from DrissionPage import ChromiumPage, ChromiumOptions
@@ -33,51 +32,49 @@ DEFAULT_PROMPTS = [
     "a vintage car on route 66 at sunset",
 ]
 
-# JS interceptor - bắt response
+# JS chặn REQUEST để lấy tokens
 JS_INTERCEPTOR = '''
 (function(){
-    if(window.__batchReady) return 'ALREADY_READY';
-    window.__batchReady = true;
-    window.__images = [];
-    window.__imageTime = 0;
+    if(window.__interceptReady) return 'ALREADY_READY';
+    window.__interceptReady = true;
+    window.__tokens = null;
 
     const origFetch = window.fetch;
     window.fetch = async function(url, opts) {
-        const response = await origFetch.apply(this, arguments);
         const urlStr = typeof url === 'string' ? url : url.url;
 
-        if (urlStr.includes('batchGenerateImages')) {
+        if (urlStr.includes('batchGenerateImages') && opts?.body) {
             try {
-                const clone = response.clone();
-                const data = await clone.json();
-                if (data.media && data.media.length > 0) {
-                    window.__images = [];
-                    for (const m of data.media) {
-                        const imgUrl = m.image?.generatedImage?.fifeUrl;
-                        if (imgUrl) window.__images.push(imgUrl);
-                    }
-                    window.__imageTime = Date.now();
-                    console.log('[BATCH] Got', window.__images.length, 'images');
-                }
+                const body = JSON.parse(opts.body);
+                window.__tokens = {
+                    bearer: opts.headers?.Authorization || null,
+                    recaptchaToken: body.recaptchaToken || null,
+                    projectId: body.requests?.[0]?.clientContext?.projectId || null,
+                    timestamp: Date.now()
+                };
+                console.log('[CAPTURED] Got tokens!');
             } catch(e) {}
         }
-        return response;
+        return origFetch.apply(this, arguments);
     };
-    console.log('[BATCH] Ready');
+    console.log('[INTERCEPTOR] Ready');
     return 'READY';
 })();
 '''
 
-
 class BatchGenerator:
+    BASE_URL = "https://aisandbox-pa.googleapis.com"
+
     def __init__(self):
         self.driver = None
+        self.bearer = None
+        self.recaptcha_token = None
+        self.project_id = None
         self.stats = {"total": 0, "success": 0, "failed": 0}
 
     def setup(self):
         print("=" * 60)
-        print("  BATCH GENERATOR (Full Auto)")
-        print("  Script nhập prompt → Enter → Download")
+        print("  BATCH GENERATOR (Full Auto + API)")
         print("=" * 60)
 
         print("\n[1] Kết nối Chrome port 9222...")
@@ -85,17 +82,20 @@ class BatchGenerator:
         try:
             options.set_local_port(9222)
             self.driver = ChromiumPage(addr_or_opts=options)
-            print("    ✓ OK")
+            print(f"    ✓ URL: {self.driver.url}")
         except Exception as e:
-            print(f"    ❌ Lỗi: {e}")
+            print(f"    ✗ {e}")
             return False
 
-        print(f"[2] URL: {self.driver.url}")
         if "/project/" not in self.driver.url:
-            print("    ⚠️ Hãy mở project Flow trong Chrome!")
+            print("    ⚠ Mở project Flow trước!")
             return False
 
-        print("[3] Inject interceptor...")
+        # Get project ID from URL
+        self.project_id = self.driver.url.split("/project/")[1].split("/")[0].split("?")[0]
+        print(f"    Project: {self.project_id}")
+
+        print("\n[2] Inject interceptor...")
         self.driver.run_js(JS_INTERCEPTOR)
         print("    ✓ OK")
 
@@ -111,18 +111,72 @@ class BatchGenerator:
                 pass
         return None
 
-    def wait_for_images(self, timeout=120):
-        start = time.time()
-        last_time = self.driver.run_js("return window.__imageTime || 0;")
+    def get_tokens_from_first_request(self, prompt):
+        """Gửi prompt đầu tiên qua UI để lấy tokens"""
+        print(f"\n[3] Gửi prompt đầu tiên để lấy tokens...")
+        print(f"    Prompt: {prompt[:50]}...")
 
-        while time.time() - start < timeout:
-            current = self.driver.run_js("return window.__imageTime || 0;")
-            if current > last_time:
-                images = self.driver.run_js("return window.__images || [];")
-                self.driver.run_js("window.__images = []; window.__imageTime = 0;")
-                return images
-            time.sleep(0.5)
-        return []
+        textarea = self.find_textarea()
+        if textarea:
+            textarea.clear()
+            time.sleep(0.2)
+            textarea.input(prompt)
+            time.sleep(0.3)
+            textarea.input('\n')  # Enter để gửi
+            print("    ✓ Đã gửi")
+
+        # Đợi tokens
+        print("    Đợi tokens...")
+        for i in range(30):
+            time.sleep(1)
+            tokens = self.driver.run_js("return window.__tokens;")
+            if tokens and tokens.get("bearer") and tokens.get("recaptchaToken"):
+                self.bearer = tokens["bearer"]
+                self.recaptcha_token = tokens["recaptchaToken"]
+                if tokens.get("projectId"):
+                    self.project_id = tokens["projectId"]
+                print(f"    ✓ Got tokens!")
+                return True
+            print(f"    {i+1}s...", end="\r")
+
+        print("    ✗ Không lấy được tokens")
+        return False
+
+    def call_api(self, prompt, count=4):
+        """Gọi API trực tiếp"""
+        url = f"{self.BASE_URL}/v1/projects/{self.project_id}/flowMedia:batchGenerateImages"
+
+        headers = {
+            "Authorization": self.bearer,
+            "Content-Type": "text/plain;charset=UTF-8",
+            "Origin": "https://aisandbox.google.com",
+            "Referer": "https://aisandbox.google.com/",
+        }
+
+        payload = {
+            "requests": [{
+                "clientContext": {"projectId": self.project_id, "tool": "IMAGE_FX"},
+                "seed": int(time.time() * 1000) + i,
+                "imageModelName": "GEM_PIX_2",
+                "imageAspectRatio": "IMAGE_ASPECT_RATIO_LANDSCAPE",
+                "prompt": prompt,
+                "imageInputs": []
+            } for i in range(count)],
+            "recaptchaToken": self.recaptcha_token
+        }
+
+        try:
+            resp = requests.post(url, headers=headers, data=json.dumps(payload), timeout=120)
+
+            if resp.status_code == 200:
+                data = resp.json()
+                return [m["image"]["generatedImage"]["fifeUrl"]
+                        for m in data.get("media", [])
+                        if m.get("image", {}).get("generatedImage", {}).get("fifeUrl")], None
+            else:
+                return [], f"{resp.status_code}: {resp.text[:100]}"
+        except Exception as e:
+            return [], str(e)
 
     def download_images(self, urls, idx):
         saved = []
@@ -138,81 +192,53 @@ class BatchGenerator:
         return saved
 
     def run_batch(self, prompts):
-        print(f"\n{'=' * 60}")
-        print(f"  TẠO {len(prompts)} ẢNH (Full Auto)")
-        print(f"{'=' * 60}")
+        # Prompt đầu tiên: gửi qua UI để lấy tokens
+        if not self.get_tokens_from_first_request(prompts[0]):
+            return
 
-        self.stats["total"] = len(prompts)
+        self.stats["success"] += 1  # Prompt đầu đã được xử lý bởi UI
+        print(f"    (Prompt 1 đã được xử lý bởi Chrome)")
 
-        for i, prompt in enumerate(prompts):
-            print(f"\n[{i+1}/{len(prompts)}] {prompt[:50]}...")
+        # Các prompt còn lại: gọi API trực tiếp
+        print(f"\n[4] Gọi API cho {len(prompts)-1} prompts còn lại...")
 
-            # Nhập prompt
-            textarea = self.find_textarea()
-            if textarea:
-                try:
-                    textarea.clear()
-                    time.sleep(0.2)
-                    textarea.input(prompt)
-                    print("    ✓ Đã nhập prompt")
+        for idx, prompt in enumerate(prompts[1:], 2):
+            self.stats["total"] += 1
+            print(f"\n[{idx}/{len(prompts)}] {prompt[:50]}...")
 
-                    # Auto nhấn Enter để gửi
-                    time.sleep(0.3)
-                    textarea.input('\n')
-                    print("    ✓ Đã gửi (Enter)")
-                except:
-                    print("    ⚠️ Không nhập được")
+            images, error = self.call_api(prompt)
 
-            images = self.wait_for_images(timeout=120)
-
-            if not images:
-                print("    ❌ Timeout!")
+            if error:
+                print(f"    ✗ {error}")
                 self.stats["failed"] += 1
+                if "403" in error or "401" in error:
+                    print("\n[STOP] Token hết hạn!")
+                    break
                 continue
 
-            # Download
-            saved = self.download_images(images, i)
-            if saved:
-                print(f"    ✓ Saved: {', '.join(saved)}")
+            if images:
+                saved = self.download_images(images, idx)
+                print(f"    ✓ Saved {len(saved)} images")
                 self.stats["success"] += 1
             else:
-                print("    ❌ Download thất bại")
+                print("    ✗ No images")
                 self.stats["failed"] += 1
 
             time.sleep(1)
 
         print(f"\n{'=' * 60}")
-        print(f"  HOÀN THÀNH: {self.stats['success']}/{self.stats['total']}")
+        print(f"  DONE: {self.stats['success']}/{len(prompts)}")
         print(f"  Output: {OUTPUT_DIR.absolute()}")
-        print(f"{'=' * 60}")
+        print("=" * 60)
 
 
 def main():
-    import sys
     gen = BatchGenerator()
-
     if not gen.setup():
         return
 
-    prompts = DEFAULT_PROMPTS
-    if len(sys.argv) > 1:
-        arg = sys.argv[1]
-        if arg.isdigit():
-            prompts = (DEFAULT_PROMPTS * 10)[:int(arg)]
-        else:
-            try:
-                prompts = [l.strip() for l in open(arg, encoding='utf-8') if l.strip()]
-            except:
-                pass
-
-    print(f"\n→ {len(prompts)} prompts")
-
-    try:
-        gen.run_batch(prompts)
-    except KeyboardInterrupt:
-        print("\n\nDừng!")
-
-    print("\nXong!")
+    gen.stats["total"] = len(DEFAULT_PROMPTS)
+    gen.run_batch(DEFAULT_PROMPTS)
 
 
 if __name__ == "__main__":
