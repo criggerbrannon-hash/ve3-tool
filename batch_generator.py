@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-Google Flow API - Batch Image Generator
-========================================
-Tự động tạo nhiều ảnh bằng DrissionPage + Interceptor.
+Google Flow API - Batch Image Generator (VE3 Method)
+=====================================================
+Tự động tạo nhiều ảnh bằng DrissionPage + VE3 JavaScript.
 
 Workflow:
 1. Mở Chrome, đăng nhập Google
-2. Inject interceptor để bắt payload
-3. Với mỗi prompt: nhập prompt -> click Generate -> bắt payload -> gọi API
-4. Lưu ảnh và thống kê
+2. Inject VE3 JavaScript script
+3. Gọi API.generateImages() qua JS (không cần UI)
+4. Download và lưu ảnh
 
 Cài đặt:
     pip install DrissionPage requests
@@ -22,7 +22,6 @@ import time
 import requests
 from pathlib import Path
 from datetime import datetime
-from collections import deque
 import random
 
 try:
@@ -35,48 +34,8 @@ except ImportError:
 OUTPUT_DIR = Path("./batch_output")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-DOWNLOADS_DIR = Path.home() / "Downloads"
-
-# JS Interceptor - lưu payload vào window thay vì download
-JS_INTERCEPTOR = '''
-(function(){
-    if(window.__interceptorInstalled) return 'ALREADY_INSTALLED';
-    window.__interceptorInstalled = true;
-
-    window.__capturedPayload = null;
-    window.__capturedTime = 0;
-
-    if(!window.__origFetch) window.__origFetch = window.fetch;
-
-    window.fetch = async (url, opts) => {
-        if (url.includes('batchGenerateImages')) {
-            window.__capturedPayload = opts.body;
-            window.__capturedTime = Date.now();
-            console.log('[BATCH] Payload captured at', new Date().toISOString());
-            // Block original request
-            return new Response('{"blocked":"batch"}');
-        }
-        return window.__origFetch(url, opts);
-    };
-
-    console.log('[BATCH] Interceptor ready');
-    return 'INSTALLED';
-})();
-'''
-
-# JS để lấy payload đã capture
-JS_GET_PAYLOAD = '''
-(function(){
-    if (window.__capturedPayload) {
-        var payload = window.__capturedPayload;
-        var time = window.__capturedTime;
-        window.__capturedPayload = null;
-        window.__capturedTime = 0;
-        return {payload: payload, time: time};
-    }
-    return null;
-})();
-'''
+# Path to VE3 JS script
+VE3_JS_PATH = Path(__file__).parent / "scripts" / "ve3_browser_automation.js"
 
 # Test prompts
 DEFAULT_PROMPTS = [
@@ -92,12 +51,110 @@ DEFAULT_PROMPTS = [
     "a vintage car on route 66 at sunset",
 ]
 
+# Simple JS to call API directly (không cần full VE3 script)
+JS_API_CALLER = '''
+(function(){
+    if(window.__batchApiReady) return 'ALREADY_READY';
+    window.__batchApiReady = true;
+
+    // Get project ID from URL
+    window.__getProjectId = function() {
+        const url = window.location.href;
+        const match = url.match(/\\/project\\/([a-f0-9-]+)/i);
+        return match ? match[1] : null;
+    };
+
+    // Generate session ID
+    window.__genSessionId = function() {
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+            const r = Math.random() * 16 | 0;
+            return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+        });
+    };
+
+    // Generate seed
+    window.__genSeed = function() {
+        return Math.floor(Math.random() * 999999) + 1;
+    };
+
+    // Build payload
+    window.__buildPayload = function(prompt, projectId, count) {
+        const sessionId = window.__genSessionId();
+        const requests = [];
+        for (let i = 0; i < count; i++) {
+            requests.push({
+                clientContext: {
+                    sessionId: sessionId,
+                    projectId: projectId,
+                    tool: "IMAGE_FX"
+                },
+                seed: window.__genSeed(),
+                imageModelName: "IMAGEN_3_1",
+                imageAspectRatio: "IMAGE_ASPECT_RATIO_LANDSCAPE",
+                prompt: prompt,
+                imageInputs: []
+            });
+        }
+        return { requests: requests };
+    };
+
+    // Call API and return result
+    window.__generateImages = async function(prompt, count) {
+        const projectId = window.__getProjectId();
+        if (!projectId) {
+            return { success: false, error: 'No projectId in URL' };
+        }
+
+        const url = 'https://aisandbox-pa.googleapis.com/v1/projects/' + projectId + '/flowMedia:batchGenerateImages';
+        const payload = window.__buildPayload(prompt, projectId, count || 2);
+
+        console.log('[BATCH] Calling API for:', prompt.slice(0, 50));
+
+        try {
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                const errText = await response.text();
+                return { success: false, error: 'API ' + response.status + ': ' + errText.slice(0, 200) };
+            }
+
+            const data = await response.json();
+
+            // Extract image URLs
+            const images = [];
+            if (data.media) {
+                for (const m of data.media) {
+                    const imgUrl = m.image?.generatedImage?.fifeUrl;
+                    if (imgUrl) {
+                        images.push({
+                            url: imgUrl,
+                            seed: m.seed || 'unknown'
+                        });
+                    }
+                }
+            }
+
+            return { success: true, images: images, count: images.length };
+
+        } catch (e) {
+            return { success: false, error: e.message };
+        }
+    };
+
+    console.log('[BATCH] API Ready. ProjectId:', window.__getProjectId());
+    return 'READY';
+})();
+'''
+
 
 class BatchGenerator:
     def __init__(self):
         self.driver = None
-        self.bearer = None
-        self.x_browser = None
         self.stats = {
             "total": 0,
             "success": 0,
@@ -106,29 +163,13 @@ class BatchGenerator:
         }
 
     def setup(self):
-        """Setup credentials and browser."""
+        """Setup browser."""
         print("=" * 60)
-        print("  BATCH IMAGE GENERATOR")
+        print("  BATCH IMAGE GENERATOR (VE3 Method)")
         print("=" * 60)
-
-        # Get Bearer
-        print("\n[1] BEARER TOKEN")
-        print("    Copy từ Chrome -> F12 -> Network -> Headers -> authorization")
-        self.bearer = input("    Paste: ").strip()
-        if self.bearer.lower().startswith("bearer "):
-            self.bearer = self.bearer[7:]
-
-        if not self.bearer or len(self.bearer) < 100:
-            print("    ❌ Bearer không hợp lệ!")
-            return False
-        print(f"    ✓ OK ({len(self.bearer)} chars)")
-
-        # x-browser-validation
-        print("\n[2] X-BROWSER-VALIDATION (optional)")
-        self.x_browser = input("    Paste (Enter to skip): ").strip()
 
         # Chrome
-        print("\n[3] MỞ CHROME...")
+        print("\n[1] MỞ CHROME...")
         print("    1 = Mở Chrome mới")
         print("    2 = Kết nối Chrome đang chạy (port 9222)")
         choice = input("    Chọn (Enter=1): ").strip()
@@ -149,26 +190,27 @@ class BatchGenerator:
             return False
 
         # URL
-        print("\n[4] URL")
+        print("\n[2] URL")
         print(f"    URL hiện tại: {self.driver.url}")
-        print("\n    Nhập URL mới hoặc:")
-        print("    - Enter = giữ nguyên trang hiện tại")
-        print("    - 1 = https://labs.google/fx/tools/image-fx")
+        print("\n    Nhập URL project Flow (phải có /project/xxx):")
+        print("    - Enter = giữ nguyên")
+        print("    - Hoặc paste URL project")
         url_input = input("    URL: ").strip()
 
-        if url_input == "1":
-            url_input = "https://labs.google/fx/tools/image-fx"
-
-        if url_input and url_input != "":
+        if url_input:
             print(f"    → Đi tới: {url_input}")
             self.driver.get(url_input)
             print("    → Đang chờ trang load...")
             time.sleep(5)
-        else:
-            print("    → Giữ nguyên trang hiện tại")
 
         # Debug: show current URL
         print(f"    → URL hiện tại: {self.driver.url}")
+
+        # Check project URL
+        if "/project/" not in self.driver.url:
+            print("    ⚠️ URL không có /project/xxx!")
+            print("    Cần mở project Flow trước (vào labs.google → Flow → mở project)")
+            return False
 
         # Check login
         if "accounts.google" in self.driver.url:
@@ -179,217 +221,69 @@ class BatchGenerator:
         # Wait for user to confirm page is ready
         input("\n    Trang đã load xong? Nhấn Enter để tiếp tục...")
 
-        # Inject interceptor
-        print("\n[5] INJECT INTERCEPTOR...")
+        # Inject API caller
+        print("\n[3] INJECT API CALLER...")
         try:
-            result = self.driver.run_js(JS_INTERCEPTOR)
+            result = self.driver.run_js(JS_API_CALLER)
             print(f"    ✓ Result: {result}")
-        except Exception as e:
-            print(f"    ⚠️ JS error: {e}")
 
-        # Debug: list all visible elements
-        print("\n[6] DEBUG - KIỂM TRA ELEMENTS...")
-        try:
-            # Check textarea
-            textareas = self.driver.eles("tag:textarea")
-            print(f"    Textareas: {len(textareas)}")
+            # Test get project ID
+            project_id = self.driver.run_js("return window.__getProjectId();")
+            print(f"    ✓ Project ID: {project_id}")
 
-            # Check contenteditable
-            editables = self.driver.eles("css:[contenteditable='true']")
-            print(f"    Contenteditable: {len(editables)}")
-
-            # Check buttons
-            buttons = self.driver.eles("tag:button")
-            print(f"    Buttons: {len(buttons)}")
-
-            # Print button texts
-            for i, btn in enumerate(buttons[:5]):
-                try:
-                    txt = btn.text[:30] if btn.text else "(no text)"
-                    print(f"      Button {i+1}: {txt}")
-                except:
-                    pass
+            if not project_id:
+                print("    ❌ Không lấy được Project ID!")
+                return False
 
         except Exception as e:
-            print(f"    Debug error: {e}")
+            print(f"    ❌ JS error: {e}")
+            return False
 
         return True
-
-    def find_prompt_input(self):
-        """Find the prompt input element."""
-        selectors = [
-            # Flow project page
-            "tag:textarea",
-            "css:textarea",
-            # Image-FX page
-            "[contenteditable='true']",
-            "css:[contenteditable='true']",
-            # Fallback
-            "tag:input@@type=text",
-            "css:input[type='text']",
-        ]
-
-        for sel in selectors:
-            try:
-                el = self.driver.ele(sel, timeout=2)
-                if el:
-                    print(f"    → Found input: {sel}")
-                    return el
-            except:
-                continue
-        return None
-
-    def find_generate_button(self):
-        """Find the Generate button."""
-        selectors = [
-            # English
-            "@@text():Generate",
-            "tag:button@@text():Generate",
-            # Vietnamese
-            "@@text():Tạo",
-            "tag:button@@text():Tạo",
-            # By aria-label
-            "css:[aria-label*='Generate']",
-            "css:[aria-label*='Tạo']",
-            # By class containing generate
-            "css:button[class*='generate']",
-            # Any button with Generate text
-            "xpath://button[contains(text(),'Generate')]",
-            "xpath://button[contains(text(),'Tạo')]",
-        ]
-
-        for sel in selectors:
-            try:
-                el = self.driver.ele(sel, timeout=2)
-                if el:
-                    print(f"    → Found button: {sel}")
-                    return el
-            except:
-                continue
-        return None
-
-    def wait_for_payload(self, timeout=30):
-        """Wait for interceptor to capture payload."""
-        start = time.time()
-        while time.time() - start < timeout:
-            result = self.driver.run_js(JS_GET_PAYLOAD)
-            if result and result.get("payload"):
-                return result["payload"]
-            time.sleep(0.3)
-        return None
-
-    def call_api(self, payload_str):
-        """Call API with captured payload."""
-        try:
-            payload = json.loads(payload_str)
-        except:
-            return None
-
-        # Get project ID
-        project_id = payload.get("requests", [{}])[0].get("clientContext", {}).get("projectId", "")
-
-        url = f"https://aisandbox-pa.googleapis.com/v1/projects/{project_id}/flowMedia:batchGenerateImages"
-
-        headers = {
-            "Authorization": f"Bearer {self.bearer}",
-            "Content-Type": "text/plain;charset=UTF-8",
-            "Origin": "https://labs.google",
-            "Referer": "https://labs.google/",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        }
-
-        if self.x_browser:
-            headers["x-browser-validation"] = self.x_browser
-            headers["x-browser-channel"] = "stable"
-            headers["x-browser-year"] = "2025"
-
-        try:
-            resp = requests.post(url, headers=headers, data=json.dumps(payload), timeout=120)
-
-            if resp.status_code == 200:
-                return resp.json()
-            else:
-                print(f"      API Error: {resp.status_code}")
-                return None
-        except Exception as e:
-            print(f"      API Exception: {e}")
-            return None
-
-    def save_images(self, result, prompt_idx):
-        """Save images from API result."""
-        saved = []
-        if "media" in result:
-            for i, media in enumerate(result["media"]):
-                img_url = media.get("image", {}).get("generatedImage", {}).get("fifeUrl")
-                if img_url:
-                    try:
-                        img_resp = requests.get(img_url, timeout=60)
-                        if img_resp.status_code == 200:
-                            filename = f"batch_{prompt_idx:03d}_{i+1}.png"
-                            (OUTPUT_DIR / filename).write_bytes(img_resp.content)
-                            saved.append(filename)
-                    except:
-                        pass
-        return saved
 
     def generate_one(self, prompt, idx):
         """Generate one image with given prompt."""
         print(f"\n[{idx+1}] {prompt[:50]}...")
 
-        # Find input
-        prompt_input = self.find_prompt_input()
-        if not prompt_input:
-            print("    ❌ Không tìm thấy input!")
-            return False
-
-        # Clear and enter prompt
         try:
-            prompt_input.clear()
-            prompt_input.input(prompt)
-            time.sleep(0.5)
+            # Call JS API
+            js_code = f'''
+                return await window.__generateImages(`{prompt.replace('`', '\\`')}`, 2);
+            '''
+
+            result = self.driver.run_js(js_code)
+
+            if not result:
+                print("    ❌ No response from JS")
+                return False, []
+
+            if result.get("success"):
+                images = result.get("images", [])
+                print(f"    ✓ Got {len(images)} images")
+
+                saved = []
+                for i, img in enumerate(images):
+                    url = img.get("url")
+                    if url:
+                        try:
+                            resp = requests.get(url, timeout=60)
+                            if resp.status_code == 200:
+                                filename = f"batch_{idx:03d}_{i+1}.png"
+                                (OUTPUT_DIR / filename).write_bytes(resp.content)
+                                saved.append(filename)
+                                print(f"      ✓ Saved: {filename}")
+                        except Exception as e:
+                            print(f"      ❌ Download error: {e}")
+
+                return len(saved) > 0, saved
+            else:
+                error = result.get("error", "Unknown error")
+                print(f"    ❌ API error: {error}")
+                return False, []
+
         except Exception as e:
-            print(f"    ❌ Nhập prompt lỗi: {e}")
-            return False
-
-        # Find and click Generate
-        gen_btn = self.find_generate_button()
-        if not gen_btn:
-            print("    ❌ Không tìm thấy nút Generate!")
-            return False
-
-        try:
-            gen_btn.click()
-            print("    → Đã click Generate")
-        except Exception as e:
-            print(f"    ❌ Click lỗi: {e}")
-            return False
-
-        # Wait for payload
-        print("    → Đang chờ payload...")
-        payload = self.wait_for_payload(timeout=15)
-
-        if not payload:
-            print("    ❌ Timeout chờ payload!")
-            return False
-
-        print("    → Payload captured, calling API...")
-
-        # Call API
-        result = self.call_api(payload)
-
-        if not result:
-            print("    ❌ API failed!")
-            return False
-
-        # Save images
-        saved = self.save_images(result, idx)
-
-        if saved:
-            print(f"    ✅ Saved: {', '.join(saved)}")
-            return True
-        else:
-            print("    ⚠️ No images saved")
-            return False
+            print(f"    ❌ Exception: {e}")
+            return False, []
 
     def run_batch(self, prompts):
         """Run batch generation."""
@@ -401,7 +295,7 @@ class BatchGenerator:
 
         for i, prompt in enumerate(prompts):
             try:
-                success = self.generate_one(prompt, i)
+                success, saved = self.generate_one(prompt, i)
 
                 if success:
                     self.stats["success"] += 1
@@ -415,7 +309,7 @@ class BatchGenerator:
 
             # Delay giữa các request để tránh rate limit
             if i < len(prompts) - 1:
-                delay = random.uniform(2, 4)
+                delay = random.uniform(3, 6)
                 print(f"    ... chờ {delay:.1f}s")
                 time.sleep(delay)
 
@@ -426,7 +320,8 @@ class BatchGenerator:
         print(f"  Total: {self.stats['total']}")
         print(f"  Success: {self.stats['success']}")
         print(f"  Failed: {self.stats['failed']}")
-        print(f"  Success rate: {self.stats['success']/self.stats['total']*100:.1f}%")
+        if self.stats['total'] > 0:
+            print(f"  Success rate: {self.stats['success']/self.stats['total']*100:.1f}%")
         print(f"  Output: {OUTPUT_DIR.absolute()}")
 
         if self.stats["errors"]:
