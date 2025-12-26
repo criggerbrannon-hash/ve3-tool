@@ -1,82 +1,152 @@
 #!/usr/bin/env python3
 """
-VE3 Tool - Test API đơn giản
+VE3 Tool - Test API với cURL
 ============================
-Bạn tự lấy token từ Chrome DevTools và điền vào đây.
+Paste cURL command từ Chrome DevTools, script tự parse tất cả.
 
-Cách lấy token:
-1. Mở Chrome → vào https://labs.google/fx/tools/flow
-2. F12 → Network tab
-3. Tạo 1 ảnh bất kỳ
-4. Tìm request "batchGenerateImages"
-5. Copy các giá trị từ Request Headers
+Cách dùng:
+1. Chrome → F12 → Network → Tạo ảnh
+2. Right-click request 'batchGenerateImages' → Copy → Copy as cURL (bash)
+3. Chạy script này và paste cURL command
 """
 
 import sys
+import re
 import json
 import requests
 from pathlib import Path
 from datetime import datetime
 
-# =============================================================================
-# ĐIỀN TOKEN VÀO ĐÂY
-# =============================================================================
 
-# Bearer token (bắt đầu bằng "ya29.")
-# Lấy từ header "Authorization: Bearer ya29.xxxxx"
-BEARER_TOKEN = ""  # <-- ĐIỀN TOKEN CỦA BẠN VÀO ĐÂY
-
-# x-browser-validation (từ header)
-X_BROWSER_VALIDATION = ""  # <-- ĐIỀN VÀO ĐÂY
-
-# ⚠️ QUAN TRỌNG: recaptchaToken (từ Request Payload)
-# Click vào request → Payload tab → requests[0].clientContext.recaptchaToken
-RECAPTCHA_TOKEN = ""  # <-- ĐIỀN VÀO ĐÂY (dài ~2000 ký tự)
-
-# Project ID (từ URL hoặc Payload)
-PROJECT_ID = ""  # <-- ĐIỀN VÀO ĐÂY
-
-# =============================================================================
-# CONFIG
-# =============================================================================
-TEST_PROMPT = "A cute orange cat sitting on a wooden table, 4k photography"
 OUTPUT_DIR = Path("./test_output")
-API_BASE = "https://aisandbox-pa.googleapis.com"
 
 
-def test_api():
-    """Test gọi API trực tiếp."""
+def parse_curl(curl_command):
+    """Parse cURL command để lấy headers và payload."""
+
+    result = {
+        "url": "",
+        "headers": {},
+        "data": "",
+        "bearer_token": "",
+        "x_browser_validation": "",
+        "recaptcha_token": "",
+        "project_id": "",
+    }
+
+    # Lấy URL
+    url_match = re.search(r"curl\s+'([^']+)'", curl_command)
+    if not url_match:
+        url_match = re.search(r'curl\s+"([^"]+)"', curl_command)
+    if url_match:
+        result["url"] = url_match.group(1)
+        # Extract project ID từ URL
+        proj_match = re.search(r'/projects/([^/]+)/', result["url"])
+        if proj_match:
+            result["project_id"] = proj_match.group(1)
+
+    # Lấy headers
+    header_matches = re.findall(r"-H\s+'([^']+)'", curl_command)
+    if not header_matches:
+        header_matches = re.findall(r'-H\s+"([^"]+)"', curl_command)
+
+    for header in header_matches:
+        if ': ' in header:
+            key, value = header.split(': ', 1)
+            result["headers"][key.lower()] = value
+
+            # Extract specific values
+            if key.lower() == 'authorization' and value.startswith('Bearer '):
+                result["bearer_token"] = value[7:]  # Remove "Bearer "
+            elif key.lower() == 'x-browser-validation':
+                result["x_browser_validation"] = value
+
+    # Lấy data/payload
+    data_match = re.search(r"--data-raw\s+'(.+?)'(?:\s|$)", curl_command, re.DOTALL)
+    if not data_match:
+        data_match = re.search(r'--data-raw\s+"(.+?)"(?:\s|$)', curl_command, re.DOTALL)
+    if not data_match:
+        data_match = re.search(r"--data\s+'(.+?)'(?:\s|$)", curl_command, re.DOTALL)
+
+    if data_match:
+        result["data"] = data_match.group(1)
+        try:
+            payload = json.loads(result["data"])
+            # Tìm recaptchaToken
+            if "requests" in payload and payload["requests"]:
+                client_ctx = payload["requests"][0].get("clientContext", {})
+                result["recaptcha_token"] = client_ctx.get("recaptchaToken", "")
+                if not result["project_id"]:
+                    result["project_id"] = client_ctx.get("projectId", "")
+        except json.JSONDecodeError:
+            pass
+
+    return result
+
+
+def test_with_curl():
+    """Test API bằng cách paste cURL command."""
 
     print("=" * 60)
-    print("  VE3 TOOL - TEST API SIMPLE")
+    print("  VE3 TOOL - TEST API WITH CURL")
     print("=" * 60)
-    print(f"Time: {datetime.now()}")
+    print(f"Time: {datetime.now()}\n")
 
-    # Check token
-    if not BEARER_TOKEN:
-        print("\n❌ Chưa điền BEARER_TOKEN!")
-        print("\nCách lấy:")
-        print("1. Mở Chrome → https://labs.google/fx/tools/flow")
-        print("2. F12 → Network tab")
-        print("3. Tạo 1 ảnh")
-        print("4. Tìm request 'batchGenerateImages'")
-        print("5. Copy 'Authorization' header (phần sau 'Bearer ')")
+    print("📋 Paste cURL command từ Chrome DevTools:")
+    print("   (Right-click request → Copy → Copy as cURL bash)")
+    print("   Paste xong nhấn Enter 2 lần\n")
+
+    # Đọc multiline input
+    lines = []
+    empty_count = 0
+    while True:
+        try:
+            line = input()
+            if line.strip() == "":
+                empty_count += 1
+                if empty_count >= 1 and lines:  # 1 dòng trống là đủ
+                    break
+            else:
+                empty_count = 0
+                lines.append(line)
+        except EOFError:
+            break
+
+    curl_command = " ".join(lines)
+
+    if not curl_command.strip():
+        print("\n❌ Không có input!")
         return False
 
-    print(f"\n✅ Bearer token: {BEARER_TOKEN[:30]}...{BEARER_TOKEN[-10:]}")
+    print("\n" + "=" * 60)
+    print("📝 Đang parse cURL command...")
 
-    if X_BROWSER_VALIDATION:
-        print(f"✅ x-browser-validation: {X_BROWSER_VALIDATION[:30]}...")
+    # Parse
+    parsed = parse_curl(curl_command)
+
+    # Validate
+    if not parsed["bearer_token"]:
+        print("❌ Không tìm thấy Authorization header!")
+        return False
+
+    if not parsed["recaptcha_token"]:
+        print("❌ Không tìm thấy recaptchaToken trong payload!")
+        return False
+
+    print(f"\n✅ Bearer token: {parsed['bearer_token'][:30]}...{parsed['bearer_token'][-10:]}")
+    print(f"✅ recaptchaToken: {parsed['recaptcha_token'][:30]}...{parsed['recaptcha_token'][-10:]}")
+
+    if parsed["x_browser_validation"]:
+        print(f"✅ x-browser-validation: {parsed['x_browser_validation']}")
     else:
-        print("⚠️  Không có x-browser-validation (thử không có)")
+        print("⚠️  Không có x-browser-validation")
 
-    # Project ID
-    project_id = PROJECT_ID or "test-" + datetime.now().strftime("%Y%m%d%H%M%S")
-    print(f"📁 Project ID: {project_id}")
+    print(f"📁 Project ID: {parsed['project_id']}")
+    print(f"🌐 URL: {parsed['url'][:60]}...")
 
-    # Build headers - copy đầy đủ từ Chrome
+    # Build headers
     headers = {
-        "Authorization": f"Bearer {BEARER_TOKEN}",
+        "Authorization": f"Bearer {parsed['bearer_token']}",
         "Content-Type": "text/plain;charset=UTF-8",
         "Accept": "*/*",
         "Origin": "https://labs.google",
@@ -90,60 +160,21 @@ def test_api():
         "sec-fetch-site": "cross-site",
     }
 
-    if X_BROWSER_VALIDATION:
-        headers["x-browser-validation"] = X_BROWSER_VALIDATION
+    if parsed["x_browser_validation"]:
+        headers["x-browser-validation"] = parsed["x_browser_validation"]
         headers["x-browser-channel"] = "stable"
         headers["x-browser-copyright"] = "Copyright 2025 Google LLC. All Rights reserved."
         headers["x-browser-year"] = "2025"
         headers["x-client-data"] = "CIDsygE="
 
-    # Check recaptcha token
-    if not RECAPTCHA_TOKEN:
-        print("\n❌ Chưa điền RECAPTCHA_TOKEN!")
-        print("\nCách lấy:")
-        print("1. F12 → Network → Tìm 'batchGenerateImages'")
-        print("2. Click vào → Payload tab")
-        print("3. Copy 'recaptchaToken' (dài ~2000 ký tự)")
-        return False
-
-    print(f"✅ recaptchaToken: {RECAPTCHA_TOKEN[:40]}...{RECAPTCHA_TOKEN[-20:]}")
-
-    # Build payload - đúng cấu trúc như Chrome
-    import random
-    session_id = f";{int(datetime.now().timestamp() * 1000)}"
-
-    payload = {
-        "clientContext": {
-            "recaptchaToken": RECAPTCHA_TOKEN,
-            "sessionId": session_id
-        },
-        "requests": [{
-            "clientContext": {
-                "recaptchaToken": RECAPTCHA_TOKEN,
-                "sessionId": session_id,
-                "projectId": project_id,
-                "tool": "PINHOLE"
-            },
-            "seed": random.randint(100000, 999999),
-            "imageModelName": "GEM_PIX_2",
-            "imageAspectRatio": "IMAGE_ASPECT_RATIO_LANDSCAPE",
-            "prompt": TEST_PROMPT,
-            "imageInputs": []
-        }]
-    }
-
-    # Call API
-    url = f"{API_BASE}/v1/projects/{project_id}/flowMedia:batchGenerateImages"
-
-    print(f"\n🎨 Prompt: {TEST_PROMPT}")
-    print(f"🌐 URL: {url[:60]}...")
+    # Sử dụng payload gốc từ cURL
     print("\n⏳ Đang gọi API...")
 
     try:
         response = requests.post(
-            url,
+            parsed["url"],
             headers=headers,
-            data=json.dumps(payload),
+            data=parsed["data"],
             timeout=120
         )
 
@@ -152,24 +183,22 @@ def test_api():
         if response.status_code == 200:
             result = response.json()
 
-            # Check for images
             if "media" in result and result["media"]:
                 print(f"\n✅ THÀNH CÔNG! Nhận được {len(result['media'])} ảnh")
 
-                # Download
                 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
                 for i, media in enumerate(result["media"]):
                     img = media.get("image", {}).get("generatedImage", {})
                     url = img.get("fifeUrl")
-                    seed = img.get("seed")
+                    seed = media.get("seed", "unknown")
+                    prompt = media.get("prompt", "")
 
                     if url:
                         print(f"\n   📷 Image {i+1}:")
-                        print(f"      URL: {url[:60]}...")
+                        print(f"      Prompt: {prompt[:50]}...")
                         print(f"      Seed: {seed}")
 
-                        # Download
                         try:
                             img_response = requests.get(url, timeout=60)
                             if img_response.status_code == 200:
@@ -188,16 +217,16 @@ def test_api():
                 return False
 
         elif response.status_code == 401:
-            print("\n❌ Token hết hạn! Lấy token mới.")
+            print("\n❌ Token hết hạn! Tạo ảnh mới trong Chrome và copy cURL lại.")
             return False
 
         elif response.status_code == 403:
             print("\n❌ Bị chặn (403)!")
-            print(f"   Response: {response.text[:200]}")
+            print(f"   Response: {response.text[:300]}")
 
-            if "captcha" in response.text.lower():
-                print("\n💡 Cần x-browser-validation header!")
-                print("   Lấy từ Chrome DevTools → Network → Request Headers")
+            if "recaptcha" in response.text.lower():
+                print("\n💡 recaptchaToken đã hết hạn!")
+                print("   Tạo ảnh mới trong Chrome và copy cURL lại.")
             return False
 
         else:
@@ -210,9 +239,11 @@ def test_api():
         return False
     except Exception as e:
         print(f"\n❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
 if __name__ == "__main__":
-    success = test_api()
+    success = test_with_curl()
     sys.exit(0 if success else 1)
