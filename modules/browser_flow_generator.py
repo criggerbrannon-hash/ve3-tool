@@ -2909,6 +2909,12 @@ class BrowserFlowGenerator:
                 tokens = direct_api.extract_tokens()
                 bearer_token = tokens.get('bearer', '')
                 direct_project_id = tokens.get('project_id', '')  # LƯU project_id!
+
+                # DEBUG: Log all captured values
+                self._log(f"[DEBUG] tokens keys: {list(tokens.keys())}")
+                self._log(f"[DEBUG] direct_project_id: {direct_project_id}")
+                self._log(f"[DEBUG] direct_api._project_id: {direct_api._project_id}")
+
                 if direct_project_id:
                     self._log(f"✓ Captured project_id: {direct_project_id[:20]}...")
             else:
@@ -2921,14 +2927,26 @@ class BrowserFlowGenerator:
             return {"success": False, "error": "Khong co prompts"}
 
         # Use extracted flow_project_id if available
-        # QUAN TRỌNG: Direct mode phải dùng project_id đã capture (recaptcha bound to project)
-        if use_direct and direct_api and direct_api._project_id:
-            flow_project_id = direct_api._project_id
-            self._log(f"Using Direct mode project_id: {flow_project_id[:20]}...")
-        elif direct_project_id:
-            flow_project_id = direct_project_id
-        else:
-            flow_project_id = self.config.get('flow_project_id', self.project_code)
+        # QUAN TRỌNG: Direct mode PHẢI dùng project_id đã capture (recaptcha bound to project)
+        flow_project_id = None
+
+        # Priority 1: DirectFlowAPI instance cached project_id
+        if use_direct and direct_api:
+            if direct_api._project_id:
+                flow_project_id = direct_api._project_id
+                self._log(f"✓ Using DirectAPI project_id: {flow_project_id[:20]}...")
+            elif direct_project_id:
+                flow_project_id = direct_project_id
+                self._log(f"✓ Using extracted project_id: {flow_project_id[:20]}...")
+
+        # Priority 2: Config fallback (for nanoai mode)
+        if not flow_project_id:
+            flow_project_id = self.config.get('flow_project_id', '') or self.project_code or None
+
+        # Validate: Direct mode MUST have project_id
+        if use_direct and not flow_project_id:
+            self._log("❌ Direct mode cần project_id từ Chrome!", "error")
+            return {"success": False, "error": "Direct mode requires captured project_id"}
 
         self._log(f"Tong: {len(prompts)} prompts")
         self._log(f"Project ID: {flow_project_id}")
