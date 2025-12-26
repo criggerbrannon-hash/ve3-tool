@@ -95,36 +95,26 @@ class BatchGenerator:
         print("  Script nhập prompt, bạn click Generate")
         print("=" * 60)
 
-        # Chrome
-        print("\n[1] CHROME")
-        print("    1 = Mở Chrome mới")
-        print("    2 = Kết nối port 9222")
-        choice = input("    Chọn (Enter=2): ").strip() or "2"
-
+        # Auto connect to port 9222
+        print("\n[1] Kết nối Chrome port 9222...")
         options = ChromiumOptions()
         try:
-            if choice == "2":
-                options.set_local_port(9222)
-                self.driver = ChromiumPage(addr_or_opts=options)
-                print("    ✓ Kết nối port 9222")
-            else:
-                self.driver = ChromiumPage(options)
-                print("    ✓ Chrome mới")
+            options.set_local_port(9222)
+            self.driver = ChromiumPage(addr_or_opts=options)
+            print("    ✓ OK")
         except Exception as e:
             print(f"    ❌ Lỗi: {e}")
+            print("    Hãy mở Chrome với: chrome --remote-debugging-port=9222")
             return False
 
-        # URL
-        print(f"\n[2] URL hiện tại: {self.driver.url}")
+        # Check URL
+        print(f"[2] URL: {self.driver.url}")
         if "/project/" not in self.driver.url:
-            print("    ⚠️ Cần mở project Flow trước!")
-            url = input("    Nhập URL (hoặc Enter để tiếp tục): ").strip()
-            if url:
-                self.driver.get(url)
-                time.sleep(3)
+            print("    ⚠️ Hãy mở project Flow trong Chrome trước!")
+            return False
 
         # Inject
-        print("\n[3] INJECT INTERCEPTOR...")
+        print("[3] Inject interceptor...")
         result = self.driver.run_js(JS_INTERCEPTOR)
         print(f"    ✓ {result}")
 
@@ -268,44 +258,39 @@ class BatchGenerator:
 
 
 def main():
+    import sys
+
     gen = BatchGenerator()
 
     if not gen.setup():
         return
 
-    # Prompts
-    print(f"\n{'=' * 60}")
-    print("  CHỌN PROMPTS:")
-    print("    1 = 10 prompts mặc định")
-    print("    2 = Nhập số lượng")
-    print("    3 = Load từ file")
-    print(f"{'=' * 60}")
+    # Check command line args for prompts file
+    prompts = DEFAULT_PROMPTS
 
-    choice = input("\nChọn (Enter=1): ").strip() or "1"
-
-    if choice == "1":
-        prompts = DEFAULT_PROMPTS
-    elif choice == "2":
-        n = int(input("Số lượng (1-100): ") or "10")
-        prompts = (DEFAULT_PROMPTS * 10)[:n]
-    elif choice == "3":
-        path = input("Path file: ").strip()
-        try:
-            prompts = [l.strip() for l in open(path, encoding='utf-8') if l.strip()]
-        except:
-            prompts = DEFAULT_PROMPTS
+    if len(sys.argv) > 1:
+        # First arg could be number or file path
+        arg = sys.argv[1]
+        if arg.isdigit():
+            n = int(arg)
+            prompts = (DEFAULT_PROMPTS * 10)[:n]
+            print(f"\n→ {n} prompts (từ command line)")
+        else:
+            try:
+                prompts = [l.strip() for l in open(arg, encoding='utf-8') if l.strip()]
+                print(f"\n→ {len(prompts)} prompts từ {arg}")
+            except:
+                print(f"    ⚠️ Không đọc được file {arg}, dùng mặc định")
     else:
-        prompts = DEFAULT_PROMPTS
-
-    print(f"\n→ {len(prompts)} prompts")
-    input("Nhấn Enter để bắt đầu...")
+        print(f"\n→ {len(prompts)} prompts mặc định")
+        print("   (Dùng: python batch_generator.py 20  hoặc  python batch_generator.py prompts.txt)")
 
     try:
         gen.run_batch(prompts)
     except KeyboardInterrupt:
         print("\n\nDừng!")
 
-    input("\nNhấn Enter để kết thúc...")
+    print("\nXong!")
 
 
 if __name__ == "__main__":
