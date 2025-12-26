@@ -647,13 +647,13 @@ class UnixVoiceToVideo:
         pending = 0
         for subfolder in self.batch_voice_folder.iterdir():
             if subfolder.is_dir():
-                for voice_file in subfolder.glob("*.mp3"):
-                    # Check if video already exists (PROJECTS/voice_stem/voice_stem.mp4)
-                    done_video = self.batch_done_folder / voice_file.stem / f"{voice_file.stem}.mp4"
-                    if not done_video.exists():
-                        pending += 1
-                for voice_file in subfolder.glob("*.wav"):
-                    done_video = self.batch_done_folder / voice_file.stem / f"{voice_file.stem}.mp4"
+                # Check for any voice file in subfolder
+                voice_files = list(subfolder.glob("*.mp3")) + list(subfolder.glob("*.wav"))
+                if voice_files:
+                    # Use FOLDER NAME for project, not voice file name
+                    # voice/ep1/audio.mp3 → PROJECTS/ep1/ep1.mp4
+                    project_name = subfolder.name
+                    done_video = self.batch_done_folder / project_name / f"{project_name}.mp4"
                     if not done_video.exists():
                         pending += 1
         return pending
