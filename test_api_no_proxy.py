@@ -64,13 +64,15 @@ def print_result(success: bool, message: str):
 # =============================================================================
 def capture_headers_from_chrome(
     profile_path: str = None,
+    profile_directory: str = None,
     headless: bool = False
 ) -> CapturedHeaders:
     """
     Mở Chrome, trigger API request, capture headers.
 
     Args:
-        profile_path: Path to Chrome profile (nếu None, dùng profile mặc định)
+        profile_path: Path to Chrome User Data folder
+        profile_directory: Profile folder name (e.g., "Profile 2")
         headless: Chạy ẩn (không hiện cửa sổ Chrome)
 
     Returns:
@@ -80,27 +82,35 @@ def capture_headers_from_chrome(
 
     # Find default Chrome profile if not specified
     if not profile_path:
-        # Common Chrome profile locations
+        # Common Chrome User Data locations
         possible_paths = [
-            Path.home() / "AppData/Local/Google/Chrome/User Data/Default",  # Windows
-            Path.home() / ".config/google-chrome/Default",  # Linux
-            Path.home() / "Library/Application Support/Google/Chrome/Default",  # macOS
+            Path.home() / "AppData/Local/Google/Chrome/User Data",  # Windows
+            Path.home() / ".config/google-chrome",  # Linux
+            Path.home() / "Library/Application Support/Google/Chrome",  # macOS
         ]
         for p in possible_paths:
             if p.exists():
-                profile_path = str(p.parent)  # Use User Data dir, not Default
-                print(f"Found Chrome profile: {profile_path}")
+                profile_path = str(p)
+                print(f"Found Chrome User Data: {profile_path}")
                 break
 
     if profile_path:
-        print(f"Using profile: {profile_path}")
+        print(f"User Data Dir: {profile_path}")
+        if profile_directory:
+            print(f"Profile Directory: {profile_directory}")
+        else:
+            print("Profile Directory: Default")
     else:
         print("No profile specified, Chrome will use temporary profile")
         print("⚠️  You may need to login to Google manually!")
 
+    print("\n⚠️  QUAN TRỌNG: Đóng tất cả cửa sổ Chrome trước khi chạy!")
+    print("   (Script cần dùng profile đang có, Chrome không thể mở 2 lần cùng profile)")
+
     # Create extractor
     extractor = ChromeHeadersExtractor(
         chrome_profile_path=profile_path,
+        profile_directory=profile_directory,
         headless=headless,
         verbose=True
     )
@@ -300,7 +310,11 @@ def main():
     )
     parser.add_argument(
         "--profile", "-p",
-        help="Path to Chrome profile directory"
+        help="Path to Chrome User Data folder (e.g., C:\\Users\\admin\\AppData\\Local\\Google\\Chrome\\User Data)"
+    )
+    parser.add_argument(
+        "--profile-dir", "-d",
+        help="Chrome profile directory name (e.g., 'Profile 2', 'Default')"
     )
     parser.add_argument(
         "--headless",
@@ -339,6 +353,7 @@ def main():
     # Step 1: Capture headers
     headers = capture_headers_from_chrome(
         profile_path=args.profile,
+        profile_directory=getattr(args, 'profile_dir', None),
         headless=args.headless
     )
 

@@ -73,10 +73,20 @@ class ChromeHeadersExtractor:
     def __init__(
         self,
         chrome_profile_path: str = None,
+        profile_directory: str = None,
         headless: bool = False,
         verbose: bool = True
     ):
+        """
+        Args:
+            chrome_profile_path: Path to Chrome User Data folder
+                                 (e.g., C:\\Users\\admin\\AppData\\Local\\Google\\Chrome\\User Data)
+            profile_directory: Profile folder name (e.g., "Profile 2", "Default")
+            headless: Run Chrome headless
+            verbose: Print debug logs
+        """
         self.chrome_profile_path = chrome_profile_path
+        self.profile_directory = profile_directory
         self.headless = headless
         self.verbose = verbose
 
@@ -116,37 +126,20 @@ class ChromeHeadersExtractor:
                     self._log(f"Chrome binary: {chrome_path}")
                     break
 
-            # Tao working profile (giong browser_flow_generator)
+            # Setup Chrome profile
             if self.chrome_profile_path:
-                profile_dir = Path(self.chrome_profile_path)
-                profile_name = profile_dir.name
+                user_data_dir = Path(self.chrome_profile_path)
+                self._log(f"User Data Dir: {user_data_dir}")
 
-                # Working profile rieng cho headers extractor
-                working_profile_base = Path.home() / ".ve3_chrome_profiles"
-                working_profile_base.mkdir(parents=True, exist_ok=True)
-                working_profile = working_profile_base / f"{profile_name}_headers"
+                # Use profile directly (don't copy) - requires Chrome to be closed!
+                options.add_argument(f"--user-data-dir={user_data_dir}")
 
-                self._log(f"Profile goc: {profile_dir}")
-                self._log(f"Working profile: {working_profile}")
-
-                # Copy profile neu chua co
-                if not working_profile.exists():
-                    working_profile.mkdir(parents=True, exist_ok=True)
-                    if profile_dir.exists() and any(profile_dir.iterdir()):
-                        for item in profile_dir.iterdir():
-                            try:
-                                dest = working_profile / item.name
-                                if item.is_dir():
-                                    shutil.copytree(item, dest, dirs_exist_ok=True)
-                                else:
-                                    shutil.copy2(item, dest)
-                            except Exception:
-                                pass  # Skip locked files
-                        self._log("Da copy profile data")
+                # Add specific profile directory if specified (e.g., "Profile 2")
+                if self.profile_directory:
+                    options.add_argument(f"--profile-directory={self.profile_directory}")
+                    self._log(f"Profile Directory: {self.profile_directory}")
                 else:
-                    self._log("Su dung working profile da co")
-
-                options.add_argument(f"--user-data-dir={working_profile}")
+                    self._log("Using Default profile")
 
             # Random debug port (tranh xung dot)
             debug_port = random.randint(9222, 9999)
