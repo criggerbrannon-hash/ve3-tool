@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """
-Google Flow API - Batch Image Generator (VE3 Method)
-=====================================================
-Tự động tạo nhiều ảnh bằng DrissionPage + VE3 JavaScript.
+Google Flow API - Batch Image Generator (UI Automation)
+========================================================
+Tự động tạo nhiều ảnh bằng DrissionPage - click Generate trong UI.
+
+Vì API yêu cầu reCAPTCHA token từ user interaction,
+script này sẽ tự động click nút Generate và download ảnh.
 
 Workflow:
-1. Mở Chrome, đăng nhập Google
-2. Inject VE3 JavaScript script
-3. Gọi API.generateImages() qua JS (không cần UI)
-4. Download và lưu ảnh
+1. Mở Chrome, đăng nhập Google, vào project Flow
+2. Với mỗi prompt: nhập prompt -> click Generate -> chờ ảnh -> download
+3. Lưu ảnh và thống kê
 
 Cài đặt:
     pip install DrissionPage requests
@@ -23,6 +25,7 @@ import requests
 from pathlib import Path
 from datetime import datetime
 import random
+import re
 
 try:
     from DrissionPage import ChromiumPage, ChromiumOptions
@@ -33,9 +36,6 @@ except ImportError:
 # Config
 OUTPUT_DIR = Path("./batch_output")
 OUTPUT_DIR.mkdir(exist_ok=True)
-
-# Path to VE3 JS script
-VE3_JS_PATH = Path(__file__).parent / "scripts" / "ve3_browser_automation.js"
 
 # Test prompts
 DEFAULT_PROMPTS = [
@@ -51,129 +51,59 @@ DEFAULT_PROMPTS = [
     "a vintage car on route 66 at sunset",
 ]
 
-# Simple JS to call API directly - with Bearer token capture
-JS_API_CALLER = '''
+# JS to intercept API REQUEST and capture payload (including recaptchaToken)
+JS_REQUEST_INTERCEPTOR = '''
 (function(){
-    if(window.__batchApiReady) return 'ALREADY_READY';
-    window.__batchApiReady = true;
+    if(window.__requestInterceptorReady) return 'ALREADY_READY';
+    window.__requestInterceptorReady = true;
+    window.__capturedPayload = null;
     window.__capturedBearer = null;
+    window.__capturedTime = 0;
 
-    // Intercept fetch to capture Bearer token
+    // Intercept fetch to capture payload BEFORE sending
     if (!window.__origFetch) {
         window.__origFetch = window.fetch;
-        window.fetch = async function(url, opts) {
-            // Capture Bearer from any request
-            if (opts && opts.headers) {
-                const auth = opts.headers['Authorization'] || opts.headers['authorization'];
-                if (auth && auth.startsWith('Bearer ')) {
-                    window.__capturedBearer = auth;
-                    console.log('[BATCH] Captured Bearer token');
-                }
-            }
-            return window.__origFetch.apply(this, arguments);
-        };
     }
 
-    // Get project ID from URL
-    window.__getProjectId = function() {
-        const url = window.location.href;
-        const match = url.match(/\\/project\\/([a-f0-9-]+)/i);
-        return match ? match[1] : null;
-    };
+    window.fetch = async function(url, opts) {
+        const urlStr = typeof url === 'string' ? url : url.url;
 
-    // Generate session ID
-    window.__genSessionId = function() {
-        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
-            const r = Math.random() * 16 | 0;
-            return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
-        });
-    };
-
-    // Generate seed
-    window.__genSeed = function() {
-        return Math.floor(Math.random() * 999999) + 1;
-    };
-
-    // Build payload
-    window.__buildPayload = function(prompt, projectId, count) {
-        const sessionId = window.__genSessionId();
-        const requests = [];
-        for (let i = 0; i < count; i++) {
-            requests.push({
-                clientContext: {
-                    sessionId: sessionId,
-                    projectId: projectId,
-                    tool: "IMAGE_FX"
-                },
-                seed: window.__genSeed(),
-                imageModelName: "IMAGEN_3_1",
-                imageAspectRatio: "IMAGE_ASPECT_RATIO_LANDSCAPE",
-                prompt: prompt,
-                imageInputs: []
-            });
-        }
-        return { requests: requests };
-    };
-
-    // Call API and return result
-    window.__generateImages = async function(prompt, count, bearerToken) {
-        const projectId = window.__getProjectId();
-        if (!projectId) {
-            return { success: false, error: 'No projectId in URL' };
-        }
-
-        // Use provided bearer or captured one
-        const bearer = bearerToken || window.__capturedBearer;
-        if (!bearer) {
-            return { success: false, error: 'No Bearer token. Click Generate once in UI first!' };
-        }
-
-        const url = 'https://aisandbox-pa.googleapis.com/v1/projects/' + projectId + '/flowMedia:batchGenerateImages';
-        const payload = window.__buildPayload(prompt, projectId, count || 2);
-
-        console.log('[BATCH] Calling API for:', prompt.slice(0, 50));
-
-        try {
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': bearer
-                },
-                body: JSON.stringify(payload)
-            });
-
-            if (!response.ok) {
-                const errText = await response.text();
-                return { success: false, error: 'API ' + response.status + ': ' + errText.slice(0, 200) };
+        // Capture Bearer from any request
+        if (opts && opts.headers) {
+            const auth = opts.headers['Authorization'] || opts.headers['authorization'];
+            if (auth && auth.startsWith('Bearer ')) {
+                window.__capturedBearer = auth;
             }
-
-            const data = await response.json();
-
-            // Extract image URLs
-            const images = [];
-            if (data.media) {
-                for (const m of data.media) {
-                    const imgUrl = m.image?.generatedImage?.fifeUrl;
-                    if (imgUrl) {
-                        images.push({
-                            url: imgUrl,
-                            seed: m.seed || 'unknown'
-                        });
-                    }
-                }
-            }
-
-            return { success: true, images: images, count: images.length };
-
-        } catch (e) {
-            return { success: false, error: e.message };
         }
+
+        if (urlStr.includes('batchGenerateImages')) {
+            // Capture the payload
+            window.__capturedPayload = opts.body;
+            window.__capturedTime = Date.now();
+            console.log('[BATCH] Captured payload at', new Date().toISOString());
+
+            // BLOCK the original request - we'll send it via Python
+            return new Response(JSON.stringify({blocked: true}), {status: 200});
+        }
+
+        return window.__origFetch.apply(this, arguments);
     };
 
-    console.log('[BATCH] API Ready. ProjectId:', window.__getProjectId());
-    console.log('[BATCH] Bearer captured:', !!window.__capturedBearer);
+    console.log('[BATCH] Request interceptor ready');
     return 'READY';
+})();
+'''
+
+# JS to get captured payload
+JS_GET_PAYLOAD = '''
+(function(){
+    const payload = window.__capturedPayload;
+    const bearer = window.__capturedBearer;
+    const time = window.__capturedTime;
+    // Clear after reading
+    window.__capturedPayload = null;
+    window.__capturedTime = 0;
+    return { payload: payload, bearer: bearer, time: time };
 })();
 '''
 
@@ -191,7 +121,7 @@ class BatchGenerator:
     def setup(self):
         """Setup browser."""
         print("=" * 60)
-        print("  BATCH IMAGE GENERATOR (VE3 Method)")
+        print("  BATCH IMAGE GENERATOR (UI Automation)")
         print("=" * 60)
 
         # Chrome
@@ -235,7 +165,7 @@ class BatchGenerator:
         # Check project URL
         if "/project/" not in self.driver.url:
             print("    ⚠️ URL không có /project/xxx!")
-            print("    Cần mở project Flow trước (vào labs.google → Flow → mở project)")
+            print("    Cần mở project Flow trước")
             return False
 
         # Check login
@@ -247,120 +177,208 @@ class BatchGenerator:
         # Wait for user to confirm page is ready
         input("\n    Trang đã load xong? Nhấn Enter để tiếp tục...")
 
-        # Inject API caller
-        print("\n[3] INJECT API CALLER...")
+        # Inject request interceptor
+        print("\n[3] INJECT REQUEST INTERCEPTOR...")
         try:
-            result = self.driver.run_js(JS_API_CALLER)
+            result = self.driver.run_js(JS_REQUEST_INTERCEPTOR)
             print(f"    ✓ Result: {result}")
-
-            # Test get project ID
-            project_id = self.driver.run_js("return window.__getProjectId();")
-            print(f"    ✓ Project ID: {project_id}")
-
-            if not project_id:
-                print("    ❌ Không lấy được Project ID!")
-                return False
-
         except Exception as e:
-            print(f"    ❌ JS error: {e}")
+            print(f"    ⚠️ JS warning: {e}")
+
+        # Find UI elements
+        print("\n[4] KIỂM TRA UI ELEMENTS...")
+        textarea = self.find_prompt_input()
+        gen_btn = self.find_generate_button()
+
+        if textarea:
+            print("    ✓ Tìm thấy textarea")
+        else:
+            print("    ❌ Không tìm thấy textarea!")
             return False
 
-        # Check for Bearer token
-        print("\n[4] BEARER TOKEN")
-        bearer = self.driver.run_js("return window.__capturedBearer;")
-
-        if not bearer:
-            print("    ⚠️ Chưa có Bearer token!")
-            print("    → Click nút 'Generate' một lần trong Chrome để bắt token")
-            print("    → Hoặc nhập Bearer token thủ công (copy từ Network tab)")
-
-            manual_bearer = input("\n    Bearer token (Enter để chờ capture): ").strip()
-
-            if manual_bearer:
-                if manual_bearer.startswith("Bearer "):
-                    self.bearer = manual_bearer
-                else:
-                    self.bearer = f"Bearer {manual_bearer}"
-                self.driver.run_js(f'window.__capturedBearer = "{self.bearer}";')
-                print("    ✓ Bearer token đã set")
-            else:
-                print("    → Click Generate trong Chrome rồi nhấn Enter...")
-                input()
-
-                # Check again
-                bearer = self.driver.run_js("return window.__capturedBearer;")
-                if bearer:
-                    print(f"    ✓ Đã capture Bearer token ({len(bearer)} chars)")
-                else:
-                    print("    ❌ Không capture được Bearer token!")
-                    return False
+        if gen_btn:
+            print("    ✓ Tìm thấy nút Generate")
         else:
-            print(f"    ✓ Bearer token sẵn sàng ({len(bearer)} chars)")
+            print("    ❌ Không tìm thấy nút Generate!")
+            return False
 
         return True
 
+    def find_prompt_input(self):
+        """Find the prompt input element."""
+        selectors = [
+            "tag:textarea",
+            "css:textarea",
+            "css:[contenteditable='true']",
+        ]
+
+        for sel in selectors:
+            try:
+                el = self.driver.ele(sel, timeout=3)
+                if el:
+                    return el
+            except:
+                continue
+        return None
+
+    def find_generate_button(self):
+        """Find the Generate button."""
+        selectors = [
+            "@@text():Tạo",
+            "@@text():Generate",
+            "tag:button@@text():Tạo",
+            "tag:button@@text():Generate",
+        ]
+
+        for sel in selectors:
+            try:
+                el = self.driver.ele(sel, timeout=3)
+                if el:
+                    return el
+            except:
+                continue
+        return None
+
+    def wait_for_payload(self, timeout=30):
+        """Wait for payload to be captured from intercepted request."""
+        start_time = time.time()
+
+        while time.time() - start_time < timeout:
+            result = self.driver.run_js(JS_GET_PAYLOAD)
+
+            if result and result.get("payload"):
+                return result
+
+            time.sleep(0.5)
+
+        return None
+
+    def call_api(self, payload_str, bearer):
+        """Call API with captured payload."""
+        try:
+            payload = json.loads(payload_str)
+        except Exception as e:
+            print(f"    ❌ JSON parse error: {e}")
+            return None
+
+        # Get project ID from payload
+        project_id = payload.get("requests", [{}])[0].get("clientContext", {}).get("projectId", "")
+
+        if not project_id:
+            print("    ❌ No projectId in payload!")
+            return None
+
+        url = f"https://aisandbox-pa.googleapis.com/v1/projects/{project_id}/flowMedia:batchGenerateImages"
+
+        headers = {
+            "Authorization": bearer,
+            "Content-Type": "text/plain;charset=UTF-8",
+            "Accept": "*/*",
+            "Origin": "https://labs.google",
+            "Referer": "https://labs.google/",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        }
+
+        try:
+            resp = requests.post(url, headers=headers, data=json.dumps(payload), timeout=120)
+
+            if resp.status_code == 200:
+                return resp.json()
+            else:
+                print(f"    ❌ API {resp.status_code}: {resp.text[:100]}")
+                return None
+        except Exception as e:
+            print(f"    ❌ API error: {e}")
+            return None
+
     def generate_one(self, prompt, idx):
-        """Generate one image with given prompt."""
+        """Generate one image with given prompt using UI automation + API call."""
         print(f"\n[{idx+1}] {prompt[:50]}...")
 
         try:
-            # Escape prompt for JS - replace backticks with single quotes
-            safe_prompt = prompt.replace('`', "'").replace('"', '\\"')
+            # Find textarea
+            textarea = self.find_prompt_input()
+            if not textarea:
+                print("    ❌ Không tìm thấy textarea!")
+                return False, []
 
-            # Store result in global variable, then retrieve it
-            # First, call async function and store promise result
-            js_call = '''
-                (async () => {
-                    window.__batchResult = null;
-                    window.__batchDone = false;
-                    try {
-                        window.__batchResult = await window.__generateImages("PROMPT_HERE", 2);
-                    } catch(e) {
-                        window.__batchResult = {success: false, error: e.message};
-                    }
-                    window.__batchDone = true;
-                })();
-            '''.replace('PROMPT_HERE', safe_prompt)
+            # Clear and enter prompt
+            try:
+                textarea.clear()
+                time.sleep(0.3)
+                textarea.input(prompt)
+                time.sleep(0.5)
+                print("    → Đã nhập prompt")
+            except Exception as e:
+                print(f"    ❌ Lỗi nhập prompt: {e}")
+                return False, []
 
-            self.driver.run_js(js_call)
+            # Find and click Generate button
+            gen_btn = self.find_generate_button()
+            if not gen_btn:
+                print("    ❌ Không tìm thấy nút Generate!")
+                return False, []
 
-            # Wait for result (poll)
-            import time as t
-            for _ in range(60):  # 30 seconds max
-                done = self.driver.run_js("return window.__batchDone;")
-                if done:
-                    break
-                t.sleep(0.5)
+            try:
+                gen_btn.click()
+                print("    → Đã click Generate")
+            except Exception as e:
+                print(f"    ❌ Lỗi click: {e}")
+                return False, []
 
-            result = self.driver.run_js("return window.__batchResult;")
+            # Wait for payload to be captured
+            print("    → Đang chờ payload...")
+            captured = self.wait_for_payload(timeout=15)
+
+            if not captured or not captured.get("payload"):
+                print("    ❌ Timeout - không bắt được payload!")
+                return False, []
+
+            payload_str = captured.get("payload")
+            bearer = captured.get("bearer")
+
+            if not bearer:
+                print("    ❌ Không có Bearer token!")
+                return False, []
+
+            print(f"    → Payload captured, calling API...")
+
+            # Call API with captured payload
+            result = self.call_api(payload_str, bearer)
 
             if not result:
-                print("    ❌ No response from JS")
                 return False, []
 
-            if result.get("success"):
-                images = result.get("images", [])
-                print(f"    ✓ Got {len(images)} images")
+            # Extract and download images
+            images = []
+            if "media" in result:
+                for m in result["media"]:
+                    img_url = m.get("image", {}).get("generatedImage", {}).get("fifeUrl")
+                    if img_url:
+                        images.append({"url": img_url, "seed": m.get("seed", "unknown")})
 
-                saved = []
-                for i, img in enumerate(images):
-                    url = img.get("url")
-                    if url:
-                        try:
-                            resp = requests.get(url, timeout=60)
-                            if resp.status_code == 200:
-                                filename = f"batch_{idx:03d}_{i+1}.png"
-                                (OUTPUT_DIR / filename).write_bytes(resp.content)
-                                saved.append(filename)
-                                print(f"      ✓ Saved: {filename}")
-                        except Exception as e:
-                            print(f"      ❌ Download error: {e}")
-
-                return len(saved) > 0, saved
-            else:
-                error = result.get("error", "Unknown error")
-                print(f"    ❌ API error: {error}")
+            if not images:
+                print("    ❌ No images in response!")
                 return False, []
+
+            print(f"    ✓ Got {len(images)} images")
+
+            # Download images
+            saved = []
+            for i, img in enumerate(images):
+                url = img.get("url")
+                if url:
+                    try:
+                        resp = requests.get(url, timeout=60)
+                        if resp.status_code == 200:
+                            filename = f"batch_{idx:03d}_{i+1}.png"
+                            (OUTPUT_DIR / filename).write_bytes(resp.content)
+                            saved.append(filename)
+                            print(f"      ✓ Saved: {filename}")
+                    except Exception as e:
+                        print(f"      ❌ Download error: {e}")
+
+            return len(saved) > 0, saved
 
         except Exception as e:
             print(f"    ❌ Exception: {e}")
@@ -388,9 +406,9 @@ class BatchGenerator:
                 self.stats["failed"] += 1
                 self.stats["errors"].append(f"Prompt {i+1}: {str(e)}")
 
-            # Delay giữa các request để tránh rate limit
+            # Delay between requests
             if i < len(prompts) - 1:
-                delay = random.uniform(3, 6)
+                delay = random.uniform(2, 4)
                 print(f"    ... chờ {delay:.1f}s")
                 time.sleep(delay)
 
@@ -412,7 +430,8 @@ class BatchGenerator:
 
     def cleanup(self):
         if self.driver:
-            self.driver.quit()
+            # Don't quit - keep browser open
+            pass
 
 
 def main():
@@ -440,7 +459,6 @@ def main():
     elif choice == "2":
         n = int(input("Số lượng prompts (1-100): ") or "10")
         n = min(max(1, n), 100)
-        # Repeat default prompts
         prompts = (DEFAULT_PROMPTS * (n // len(DEFAULT_PROMPTS) + 1))[:n]
 
     elif choice == "3":
@@ -476,7 +494,7 @@ def main():
     except KeyboardInterrupt:
         print("\n\nInterrupted!")
     finally:
-        input("\nNhấn Enter để đóng Chrome...")
+        input("\nNhấn Enter để kết thúc...")
         gen.cleanup()
 
 
