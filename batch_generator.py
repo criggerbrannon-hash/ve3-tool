@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 """
-Google Flow API - Batch Image Generator (Semi-Auto)
+Google Flow API - Batch Image Generator (Full Auto)
 ====================================================
-Script nhập prompt, bạn click Generate, script download ảnh.
+Script nhập prompt, tự click Generate, download ảnh.
 """
 
 import json
 import time
 import requests
 from pathlib import Path
-import random
 
 try:
     from DrissionPage import ChromiumPage, ChromiumOptions
@@ -76,8 +75,7 @@ class BatchGenerator:
 
     def setup(self):
         print("=" * 60)
-        print("  BATCH GENERATOR (Semi-Auto)")
-        print("  Script nhập prompt, BẠN CLICK Generate")
+        print("  BATCH GENERATOR (Full Auto)")
         print("=" * 60)
 
         print("\n[1] Kết nối Chrome port 9222...")
@@ -111,6 +109,49 @@ class BatchGenerator:
                 pass
         return None
 
+    def find_generate_button(self):
+        """Tìm nút Generate"""
+        # Thử nhiều selector
+        selectors = [
+            'xpath://button[contains(., "Generate")]',
+            'xpath://button[contains(text(), "Generate")]',
+            'css:button[aria-label*="Generate"]',
+            'css:button[data-testid*="generate"]',
+        ]
+        for sel in selectors:
+            try:
+                btn = self.driver.ele(sel, timeout=1)
+                if btn:
+                    return btn
+            except:
+                pass
+        return None
+
+    def click_generate(self):
+        """Click nút Generate"""
+        btn = self.find_generate_button()
+        if btn:
+            try:
+                btn.click()
+                return True
+            except:
+                pass
+
+        # Fallback: dùng JS click
+        js_click = '''
+        (function() {
+            const buttons = document.querySelectorAll('button');
+            for (const btn of buttons) {
+                if (btn.textContent.includes('Generate')) {
+                    btn.click();
+                    return true;
+                }
+            }
+            return false;
+        })();
+        '''
+        return self.driver.run_js(js_click)
+
     def wait_for_images(self, timeout=120):
         start = time.time()
         last_time = self.driver.run_js("return window.__imageTime || 0;")
@@ -139,8 +180,7 @@ class BatchGenerator:
 
     def run_batch(self, prompts):
         print(f"\n{'=' * 60}")
-        print(f"  TẠO {len(prompts)} ẢNH")
-        print(f"  Script nhập prompt → BẠN CLICK Generate → Script download")
+        print(f"  TẠO {len(prompts)} ẢNH (Full Auto)")
         print(f"{'=' * 60}")
 
         self.stats["total"] = len(prompts)
@@ -153,15 +193,22 @@ class BatchGenerator:
             if textarea:
                 try:
                     textarea.clear()
-                    time.sleep(0.2)
+                    time.sleep(0.3)
                     textarea.input(prompt)
                     print("    ✓ Đã nhập prompt")
-                except:
-                    print("    ⚠️ Không nhập được")
+                except Exception as e:
+                    print(f"    ⚠️ Lỗi nhập: {e}")
 
-            # Chờ user click Generate
-            print("    → CLICK 'Generate' TRONG CHROME...")
+            time.sleep(0.5)
 
+            # Auto click Generate
+            print("    → Auto click Generate...")
+            if self.click_generate():
+                print("    ✓ Đã click")
+            else:
+                print("    ⚠️ Không tìm thấy nút Generate")
+
+            # Chờ ảnh
             images = self.wait_for_images(timeout=120)
 
             if not images:
@@ -178,7 +225,7 @@ class BatchGenerator:
                 print("    ❌ Download thất bại")
                 self.stats["failed"] += 1
 
-            time.sleep(1)
+            time.sleep(2)
 
         print(f"\n{'=' * 60}")
         print(f"  HOÀN THÀNH: {self.stats['success']}/{self.stats['total']}")
