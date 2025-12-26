@@ -152,8 +152,9 @@ class DirectFlowAPI:
         self.log("Inject capture script (bearer + recaptcha + x-browser-validation + BLOCK)...")
 
         # Script capture: bearer, recaptchaToken, x-browser-validation
+        # Handle both Headers object và plain object
         # Rồi CHẶN request (không gửi thật), trả về fake response
-        capture_script = '''window._tk=null;window._pj=null;window._rc=null;window._xbv=null;window._blocked=0;(function(){var f=window.fetch;window.fetch=function(u,o){var s=u?u.toString():'';if(s.includes('batchGenerateImages')){var h=o&&o.headers?o.headers:{};var a=h.Authorization||h.authorization||'';if(a.startsWith('Bearer ')){window._tk=a.substring(7);var m=s.match(/\\/projects\\/([^\\/]+)\\//);if(m)window._pj=m[1];console.log('✓ BEARER!');}var xbv=h['x-browser-validation']||h['X-Browser-Validation']||'';if(xbv){window._xbv=xbv;console.log('✓ X-BROWSER-VALIDATION!');}if(o&&o.body){try{var body=JSON.parse(o.body);if(body.clientContext&&body.clientContext.recaptchaToken){window._rc=body.clientContext.recaptchaToken;window._blocked++;console.log('✓ RECAPTCHA! (blocked #'+window._blocked+')');return Promise.resolve(new Response(JSON.stringify({media:[]}),{status:200,headers:{'Content-Type':'application/json'}}));}}catch(e){}}}return f.apply(this,arguments);};console.log('[DirectFlow] Capture ready!');})();'''
+        capture_script = '''window._tk=null;window._pj=null;window._rc=null;window._xbv=null;window._blocked=0;(function(){var f=window.fetch;window.fetch=function(u,o){var s=u?u.toString():'';if(s.includes('batchGenerateImages')){var h=o&&o.headers?o.headers:{};var getH=function(k){if(h.get)return h.get(k);return h[k]||'';};var a=getH('Authorization')||getH('authorization')||'';if(a.startsWith('Bearer ')){window._tk=a.substring(7);var m=s.match(/\\/projects\\/([^\\/]+)\\//);if(m)window._pj=m[1];console.log('✓ BEARER!');}var xbv=getH('x-browser-validation')||getH('X-Browser-Validation')||'';if(xbv){window._xbv=xbv;console.log('✓ X-BROWSER-VALIDATION: '+xbv.substring(0,30)+'...');}if(o&&o.body){try{var body=JSON.parse(o.body);if(body.clientContext&&body.clientContext.recaptchaToken){window._rc=body.clientContext.recaptchaToken;window._blocked++;console.log('✓ RECAPTCHA! (blocked #'+window._blocked+')');return Promise.resolve(new Response(JSON.stringify({media:[]}),{status:200,headers:{'Content-Type':'application/json'}}));}}catch(e){}}}return f.apply(this,arguments);};console.log('[DirectFlow] Capture ready!');})();'''
 
         try:
             pag.hotkey("ctrl", "shift", "j")
@@ -346,7 +347,13 @@ class DirectFlowAPI:
 
                 if tokens.get('recaptcha'):
                     self._recaptcha_token = tokens['recaptcha']
-                    self.log(f"✓ Fresh reCAPTCHA (instant): {self._recaptcha_token[:30]}...")
+                    self.log(f"✓ Fresh reCAPTCHA: {self._recaptcha_token[:30]}...")
+
+                    # Cập nhật x-browser-validation nếu có
+                    if tokens.get('x_browser_validation'):
+                        self._x_browser_validation = tokens['x_browser_validation']
+                        self.log(f"✓ Fresh x-browser-validation: {self._x_browser_validation[:30]}...")
+
                     return self._recaptcha_token
 
             self.log("Không capture được recaptcha!")

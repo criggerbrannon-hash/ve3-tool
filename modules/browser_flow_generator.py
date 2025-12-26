@@ -3090,6 +3090,11 @@ class BrowserFlowGenerator:
                     recaptcha_token = self._direct_api.get_fresh_recaptcha()
                     if recaptcha_token:
                         self._log(f"✓ reCAPTCHA OK: {recaptcha_token[:30]}...")
+
+                        # Update x-browser-validation header nếu có mới
+                        if self._direct_api._x_browser_validation:
+                            api.session.headers['x-browser-validation'] = self._direct_api._x_browser_validation
+                            self._log(f"✓ Updated x-browser-validation header")
                     else:
                         self._log("⚠️ Không lấy được recaptcha, thử gọi API direct...", "warn")
 
