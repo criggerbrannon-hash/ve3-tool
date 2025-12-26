@@ -117,6 +117,9 @@ class BatchGenerator:
         print(f"    Project: {self.project_id}")
 
         print("\n[2] Inject interceptor...")
+        # Reset interceptor cũ nếu có
+        self.driver.run_js("window.__interceptReady = false; window.__tokens = null;")
+        time.sleep(0.5)
         self.driver.run_js(JS_INTERCEPTOR)
         print("    ✓ OK")
 
@@ -151,16 +154,19 @@ class BatchGenerator:
         for i in range(30):
             time.sleep(1)
             tokens = self.driver.run_js("return window.__tokens;")
-            if tokens and tokens.get("bearer") and tokens.get("recaptchaToken"):
-                self.bearer = tokens["bearer"]
-                self.recaptcha_token = tokens["recaptchaToken"]
-                if tokens.get("projectId"):
-                    self.project_id = tokens["projectId"]
-                print(f"    ✓ Got tokens!")
-                return True
+            if tokens:
+                print(f"    tokens: bearer={bool(tokens.get('bearer'))}, recaptcha={bool(tokens.get('recaptchaToken'))}")
+                if tokens.get("bearer") and tokens.get("recaptchaToken"):
+                    self.bearer = tokens["bearer"]
+                    self.recaptcha_token = tokens["recaptchaToken"]
+                    if tokens.get("projectId"):
+                        self.project_id = tokens["projectId"]
+                    print(f"    ✓ Got tokens!")
+                    return True
             print(f"    {i+1}s...", end="\r")
 
         print("    ✗ Không lấy được tokens")
+        print(f"    Debug: {tokens}")
         return False
 
     def call_api(self, prompt, count=4):
