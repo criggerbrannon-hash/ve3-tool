@@ -1,26 +1,14 @@
 #!/usr/bin/env python3
 """
-Google Flow API - Batch Image Generator (Full Auto)
+Google Flow API - Batch Image Generator (Semi-Auto)
 ====================================================
-Tự động hoàn toàn: nhập prompt, click Generate, download ảnh.
-
-Cách hoạt động:
-- Để UI xử lý request bình thường (không block)
-- Chỉ intercept RESPONSE để lấy image URLs
-- DrissionPage click Generate
-- Download ảnh từ response
-
-Sử dụng:
-    python batch_generator.py           # 10 prompts mặc định
-    python batch_generator.py 20        # 20 prompts
-    python batch_generator.py file.txt  # load từ file
+Script nhập prompt, bạn click Generate, script download ảnh.
 """
 
 import json
 import time
 import requests
 from pathlib import Path
-from datetime import datetime
 import random
 
 try:
@@ -45,11 +33,11 @@ DEFAULT_PROMPTS = [
     "a vintage car on route 66 at sunset",
 ]
 
-# JS interceptor - capture RESPONSE (không block request)
+# JS interceptor - bắt response
 JS_INTERCEPTOR = '''
 (function(){
-    if(window.__autoReady) return 'ALREADY_READY';
-    window.__autoReady = true;
+    if(window.__batchReady) return 'ALREADY_READY';
+    window.__batchReady = true;
     window.__images = [];
     window.__imageTime = 0;
 
@@ -58,32 +46,24 @@ JS_INTERCEPTOR = '''
         const response = await origFetch.apply(this, arguments);
         const urlStr = typeof url === 'string' ? url : url.url;
 
-        // Capture response from batchGenerateImages
         if (urlStr.includes('batchGenerateImages')) {
             try {
                 const clone = response.clone();
                 const data = await clone.json();
-
                 if (data.media && data.media.length > 0) {
                     window.__images = [];
                     for (const m of data.media) {
                         const imgUrl = m.image?.generatedImage?.fifeUrl;
-                        if (imgUrl) {
-                            window.__images.push(imgUrl);
-                        }
+                        if (imgUrl) window.__images.push(imgUrl);
                     }
                     window.__imageTime = Date.now();
-                    console.log('[AUTO] Got', window.__images.length, 'images');
+                    console.log('[BATCH] Got', window.__images.length, 'images');
                 }
-            } catch(e) {
-                console.log('[AUTO] Parse error:', e);
-            }
+            } catch(e) {}
         }
-
         return response;
     };
-
-    console.log('[AUTO] Interceptor ready');
+    console.log('[BATCH] Ready');
     return 'READY';
 })();
 '''
@@ -96,7 +76,8 @@ class BatchGenerator:
 
     def setup(self):
         print("=" * 60)
-        print("  BATCH GENERATOR (Full Auto)")
+        print("  BATCH GENERATOR (Semi-Auto)")
+        print("  Script nhập prompt, BẠN CLICK Generate")
         print("=" * 60)
 
         print("\n[1] Kết nối Chrome port 9222...")
@@ -111,12 +92,12 @@ class BatchGenerator:
 
         print(f"[2] URL: {self.driver.url}")
         if "/project/" not in self.driver.url:
-            print("    ⚠️ Hãy mở project Flow trong Chrome trước!")
+            print("    ⚠️ Hãy mở project Flow trong Chrome!")
             return False
 
         print("[3] Inject interceptor...")
-        result = self.driver.run_js(JS_INTERCEPTOR)
-        print(f"    ✓ {result}")
+        self.driver.run_js(JS_INTERCEPTOR)
+        print("    ✓ OK")
 
         return True
 
@@ -130,36 +111,17 @@ class BatchGenerator:
                 pass
         return None
 
-    def find_generate_button(self):
-        selectors = [
-            "@@text():Tạo",
-            "@@text():Generate",
-            "tag:button@@text():Tạo",
-            "tag:button@@text():Generate",
-        ]
-        for sel in selectors:
-            try:
-                el = self.driver.ele(sel, timeout=2)
-                if el:
-                    return el
-            except:
-                pass
-        return None
-
-    def wait_for_images(self, timeout=90):
-        """Wait for images from response."""
+    def wait_for_images(self, timeout=120):
         start = time.time()
         last_time = self.driver.run_js("return window.__imageTime || 0;")
 
         while time.time() - start < timeout:
-            current_time = self.driver.run_js("return window.__imageTime || 0;")
-            if current_time > last_time:
+            current = self.driver.run_js("return window.__imageTime || 0;")
+            if current > last_time:
                 images = self.driver.run_js("return window.__images || [];")
-                # Clear for next
                 self.driver.run_js("window.__images = []; window.__imageTime = 0;")
                 return images
-            time.sleep(1)
-
+            time.sleep(0.5)
         return []
 
     def download_images(self, urls, idx):
@@ -175,125 +137,74 @@ class BatchGenerator:
                 pass
         return saved
 
-    def generate_one(self, prompt, idx, total):
-        print(f"\n[{idx+1}/{total}] {prompt[:50]}...")
-
-        # Enter prompt
-        textarea = self.find_textarea()
-        if not textarea:
-            print("    ❌ Không tìm thấy textarea")
-            return False
-
-        try:
-            textarea.clear()
-            time.sleep(0.2)
-            textarea.input(prompt)
-            time.sleep(0.3)
-            print("    ✓ Nhập prompt")
-
-            # Click chuột thật vào nút Generate bằng pyautogui
-            gen_btn = self.find_generate_button()
-            if gen_btn:
-                try:
-                    import pyautogui
-                    # Lấy vị trí của button trên màn hình
-                    rect = gen_btn.rect
-                    # rect.midpoint hoặc tính từ location + size
-                    x = rect.location['x'] + rect.size['width'] // 2
-                    y = rect.location['y'] + rect.size['height'] // 2
-
-                    # Click chuột thật
-                    pyautogui.click(x, y)
-                    print(f"    ✓ Click tại ({x}, {y})")
-                except Exception as e:
-                    print(f"    ⚠️ pyautogui error: {e}")
-                    gen_btn.click()
-                    print("    ✓ Click button (DrissionPage)")
-            else:
-                print("    ❌ Không tìm thấy nút Generate")
-            time.sleep(0.5)
-
-        except Exception as e:
-            print(f"    ❌ Lỗi: {e}")
-            # Fallback: thử click button
-            try:
-                gen_btn = self.find_generate_button()
-                if gen_btn:
-                    gen_btn.click()
-                    print("    ✓ Click button (fallback)")
-            except:
-                return False
-
-        # Wait for response
-        print("    → Đang chờ ảnh...")
-        images = self.wait_for_images(timeout=90)
-
-        if not images:
-            print("    ❌ Timeout!")
-            return False
-
-        # Download
-        saved = self.download_images(images, idx)
-        if saved:
-            print(f"    ✓ Saved: {', '.join(saved)}")
-            return True
-        else:
-            print("    ❌ Download thất bại")
-            return False
-
     def run_batch(self, prompts):
         print(f"\n{'=' * 60}")
-        print(f"  TẠO {len(prompts)} ẢNH (Full Auto)")
+        print(f"  TẠO {len(prompts)} ẢNH")
+        print(f"  Script nhập prompt → BẠN CLICK Generate → Script download")
         print(f"{'=' * 60}")
 
         self.stats["total"] = len(prompts)
 
         for i, prompt in enumerate(prompts):
-            success = self.generate_one(prompt, i, len(prompts))
+            print(f"\n[{i+1}/{len(prompts)}] {prompt[:50]}...")
 
-            if success:
+            # Nhập prompt
+            textarea = self.find_textarea()
+            if textarea:
+                try:
+                    textarea.clear()
+                    time.sleep(0.2)
+                    textarea.input(prompt)
+                    print("    ✓ Đã nhập prompt")
+                except:
+                    print("    ⚠️ Không nhập được")
+
+            # Chờ user click Generate
+            print("    → CLICK 'Generate' TRONG CHROME...")
+
+            images = self.wait_for_images(timeout=120)
+
+            if not images:
+                print("    ❌ Timeout!")
+                self.stats["failed"] += 1
+                continue
+
+            # Download
+            saved = self.download_images(images, i)
+            if saved:
+                print(f"    ✓ Saved: {', '.join(saved)}")
                 self.stats["success"] += 1
             else:
+                print("    ❌ Download thất bại")
                 self.stats["failed"] += 1
 
-            # Delay between prompts
-            if i < len(prompts) - 1:
-                delay = random.uniform(2, 4)
-                print(f"    ... chờ {delay:.1f}s")
-                time.sleep(delay)
+            time.sleep(1)
 
         print(f"\n{'=' * 60}")
-        print(f"  HOÀN THÀNH!")
-        print(f"  Success: {self.stats['success']}/{self.stats['total']}")
-        print(f"  Failed: {self.stats['failed']}")
+        print(f"  HOÀN THÀNH: {self.stats['success']}/{self.stats['total']}")
         print(f"  Output: {OUTPUT_DIR.absolute()}")
         print(f"{'=' * 60}")
 
 
 def main():
     import sys
-
     gen = BatchGenerator()
 
     if not gen.setup():
         return
 
     prompts = DEFAULT_PROMPTS
-
     if len(sys.argv) > 1:
         arg = sys.argv[1]
         if arg.isdigit():
-            n = int(arg)
-            prompts = (DEFAULT_PROMPTS * 10)[:n]
-            print(f"\n→ {n} prompts")
+            prompts = (DEFAULT_PROMPTS * 10)[:int(arg)]
         else:
             try:
                 prompts = [l.strip() for l in open(arg, encoding='utf-8') if l.strip()]
-                print(f"\n→ {len(prompts)} prompts từ {arg}")
             except:
-                print(f"    ⚠️ Không đọc được {arg}")
-    else:
-        print(f"\n→ {len(prompts)} prompts mặc định")
+                pass
+
+    print(f"\n→ {len(prompts)} prompts")
 
     try:
         gen.run_batch(prompts)
