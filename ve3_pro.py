@@ -1991,21 +1991,56 @@ class UnixVoiceToVideo:
                             results["processed"] += 1
                             if result and result.get('success'):
                                 results["success"] += 1
-                                # === XÓA FILE VOICE SAU KHI THÀNH CÔNG ===
+                                # === XÓA CÁC FILE LIÊN QUAN SAU KHI THÀNH CÔNG ===
                                 try:
+                                    import shutil
+                                    stem = voice_path.stem  # AR16-0035
+                                    parent_folder = voice_path.parent  # voice/AR16-T1/
+                                    voice_root = self.batch_voice_folder  # voice/
+
+                                    # 1. Xóa file voice chính (.mp3/.wav)
                                     if voice_path.exists():
                                         voice_path.unlink()
                                         self.root.after(0, lambda vp=voice_path:
-                                            self.log(f"[W{worker_id}] 🗑️ Đã xóa: {vp.name}"))
-                                        # Xóa thư mục cha nếu rỗng
-                                        parent_folder = voice_path.parent
-                                        if parent_folder.exists() and not any(parent_folder.iterdir()):
-                                            parent_folder.rmdir()
-                                            self.root.after(0, lambda pf=parent_folder:
-                                                self.log(f"[W{worker_id}] 🗑️ Xóa folder rỗng: {pf.name}"))
+                                            self.log(f"[W{worker_id}] 🗑️ Xóa: {vp.name}"))
+
+                                    # 2. Xóa .txt trong cùng thư mục (voice/AR16-T1/AR16-0035.txt)
+                                    txt_in_folder = parent_folder / f"{stem}.txt"
+                                    if txt_in_folder.exists():
+                                        txt_in_folder.unlink()
+                                        self.root.after(0, lambda: self.log(f"[W{worker_id}] 🗑️ Xóa: {stem}.txt"))
+
+                                    # 3. Xóa .dgt trong cùng thư mục (voice/AR16-T1/AR16-0035.dgt)
+                                    dgt_in_folder = parent_folder / f"{stem}.dgt"
+                                    if dgt_in_folder.exists():
+                                        dgt_in_folder.unlink()
+                                        self.root.after(0, lambda: self.log(f"[W{worker_id}] 🗑️ Xóa: {stem}.dgt"))
+
+                                    # 4. Xóa thư mục con (voice/AR16-T1/AR16-0035/)
+                                    sub_folder = parent_folder / stem
+                                    if sub_folder.exists() and sub_folder.is_dir():
+                                        shutil.rmtree(sub_folder)
+                                        self.root.after(0, lambda sf=sub_folder:
+                                            self.log(f"[W{worker_id}] 🗑️ Xóa folder: {sf.name}/"))
+
+                                    # 5. Copy .txt từ voice root sang voice/done/ (lưu trữ)
+                                    txt_in_root = voice_root / f"{stem}.txt"
+                                    if txt_in_root.exists():
+                                        done_archive = voice_root / "done"
+                                        done_archive.mkdir(parents=True, exist_ok=True)
+                                        shutil.copy2(txt_in_root, done_archive / f"{stem}.txt")
+                                        txt_in_root.unlink()
+                                        self.root.after(0, lambda: self.log(f"[W{worker_id}] 📦 Lưu trữ: {stem}.txt → voice/done/"))
+
+                                    # 6. Xóa thư mục cha nếu rỗng
+                                    if parent_folder.exists() and not any(parent_folder.iterdir()):
+                                        parent_folder.rmdir()
+                                        self.root.after(0, lambda pf=parent_folder:
+                                            self.log(f"[W{worker_id}] 🗑️ Xóa folder rỗng: {pf.name}"))
+
                                 except Exception as del_err:
                                     self.root.after(0, lambda err=del_err:
-                                        self.log(f"[W{worker_id}] ⚠️ Không xóa được voice: {err}", "WARN"))
+                                        self.log(f"[W{worker_id}] ⚠️ Lỗi xóa file: {err}", "WARN"))
                             else:
                                 results["failed"] += 1
 
