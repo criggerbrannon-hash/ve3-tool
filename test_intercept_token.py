@@ -34,8 +34,13 @@ print("""
 print('''(function(){
   window.fetch = async (url, opts) => {
     if (url.includes('batchGenerateImages')) {
-      navigator.clipboard.writeText(opts.body);
-      alert("PAYLOAD DA COPY! Paste vao terminal.");
+      // Tạo file download thay vì clipboard
+      const blob = new Blob([opts.body], {type: 'application/json'});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'payload.json';
+      a.click();
+      alert("DA DOWNLOAD payload.json!");
       return new Response('{}');
     }
     return window.__origFetch(url, opts);
@@ -46,20 +51,38 @@ print('''(function(){
 
 print("""
 ==================================================
-  BƯỚC 3: Tạo ảnh → Alert "PAYLOAD DA COPY"
-  BƯỚC 4: Paste payload vào đây (Ctrl+V, Enter)
+  BƯỚC 3: Tạo ảnh → Download file payload.json
+  BƯỚC 4: Kéo file payload.json vào đây hoặc gõ path
 ==================================================
 """)
 
-payload_str = input("Payload: ").strip()
-if not payload_str:
-    print("Không có payload!")
-    exit()
+file_path = input("Path to payload.json: ").strip().strip('"')
+if not file_path:
+    file_path = "payload.json"
 
 try:
-    payload = json.loads(payload_str)
-except:
-    print("JSON không hợp lệ!")
+    from pathlib import Path
+    # Thử nhiều vị trí
+    locations = [
+        file_path,
+        Path.home() / "Downloads" / "payload.json",
+        Path("C:/Users/admin/Downloads/payload.json"),
+    ]
+
+    payload = None
+    for loc in locations:
+        try:
+            payload = json.loads(Path(loc).read_text(encoding='utf-8'))
+            print(f"✓ Loaded from: {loc}")
+            break
+        except:
+            continue
+
+    if not payload:
+        print("Không tìm thấy file!")
+        exit()
+except Exception as e:
+    print(f"Lỗi: {e}")
     exit()
 
 project_id = payload.get("requests", [{}])[0].get("clientContext", {}).get("projectId", "")
