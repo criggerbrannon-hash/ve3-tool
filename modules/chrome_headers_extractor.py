@@ -103,84 +103,79 @@ class ChromeHeadersExtractor:
 
     def start_browser(self) -> bool:
         """
-        Khởi động Chrome với CDP enabled.
-        Copy từ browser_flow_generator._create_driver() để đảm bảo tương thích.
+        Khởi động Chrome bằng subprocess (như người dùng thật) rồi connect Selenium.
         """
         import os
         import random
-        import shutil
+        import subprocess
+        import time
 
         try:
             from selenium import webdriver
             from selenium.webdriver.chrome.options import Options
 
-            options = Options()
-
-            # Set Chrome binary - use specified path or find automatically
-            if self.chrome_binary and os.path.exists(self.chrome_binary):
-                options.binary_location = self.chrome_binary
-                self._log(f"Chrome binary (specified): {self.chrome_binary}")
-            else:
-                # Find Chrome binary automatically
+            # Find Chrome binary
+            chrome_binary = self.chrome_binary
+            if not chrome_binary or not os.path.exists(chrome_binary):
                 chrome_paths = [
                     r"C:\Program Files\Google\Chrome\Application\chrome.exe",
                     r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
                     "/usr/bin/google-chrome",
                     "/usr/bin/chromium-browser",
                 ]
-                for chrome_path in chrome_paths:
-                    if os.path.exists(chrome_path):
-                        options.binary_location = chrome_path
-                        self._log(f"Chrome binary (auto): {chrome_path}")
+                for path in chrome_paths:
+                    if os.path.exists(path):
+                        chrome_binary = path
                         break
 
-            # Setup Chrome profile
+            if not chrome_binary:
+                self._log("Chrome not found!")
+                return False
+
+            self._log(f"Chrome binary: {chrome_binary}")
+
+            # Random debug port
+            self.debug_port = random.randint(9222, 9299)
+            self._log(f"Debug port: {self.debug_port}")
+
+            # Build Chrome command - như người dùng thật mở Chrome
+            cmd = [chrome_binary]
+            cmd.append(f"--remote-debugging-port={self.debug_port}")
+
             if self.chrome_profile_path:
-                user_data_dir = Path(self.chrome_profile_path)
-                self._log(f"User Data Dir: {user_data_dir}")
+                cmd.append(f"--user-data-dir={self.chrome_profile_path}")
+                self._log(f"User Data Dir: {self.chrome_profile_path}")
 
-                # Use profile directly (don't copy) - requires Chrome to be closed!
-                options.add_argument(f"--user-data-dir={user_data_dir}")
+            if self.profile_directory:
+                cmd.append(f"--profile-directory={self.profile_directory}")
+                self._log(f"Profile Directory: {self.profile_directory}")
 
-                # Add specific profile directory if specified (e.g., "Profile 2")
-                if self.profile_directory:
-                    options.add_argument(f"--profile-directory={self.profile_directory}")
-                    self._log(f"Profile Directory: {self.profile_directory}")
-                else:
-                    self._log("Using Default profile")
+            # Mở Chrome bằng subprocess (như click vào icon Chrome)
+            self._log(f"Launching Chrome...")
+            self._log(f"Command: {' '.join(cmd[:3])}...")
 
-            # Random debug port (tranh xung dot)
-            debug_port = random.randint(9222, 9999)
-            options.add_argument(f"--remote-debugging-port={debug_port}")
-            self._log(f"Debug port: {debug_port}")
+            # Start Chrome process
+            self._chrome_process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
 
-            if self.headless:
-                options.add_argument("--headless=new")
-                options.add_argument("--disable-gpu")
+            # Đợi Chrome khởi động
+            self._log("Waiting for Chrome to start (5s)...")
+            time.sleep(5)
 
-            # Cac options giong browser_flow_generator
-            options.add_argument("--no-sandbox")
-            options.add_argument("--disable-dev-shm-usage")
-            options.add_argument("--disable-blink-features=AutomationControlled")
-            options.add_argument("--disable-extensions")
-            options.add_argument("--disable-infobars")
-            options.add_argument("--window-size=1920,1080")
+            # Connect Selenium to running Chrome
+            self._log(f"Connecting Selenium to Chrome on port {self.debug_port}...")
+            options = Options()
+            options.add_experimental_option("debuggerAddress", f"127.0.0.1:{self.debug_port}")
 
-            # Enable CDP logging
+            # Enable performance logging
             options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
 
-            options.add_experimental_option("excludeSwitches", ["enable-automation", "enable-logging"])
-            options.add_experimental_option("useAutomationExtension", False)
-
-            self._log(f"Dang khoi dong Chrome...")
             self.driver = webdriver.Chrome(options=options)
+            self._log("Connected to Chrome!")
 
-            # Hide webdriver
-            self.driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
-                "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-            })
-
-            self._log("Browser started!")
             return True
 
         except Exception as e:
@@ -457,13 +452,25 @@ class ChromeHeadersExtractor:
             return self.captured_headers
 
     def stop_browser(self):
-        """Đóng browser."""
+        """Đóng browser và Chrome process."""
         if self.driver:
             try:
                 self.driver.quit()
             except:
                 pass
             self.driver = None
+
+        # Đóng Chrome process nếu đã start bằng subprocess
+        if hasattr(self, '_chrome_process') and self._chrome_process:
+            try:
+                self._chrome_process.terminate()
+                self._chrome_process.wait(timeout=5)
+            except:
+                try:
+                    self._chrome_process.kill()
+                except:
+                    pass
+            self._chrome_process = None
 
 
 def extract_headers_for_api(chrome_profile: str = None) -> Dict[str, str]:
