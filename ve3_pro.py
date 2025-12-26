@@ -957,6 +957,30 @@ class UnixVoiceToVideo:
                         variable=gen_mode_var, value="api",
                         command=on_mode_change).pack(side=tk.LEFT)
 
+        # API Provider setting (nanoai vs direct)
+        ttk.Separator(prof_tab, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(15, 10))
+        ttk.Label(prof_tab, text="API Provider (khi chọn API mode):",
+                  font=('Segoe UI', 10, 'bold')).pack(anchor=tk.W)
+        ttk.Label(prof_tab, text="Direct: Miễn phí, tự lấy token | Nanoai: Trả phí, ổn định hơn",
+                  foreground='gray', font=('Segoe UI', 9)).pack(anchor=tk.W, pady=(0, 5))
+
+        api_provider_frame = ttk.Frame(prof_tab)
+        api_provider_frame.pack(fill=tk.X, pady=(5, 10))
+
+        current_provider = self._get_api_provider()
+        api_provider_var = tk.StringVar(value=current_provider)
+
+        def on_provider_change():
+            provider = api_provider_var.get()
+            self._save_api_provider(provider)
+
+        ttk.Radiobutton(api_provider_frame, text="🆓 Direct (Miễn phí - tự capture token)",
+                        variable=api_provider_var, value="direct",
+                        command=on_provider_change).pack(side=tk.LEFT, padx=(0, 20))
+        ttk.Radiobutton(api_provider_frame, text="💰 Nanoai.pics (Trả phí - cần API key)",
+                        variable=api_provider_var, value="nanoai",
+                        command=on_provider_change).pack(side=tk.LEFT)
+
         # Parallel workers setting (for batch processing)
         ttk.Separator(prof_tab, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(15, 10))
         ttk.Label(prof_tab, text="Số luồng xử lý song song (Auto Batch):",
@@ -1521,6 +1545,36 @@ class UnixVoiceToVideo:
             self.log(f"Generation mode: {mode_name}", "OK")
         except Exception as e:
             print(f"Save generation_mode error: {e}")
+
+    def _get_api_provider(self) -> str:
+        """Get API provider from config: 'direct' or 'nanoai'."""
+        try:
+            import yaml
+            config_path = CONFIG_DIR / "settings.yaml"
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+                return config.get('api_provider', 'direct')
+        except:
+            pass
+        return 'direct'  # Default: Direct (miễn phí)
+
+    def _save_api_provider(self, provider: str):
+        """Save API provider to config: 'direct' or 'nanoai'."""
+        try:
+            import yaml
+            config_path = CONFIG_DIR / "settings.yaml"
+            config = {}
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+            config['api_provider'] = provider
+            with open(config_path, 'w', encoding='utf-8') as f:
+                yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+            provider_name = "Direct (Miễn phí)" if provider == 'direct' else "Nanoai.pics (Trả phí)"
+            self.log(f"API Provider: {provider_name}", "OK")
+        except Exception as e:
+            print(f"Save api_provider error: {e}")
 
     def _get_parallel_workers(self) -> int:
         """Get number of parallel workers from config."""

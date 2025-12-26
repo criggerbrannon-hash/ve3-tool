@@ -24,6 +24,11 @@ flow_image_count: 2
 flow_timeout: 120
 flow_delay: 3.0
 
+# API Provider: "direct" hoặc "nanoai"
+# - direct: Miễn phí, tự capture token từ browser (mặc định)
+# - nanoai: Trả phí qua nanoai.pics, ổn định hơn
+api_provider: "direct"
+
 # ============================================================================
 # VIDEO GENERATION (VEO 3) Settings
 # ============================================================================
