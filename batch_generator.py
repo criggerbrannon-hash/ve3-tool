@@ -109,49 +109,6 @@ class BatchGenerator:
                 pass
         return None
 
-    def find_generate_button(self):
-        """Tìm nút Generate"""
-        # Thử nhiều selector
-        selectors = [
-            'xpath://button[contains(., "Generate")]',
-            'xpath://button[contains(text(), "Generate")]',
-            'css:button[aria-label*="Generate"]',
-            'css:button[data-testid*="generate"]',
-        ]
-        for sel in selectors:
-            try:
-                btn = self.driver.ele(sel, timeout=1)
-                if btn:
-                    return btn
-            except:
-                pass
-        return None
-
-    def click_generate(self):
-        """Click nút Generate"""
-        btn = self.find_generate_button()
-        if btn:
-            try:
-                btn.click()
-                return True
-            except:
-                pass
-
-        # Fallback: dùng JS click
-        js_click = '''
-        (function() {
-            const buttons = document.querySelectorAll('button');
-            for (const btn of buttons) {
-                if (btn.textContent.includes('Generate')) {
-                    btn.click();
-                    return true;
-                }
-            }
-            return false;
-        })();
-        '''
-        return self.driver.run_js(js_click)
-
     def wait_for_images(self, timeout=120):
         start = time.time()
         last_time = self.driver.run_js("return window.__imageTime || 0;")
@@ -196,17 +153,13 @@ class BatchGenerator:
                     time.sleep(0.3)
                     textarea.input(prompt)
                     print("    ✓ Đã nhập prompt")
+
+                    # Nhấn Enter để gửi
+                    time.sleep(0.3)
+                    textarea.input('\n')
+                    print("    ✓ Đã nhấn Enter")
                 except Exception as e:
-                    print(f"    ⚠️ Lỗi nhập: {e}")
-
-            time.sleep(0.5)
-
-            # Auto click Generate
-            print("    → Auto click Generate...")
-            if self.click_generate():
-                print("    ✓ Đã click")
-            else:
-                print("    ⚠️ Không tìm thấy nút Generate")
+                    print(f"    ⚠️ Lỗi: {e}")
 
             # Chờ ảnh
             images = self.wait_for_images(timeout=120)
