@@ -1905,7 +1905,7 @@ class SmartEngine:
         self.log("="*50)
 
         # === RESUME CHECK: Kiểm tra đã làm đến bước nào ===
-        final_video = proj_dir / f"{name}_final.mp4"
+        final_video = proj_dir / f"{name}.mp4"
 
         # Nếu video cuối đã tồn tại → hoàn thành rồi
         if final_video.exists():
@@ -2499,10 +2499,10 @@ class SmartEngine:
 
         # Xử lý SRT: tách dòng dài (max 50 ký tự)
         if srt_path:
-            processed_srt = proj_dir / f"{name}_video.srt"
+            processed_srt = proj_dir / f"{name}.srt"
             srt_path = self._process_srt_for_video(srt_path, processed_srt, max_chars=50)
 
-        output_path = proj_dir / f"{name}_final.mp4"
+        output_path = proj_dir / f"{name}.mp4"
         img_dir = proj_dir / "img"
 
         self.log(f"  Voice: {voice_path.name}")
@@ -2780,14 +2780,21 @@ class SmartEngine:
 
                             # Log hiệu ứng đang dùng (mỗi 5 ảnh)
                             if i % 5 == 0:
-                                self.log(f"    #{item['id']}: {kb_effect.value}")
+                                self.log(f"    #{item['id']}: {kb_effect.value} (mode={'balanced' if use_simple_kb else 'quality'})")
+
+                            # Debug: Log filter cho clip đầu tiên
+                            if i == 0:
+                                self.log(f"  [DEBUG] Filter clip 0: {vf[:150]}...")
                         else:
-                            # FAST MODE: Chỉ scale về 1920x1080, không zoom/crop
-                            # Nhanh nhất, ảnh giữ nguyên tỷ lệ
+                            # FAST MODE: Chỉ scale giữ nguyên tỷ lệ, không crop
+                            # Nhanh nhất - không có hiệu ứng gì
+                            base_filter = "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2"
+
+                            # Thêm fade
                             if fade_filter:
-                                vf = f"scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,{fade_filter}"
+                                vf = f"{base_filter},{fade_filter}"
                             else:
-                                vf = f"scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2"
+                                vf = base_filter
 
                         # Build FFmpeg command với GPU acceleration nếu có
                         # Fast mode dùng preset nhanh nhất
@@ -2967,7 +2974,7 @@ class SmartEngine:
         import subprocess
         import shutil
 
-        output_path = proj_dir / f"{name}_final.mp4"
+        output_path = proj_dir / f"{name}.mp4"
         temp_video = Path(temp_dir) / "temp_video.mp4"
         temp_with_audio = Path(temp_dir) / "with_audio.mp4"
 

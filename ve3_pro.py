@@ -179,7 +179,7 @@ class UnixVoiceToVideo:
         # Tool: D:\AUTO\ve3-tool → Parent: D:\AUTO
         # Voice: D:\AUTO\voice, Done: D:\AUTO\done
         self.batch_voice_folder = ROOT_DIR.parent / "voice"
-        self.batch_done_folder = ROOT_DIR.parent / "done"
+        self.batch_done_folder = ROOT_DIR / "PROJECTS"
 
         # Data
         self.profiles: List[str] = []
@@ -648,12 +648,12 @@ class UnixVoiceToVideo:
         for subfolder in self.batch_voice_folder.iterdir():
             if subfolder.is_dir():
                 for voice_file in subfolder.glob("*.mp3"):
-                    # Check if video already exists (done/voice_stem/voice_stem_final.mp4)
-                    done_video = self.batch_done_folder / voice_file.stem / f"{voice_file.stem}_final.mp4"
+                    # Check if video already exists (PROJECTS/voice_stem/voice_stem.mp4)
+                    done_video = self.batch_done_folder / voice_file.stem / f"{voice_file.stem}.mp4"
                     if not done_video.exists():
                         pending += 1
                 for voice_file in subfolder.glob("*.wav"):
-                    done_video = self.batch_done_folder / voice_file.stem / f"{voice_file.stem}_final.mp4"
+                    done_video = self.batch_done_folder / voice_file.stem / f"{voice_file.stem}.mp4"
                     if not done_video.exists():
                         pending += 1
         return pending
@@ -956,6 +956,30 @@ class UnixVoiceToVideo:
         ttk.Radiobutton(gen_mode_frame, text="⚡ API (Direct - cần Bearer Token)",
                         variable=gen_mode_var, value="api",
                         command=on_mode_change).pack(side=tk.LEFT)
+
+        # API Provider setting (nanoai vs direct)
+        ttk.Separator(prof_tab, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(15, 10))
+        ttk.Label(prof_tab, text="API Provider (khi chọn API mode):",
+                  font=('Segoe UI', 10, 'bold')).pack(anchor=tk.W)
+        ttk.Label(prof_tab, text="Direct: Miễn phí, tự lấy token | Nanoai: Trả phí, ổn định hơn",
+                  foreground='gray', font=('Segoe UI', 9)).pack(anchor=tk.W, pady=(0, 5))
+
+        api_provider_frame = ttk.Frame(prof_tab)
+        api_provider_frame.pack(fill=tk.X, pady=(5, 10))
+
+        current_provider = self._get_api_provider()
+        api_provider_var = tk.StringVar(value=current_provider)
+
+        def on_provider_change():
+            provider = api_provider_var.get()
+            self._save_api_provider(provider)
+
+        ttk.Radiobutton(api_provider_frame, text="🆓 Direct (Miễn phí - tự capture token)",
+                        variable=api_provider_var, value="direct",
+                        command=on_provider_change).pack(side=tk.LEFT, padx=(0, 20))
+        ttk.Radiobutton(api_provider_frame, text="💰 Nanoai.pics (Trả phí - cần API key)",
+                        variable=api_provider_var, value="nanoai",
+                        command=on_provider_change).pack(side=tk.LEFT)
 
         # Parallel workers setting (for batch processing)
         ttk.Separator(prof_tab, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(15, 10))
@@ -1522,6 +1546,36 @@ class UnixVoiceToVideo:
         except Exception as e:
             print(f"Save generation_mode error: {e}")
 
+    def _get_api_provider(self) -> str:
+        """Get API provider from config: 'direct' or 'nanoai'."""
+        try:
+            import yaml
+            config_path = CONFIG_DIR / "settings.yaml"
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+                return config.get('api_provider', 'direct')
+        except:
+            pass
+        return 'direct'  # Default: Direct (miễn phí)
+
+    def _save_api_provider(self, provider: str):
+        """Save API provider to config: 'direct' or 'nanoai'."""
+        try:
+            import yaml
+            config_path = CONFIG_DIR / "settings.yaml"
+            config = {}
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+            config['api_provider'] = provider
+            with open(config_path, 'w', encoding='utf-8') as f:
+                yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+            provider_name = "Direct (Miễn phí)" if provider == 'direct' else "Nanoai.pics (Trả phí)"
+            self.log(f"API Provider: {provider_name}", "OK")
+        except Exception as e:
+            print(f"Save api_provider error: {e}")
+
     def _get_parallel_workers(self) -> int:
         """Get number of parallel workers from config."""
         try:
@@ -1846,7 +1900,7 @@ class UnixVoiceToVideo:
                     output_folder = self.batch_done_folder / voice_file.stem
 
                     # Check if video already exists
-                    final_video = output_folder / f"{voice_file.stem}_final.mp4"
+                    final_video = output_folder / f"{voice_file.stem}.mp4"
                     if final_video.exists():
                         continue
 
@@ -1991,6 +2045,56 @@ class UnixVoiceToVideo:
                             results["processed"] += 1
                             if result and result.get('success'):
                                 results["success"] += 1
+                                # === XÓA CÁC FILE LIÊN QUAN SAU KHI THÀNH CÔNG ===
+                                try:
+                                    import shutil
+                                    stem = voice_path.stem  # AR16-0035
+                                    parent_folder = voice_path.parent  # voice/AR16-T1/
+                                    voice_root = self.batch_voice_folder  # voice/
+
+                                    # 1. Xóa file voice chính (.mp3/.wav)
+                                    if voice_path.exists():
+                                        voice_path.unlink()
+                                        self.root.after(0, lambda vp=voice_path:
+                                            self.log(f"[W{worker_id}] 🗑️ Xóa: {vp.name}"))
+
+                                    # 2. Xóa .txt trong cùng thư mục (voice/AR16-T1/AR16-0035.txt)
+                                    txt_in_folder = parent_folder / f"{stem}.txt"
+                                    if txt_in_folder.exists():
+                                        txt_in_folder.unlink()
+                                        self.root.after(0, lambda: self.log(f"[W{worker_id}] 🗑️ Xóa: {stem}.txt"))
+
+                                    # 3. Xóa .dgt trong cùng thư mục (voice/AR16-T1/AR16-0035.dgt)
+                                    dgt_in_folder = parent_folder / f"{stem}.dgt"
+                                    if dgt_in_folder.exists():
+                                        dgt_in_folder.unlink()
+                                        self.root.after(0, lambda: self.log(f"[W{worker_id}] 🗑️ Xóa: {stem}.dgt"))
+
+                                    # 4. Xóa thư mục con (voice/AR16-T1/AR16-0035/)
+                                    sub_folder = parent_folder / stem
+                                    if sub_folder.exists() and sub_folder.is_dir():
+                                        shutil.rmtree(sub_folder)
+                                        self.root.after(0, lambda sf=sub_folder:
+                                            self.log(f"[W{worker_id}] 🗑️ Xóa folder: {sf.name}/"))
+
+                                    # 5. Copy .txt từ voice root sang voice/done/ (lưu trữ)
+                                    txt_in_root = voice_root / f"{stem}.txt"
+                                    if txt_in_root.exists():
+                                        done_archive = voice_root / "done"
+                                        done_archive.mkdir(parents=True, exist_ok=True)
+                                        shutil.copy2(txt_in_root, done_archive / f"{stem}.txt")
+                                        txt_in_root.unlink()
+                                        self.root.after(0, lambda: self.log(f"[W{worker_id}] 📦 Lưu trữ: {stem}.txt → voice/done/"))
+
+                                    # 6. Xóa thư mục cha nếu rỗng
+                                    if parent_folder.exists() and not any(parent_folder.iterdir()):
+                                        parent_folder.rmdir()
+                                        self.root.after(0, lambda pf=parent_folder:
+                                            self.log(f"[W{worker_id}] 🗑️ Xóa folder rỗng: {pf.name}"))
+
+                                except Exception as del_err:
+                                    self.root.after(0, lambda err=del_err:
+                                        self.log(f"[W{worker_id}] ⚠️ Lỗi xóa file: {err}", "WARN"))
                             else:
                                 results["failed"] += 1
 
