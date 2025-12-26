@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Lấy token thủ công từ Chrome DevTools
+Kết hợp: JS chặn request + copy Authorization header thủ công
 """
 
 import json
@@ -9,88 +9,93 @@ from pathlib import Path
 
 print("""
 ==================================================
-  BƯỚC 1: Mở Chrome → Flow → F12 → Network tab
-  BƯỚC 2: Tạo ảnh trong Flow
-  BƯỚC 3: Tìm request "batchGenerateImages"
-  BƯỚC 4: Click vào → Headers tab
-  BƯỚC 5: Copy "authorization" header (Bearer ya29.xxx...)
+  BƯỚC 1: Lấy Authorization header TRƯỚC
+==================================================
+  - F12 → Network → tạo 1 ảnh bất kỳ
+  - Copy "authorization: Bearer ya29.xxx..."
 ==================================================
 """)
 
-bearer = input("Paste Authorization header: ").strip()
+bearer = input("Paste Authorization: ").strip()
 if bearer.startswith("Bearer "):
     bearer = bearer[7:]
-
-if not bearer or not bearer.startswith("ya29."):
-    print("Token không hợp lệ! Phải bắt đầu bằng ya29.")
+if not bearer.startswith("ya29."):
+    print("Sai! Phải là ya29.xxx")
     exit()
 
-print(f"\n✓ Token: {bearer[:30]}...{bearer[-10:]}")
+print(f"✓ Bearer OK")
 
 print("""
 ==================================================
-  BƯỚC 6: Click Payload tab
-  BƯỚC 7: Right-click → Copy value (hoặc copy thủ công)
+  BƯỚC 2: Paste JS vào Console (F12 → Console)
 ==================================================
 """)
 
-print("Paste request payload (JSON):")
-lines = []
-while True:
-    line = input()
-    if line.strip() == "":
-        break
-    lines.append(line)
+print('''(function(){
+  window.fetch = async (url, opts) => {
+    if (url.includes('batchGenerateImages')) {
+      navigator.clipboard.writeText(opts.body);
+      alert("PAYLOAD DA COPY! Paste vao terminal.");
+      return new Response('{}');
+    }
+    return window.__origFetch(url, opts);
+  };
+  window.__origFetch = window.__origFetch || fetch;
+  alert("OK! Tao anh di.");
+})();''')
 
-payload_str = "".join(lines)
+print("""
+==================================================
+  BƯỚC 3: Tạo ảnh → Alert "PAYLOAD DA COPY"
+  BƯỚC 4: Paste payload vào đây (Ctrl+V, Enter)
+==================================================
+""")
+
+payload_str = input("Payload: ").strip()
+if not payload_str:
+    print("Không có payload!")
+    exit()
 
 try:
     payload = json.loads(payload_str)
 except:
-    print("Payload không hợp lệ!")
+    print("JSON không hợp lệ!")
     exit()
 
-# Lấy URL từ payload
 project_id = payload.get("requests", [{}])[0].get("clientContext", {}).get("projectId", "")
 url = f"https://aisandbox-pa.googleapis.com/v1/projects/{project_id}/flowMedia:batchGenerateImages"
 
-print(f"\n✓ Project: {project_id}")
+print(f"✓ Project: {project_id}")
 
 # Đổi prompt
 for r in payload.get("requests", []):
-    r["prompt"] = "A dragon flying over mountains, fantasy art, 4k"
-    r["seed"] = 999999
+    r["prompt"] = "A majestic dragon over mountains, 4k"
+    r["seed"] = 888888
 
-print("✓ Prompt: A dragon flying over mountains")
-
-# Gọi API
+print("✓ Prompt: dragon")
 print("\n⏳ Gọi API...")
 
-resp = requests.post(
-    url,
-    headers={
-        "Authorization": f"Bearer {bearer}",
-        "Content-Type": "text/plain;charset=UTF-8",
-        "Origin": "https://labs.google",
-        "Referer": "https://labs.google/",
-    },
-    data=json.dumps(payload),
-    timeout=120
-)
+resp = requests.post(url, headers={
+    "Authorization": f"Bearer {bearer}",
+    "Content-Type": "text/plain;charset=UTF-8",
+    "Origin": "https://labs.google",
+    "Referer": "https://labs.google/",
+}, data=json.dumps(payload), timeout=120)
 
 print(f"Status: {resp.status_code}")
 
 if resp.status_code == 200:
     result = resp.json()
     if "media" in result:
-        print(f"\n✅ THÀNH CÔNG! {len(result['media'])} ảnh")
+        print(f"✅ THÀNH CÔNG! {len(result['media'])} ảnh")
         Path("./test_output").mkdir(exist_ok=True)
         for i, m in enumerate(result["media"]):
-            img_url = m.get("image", {}).get("generatedImage", {}).get("fifeUrl")
-            if img_url:
-                Path(f"./test_output/dragon_{i+1}.png").write_bytes(requests.get(img_url).content)
-                print(f"   💾 ./test_output/dragon_{i+1}.png")
-    else:
-        print(f"Không có ảnh: {str(result)[:200]}")
+            u = m.get("image", {}).get("generatedImage", {}).get("fifeUrl")
+            if u:
+                Path(f"./test_output/dragon_{i+1}.png").write_bytes(requests.get(u).content)
+                print(f"   💾 dragon_{i+1}.png")
+elif resp.status_code == 403:
+    print("❌ 403 - Token hết hạn hoặc đã dùng")
+    print(resp.text[:200])
 else:
-    print(f"❌ Lỗi: {resp.text[:300]}")
+    print(f"❌ {resp.text[:200]}")
