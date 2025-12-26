@@ -25,25 +25,23 @@ JS_CODE = '''
   const orig = fetch;
   window.fetch = async (url, opts) => {
     if (url.includes('batchGenerateImages')) {
-      // Convert Headers object to plain object
       let h = {};
       if (opts.headers) {
-        if (opts.headers.forEach) {
-          opts.headers.forEach((v,k) => h[k]=v);
-        } else {
-          h = opts.headers;
-        }
+        if (opts.headers.forEach) opts.headers.forEach((v,k) => h[k]=v);
+        else h = opts.headers;
       }
       const data = btoa(unescape(encodeURIComponent(JSON.stringify({url, headers: h, body: opts.body}))));
-      console.log("=== COPY THIS ===");
-      console.log(data);
-      console.log("=================");
-      prompt("Copy this:", data);
+
+      // Copy to clipboard
+      navigator.clipboard.writeText(data).then(() => {
+        alert("DA COPY VAO CLIPBOARD! Quay lai terminal paste.");
+      });
+
       return new Response('{"blocked":true}');
     }
     return orig(url, opts);
   };
-  alert("OK! Giờ tạo ảnh đi.");
+  alert("OK! Gio tao anh di.");
 })();
 '''
 
