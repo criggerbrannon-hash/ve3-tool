@@ -90,12 +90,9 @@ url = f"https://aisandbox-pa.googleapis.com/v1/projects/{project_id}/flowMedia:b
 
 print(f"✓ Project: {project_id}")
 
-# Đổi prompt
-for r in payload.get("requests", []):
-    r["prompt"] = "A majestic dragon over mountains, 4k"
-    r["seed"] = 888888
-
-print("✓ Prompt: dragon")
+# KHÔNG đổi prompt - giữ nguyên payload gốc
+original_prompt = payload.get("requests", [{}])[0].get("prompt", "unknown")
+print(f"✓ Prompt (giữ nguyên): {original_prompt[:50]}...")
 print("\n⏳ Gọi API...")
 
 print("\nNhập x-browser-validation header (từ Network tab, có thể bỏ qua):")
