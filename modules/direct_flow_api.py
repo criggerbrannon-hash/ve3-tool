@@ -103,6 +103,7 @@ class DirectFlowAPI:
         self._recaptcha_token = None
         self._project_id = None
         self._session_id = None
+        self._x_browser_validation = None  # Header cần cho API
 
         self._initialized = True
 
@@ -148,11 +149,11 @@ class DirectFlowAPI:
         if not pag or not pyperclip:
             return False
 
-        self.log("Inject capture script (bearer + recaptcha + BLOCK request)...")
+        self.log("Inject capture script (bearer + recaptcha + x-browser-validation + BLOCK)...")
 
-        # Script capture CẢ bearer VÀ recaptchaToken, rồi CHẶN request (không gửi thật)
-        # Trả về fake response để browser không lỗi
-        capture_script = '''window._tk=null;window._pj=null;window._rc=null;window._blocked=0;(function(){var f=window.fetch;window.fetch=function(u,o){var s=u?u.toString():'';if(s.includes('batchGenerateImages')){var h=o&&o.headers?o.headers:{};var a=h.Authorization||h.authorization||'';if(a.startsWith('Bearer ')){window._tk=a.substring(7);var m=s.match(/\\/projects\\/([^\\/]+)\\//);if(m)window._pj=m[1];console.log('✓ BEARER CAPTURED!');}if(o&&o.body){try{var body=JSON.parse(o.body);if(body.clientContext&&body.clientContext.recaptchaToken){window._rc=body.clientContext.recaptchaToken;window._blocked++;console.log('✓ RECAPTCHA CAPTURED! (request #'+window._blocked+' BLOCKED)');return Promise.resolve(new Response(JSON.stringify({media:[]}),{status:200,headers:{'Content-Type':'application/json'}}));}}catch(e){}}}return f.apply(this,arguments);};console.log('[DirectFlow] Capture + Block ready!');})();'''
+        # Script capture: bearer, recaptchaToken, x-browser-validation
+        # Rồi CHẶN request (không gửi thật), trả về fake response
+        capture_script = '''window._tk=null;window._pj=null;window._rc=null;window._xbv=null;window._blocked=0;(function(){var f=window.fetch;window.fetch=function(u,o){var s=u?u.toString():'';if(s.includes('batchGenerateImages')){var h=o&&o.headers?o.headers:{};var a=h.Authorization||h.authorization||'';if(a.startsWith('Bearer ')){window._tk=a.substring(7);var m=s.match(/\\/projects\\/([^\\/]+)\\//);if(m)window._pj=m[1];console.log('✓ BEARER!');}var xbv=h['x-browser-validation']||h['X-Browser-Validation']||'';if(xbv){window._xbv=xbv;console.log('✓ X-BROWSER-VALIDATION!');}if(o&&o.body){try{var body=JSON.parse(o.body);if(body.clientContext&&body.clientContext.recaptchaToken){window._rc=body.clientContext.recaptchaToken;window._blocked++;console.log('✓ RECAPTCHA! (blocked #'+window._blocked+')');return Promise.resolve(new Response(JSON.stringify({media:[]}),{status:200,headers:{'Content-Type':'application/json'}}));}}catch(e){}}}return f.apply(this,arguments);};console.log('[DirectFlow] Capture ready!');})();'''
 
         try:
             pag.hotkey("ctrl", "shift", "j")
@@ -260,7 +261,7 @@ class DirectFlowAPI:
             return False
 
     def _get_tokens_from_devtools(self) -> Dict[str, str]:
-        """Lấy CẢ bearer VÀ recaptchaToken từ DevTools."""
+        """Lấy bearer, recaptchaToken, x-browser-validation từ DevTools."""
         if not pag or not pyperclip:
             return {}
 
@@ -268,8 +269,8 @@ class DirectFlowAPI:
             pag.hotkey("ctrl", "shift", "j")
             time.sleep(1.2)
 
-            # Lấy cả 3: token, project, recaptcha
-            js = 'copy(JSON.stringify({t:window._tk,p:window._pj,r:window._rc}))'
+            # Lấy tất cả: token, project, recaptcha, x-browser-validation
+            js = 'copy(JSON.stringify({t:window._tk,p:window._pj,r:window._rc,x:window._xbv}))'
             pyperclip.copy(js)
             time.sleep(0.2)
             pag.hotkey("ctrl", "v")
@@ -287,7 +288,8 @@ class DirectFlowAPI:
                     return {
                         'bearer': data.get('t'),
                         'project_id': data.get('p'),
-                        'recaptcha': data.get('r')
+                        'recaptcha': data.get('r'),
+                        'x_browser_validation': data.get('x')  # Header quan trọng!
                     }
             except:
                 pass
@@ -484,6 +486,10 @@ class DirectFlowAPI:
                 if tokens.get('recaptcha'):
                     self._recaptcha_token = tokens['recaptcha']
                     self.log(f"✓ reCAPTCHA: {self._recaptcha_token[:30]}...")
+
+                if tokens.get('x_browser_validation'):
+                    self._x_browser_validation = tokens['x_browser_validation']
+                    self.log(f"✓ x-browser-validation: {self._x_browser_validation[:30]}...")
 
                 # Cần cả bearer VÀ recaptcha
                 if tokens.get('bearer') and tokens.get('recaptcha'):
