@@ -266,7 +266,8 @@ class GoogleFlowAPI:
         aspect_ratio: AspectRatio = AspectRatio.LANDSCAPE,
         model: ImageModel = ImageModel.GEM_PIX_2,
         image_inputs: Optional[List[ImageInput]] = None,
-        reference_images: Optional[List[GeneratedImage]] = None
+        reference_images: Optional[List[GeneratedImage]] = None,
+        recaptcha_token: Optional[str] = None
     ) -> Tuple[bool, List[GeneratedImage], str]:
         """
         Tạo ảnh từ prompt sử dụng Flow API.
@@ -279,6 +280,7 @@ class GoogleFlowAPI:
             image_inputs: List ImageInput objects cho reference images
             reference_images: List GeneratedImage objects để dùng làm reference
                             (sẽ tự động convert sang ImageInput)
+            recaptcha_token: reCAPTCHA token (cho Direct mode, bypass nanoai)
 
         Returns:
             Tuple[success, list_of_images, error_message]
@@ -317,12 +319,18 @@ class GoogleFlowAPI:
         # Build requests array
         requests_data = []
         for _ in range(count):
+            # Client context cho mỗi request
+            request_context = {
+                "sessionId": self.session_id,
+                "projectId": self.project_id,
+                "tool": self.TOOL_NAME
+            }
+            # Thêm recaptcha nếu có (Direct mode)
+            if recaptcha_token:
+                request_context["recaptchaToken"] = recaptcha_token
+
             request_item = {
-                "clientContext": {
-                    "sessionId": self.session_id,
-                    "projectId": self.project_id,
-                    "tool": self.TOOL_NAME
-                },
+                "clientContext": request_context,
                 "seed": self._generate_seed(),
                 "imageModelName": model.value,
                 "imageAspectRatio": aspect_ratio.value,
@@ -330,13 +338,20 @@ class GoogleFlowAPI:
                 "imageInputs": image_inputs_data
             }
             requests_data.append(request_item)
-        
+
+        # Main client context
+        main_context = {
+            "sessionId": self.session_id,
+            "projectId": self.project_id,
+            "tool": self.TOOL_NAME
+        }
+        # Thêm recaptcha vào main context (Direct mode)
+        if recaptcha_token:
+            main_context["recaptchaToken"] = recaptcha_token
+            self._log("🆓 Direct mode: Using captured recaptchaToken")
+
         payload = {
-            "clientContext": {
-                "sessionId": self.session_id,
-                "projectId": self.project_id,
-                "tool": self.TOOL_NAME
-            },
+            "clientContext": main_context,
             "requests": requests_data
         }
 

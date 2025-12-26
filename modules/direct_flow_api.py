@@ -61,11 +61,25 @@ class DirectFlowAPI:
     """
     Gọi Google Flow API trực tiếp với token tự động capture.
 
-    Flow giống auto_token.py nhưng capture thêm recaptchaToken.
+    Flow tận dụng Chrome session đã mở:
+    1. Lần đầu: Mở Chrome → inject script → trigger → capture tokens
+    2. Lần sau: Chỉ trigger lại để lấy recaptchaToken mới (Chrome đã mở)
+
+    Ưu điểm: Không cần trả tiền captcha (nanoai.pics)
     """
 
     BASE_URL = "https://aisandbox-pa.googleapis.com"
     FLOW_URL = "https://labs.google/fx/vi/tools/flow"
+
+    # Singleton để giữ Chrome session
+    _instance = None
+    _chrome_ready = False
+
+    def __new__(cls, *args, **kwargs):
+        """Singleton pattern - chỉ 1 instance để giữ Chrome session."""
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
 
     def __init__(
         self,
@@ -74,6 +88,10 @@ class DirectFlowAPI:
         verbose: bool = True,
         timeout: int = 120
     ):
+        # Chỉ init một lần
+        if hasattr(self, '_initialized') and self._initialized:
+            return
+
         self.chrome_path = chrome_path or r"C:\Program Files\Google\Chrome\Application\chrome.exe"
         self.profile_path = profile_path
         self.verbose = verbose
@@ -85,6 +103,8 @@ class DirectFlowAPI:
         self._recaptcha_token = None
         self._project_id = None
         self._session_id = None
+
+        self._initialized = True
 
     def log(self, msg: str):
         """Print log."""
@@ -275,6 +295,85 @@ class DirectFlowAPI:
 
         return {}
 
+    def get_fresh_recaptcha(
+        self,
+        callback: Callable = None,
+        trigger_prompt: str = "test image"
+    ) -> Optional[str]:
+        """
+        Lấy recaptchaToken MỚI từ Chrome đã mở.
+
+        CHỈ dùng khi Chrome đã mở và có bearer token.
+        Flow nhanh: Focus textarea → Gửi prompt → Capture recaptcha
+
+        Returns:
+            recaptchaToken mới hoặc None
+        """
+        self.callback = callback
+
+        if not DirectFlowAPI._chrome_ready:
+            self.log("Chrome chưa sẵn sàng! Gọi extract_tokens() trước.")
+            return None
+
+        if not pag or not pyperclip:
+            return None
+
+        try:
+            self.log("=== LẤY RECAPTCHA MỚI (Chrome đã mở) ===")
+
+            # Reset recaptcha cũ trong browser
+            self._reset_recaptcha_in_browser()
+
+            # Focus textarea và gửi prompt
+            self.log("Focus textarea...")
+            self._focus_textarea_js()
+            time.sleep(1)
+
+            self._send_prompt_manual(trigger_prompt)
+
+            # recaptcha được gửi cùng request → capture ngay sau khi send
+            # KHÔNG CẦN đợi image tạo xong!
+            self.log("Đợi request gửi đi (3s)...")
+            time.sleep(3)
+
+            # Capture recaptcha từ request (nhanh!)
+            for i in range(3):
+                time.sleep(1)
+                tokens = self._get_tokens_from_devtools()
+
+                if tokens.get('recaptcha'):
+                    self._recaptcha_token = tokens['recaptcha']
+                    self.log(f"✓ Fresh reCAPTCHA (instant): {self._recaptcha_token[:30]}...")
+                    return self._recaptcha_token
+
+            self.log("Không capture được recaptcha!")
+            return None
+
+        except Exception as e:
+            self.log(f"Lỗi get_fresh_recaptcha: {e}")
+            return None
+
+    def _reset_recaptcha_in_browser(self) -> bool:
+        """Reset biến _rc trong browser để capture token mới."""
+        if not pag or not pyperclip:
+            return False
+
+        try:
+            pag.hotkey("ctrl", "shift", "j")
+            time.sleep(1)
+
+            pyperclip.copy("window._rc=null;console.log('Recaptcha reset');")
+            pag.hotkey("ctrl", "v")
+            time.sleep(0.2)
+            pag.press("enter")
+            time.sleep(0.3)
+
+            pag.hotkey("ctrl", "shift", "j")
+            time.sleep(0.3)
+            return True
+        except:
+            return False
+
     def extract_tokens(
         self,
         project_id: str = None,
@@ -285,13 +384,9 @@ class DirectFlowAPI:
         """
         Lấy bearer + recaptchaToken bằng cách trigger tạo ảnh.
 
-        Flow giống auto_token.py:
-        1. Mở Chrome
-        2. Inject capture script
-        3. Click Dự án mới (nếu cần)
-        4. Chọn Tạo hình ảnh
-        5. Gửi prompt
-        6. Đợi và capture tokens
+        Flow:
+        - Nếu Chrome chưa mở: Full flow (mở Chrome, inject, trigger, capture)
+        - Nếu Chrome đã mở: Chỉ trigger để lấy recaptcha mới
 
         Returns:
             Dict với 'bearer', 'project_id', 'recaptcha'
@@ -305,8 +400,22 @@ class DirectFlowAPI:
             self.log("Thiếu pyperclip!")
             return {}
 
+        # === CHROME ĐÃ MỞ → chỉ lấy recaptcha mới ===
+        if DirectFlowAPI._chrome_ready and self._bearer_token:
+            self.log("Chrome đã mở, lấy fresh recaptcha...")
+            recaptcha = self.get_fresh_recaptcha(callback, trigger_prompt)
+            if recaptcha:
+                return {
+                    'bearer': self._bearer_token,
+                    'project_id': self._project_id,
+                    'recaptcha': recaptcha
+                }
+            # Nếu không lấy được, thử full flow
+            self.log("Không lấy được recaptcha, thử mở Chrome lại...")
+            DirectFlowAPI._chrome_ready = False
+
         try:
-            # === 1. Mở Chrome ===
+            # === FULL FLOW: Mở Chrome mới ===
             if project_url:
                 url = project_url
                 self.log(f"Vào project URL: {url[:60]}...")
@@ -350,16 +459,16 @@ class DirectFlowAPI:
             # === 7. Gửi prompt ===
             self._send_prompt_manual(trigger_prompt)
 
-            # === 8. Đợi ảnh tạo xong ===
-            self.log("Đợi ảnh tạo xong (20s)...")
-            time.sleep(20)
+            # === 8. Capture tokens (NHANH - không cần đợi ảnh tạo xong!) ===
+            # recaptcha được gửi trong request body → capture ngay!
+            self.log("Đợi request gửi đi (5s)...")
+            time.sleep(5)
 
-            # === 9. Capture tokens ===
-            self.log("Kiểm tra tokens...")
+            self.log("Capture tokens...")
 
-            for i in range(10):
-                time.sleep(3)
-                self.log(f"Kiểm tra #{i+1}/10...")
+            for i in range(5):
+                time.sleep(1)
+                self.log(f"Kiểm tra #{i+1}/5...")
 
                 tokens = self._get_tokens_from_devtools()
 
@@ -378,9 +487,15 @@ class DirectFlowAPI:
                 # Cần cả bearer VÀ recaptcha
                 if tokens.get('bearer') and tokens.get('recaptcha'):
                     self.log("=== ĐÃ LẤY ĐƯỢC TOKENS! ===")
+                    # Đánh dấu Chrome đã sẵn sàng để reuse
+                    DirectFlowAPI._chrome_ready = True
+                    self.log("Chrome session ready for reuse!")
                     return tokens
 
             self.log("Không lấy được đủ tokens!")
+            # Vẫn đánh dấu ready nếu có bearer (recaptcha có thể lấy sau)
+            if self._bearer_token:
+                DirectFlowAPI._chrome_ready = True
             return {'bearer': self._bearer_token, 'project_id': self._project_id, 'recaptcha': None}
 
         except Exception as e:

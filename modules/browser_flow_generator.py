@@ -151,6 +151,25 @@ class BrowserFlowGenerator:
             }
             print(f"[{timestamp}] {icons.get(level, '')} {message}")
 
+    def _get_profile_path(self) -> Optional[str]:
+        """Lấy Chrome profile path từ config hoặc default."""
+        # Từ settings.yaml
+        chrome_profile = self.config.get('chrome_profile', '')
+        if chrome_profile:
+            profile_path = Path(chrome_profile)
+            if profile_path.exists():
+                return str(profile_path)
+            # Thử resolve từ project root
+            abs_path = Path.cwd() / chrome_profile
+            if abs_path.exists():
+                return str(abs_path)
+
+        # Fallback: dùng tool profile
+        if hasattr(self, 'profile_dir') and self.profile_dir:
+            return str(self.profile_dir)
+
+        return None
+
     def _find_excel_file(self) -> Optional[Path]:
         """Tim file Excel prompts trong project."""
         # Tim trong prompts/
@@ -2850,12 +2869,32 @@ class BrowserFlowGenerator:
         except ImportError as e:
             return {"success": False, "error": f"Khong import duoc GoogleFlowAPI: {e}"}
 
-        # Check proxy support
+        # === CHECK API PROVIDER MODE ===
+        api_provider = self.config.get('api_provider', 'direct')
         proxy_api_token = self.config.get('proxy_api_token', '')
-        use_proxy = bool(proxy_api_token)
+
+        # Determine mode: direct (free) vs nanoai (paid)
+        use_direct = (api_provider == 'direct')
+        use_proxy = (api_provider == 'nanoai' and bool(proxy_api_token))
+
+        # Initialize DirectFlowAPI for direct mode
+        direct_api = None
+        if use_direct:
+            try:
+                from modules.direct_flow_api import DirectFlowAPI
+                direct_api = DirectFlowAPI(
+                    chrome_path=self.config.get('chrome_path'),
+                    profile_path=self._get_profile_path(),
+                    verbose=self.verbose
+                )
+                self._log("🆓 Direct mode: Sử dụng Chrome để lấy recaptcha (miễn phí)")
+            except ImportError:
+                self._log("Khong import duoc DirectFlowAPI, fallback to nanoai", "warn")
+                use_direct = False
+                use_proxy = bool(proxy_api_token)
 
         if use_proxy:
-            self._log("Proxy API token co san - se su dung proxy de bypass captcha")
+            self._log("💰 Nanoai mode: Sử dụng proxy nanoai.pics (trả phí)")
 
         # Check bearer token
         if not bearer_token:
@@ -2864,7 +2903,12 @@ class BrowserFlowGenerator:
         # Neu van chua co token, capture tu Chrome (PyAutoGUI)
         if not bearer_token:
             self._log("Khong co bearer token, thu tu dong lay...")
-            bearer_token = self._auto_extract_token()
+            if use_direct and direct_api:
+                # Direct mode: lấy bearer + recaptcha cùng lúc
+                tokens = direct_api.extract_tokens()
+                bearer_token = tokens.get('bearer', '')
+            else:
+                bearer_token = self._auto_extract_token()
 
         if not bearer_token:
             return {"success": False, "error": "Can bearer token cho API mode. Chua co token va khong the tu dong lay."}
@@ -2878,12 +2922,14 @@ class BrowserFlowGenerator:
         self._log(f"Tong: {len(prompts)} prompts")
         self._log(f"Project ID: {flow_project_id}")
         self._log(f"Token: {bearer_token[:20]}...{bearer_token[-10:]}")
-        if use_proxy:
-            self._log(f"Proxy mode: ENABLED (nanoai.pics)")
+        if use_direct:
+            self._log(f"Mode: 🆓 DIRECT (free - recaptcha from Chrome)")
+        elif use_proxy:
+            self._log(f"Mode: 💰 NANOAI (paid - proxy at nanoai.pics)")
         else:
-            self._log(f"Proxy mode: DISABLED (direct API call)")
+            self._log(f"Mode: ⚠️ DIRECT (no recaptcha - may fail)")
 
-        # Create API client with proxy support
+        # Create API client
         api = GoogleFlowAPI(
             bearer_token=bearer_token,
             project_id=flow_project_id,
@@ -2892,6 +2938,10 @@ class BrowserFlowGenerator:
             proxy_api_token=proxy_api_token,
             use_proxy=use_proxy
         )
+
+        # Store direct_api reference for use in generation loop
+        self._direct_api = direct_api
+        self._use_direct = use_direct
 
         # Map aspect ratio
         ar_setting = self.config.get('flow_aspect_ratio', 'landscape')
@@ -2997,33 +3047,65 @@ class BrowserFlowGenerator:
                 if not image_inputs:
                     self._log(f"  [REF] Khong co reference (ref_files='{ref_files_str[:30]}...' neu co)")
 
+                # === DIRECT MODE: Lấy fresh recaptcha trước khi generate ===
+                recaptcha_token = None
+                if self._use_direct and self._direct_api:
+                    self._log("🔄 Lấy fresh recaptcha từ Chrome...")
+                    recaptcha_token = self._direct_api.get_fresh_recaptcha()
+                    if recaptcha_token:
+                        self._log(f"✓ reCAPTCHA OK: {recaptcha_token[:30]}...")
+                    else:
+                        self._log("⚠️ Không lấy được recaptcha, thử gọi API direct...", "warn")
+
                 # Generate - co retry khi token het han
                 success, images, error = api.generate_images(
                     prompt=prompt,
                     count=self.config.get('flow_image_count', 2),
                     aspect_ratio=aspect_ratio,
-                    image_inputs=[inp.to_dict() for inp in image_inputs] if image_inputs else None
+                    image_inputs=[inp.to_dict() for inp in image_inputs] if image_inputs else None,
+                    recaptcha_token=recaptcha_token  # Direct mode: pass recaptcha
                 )
 
                 # Check token expired (401) - auto refresh and retry
                 if not success and error:
                     error_lower = str(error).lower()
                     is_token_expired = '401' in error_lower or 'expired' in error_lower or 'authentication' in error_lower or 'unauthenticated' in error_lower
+                    is_recaptcha_error = '403' in error_lower or 'recaptcha' in error_lower
+
                     if is_token_expired:
                         self._log(f"Token het han (401)! Dang mo Chrome lay token moi...", "warn")
-                        new_token = self._auto_extract_token(force_refresh=True)  # FORCE lay token moi
+                        new_token = self._auto_extract_token(force_refresh=True)
                         if new_token:
                             api.bearer_token = new_token
                             bearer_token = new_token
                             self._log(f"Token moi OK - dang retry ID {pid}...")
+
+                            # Lấy recaptcha mới nếu dùng direct mode
+                            if self._use_direct and self._direct_api:
+                                recaptcha_token = self._direct_api.get_fresh_recaptcha()
+
                             success, images, error = api.generate_images(
                                 prompt=prompt,
                                 count=self.config.get('flow_image_count', 2),
                                 aspect_ratio=aspect_ratio,
-                                image_inputs=[inp.to_dict() for inp in image_inputs] if image_inputs else None
+                                image_inputs=[inp.to_dict() for inp in image_inputs] if image_inputs else None,
+                                recaptcha_token=recaptcha_token
                             )
                         else:
                             self._log(f"Khong the refresh token!", "error")
+
+                    elif is_recaptcha_error and self._use_direct and self._direct_api:
+                        # Recaptcha expired - lấy mới và retry
+                        self._log("reCAPTCHA expired, lấy mới...", "warn")
+                        recaptcha_token = self._direct_api.get_fresh_recaptcha()
+                        if recaptcha_token:
+                            success, images, error = api.generate_images(
+                                prompt=prompt,
+                                count=self.config.get('flow_image_count', 2),
+                                aspect_ratio=aspect_ratio,
+                                image_inputs=[inp.to_dict() for inp in image_inputs] if image_inputs else None,
+                                recaptcha_token=recaptcha_token
+                            )
 
                 if success and images:
                     # Determine output dir
