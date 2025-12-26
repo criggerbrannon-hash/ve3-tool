@@ -246,13 +246,11 @@ class BatchGenerator:
         print(f"\n[{idx+1}] {prompt[:50]}...")
 
         try:
-            # Escape prompt for JS
-            escaped_prompt = prompt.replace('\\', '\\\\').replace('`', "'").replace('$', '\\$')
+            # Escape prompt for JS - replace backticks with single quotes
+            safe_prompt = prompt.replace('`', "'").replace('"', '\\"')
 
-            # Call JS API
-            js_code = f'''
-                return await window.__generateImages(`{escaped_prompt}`, 2);
-            '''
+            # Call JS API using string format (avoid f-string backslash issues)
+            js_code = 'return await window.__generateImages("' + safe_prompt + '", 2);'
 
             result = self.driver.run_js(js_code)
 
