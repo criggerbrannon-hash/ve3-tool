@@ -191,10 +191,8 @@ class BatchGenerator:
             time.sleep(0.3)
             print("    ✓ Nhập prompt")
 
-            # Nhấn Enter bằng keyboard simulation
-            from DrissionPage.common.actions import Actions
-            actions = Actions(self.driver)
-            actions.key_down('Enter').key_up('Enter')
+            # Nhấn Enter - sử dụng type() của DrissionPage
+            textarea.type(('\n',))  # tuple với key
             print("    ✓ Nhấn Enter")
             time.sleep(0.5)
 
