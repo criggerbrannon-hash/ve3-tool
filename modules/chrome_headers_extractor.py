@@ -113,8 +113,13 @@ class ChromeHeadersExtractor:
             from selenium import webdriver
             from selenium.webdriver.chrome.options import Options
 
+            # Đóng Chrome trước (quan trọng!)
+            self._log("Closing existing Chrome...")
+            os.system('taskkill /F /IM chrome.exe /T 2>nul')
+            time.sleep(2)
+
             # Random debug port
-            self.debug_port = random.randint(9222, 9299)
+            self.debug_port = 9222  # Dùng port cố định
             self._log(f"Debug port: {self.debug_port}")
 
             # Tạo lệnh mở Chrome - dùng start command của Windows
