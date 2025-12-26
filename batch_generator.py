@@ -76,8 +76,8 @@ class BatchGenerator:
 
     def setup(self):
         print("=" * 60)
-        print("  BATCH GENERATOR (Semi-Auto)")
-        print("  Script nhập prompt, BẠN CLICK Generate")
+        print("  BATCH GENERATOR (Full Auto)")
+        print("  Script nhập prompt → Enter → Download")
         print("=" * 60)
 
         print("\n[1] Kết nối Chrome port 9222...")
@@ -139,8 +139,7 @@ class BatchGenerator:
 
     def run_batch(self, prompts):
         print(f"\n{'=' * 60}")
-        print(f"  TẠO {len(prompts)} ẢNH")
-        print(f"  Script nhập prompt → BẠN CLICK Generate → Script download")
+        print(f"  TẠO {len(prompts)} ẢNH (Full Auto)")
         print(f"{'=' * 60}")
 
         self.stats["total"] = len(prompts)
@@ -156,11 +155,13 @@ class BatchGenerator:
                     time.sleep(0.2)
                     textarea.input(prompt)
                     print("    ✓ Đã nhập prompt")
+
+                    # Auto nhấn Enter để gửi
+                    time.sleep(0.3)
+                    textarea.input('\n')
+                    print("    ✓ Đã gửi (Enter)")
                 except:
                     print("    ⚠️ Không nhập được")
-
-            # Chờ user click Generate
-            print("    → CLICK 'Generate' TRONG CHROME...")
 
             images = self.wait_for_images(timeout=120)
 
