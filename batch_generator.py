@@ -187,12 +187,72 @@ class BatchGenerator:
         try:
             textarea.clear()
             time.sleep(0.2)
-            # Nhập prompt và nhấn Enter để gửi
-            textarea.input(prompt + '\n')
-            print("    ✓ Nhập prompt + Enter")
+            textarea.input(prompt)
+            time.sleep(0.3)
+            print("    ✓ Nhập prompt")
         except Exception as e:
             print(f"    ❌ Lỗi nhập: {e}")
             return False
+
+        # Thử nhiều cách submit
+        submitted = False
+
+        # Cách 1: Dispatch Enter event qua JS
+        try:
+            self.driver.run_js('''
+                const textarea = document.querySelector('textarea');
+                if (textarea) {
+                    const event = new KeyboardEvent('keydown', {
+                        key: 'Enter',
+                        code: 'Enter',
+                        keyCode: 13,
+                        which: 13,
+                        bubbles: true
+                    });
+                    textarea.dispatchEvent(event);
+                }
+            ''')
+            time.sleep(0.5)
+            check = self.driver.run_js("return window.__imageTime > 0 || document.querySelector('[class*=loading]') !== null;")
+            if check:
+                submitted = True
+                print("    ✓ Submit (JS Enter)")
+        except:
+            pass
+
+        # Cách 2: Click button qua JS
+        if not submitted:
+            try:
+                clicked = self.driver.run_js('''
+                    const btns = document.querySelectorAll('button');
+                    for (const btn of btns) {
+                        const text = btn.textContent || btn.innerText;
+                        if (text.includes('Tạo') || text.includes('Generate')) {
+                            btn.click();
+                            return true;
+                        }
+                    }
+                    return false;
+                ''')
+                if clicked:
+                    submitted = True
+                    print("    ✓ Submit (JS click button)")
+            except:
+                pass
+
+        # Cách 3: Click button bằng DrissionPage
+        if not submitted:
+            gen_btn = self.find_generate_button()
+            if gen_btn:
+                try:
+                    gen_btn.click()
+                    submitted = True
+                    print("    ✓ Submit (click button)")
+                except:
+                    pass
+
+        if not submitted:
+            print("    ⚠️ Không submit được, thử tiếp...")
 
         # Wait for response
         print("    → Đang chờ ảnh...")
