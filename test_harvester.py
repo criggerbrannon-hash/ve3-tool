@@ -316,11 +316,23 @@ class TokenHarvester:
                 # Debug
                 print(f"    URL: {self.driver.url}")
                 print(f"    Title: {self.driver.title}")
-                # Check grecaptcha
-                check1 = self.driver.run_js("return typeof grecaptcha")
-                check2 = self.driver.run_js("return typeof grecaptcha !== 'undefined' ? Object.keys(grecaptcha) : 'undefined'")
-                print(f"    grecaptcha type: {check1}")
-                print(f"    grecaptcha keys: {check2}")
+                print(f"    Tabs: {len(self.driver.tab_ids)}")
+                # Thử nhiều cách run JS
+                try:
+                    check1 = self.driver.run_js("return typeof grecaptcha")
+                    print(f"    run_js: {check1}")
+                except Exception as e:
+                    print(f"    run_js error: {e}")
+                try:
+                    check2 = self.driver.run_js_loaded("return typeof grecaptcha")
+                    print(f"    run_js_loaded: {check2}")
+                except Exception as e:
+                    print(f"    run_js_loaded error: {e}")
+                # Check current tab
+                try:
+                    print(f"    Tab ID: {self.driver.tab_id}")
+                except:
+                    pass
             elif cmd.lower() == 't':
                 token = self.get_token()
                 if token:
