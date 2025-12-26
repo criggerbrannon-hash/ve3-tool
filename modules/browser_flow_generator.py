@@ -3091,6 +3091,11 @@ class BrowserFlowGenerator:
                     if recaptcha_token:
                         self._log(f"✓ reCAPTCHA OK: {recaptcha_token[:30]}...")
 
+                        # QUAN TRỌNG: Update sessionId (bound với recaptcha!)
+                        if self._direct_api._session_id:
+                            api.session_id = self._direct_api._session_id
+                            self._log(f"✓ Updated sessionId: {api.session_id}")
+
                         # Update x-browser-validation header nếu có mới
                         if self._direct_api._x_browser_validation:
                             api.session.headers['x-browser-validation'] = self._direct_api._x_browser_validation
@@ -3124,6 +3129,9 @@ class BrowserFlowGenerator:
                             # Lấy recaptcha mới nếu dùng direct mode
                             if self._use_direct and self._direct_api:
                                 recaptcha_token = self._direct_api.get_fresh_recaptcha()
+                                # Update sessionId (bound với recaptcha)
+                                if self._direct_api._session_id:
+                                    api.session_id = self._direct_api._session_id
 
                             success, images, error = api.generate_images(
                                 prompt=prompt,
@@ -3140,6 +3148,9 @@ class BrowserFlowGenerator:
                         self._log("reCAPTCHA expired, lấy mới...", "warn")
                         recaptcha_token = self._direct_api.get_fresh_recaptcha()
                         if recaptcha_token:
+                            # Update sessionId (bound với recaptcha)
+                            if self._direct_api._session_id:
+                                api.session_id = self._direct_api._session_id
                             success, images, error = api.generate_images(
                                 prompt=prompt,
                                 count=self.config.get('flow_image_count', 2),

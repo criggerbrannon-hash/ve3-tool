@@ -149,12 +149,12 @@ class DirectFlowAPI:
         if not pag or not pyperclip:
             return False
 
-        self.log("Inject capture script (bearer + recaptcha + x-browser-validation + BLOCK)...")
+        self.log("Inject capture script (bearer + recaptcha + sessionId + BLOCK)...")
 
-        # Script capture: bearer, recaptchaToken, x-browser-validation
-        # Handle both Headers object và plain object
+        # Script capture: bearer, recaptchaToken, sessionId từ payload
+        # QUAN TRỌNG: sessionId phải match với recaptcha!
         # Rồi CHẶN request (không gửi thật), trả về fake response
-        capture_script = '''window._tk=null;window._pj=null;window._rc=null;window._xbv=null;window._blocked=0;(function(){var f=window.fetch;window.fetch=function(u,o){var s=u?u.toString():'';if(s.includes('batchGenerateImages')){var h=o&&o.headers?o.headers:{};var getH=function(k){if(h.get)return h.get(k);return h[k]||'';};var a=getH('Authorization')||getH('authorization')||'';if(a.startsWith('Bearer ')){window._tk=a.substring(7);var m=s.match(/\\/projects\\/([^\\/]+)\\//);if(m)window._pj=m[1];console.log('✓ BEARER!');}var xbv=getH('x-browser-validation')||getH('X-Browser-Validation')||'';if(xbv){window._xbv=xbv;console.log('✓ X-BROWSER-VALIDATION: '+xbv.substring(0,30)+'...');}if(o&&o.body){try{var body=JSON.parse(o.body);if(body.clientContext&&body.clientContext.recaptchaToken){window._rc=body.clientContext.recaptchaToken;window._blocked++;console.log('✓ RECAPTCHA! (blocked #'+window._blocked+')');return Promise.resolve(new Response(JSON.stringify({media:[]}),{status:200,headers:{'Content-Type':'application/json'}}));}}catch(e){}}}return f.apply(this,arguments);};console.log('[DirectFlow] Capture ready!');})();'''
+        capture_script = '''window._tk=null;window._pj=null;window._rc=null;window._sid=null;window._blocked=0;(function(){var f=window.fetch;window.fetch=function(u,o){var s=u?u.toString():'';if(s.includes('batchGenerateImages')){var h=o&&o.headers?o.headers:{};var getH=function(k){if(h.get)return h.get(k);return h[k]||'';};var a=getH('Authorization')||getH('authorization')||'';if(a.startsWith('Bearer ')){window._tk=a.substring(7);var m=s.match(/\\/projects\\/([^\\/]+)\\//);if(m)window._pj=m[1];console.log('✓ BEARER!');}if(o&&o.body){try{var body=JSON.parse(o.body);if(body.clientContext){if(body.clientContext.sessionId){window._sid=body.clientContext.sessionId;console.log('✓ SESSION_ID: '+window._sid);}if(body.clientContext.recaptchaToken){window._rc=body.clientContext.recaptchaToken;window._blocked++;console.log('✓ RECAPTCHA! (blocked #'+window._blocked+')');return Promise.resolve(new Response(JSON.stringify({media:[]}),{status:200,headers:{'Content-Type':'application/json'}}));}}}catch(e){}}}return f.apply(this,arguments);};console.log('[DirectFlow] Capture ready!');})();'''
 
         try:
             pag.hotkey("ctrl", "shift", "j")
@@ -262,7 +262,7 @@ class DirectFlowAPI:
             return False
 
     def _get_tokens_from_devtools(self) -> Dict[str, str]:
-        """Lấy bearer, recaptchaToken, x-browser-validation từ DevTools."""
+        """Lấy bearer, recaptchaToken, sessionId, x-browser-validation từ DevTools."""
         if not pag or not pyperclip:
             return {}
 
@@ -270,8 +270,9 @@ class DirectFlowAPI:
             pag.hotkey("ctrl", "shift", "j")
             time.sleep(1.2)
 
-            # Lấy tất cả: token, project, recaptcha, x-browser-validation
-            js = 'copy(JSON.stringify({t:window._tk,p:window._pj,r:window._rc,x:window._xbv}))'
+            # Lấy tất cả: token, project, recaptcha, sessionId, x-browser-validation
+            # QUAN TRỌNG: sessionId phải match với recaptcha (bound together)
+            js = 'copy(JSON.stringify({t:window._tk,p:window._pj,r:window._rc,s:window._sid,x:window._xbv}))'
             pyperclip.copy(js)
             time.sleep(0.2)
             pag.hotkey("ctrl", "v")
@@ -290,7 +291,8 @@ class DirectFlowAPI:
                         'bearer': data.get('t'),
                         'project_id': data.get('p'),
                         'recaptcha': data.get('r'),
-                        'x_browser_validation': data.get('x')  # Header quan trọng!
+                        'session_id': data.get('s'),  # QUAN TRỌNG: sessionId bound với recaptcha
+                        'x_browser_validation': data.get('x')
                     }
             except:
                 pass
@@ -340,7 +342,7 @@ class DirectFlowAPI:
             self.log("Đợi request gửi đi (3s)...")
             time.sleep(3)
 
-            # Capture recaptcha từ request (nhanh!)
+            # Capture recaptcha + sessionId từ request (nhanh!)
             for i in range(3):
                 time.sleep(1)
                 tokens = self._get_tokens_from_devtools()
@@ -348,6 +350,11 @@ class DirectFlowAPI:
                 if tokens.get('recaptcha'):
                     self._recaptcha_token = tokens['recaptcha']
                     self.log(f"✓ Fresh reCAPTCHA: {self._recaptcha_token[:30]}...")
+
+                    # QUAN TRỌNG: Capture sessionId (bound với recaptcha)
+                    if tokens.get('session_id'):
+                        self._session_id = tokens['session_id']
+                        self.log(f"✓ Fresh sessionId: {self._session_id}")
 
                     # Cập nhật x-browser-validation nếu có
                     if tokens.get('x_browser_validation'):
@@ -364,7 +371,7 @@ class DirectFlowAPI:
             return None
 
     def _reset_recaptcha_in_browser(self) -> bool:
-        """Reset biến _rc trong browser để capture token mới."""
+        """Reset biến _rc và _sid trong browser để capture token mới."""
         if not pag or not pyperclip:
             return False
 
@@ -372,7 +379,8 @@ class DirectFlowAPI:
             pag.hotkey("ctrl", "shift", "j")
             time.sleep(1)
 
-            pyperclip.copy("window._rc=null;console.log('Recaptcha reset');")
+            # Reset cả recaptcha VÀ sessionId (chúng bound với nhau)
+            pyperclip.copy("window._rc=null;window._sid=null;console.log('Recaptcha+SessionId reset');")
             pag.hotkey("ctrl", "v")
             time.sleep(0.2)
             pag.press("enter")
@@ -493,6 +501,11 @@ class DirectFlowAPI:
                 if tokens.get('recaptcha'):
                     self._recaptcha_token = tokens['recaptcha']
                     self.log(f"✓ reCAPTCHA: {self._recaptcha_token[:30]}...")
+
+                # QUAN TRỌNG: Capture sessionId (bound với recaptcha)
+                if tokens.get('session_id'):
+                    self._session_id = tokens['session_id']
+                    self.log(f"✓ sessionId: {self._session_id}")
 
                 if tokens.get('x_browser_validation'):
                     self._x_browser_validation = tokens['x_browser_validation']
