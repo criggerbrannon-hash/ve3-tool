@@ -2780,64 +2780,21 @@ class SmartEngine:
 
                             # Log hiệu ứng đang dùng (mỗi 5 ảnh)
                             if i % 5 == 0:
-                                self.log(f"    #{item['id']}: {kb_effect.value}")
+                                self.log(f"    #{item['id']}: {kb_effect.value} (mode={'balanced' if use_simple_kb else 'quality'})")
+
+                            # Debug: Log filter cho clip đầu tiên
+                            if i == 0:
+                                self.log(f"  [DEBUG] Filter clip 0: {vf[:150]}...")
                         else:
-                            # FAST MODE: Static zoom/crop (tính 1 lần, không từng frame)
-                            # Đa dạng: zoom in/out, pan left/right, zoom góc...
-                            # NHANH vì chỉ scale + crop 1 lần, không animation từng frame
-
-                            import random
-
-                            # Scale ảnh lên 120% để có không gian crop
-                            scale_factor = 1.20
-                            scaled_w = int(1920 * scale_factor)  # 2304
-                            scaled_h = int(1080 * scale_factor)  # 1296
-                            margin_x = scaled_w - 1920  # 384
-                            margin_y = scaled_h - 1080  # 216
-
-                            # Random chọn 1 trong nhiều vị trí crop (static, không di chuyển)
-                            crop_positions = [
-                                # Zoom center
-                                (margin_x // 2, margin_y // 2, "zoom_center"),
-                                # Zoom góc trái trên
-                                (0, 0, "zoom_top_left"),
-                                # Zoom góc phải trên
-                                (margin_x, 0, "zoom_top_right"),
-                                # Zoom góc trái dưới
-                                (0, margin_y, "zoom_bottom_left"),
-                                # Zoom góc phải dưới
-                                (margin_x, margin_y, "zoom_bottom_right"),
-                                # Pan left (crop bên phải)
-                                (margin_x, margin_y // 2, "pan_left"),
-                                # Pan right (crop bên trái)
-                                (0, margin_y // 2, "pan_right"),
-                                # Pan up (crop phía dưới)
-                                (margin_x // 2, margin_y, "pan_up"),
-                                # Pan down (crop phía trên)
-                                (margin_x // 2, 0, "pan_down"),
-                                # Zoom out (không crop, scale fit)
-                                (None, None, "zoom_out"),
-                            ]
-
-                            # Random chọn vị trí
-                            crop_x, crop_y, effect_name = random.choice(crop_positions)
-
-                            if crop_x is None:
-                                # Zoom out: scale fit (không crop)
-                                base_filter = f"scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2"
-                            else:
-                                # Zoom in + crop tại vị trí cố định
-                                base_filter = f"scale={scaled_w}:{scaled_h}:force_original_aspect_ratio=increase,crop=1920:1080:{crop_x}:{crop_y}"
+                            # FAST MODE: Chỉ scale giữ nguyên tỷ lệ, không crop
+                            # Nhanh nhất - không có hiệu ứng gì
+                            base_filter = "scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2"
 
                             # Thêm fade
                             if fade_filter:
                                 vf = f"{base_filter},{fade_filter}"
                             else:
                                 vf = base_filter
-
-                            # Log effect (mỗi 10 ảnh)
-                            if i % 10 == 0:
-                                self.log(f"    #{item['id']}: {effect_name}")
 
                         # Build FFmpeg command với GPU acceleration nếu có
                         # Fast mode dùng preset nhanh nhất
