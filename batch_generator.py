@@ -180,27 +180,18 @@ class BatchGenerator:
 
         # Enter prompt
         textarea = self.find_textarea()
-        if textarea:
-            try:
-                textarea.clear()
-                time.sleep(0.2)
-                textarea.input(prompt)
-                print("    ✓ Nhập prompt")
-            except Exception as e:
-                print(f"    ❌ Lỗi nhập: {e}")
-                return False
-
-        # Click Generate
-        gen_btn = self.find_generate_button()
-        if not gen_btn:
-            print("    ❌ Không tìm thấy nút Generate")
+        if not textarea:
+            print("    ❌ Không tìm thấy textarea")
             return False
 
         try:
-            gen_btn.click()
-            print("    ✓ Click Generate")
+            textarea.clear()
+            time.sleep(0.2)
+            # Nhập prompt và nhấn Enter để gửi
+            textarea.input(prompt + '\n')
+            print("    ✓ Nhập prompt + Enter")
         except Exception as e:
-            print(f"    ❌ Lỗi click: {e}")
+            print(f"    ❌ Lỗi nhập: {e}")
             return False
 
         # Wait for response
