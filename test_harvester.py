@@ -91,16 +91,27 @@ class TokenHarvester:
 
         # Open Chrome
         print("\n[4] Mở Chrome...")
+        print("    Chọn: 1 = Mở Chrome mới, 2 = Kết nối Chrome đang chạy (port 9222)")
+        chrome_choice = input("    Chọn (Enter=1): ").strip()
+
         options = ChromiumOptions()
         options.set_argument("--start-maximized")
 
         try:
-            self.driver = ChromiumPage(options)
+            if chrome_choice == "2":
+                # Kết nối Chrome đang chạy
+                options.set_local_port(9222)
+                self.driver = ChromiumPage(addr_or_opts=options)
+                print("    ✓ Kết nối Chrome port 9222")
+            else:
+                # Mở Chrome mới
+                self.driver = ChromiumPage(options)
+                print("    ✓ Chrome mới đã mở")
         except Exception as e:
             print(f"    ❌ Lỗi: {e}")
+            print("    Thử chạy Chrome trước với:")
+            print('    chrome.exe --remote-debugging-port=9222')
             return
-
-        print("    ✓ Chrome đã mở")
 
         # Go to URL
         print(f"\n[5] Đi tới {custom_url[:60]}...")
