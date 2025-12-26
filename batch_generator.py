@@ -149,17 +149,26 @@ class BatchGenerator:
             return False
 
         # URL
-        print("\n[4] NHẬP URL")
-        print("    Mặc định: https://labs.google/fx/tools/image-fx")
-        print("    Hoặc nhập URL project của bạn")
-        url_input = input("    URL (Enter=mặc định): ").strip()
+        print("\n[4] URL")
+        print(f"    URL hiện tại: {self.driver.url}")
+        print("\n    Nhập URL mới hoặc:")
+        print("    - Enter = giữ nguyên trang hiện tại")
+        print("    - 1 = https://labs.google/fx/tools/image-fx")
+        url_input = input("    URL: ").strip()
 
-        if not url_input:
+        if url_input == "1":
             url_input = "https://labs.google/fx/tools/image-fx"
 
-        print(f"    → Đi tới: {url_input}")
-        self.driver.get(url_input)
-        time.sleep(3)
+        if url_input and url_input != "":
+            print(f"    → Đi tới: {url_input}")
+            self.driver.get(url_input)
+            print("    → Đang chờ trang load...")
+            time.sleep(5)
+        else:
+            print("    → Giữ nguyên trang hiện tại")
+
+        # Debug: show current URL
+        print(f"    → URL hiện tại: {self.driver.url}")
 
         # Check login
         if "accounts.google" in self.driver.url:
@@ -167,10 +176,42 @@ class BatchGenerator:
             input("    Đăng nhập xong nhấn Enter...")
             time.sleep(2)
 
+        # Wait for user to confirm page is ready
+        input("\n    Trang đã load xong? Nhấn Enter để tiếp tục...")
+
         # Inject interceptor
         print("\n[5] INJECT INTERCEPTOR...")
-        result = self.driver.run_js(JS_INTERCEPTOR)
-        print(f"    ✓ {result}")
+        try:
+            result = self.driver.run_js(JS_INTERCEPTOR)
+            print(f"    ✓ Result: {result}")
+        except Exception as e:
+            print(f"    ⚠️ JS error: {e}")
+
+        # Debug: list all visible elements
+        print("\n[6] DEBUG - KIỂM TRA ELEMENTS...")
+        try:
+            # Check textarea
+            textareas = self.driver.eles("tag:textarea")
+            print(f"    Textareas: {len(textareas)}")
+
+            # Check contenteditable
+            editables = self.driver.eles("css:[contenteditable='true']")
+            print(f"    Contenteditable: {len(editables)}")
+
+            # Check buttons
+            buttons = self.driver.eles("tag:button")
+            print(f"    Buttons: {len(buttons)}")
+
+            # Print button texts
+            for i, btn in enumerate(buttons[:5]):
+                try:
+                    txt = btn.text[:30] if btn.text else "(no text)"
+                    print(f"      Button {i+1}: {txt}")
+                except:
+                    pass
+
+        except Exception as e:
+            print(f"    Debug error: {e}")
 
         return True
 
