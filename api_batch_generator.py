@@ -2,8 +2,8 @@
 """
 Google Flow API - Direct API Batch Generator
 =============================================
-Gọi API trực tiếp với IPv6 rotating proxy.
-Cần lấy token từ Chrome một lần.
+Chrome chạy qua IPv6 proxy để bypass IP block.
+Script chặn request để lấy recaptchaToken, sau đó gọi API trực tiếp.
 """
 
 import json
@@ -19,9 +19,6 @@ from ipv6_rotate_proxy import IPv6Rotator, ProxyServer, IPV6_LIST, PROXY_PORT
 OUTPUT_DIR = Path("./batch_output")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-# API endpoint
-API_URL = "https://aisandbox-pa.googleapis.com/v1:batchGenerateImages"
-
 DEFAULT_PROMPTS = [
     "a majestic lion in the savanna at sunset",
     "a cute kitten playing with yarn",
@@ -35,215 +32,172 @@ DEFAULT_PROMPTS = [
     "a vintage car on route 66 at sunset",
 ]
 
-# JS để inject vào Chrome lấy token
-JS_GET_TOKEN = '''
+# JavaScript để chặn request và lấy tokens
+JS_INTERCEPT_REQUEST = '''
 (function() {
-    // Intercept fetch để lấy token
-    if (!window.__tokenCapture) {
-        window.__tokenCapture = {token: null, recaptcha: null};
+    if (window.__interceptReady) return 'ALREADY_READY';
+    window.__interceptReady = true;
 
-        const origFetch = window.fetch;
-        window.fetch = async function(url, opts) {
-            if (url.includes('batchGenerateImages') && opts?.body) {
+    // Store captured data
+    window.__capturedData = {
+        bearerToken: null,
+        recaptchaToken: null,
+        projectId: null,
+        lastCapture: 0
+    };
+
+    const origFetch = window.fetch;
+    window.fetch = async function(url, opts) {
+        const urlStr = typeof url === 'string' ? url : url.url;
+
+        // Chặn request batchGenerateImages để lấy tokens
+        if (urlStr.includes('batchGenerateImages')) {
+            // Lấy Bearer token từ headers
+            if (opts?.headers) {
+                const auth = opts.headers.Authorization || opts.headers.authorization;
+                if (auth) {
+                    window.__capturedData.bearerToken = auth;
+                }
+            }
+
+            // Lấy recaptchaToken từ body
+            if (opts?.body) {
                 try {
                     const body = JSON.parse(opts.body);
                     if (body.recaptchaToken) {
-                        window.__tokenCapture.recaptcha = body.recaptchaToken;
+                        window.__capturedData.recaptchaToken = body.recaptchaToken;
+                        window.__capturedData.lastCapture = Date.now();
+                        console.log('[INTERCEPTED] Got recaptchaToken!');
+                    }
+                    // Lấy projectId
+                    if (body.clientContext?.projectId) {
+                        window.__capturedData.projectId = body.clientContext.projectId;
                     }
                 } catch(e) {}
-
-                // Get auth header
-                if (opts.headers) {
-                    const auth = opts.headers.Authorization || opts.headers.authorization;
-                    if (auth) {
-                        window.__tokenCapture.token = auth;
-                    }
-                }
             }
-            return origFetch.apply(this, arguments);
-        };
-    }
-    return window.__tokenCapture;
+        }
+
+        return origFetch.apply(this, arguments);
+    };
+
+    console.log('[INTERCEPTOR] Ready to capture tokens');
+    return 'READY';
 })();
 '''
 
 
-class APIBatchGenerator:
-    def __init__(self):
-        self.bearer_token = None
-        self.project_id = None
-        self.proxy_url = f"socks5://127.0.0.1:{PROXY_PORT}"
-        self.stats = {"total": 0, "success": 0, "failed": 0}
+class DirectAPIGenerator:
+    """Gọi API trực tiếp sử dụng tokens từ Chrome"""
 
-    def setup_from_chrome(self):
-        """Lấy token từ Chrome đang mở"""
-        try:
-            from DrissionPage import ChromiumPage, ChromiumOptions
-        except ImportError:
-            print("[ERROR] Cần cài: pip install DrissionPage")
-            return False
+    BASE_URL = "https://aisandbox-pa.googleapis.com"
 
-        print("[1] Kết nối Chrome...")
-        options = ChromiumOptions()
-        options.set_local_port(9222)
+    def __init__(self, bearer_token: str, recaptcha_token: str, project_id: str):
+        self.bearer_token = bearer_token
+        self.recaptcha_token = recaptcha_token
+        self.project_id = project_id
+        self.session_id = f"session_{int(time.time())}"
 
-        try:
-            driver = ChromiumPage(addr_or_opts=options)
-        except:
-            print("[ERROR] Không kết nối được Chrome port 9222")
-            return False
-
-        url = driver.url
-        print(f"    URL: {url}")
-
-        # Lấy project ID từ URL
-        if "/project/" in url:
-            parts = url.split("/project/")
-            if len(parts) > 1:
-                self.project_id = parts[1].split("/")[0].split("?")[0]
-                print(f"    Project ID: {self.project_id}")
-
-        # Inject và đợi user click Generate
-        print("\n[2] Inject token capture...")
-        driver.run_js(JS_GET_TOKEN)
-
-        print("\n[3] Hãy CLICK 'Generate' một lần trong Chrome để lấy token...")
-        print("    (Đợi tối đa 60 giây)")
-
-        for i in range(60):
-            time.sleep(1)
-            tokens = driver.run_js("return window.__tokenCapture;")
-            if tokens and tokens.get('token'):
-                self.bearer_token = tokens['token']
-                print(f"\n[OK] Đã lấy được Bearer token!")
-                print(f"    Token: {self.bearer_token[:50]}...")
-                return True
-            print(f"    Đợi... {i+1}s", end="\r")
-
-        print("\n[ERROR] Không lấy được token. Hãy click Generate trong Chrome!")
-        return False
-
-    def manual_token_input(self):
-        """Nhập token thủ công"""
-        print("\n[MANUAL] Nhập Bearer token:")
-        print("  (Mở Chrome DevTools → Network → tìm request batchGenerateImages)")
-        print("  (Copy giá trị Authorization header)")
-        token = input("\nBearer token: ").strip()
-        if token:
-            if not token.startswith("Bearer "):
-                token = f"Bearer {token}"
-            self.bearer_token = token
-            return True
-        return False
-
-    def generate_image(self, prompt: str, retry_count: int = 3) -> Tuple[List[str], Optional[str]]:
-        """Gọi API generate image"""
-        if not self.bearer_token:
-            return [], "No token"
-
-        headers = {
-            "Authorization": self.bearer_token,
+        # Session không cần proxy - gọi API trực tiếp
+        self.session = requests.Session()
+        self.session.headers.update({
+            "Authorization": bearer_token,
             "Content-Type": "application/json",
             "Origin": "https://aisandbox.google.com",
             "Referer": "https://aisandbox.google.com/",
-        }
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/131.0.0.0"
+        })
 
-        # Payload đơn giản (không có recaptchaToken - test xem)
-        payload = {
-            "requests": [{
+        self.stats = {"total": 0, "success": 0, "failed": 0}
+
+    def generate_images(self, prompt: str, count: int = 4) -> Tuple[List[str], Optional[str]]:
+        """Gọi API generate images với recaptchaToken"""
+        url = f"{self.BASE_URL}/v1/projects/{self.project_id}/flowMedia:batchGenerateImages"
+
+        # Build requests
+        requests_data = []
+        for i in range(count):
+            requests_data.append({
+                "clientContext": {
+                    "sessionId": self.session_id,
+                    "projectId": self.project_id,
+                    "tool": "IMAGE_FX"
+                },
+                "seed": int(time.time() * 1000) + i,
+                "imageModelName": "GEM_PIX_2",
+                "imageAspectRatio": "IMAGE_ASPECT_RATIO_LANDSCAPE",
                 "prompt": prompt,
-                "mediaType": "IMAGE"
-            }],
-            "generationConfig": {
-                "imageCount": 4
-            }
+                "imageInputs": []
+            })
+
+        payload = {
+            "clientContext": {
+                "sessionId": self.session_id,
+                "projectId": self.project_id,
+                "tool": "IMAGE_FX"
+            },
+            "requests": requests_data,
+            "recaptchaToken": self.recaptcha_token  # Token từ Chrome
         }
 
-        proxies = {
-            "http": self.proxy_url,
-            "https": self.proxy_url,
-        }
+        try:
+            response = self.session.post(url, json=payload, timeout=120)
 
-        for attempt in range(retry_count):
-            try:
-                print(f"      API call (attempt {attempt+1})...")
-                response = requests.post(
-                    API_URL,
-                    headers=headers,
-                    json=payload,
-                    proxies=proxies,
-                    timeout=60
-                )
+            if response.status_code == 200:
+                data = response.json()
+                images = []
+                if data.get("media"):
+                    for m in data["media"]:
+                        img_url = m.get("image", {}).get("generatedImage", {}).get("fifeUrl")
+                        if img_url:
+                            images.append(img_url)
+                return images, None
 
-                if response.status_code == 200:
-                    data = response.json()
-                    images = []
-                    if data.get("media"):
-                        for m in data["media"]:
-                            url = m.get("image", {}).get("generatedImage", {}).get("fifeUrl")
-                            if url:
-                                images.append(url)
-                    return images, None
+            elif response.status_code == 401:
+                return [], "Token expired"
 
-                elif response.status_code == 401:
-                    return [], "Token expired - cần lấy token mới"
+            elif response.status_code == 403:
+                try:
+                    err = response.json()
+                    msg = err.get("error", {}).get("message", "")[:100]
+                except:
+                    msg = response.text[:100]
+                return [], f"403: {msg}"
 
-                elif response.status_code == 403:
-                    error_msg = response.text[:200]
-                    if "recaptcha" in error_msg.lower():
-                        return [], "Cần recaptchaToken - API không cho phép gọi trực tiếp"
-                    return [], f"403 Forbidden: {error_msg}"
+            else:
+                return [], f"HTTP {response.status_code}"
 
-                else:
-                    return [], f"HTTP {response.status_code}: {response.text[:100]}"
+        except Exception as e:
+            return [], str(e)
 
-            except requests.exceptions.ProxyError as e:
-                print(f"      Proxy error, retry...")
-                time.sleep(2)
-            except Exception as e:
-                return [], str(e)
-
-        return [], "Max retries exceeded"
-
-    def download_images(self, urls: List[str], idx: int) -> List[str]:
-        """Download images"""
-        saved = []
-        proxies = {
-            "http": self.proxy_url,
-            "https": self.proxy_url,
-        }
-
-        for i, url in enumerate(urls):
-            try:
-                resp = requests.get(url, proxies=proxies, timeout=60)
-                if resp.status_code == 200:
-                    filename = f"api_batch_{idx:03d}_{i+1}.png"
-                    (OUTPUT_DIR / filename).write_bytes(resp.content)
-                    saved.append(filename)
-            except:
-                pass
-        return saved
+    def download_image(self, url: str, filename: str) -> bool:
+        try:
+            resp = self.session.get(url, timeout=60)
+            if resp.status_code == 200:
+                (OUTPUT_DIR / filename).write_bytes(resp.content)
+                return True
+        except:
+            pass
+        return False
 
     def run_batch(self, prompts: List[str]):
-        """Chạy batch generate"""
         print("\n" + "=" * 50)
-        print("  API BATCH IMAGE GENERATION")
+        print("  DIRECT API BATCH GENERATION")
+        print(f"  Project: {self.project_id}")
         print("=" * 50)
 
         for idx, prompt in enumerate(prompts, 1):
             self.stats["total"] += 1
-            short = prompt[:40] + "..." if len(prompt) > 40 else prompt
+            short = prompt[:45] + "..." if len(prompt) > 45 else prompt
             print(f"\n[{idx}/{len(prompts)}] {short}")
 
-            images, error = self.generate_image(prompt)
+            images, error = self.generate_images(prompt)
 
             if error:
                 print(f"    ✗ {error}")
                 self.stats["failed"] += 1
 
-                if "recaptcha" in error.lower():
-                    print("\n[STOP] API yêu cầu recaptchaToken.")
-                    print("       Không thể gọi API trực tiếp mà không có token từ UI.")
+                if "403" in error and "recaptcha" in error.lower():
+                    print("\n[STOP] recaptchaToken hết hạn. Cần lấy token mới.")
                     break
                 continue
 
@@ -252,33 +206,34 @@ class APIBatchGenerator:
                 self.stats["failed"] += 1
                 continue
 
-            saved = self.download_images(images, idx)
-            if saved:
-                print(f"    ✓ Đã lưu {len(saved)} ảnh")
+            saved = 0
+            for i, img_url in enumerate(images):
+                if self.download_image(img_url, f"batch_{idx:03d}_{i+1}.png"):
+                    saved += 1
+
+            if saved > 0:
+                print(f"    ✓ Saved {saved} images")
                 self.stats["success"] += 1
             else:
-                print("    ✗ Lỗi download")
+                print("    ✗ Download failed")
                 self.stats["failed"] += 1
 
-            time.sleep(2)
+            time.sleep(1)
 
-        # Summary
         print("\n" + "=" * 50)
-        print("  KẾT QUẢ")
-        print("=" * 50)
-        print(f"  Tổng: {self.stats['total']}")
-        print(f"  Thành công: {self.stats['success']}")
-        print(f"  Thất bại: {self.stats['failed']}")
+        print(f"  Total: {self.stats['total']} | Success: {self.stats['success']} | Failed: {self.stats['failed']}")
+        print(f"  Output: {OUTPUT_DIR.absolute()}")
 
 
 def main():
     print("=" * 60)
-    print("  GOOGLE FLOW - DIRECT API BATCH GENERATOR")
+    print("  GOOGLE FLOW - DIRECT API GENERATOR")
+    print("  Chrome (IPv6 proxy) → Capture tokens → API calls")
     print("=" * 60)
     print()
 
-    # Start proxy
-    print("[PROXY] Starting IPv6 proxy...")
+    # 1. Start IPv6 proxy for Chrome
+    print("[1] Starting IPv6 proxy...")
     try:
         rotator = IPv6Rotator(IPV6_LIST)
     except Exception as e:
@@ -288,25 +243,64 @@ def main():
     proxy = ProxyServer(rotator)
     proxy.start()
     time.sleep(1)
-    print()
 
-    # Setup generator
-    generator = APIBatchGenerator()
+    # 2. Connect to Chrome
+    print("\n[2] Connecting to Chrome...")
+    try:
+        from DrissionPage import ChromiumPage, ChromiumOptions
+    except ImportError:
+        print("[ERROR] pip install DrissionPage")
+        return
 
-    print("Chọn cách lấy token:")
-    print("  1. Tự động từ Chrome (cần Chrome đang mở với --remote-debugging-port=9222)")
-    print("  2. Nhập thủ công")
-    choice = input("\nChọn (1/2): ").strip()
+    options = ChromiumOptions()
+    options.set_local_port(9222)
 
-    if choice == "1":
-        if not generator.setup_from_chrome():
-            return
-    else:
-        if not generator.manual_token_input():
-            print("[ERROR] Cần token để tiếp tục")
-            return
+    try:
+        driver = ChromiumPage(addr_or_opts=options)
+    except Exception as e:
+        print(f"[ERROR] {e}")
+        print("\n[TIP] Mở Chrome với proxy:")
+        print('  chrome.exe --proxy-server="socks5://127.0.0.1:1080" --remote-debugging-port=9222')
+        return
 
-    # Run batch
+    url = driver.url
+    print(f"    URL: {url}")
+
+    if "/project/" not in url:
+        print("\n[WARN] Hãy mở project trong Flow trước!")
+        input("Nhấn ENTER khi đã sẵn sàng...")
+
+    # 3. Inject interceptor
+    print("\n[3] Injecting token interceptor...")
+    driver.run_js(JS_INTERCEPT_REQUEST)
+
+    # 4. Wait for user to click Generate
+    print("\n[4] Click 'Generate' trong Chrome để lấy tokens...")
+    print("    (Script sẽ chặn request và lấy bearerToken + recaptchaToken)")
+
+    captured = None
+    for i in range(120):
+        time.sleep(1)
+        data = driver.run_js("return window.__capturedData;")
+        if data and data.get("recaptchaToken") and data.get("bearerToken"):
+            captured = data
+            print(f"\n[OK] Captured tokens!")
+            print(f"    Bearer: {data['bearerToken'][:50]}...")
+            print(f"    reCAPTCHA: {data['recaptchaToken'][:50]}...")
+            break
+        print(f"    Waiting... {i+1}s", end="\r")
+
+    if not captured:
+        print("\n[ERROR] Không lấy được tokens")
+        return
+
+    # 5. Run batch with captured tokens
+    print("\n[5] Starting batch generation...")
+    generator = DirectAPIGenerator(
+        captured["bearerToken"],
+        captured["recaptchaToken"],
+        captured.get("projectId", url.split("/project/")[1].split("/")[0])
+    )
     generator.run_batch(DEFAULT_PROMPTS)
 
 
