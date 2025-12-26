@@ -191,16 +191,18 @@ class BatchGenerator:
             time.sleep(0.3)
             print("    ✓ Nhập prompt")
 
-            # Nhấn Enter - dùng run_js để focus và dispatch key
-            self.driver.run_js('''
-                const ta = document.querySelector('textarea');
-                if (ta) {
-                    ta.focus();
-                    ta.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true}));
-                    ta.dispatchEvent(new KeyboardEvent('keyup', {key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true}));
-                }
-            ''')
-            print("    ✓ Dispatch Enter")
+            # Nhấn Enter thật bằng pyautogui (OS-level)
+            try:
+                import pyautogui
+                pyautogui.press('enter')
+                print("    ✓ Nhấn Enter (pyautogui)")
+            except ImportError:
+                print("    ⚠️ Cần cài: pip install pyautogui")
+                # Fallback click button
+                gen_btn = self.find_generate_button()
+                if gen_btn:
+                    gen_btn.click()
+                    print("    ✓ Click button")
             time.sleep(0.5)
 
         except Exception as e:
