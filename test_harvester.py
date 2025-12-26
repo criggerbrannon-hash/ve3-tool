@@ -177,32 +177,24 @@ class TokenHarvester:
     def get_token(self):
         """Lấy token mới từ grecaptcha"""
         try:
-            # Bước 1: Trigger execute
-            result = self.driver.run_js(JS_GET_TOKEN)
-            print(f"    Trigger: {result}")
+            # Cách 1: Trigger và lưu vào window
+            js_trigger = f"""
+            window.__recaptchaToken = null;
+            grecaptcha.enterprise.execute('{SITE_KEY}', {{action: 'submit'}}).then(t => window.__recaptchaToken = t);
+            """
+            self.driver.run_js(js_trigger)
+            print("    Triggered...")
 
-            if isinstance(result, dict) and result.get('error'):
-                print(f"    JS Error: {result['error']}")
-                return None
-
-            # Bước 2: Chờ và lấy kết quả
-            for i in range(20):  # Chờ tối đa 2 giây
+            # Chờ token
+            for i in range(30):  # Chờ tối đa 3 giây
                 time.sleep(0.1)
-                result = self.driver.run_js(JS_GET_TOKEN_RESULT)
-
-                if isinstance(result, dict):
-                    if 'token' in result:
-                        token = result['token']
-                        self.tokens.append({
-                            'token': token,
-                            'time': time.time()
-                        })
-                        return token
-                    elif 'error' in result:
-                        print(f"    JS Error: {result['error']}")
-                        return None
-                    elif result.get('status') == 'waiting':
-                        continue
+                token = self.driver.run_js("return window.__recaptchaToken")
+                if token:
+                    self.tokens.append({
+                        'token': token,
+                        'time': time.time()
+                    })
+                    return token
 
             print("    Timeout waiting for token")
             return None
