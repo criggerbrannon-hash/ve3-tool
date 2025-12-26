@@ -26,12 +26,14 @@ from datetime import datetime
 # Lấy từ header "Authorization: Bearer ya29.xxxxx"
 BEARER_TOKEN = ""  # <-- ĐIỀN TOKEN CỦA BẠN VÀO ĐÂY
 
-# x-browser-validation (optional - thử không có trước)
-# Lấy từ header "x-browser-validation: eyJxxxxx"
+# x-browser-validation (từ header)
 X_BROWSER_VALIDATION = ""  # <-- ĐIỀN VÀO ĐÂY
 
-# Project ID (optional - tự tạo nếu không có)
-# Lấy từ URL: https://labs.google/fx/tools/flow/project/{PROJECT_ID}
+# ⚠️ QUAN TRỌNG: recaptchaToken (từ Request Payload)
+# Click vào request → Payload tab → requests[0].clientContext.recaptchaToken
+RECAPTCHA_TOKEN = ""  # <-- ĐIỀN VÀO ĐÂY (dài ~2000 ký tự)
+
+# Project ID (từ URL hoặc Payload)
 PROJECT_ID = ""  # <-- ĐIỀN VÀO ĐÂY
 
 # =============================================================================
@@ -95,16 +97,34 @@ def test_api():
         headers["x-browser-year"] = "2025"
         headers["x-client-data"] = "CIDsygE="
 
-    # Build payload
+    # Check recaptcha token
+    if not RECAPTCHA_TOKEN:
+        print("\n❌ Chưa điền RECAPTCHA_TOKEN!")
+        print("\nCách lấy:")
+        print("1. F12 → Network → Tìm 'batchGenerateImages'")
+        print("2. Click vào → Payload tab")
+        print("3. Copy 'recaptchaToken' (dài ~2000 ký tự)")
+        return False
+
+    print(f"✅ recaptchaToken: {RECAPTCHA_TOKEN[:40]}...{RECAPTCHA_TOKEN[-20:]}")
+
+    # Build payload - đúng cấu trúc như Chrome
     import random
+    session_id = f";{int(datetime.now().timestamp() * 1000)}"
+
     payload = {
+        "clientContext": {
+            "recaptchaToken": RECAPTCHA_TOKEN,
+            "sessionId": session_id
+        },
         "requests": [{
             "clientContext": {
-                "sessionId": str(random.randint(100000, 999999)),
+                "recaptchaToken": RECAPTCHA_TOKEN,
+                "sessionId": session_id,
                 "projectId": project_id,
                 "tool": "PINHOLE"
             },
-            "seed": random.randint(1, 999999),
+            "seed": random.randint(100000, 999999),
             "imageModelName": "GEM_PIX_2",
             "imageAspectRatio": "IMAGE_ASPECT_RATIO_LANDSCAPE",
             "prompt": TEST_PROMPT,
