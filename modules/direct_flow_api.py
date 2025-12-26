@@ -4,19 +4,19 @@ VE3 Tool - Direct Flow API Module
 =================================
 Gọi Google Flow API trực tiếp, không qua proxy (nanoai.pics).
 
-Flow tự động:
+Sử dụng flow giống auto_token.py:
 1. Mở Chrome với profile đã login
-2. Vào Flow page, inject JS để capture recaptchaToken
-3. Trigger tạo ảnh trong browser → capture token
-4. Dùng token để gọi API từ Python
+2. Click Dự án mới → Chọn Tạo hình ảnh
+3. Gửi prompt → Capture bearer + recaptchaToken
+4. Dùng tokens để gọi API trực tiếp
 
 Ưu điểm:
 - Miễn phí (không cần nanoai.pics)
-- Không bị rate limit từ proxy
+- Dùng lại flow đã hoạt động tốt
 
 Nhược điểm:
-- Cần Chrome mở liên tục
-- Mỗi request cần ~3-5 giây để lấy token mới
+- recaptchaToken chỉ dùng 1 lần
+- Mỗi request cần trigger browser để lấy token mới
 """
 
 import json
@@ -25,7 +25,7 @@ import random
 import base64
 import subprocess
 from pathlib import Path
-from typing import Optional, Tuple, List, Dict, Any
+from typing import Optional, Tuple, List, Dict, Any, Callable
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -59,13 +59,27 @@ class GeneratedImage:
 
 class DirectFlowAPI:
     """
-    Gọi Google Flow API trực tiếp với recaptchaToken tự động.
+    Gọi Google Flow API trực tiếp với token tự động capture.
 
-    Sử dụng browser để lấy recaptchaToken (vì không thể tạo từ Python).
+    Flow tận dụng Chrome session đã mở:
+    1. Lần đầu: Mở Chrome → inject script → trigger → capture tokens
+    2. Lần sau: Chỉ trigger lại để lấy recaptchaToken mới (Chrome đã mở)
+
+    Ưu điểm: Không cần trả tiền captcha (nanoai.pics)
     """
 
     BASE_URL = "https://aisandbox-pa.googleapis.com"
     FLOW_URL = "https://labs.google/fx/vi/tools/flow"
+
+    # Singleton để giữ Chrome session
+    _instance = None
+    _chrome_ready = False
+
+    def __new__(cls, *args, **kwargs):
+        """Singleton pattern - chỉ 1 instance để giữ Chrome session."""
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
 
     def __init__(
         self,
@@ -74,34 +88,33 @@ class DirectFlowAPI:
         verbose: bool = True,
         timeout: int = 120
     ):
-        """
-        Khởi tạo DirectFlowAPI.
+        # Chỉ init một lần
+        if hasattr(self, '_initialized') and self._initialized:
+            return
 
-        Args:
-            chrome_path: Đường dẫn Chrome executable
-            profile_path: Đường dẫn Chrome profile (đã login Google)
-            verbose: In log chi tiết
-            timeout: Timeout cho API calls
-        """
         self.chrome_path = chrome_path or r"C:\Program Files\Google\Chrome\Application\chrome.exe"
         self.profile_path = profile_path
         self.verbose = verbose
         self.timeout = timeout
+        self.callback = None
 
         # Cached tokens
         self._bearer_token = None
-        self._bearer_token_time = 0
+        self._recaptcha_token = None
         self._project_id = None
         self._session_id = None
+        self._x_browser_validation = None  # Header cần cho API
+        self._full_body = None  # v3: Full Chrome payload for exact replay
 
-        # Browser state
-        self._browser_ready = False
+        self._initialized = True
 
-    def _log(self, msg: str):
+    def log(self, msg: str):
         """Print log."""
         if self.verbose:
             timestamp = datetime.now().strftime("%H:%M:%S")
             print(f"[{timestamp}] [DirectFlow] {msg}")
+        if self.callback:
+            self.callback(msg)
 
     def _open_chrome(self, url: str) -> bool:
         """Mở Chrome với profile."""
@@ -114,274 +127,454 @@ class DirectFlowAPI:
 
                 if default_folder.exists():
                     cmd.append(f"--user-data-dir={profile_path}")
+                    self.log(f"Using user-data-dir: {profile_path}")
                 else:
                     cmd.extend([
                         f"--user-data-dir={profile_path.parent}",
                         f"--profile-directory={profile_path.name}"
                     ])
+                    self.log(f"Using profile: {profile_path.parent} / {profile_path.name}")
 
             cmd.append(url)
             subprocess.Popen(cmd, shell=False)
             return True
         except Exception as e:
-            self._log(f"Lỗi mở Chrome: {e}")
+            self.log(f"Lỗi mở Chrome: {e}")
             return False
 
-    def _inject_token_capture(self) -> bool:
+    def _inject_capture_with_recaptcha(self) -> bool:
         """
-        Inject JS để capture Bearer token và recaptchaToken.
-        Chạy trong DevTools Console.
+        Inject script capture CẢ bearer token VÀ recaptchaToken.
+        Đây là điểm khác biệt với auto_token.py.
         """
         if not pag or not pyperclip:
-            self._log("Thiếu pyautogui hoặc pyperclip")
             return False
 
-        # JS capture cả Bearer và recaptchaToken
-        capture_js = '''
-(function(){
-    // Capture tokens
-    window._flowTokens = {bearer: null, recaptcha: null, projectId: null};
+        self.log("Inject capture script (bearer + recaptcha + sessionId + BLOCK)...")
 
-    // Hook fetch để capture
-    const origFetch = window.fetch;
-    window.fetch = async function(url, opts) {
-        const urlStr = url.toString();
-
-        if (urlStr.includes('flowMedia') || urlStr.includes('aisandbox')) {
-            // Capture Bearer token
-            const auth = opts?.headers?.Authorization || opts?.headers?.authorization;
-            if (auth && auth.startsWith('Bearer ')) {
-                window._flowTokens.bearer = auth.substring(7);
-            }
-
-            // Capture recaptchaToken từ body
-            if (opts?.body) {
-                try {
-                    const body = JSON.parse(opts.body);
-                    if (body.clientContext?.recaptchaToken) {
-                        window._flowTokens.recaptcha = body.clientContext.recaptchaToken;
-                    }
-                    if (body.requests?.[0]?.clientContext?.projectId) {
-                        window._flowTokens.projectId = body.requests[0].clientContext.projectId;
-                    }
-                } catch(e) {}
-            }
-
-            console.log('[CAPTURE] Tokens captured!', window._flowTokens);
-        }
-
-        return origFetch.apply(this, arguments);
-    };
-
-    console.log('[DirectFlow] Token capture ready!');
-})();
-'''
+        # Script capture: bearer, recaptchaToken, sessionId, projectId + FULL BODY + x-browser-validation
+        # QUAN TRỌNG: Lưu toàn bộ body + headers để có thể replay chính xác!
+        # v4: Also capture x-browser-validation header (REQUIRED!)
+        capture_script = '''window._tk=null;window._pj=null;window._rc=null;window._sid=null;window._body=null;window._xbv=null;window._blocked=0;(function(){var f=window.fetch;window.fetch=function(u,o){var s=u?u.toString():'';if(s.includes('batchGenerateImages')){console.log('[DirectFlow v4] URL: '+s.substring(0,100));var h=o&&o.headers?o.headers:{};var getH=function(k){if(h.get)return h.get(k);if(typeof h==='object'){for(var key in h){if(key.toLowerCase()===k.toLowerCase())return h[key];}}return '';};var a=getH('Authorization')||getH('authorization')||'';if(a.startsWith('Bearer ')){window._tk=a.substring(7);var m=s.match(/\\/projects\\/([^\\/]+)\\//);if(m){window._pj=m[1];console.log('✓ PROJECT_ID: '+window._pj);}console.log('✓ BEARER!');}var xbv=getH('x-browser-validation');if(xbv){window._xbv=xbv;console.log('✓ X-BROWSER-VALIDATION: '+xbv.substring(0,30)+'...');}if(o&&o.body){try{var body=JSON.parse(o.body);window._body=o.body;console.log('✓ FULL BODY SAVED ('+o.body.length+' chars)');if(body.clientContext){if(body.clientContext.sessionId){window._sid=body.clientContext.sessionId;console.log('✓ SESSION_ID: '+window._sid);}if(body.clientContext.projectId&&!window._pj){window._pj=body.clientContext.projectId;console.log('✓ PROJECT_ID (from body): '+window._pj);}if(body.clientContext.recaptchaToken){window._rc=body.clientContext.recaptchaToken;window._blocked++;console.log('✓ RECAPTCHA! (blocked #'+window._blocked+')');return Promise.resolve(new Response(JSON.stringify({media:[]}),{status:200,headers:{'Content-Type':'application/json'}}));}}}catch(e){console.log('Parse error: '+e);}}}return f.apply(this,arguments);};console.log('[DirectFlow] Capture ready v4!');})();'''
 
         try:
-            # Mở DevTools
             pag.hotkey("ctrl", "shift", "j")
             time.sleep(1.5)
 
-            # Paste và chạy
-            pyperclip.copy(capture_js)
+            pyperclip.copy(capture_script)
             time.sleep(0.2)
             pag.hotkey("ctrl", "v")
             time.sleep(0.3)
             pag.press("enter")
             time.sleep(0.5)
 
-            # Đóng DevTools
             pag.hotkey("ctrl", "shift", "j")
             time.sleep(0.5)
 
-            self._log("Đã inject token capture script")
+            self.log("Capture script injected, DevTools closed")
             return True
         except Exception as e:
-            self._log(f"Lỗi inject: {e}")
+            self.log(f"Inject error: {e}")
             return False
 
-    def _get_captured_tokens(self) -> Dict[str, str]:
-        """Lấy tokens đã capture từ browser."""
+    def _click_new_project_js(self) -> bool:
+        """Click 'Dự án mới' bằng JS."""
         if not pag or not pyperclip:
-            return {}
+            return False
+
+        js = '''(function(){var btns=document.querySelectorAll('button');for(var b of btns){if(b.textContent.includes('Dự án mới')){b.click();console.log('Clicked Du an moi');return true;}}return false;})();'''
 
         try:
-            # Mở DevTools
             pag.hotkey("ctrl", "shift", "j")
             time.sleep(1)
-
-            # Lấy tokens
-            js = 'copy(JSON.stringify(window._flowTokens || {}))'
             pyperclip.copy(js)
             pag.hotkey("ctrl", "v")
             time.sleep(0.2)
             pag.press("enter")
             time.sleep(0.5)
-
-            # Đóng DevTools
             pag.hotkey("ctrl", "shift", "j")
-            time.sleep(0.3)
+            time.sleep(0.5)
+            return True
+        except:
+            return False
 
-            # Parse result
-            result = pyperclip.paste()
-            if result and result.startswith('{'):
-                return json.loads(result)
-        except Exception as e:
-            self._log(f"Lỗi lấy tokens: {e}")
-
-        return {}
-
-    def _trigger_image_generation(self, prompt: str = "test image") -> bool:
-        """
-        Trigger tạo ảnh trong browser để capture fresh recaptchaToken.
-        Dùng khi cần token mới (token cũ đã dùng/hết hạn).
-        """
+    def _click_image_mode_js(self) -> bool:
+        """Click dropdown và chọn 'Tạo hình ảnh'."""
         if not pag or not pyperclip:
             return False
 
-        self._log("Triggering image generation để lấy fresh token...")
+        js = '''(async function(){var dd=document.querySelector('button[role="combobox"]');if(dd){dd.click();await new Promise(r=>setTimeout(r,500));var all=document.querySelectorAll('*');for(var el of all){var t=el.textContent||'';if(t==='Tạo hình ảnh'||t.includes('Tạo hình ảnh từ văn bản')){var r=el.getBoundingClientRect();if(r.height>10&&r.height<80){el.click();console.log('Clicked: '+t.substring(0,40));return true;}}}}return false;})();'''
 
         try:
-            # JS để trigger tạo ảnh
-            trigger_js = f'''
-(async function(){{
-    // Tìm textarea
-    const ta = document.querySelector('textarea');
-    if (!ta) {{ console.log('No textarea!'); return; }}
-
-    // Set prompt
-    ta.value = "{prompt}";
-    ta.dispatchEvent(new Event('input', {{bubbles: true}}));
-
-    // Tìm nút gửi và click
-    await new Promise(r => setTimeout(r, 500));
-
-    // Trigger Enter
-    ta.dispatchEvent(new KeyboardEvent('keydown', {{
-        key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true
-    }}));
-
-    console.log('[DirectFlow] Triggered generation!');
-}})();
-'''
-
-            # Mở DevTools
             pag.hotkey("ctrl", "shift", "j")
             time.sleep(1)
+            pyperclip.copy(js)
+            pag.hotkey("ctrl", "v")
+            time.sleep(0.2)
+            pag.press("enter")
+            time.sleep(1)
+            pag.hotkey("ctrl", "shift", "j")
+            time.sleep(0.5)
+            return True
+        except:
+            return False
 
-            # Chạy trigger
-            pyperclip.copy(trigger_js)
+    def _focus_textarea_js(self) -> bool:
+        """Focus vào textarea."""
+        if not pag or not pyperclip:
+            return False
+
+        js = '''(function(){var ta=document.querySelector('textarea');if(ta){ta.focus();ta.click();console.log('Textarea focused');return true;}return false;})();'''
+
+        try:
+            pag.hotkey("ctrl", "shift", "j")
+            time.sleep(1)
+            pyperclip.copy(js)
             pag.hotkey("ctrl", "v")
             time.sleep(0.2)
             pag.press("enter")
             time.sleep(0.5)
-
-            # Đóng DevTools
             pag.hotkey("ctrl", "shift", "j")
             time.sleep(0.5)
+            return True
+        except:
+            return False
 
-            # Đợi request được gửi
-            self._log("Đợi 5 giây để capture token...")
-            time.sleep(5)
+    def _send_prompt_manual(self, prompt: str) -> bool:
+        """Gửi prompt bằng PyAutoGUI."""
+        if not pag or not pyperclip:
+            return False
 
+        self.log(f"Gửi prompt: {prompt[:40]}...")
+
+        try:
+            pyperclip.copy(prompt)
+            time.sleep(0.2)
+            pag.hotkey("ctrl", "v")
+            time.sleep(0.5)
+
+            pag.press("enter")
+            time.sleep(0.5)
+
+            self.log("Prompt sent!")
             return True
         except Exception as e:
-            self._log(f"Lỗi trigger: {e}")
+            self.log(f"Send prompt error: {e}")
             return False
 
-    def setup_browser(self, project_url: str = None) -> bool:
-        """
-        Setup browser: mở Chrome, vào Flow, inject capture script.
-
-        Args:
-            project_url: URL project cụ thể (nếu có)
-
-        Returns:
-            True nếu setup thành công
-        """
-        url = project_url or self.FLOW_URL
-
-        self._log(f"Mở Chrome: {url}")
-        if not self._open_chrome(url):
-            return False
-
-        self._log("Đợi trang load (12s)...")
-        time.sleep(12)
-
-        # Inject capture script
-        if not self._inject_token_capture():
-            return False
-
-        self._browser_ready = True
-        return True
-
-    def get_fresh_tokens(self, trigger_prompt: str = "beautiful sunset") -> Dict[str, str]:
-        """
-        Lấy fresh tokens bằng cách trigger tạo ảnh.
-
-        Returns:
-            Dict với bearer, recaptcha, projectId
-        """
-        if not self._browser_ready:
-            self._log("Browser chưa setup!")
+    def _get_tokens_from_devtools(self) -> Dict[str, str]:
+        """Lấy bearer, recaptchaToken, sessionId, x-browser-validation từ DevTools."""
+        if not pag or not pyperclip:
             return {}
 
-        # Trigger để capture fresh token
-        self._trigger_image_generation(trigger_prompt)
+        try:
+            pag.hotkey("ctrl", "shift", "j")
+            time.sleep(1.2)
 
-        # Lấy tokens
-        tokens = self._get_captured_tokens()
+            # Lấy tất cả: token, project, recaptcha, sessionId, full_body, x-browser-validation
+            # QUAN TRỌNG: sessionId phải match với recaptcha (bound together)
+            # v4: Also get x-browser-validation (REQUIRED!)
+            js = 'copy(JSON.stringify({t:window._tk,p:window._pj,r:window._rc,s:window._sid,b:window._body,x:window._xbv}))'
+            pyperclip.copy(js)
+            time.sleep(0.2)
+            pag.hotkey("ctrl", "v")
+            time.sleep(0.2)
+            pag.press("enter")
+            time.sleep(0.8)
 
-        if tokens.get('bearer'):
-            self._bearer_token = tokens['bearer']
-            self._bearer_token_time = time.time()
-            self._log(f"Bearer: {self._bearer_token[:20]}...")
+            pag.hotkey("ctrl", "shift", "j")
+            time.sleep(0.3)
 
-        if tokens.get('projectId'):
-            self._project_id = tokens['projectId']
-            self._log(f"Project: {self._project_id[:20]}...")
+            try:
+                text = pyperclip.paste()
+                if text and text.startswith('{'):
+                    data = json.loads(text)
+                    return {
+                        'bearer': data.get('t'),
+                        'project_id': data.get('p'),
+                        'recaptcha': data.get('r'),
+                        'session_id': data.get('s'),  # QUAN TRỌNG: sessionId bound với recaptcha
+                        'full_body': data.get('b'),  # Full Chrome payload for exact replay
+                        'x_browser_validation': data.get('x')  # v4: REQUIRED header!
+                    }
+            except:
+                pass
+        except:
+            pass
 
-        if tokens.get('recaptcha'):
-            self._log(f"reCAPTCHA: {tokens['recaptcha'][:30]}...")
+        return {}
 
-        return tokens
+    def get_fresh_recaptcha(
+        self,
+        callback: Callable = None,
+        trigger_prompt: str = "test image"
+    ) -> Optional[str]:
+        """
+        Lấy recaptchaToken MỚI từ Chrome đã mở.
 
-    def generate_images(
+        CHỈ dùng khi Chrome đã mở và có bearer token.
+        Flow nhanh: Focus textarea → Gửi prompt → Capture recaptcha
+
+        Returns:
+            recaptchaToken mới hoặc None
+        """
+        self.callback = callback
+
+        if not DirectFlowAPI._chrome_ready:
+            self.log("Chrome chưa sẵn sàng! Gọi extract_tokens() trước.")
+            return None
+
+        if not pag or not pyperclip:
+            return None
+
+        try:
+            self.log("=== LẤY RECAPTCHA MỚI (Chrome đã mở) ===")
+
+            # Reset recaptcha cũ trong browser
+            self._reset_recaptcha_in_browser()
+
+            # Focus textarea và gửi prompt
+            self.log("Focus textarea...")
+            self._focus_textarea_js()
+            time.sleep(1)
+
+            self._send_prompt_manual(trigger_prompt)
+
+            # recaptcha được gửi cùng request → capture ngay sau khi send
+            # KHÔNG CẦN đợi image tạo xong!
+            self.log("Đợi request gửi đi (3s)...")
+            time.sleep(3)
+
+            # Capture recaptcha + sessionId + full_body + x-browser-validation từ request
+            for i in range(3):
+                time.sleep(1)
+                tokens = self._get_tokens_from_devtools()
+
+                if tokens.get('recaptcha'):
+                    self._recaptcha_token = tokens['recaptcha']
+                    self.log(f"✓ Fresh reCAPTCHA: {self._recaptcha_token[:30]}...")
+
+                    # QUAN TRỌNG: Capture sessionId (bound với recaptcha)
+                    if tokens.get('session_id'):
+                        self._session_id = tokens['session_id']
+                        self.log(f"✓ Fresh sessionId: {self._session_id}")
+
+                    # v4: Capture full body for exact replay
+                    if tokens.get('full_body'):
+                        self._full_body = tokens['full_body']
+                        self.log(f"✓ Fresh full_body: {len(self._full_body)} chars")
+
+                    # v4: Capture x-browser-validation (REQUIRED!)
+                    if tokens.get('x_browser_validation'):
+                        self._x_browser_validation = tokens['x_browser_validation']
+                        self.log(f"✓ Fresh x-browser-validation: {self._x_browser_validation[:30]}...")
+
+                    return self._recaptcha_token
+
+            self.log("Không capture được recaptcha!")
+            return None
+
+        except Exception as e:
+            self.log(f"Lỗi get_fresh_recaptcha: {e}")
+            return None
+
+    def _reset_recaptcha_in_browser(self) -> bool:
+        """Reset biến _rc và _sid trong browser để capture token mới."""
+        if not pag or not pyperclip:
+            return False
+
+        try:
+            pag.hotkey("ctrl", "shift", "j")
+            time.sleep(1)
+
+            # Reset cả recaptcha VÀ sessionId (chúng bound với nhau)
+            pyperclip.copy("window._rc=null;window._sid=null;console.log('Recaptcha+SessionId reset');")
+            pag.hotkey("ctrl", "v")
+            time.sleep(0.2)
+            pag.press("enter")
+            time.sleep(0.3)
+
+            pag.hotkey("ctrl", "shift", "j")
+            time.sleep(0.3)
+            return True
+        except:
+            return False
+
+    def extract_tokens(
+        self,
+        project_id: str = None,
+        project_url: str = None,
+        callback: Callable = None,
+        trigger_prompt: str = "beautiful sunset over ocean"
+    ) -> Dict[str, str]:
+        """
+        Lấy bearer + recaptchaToken bằng cách trigger tạo ảnh.
+
+        Flow:
+        - Nếu Chrome chưa mở: Full flow (mở Chrome, inject, trigger, capture)
+        - Nếu Chrome đã mở: Chỉ trigger để lấy recaptcha mới
+
+        Returns:
+            Dict với 'bearer', 'project_id', 'recaptcha'
+        """
+        self.callback = callback
+
+        if not pag:
+            self.log("Thiếu pyautogui!")
+            return {}
+        if not pyperclip:
+            self.log("Thiếu pyperclip!")
+            return {}
+
+        # === CHROME ĐÃ MỞ → chỉ lấy recaptcha mới ===
+        if DirectFlowAPI._chrome_ready and self._bearer_token:
+            self.log("Chrome đã mở, lấy fresh recaptcha...")
+            recaptcha = self.get_fresh_recaptcha(callback, trigger_prompt)
+            if recaptcha:
+                return {
+                    'bearer': self._bearer_token,
+                    'project_id': self._project_id,
+                    'recaptcha': recaptcha
+                }
+            # Nếu không lấy được, thử full flow
+            self.log("Không lấy được recaptcha, thử mở Chrome lại...")
+            DirectFlowAPI._chrome_ready = False
+
+        try:
+            # === FULL FLOW: Mở Chrome mới ===
+            if project_url:
+                url = project_url
+                self.log(f"Vào project URL: {url[:60]}...")
+            elif project_id:
+                url = f"https://labs.google/fx/vi/tools/flow/project/{project_id}"
+                self.log(f"Vào project ID: {project_id[:20]}...")
+            else:
+                url = self.FLOW_URL
+
+            self.log("Mở Chrome...")
+            if not self._open_chrome(url):
+                return {}
+
+            # === 2. Đợi trang load ===
+            self.log("Đợi trang load (12s)...")
+            time.sleep(12)
+
+            # === 3. Inject capture script ===
+            self._inject_capture_with_recaptcha()
+            time.sleep(1)
+
+            # === 4. Click Dự án mới (nếu chưa có project) ===
+            if not project_id and not project_url:
+                self.log("Click Dự án mới...")
+                self._click_new_project_js()
+                self.log("Đợi 5s...")
+                time.sleep(5)
+            else:
+                self.log("Đã trong project → skip 'Dự án mới'")
+
+            # === 5. Chọn Tạo hình ảnh ===
+            self.log("Chọn mode Tạo hình ảnh...")
+            self._click_image_mode_js()
+            time.sleep(3)
+
+            # === 6. Focus textarea ===
+            self.log("Focus textarea...")
+            self._focus_textarea_js()
+            time.sleep(1)
+
+            # === 7. Gửi prompt ===
+            self._send_prompt_manual(trigger_prompt)
+
+            # === 8. Capture tokens (NHANH - không cần đợi ảnh tạo xong!) ===
+            # recaptcha được gửi trong request body → capture ngay!
+            self.log("Đợi request gửi đi (5s)...")
+            time.sleep(5)
+
+            self.log("Capture tokens...")
+
+            for i in range(5):
+                time.sleep(1)
+                self.log(f"Kiểm tra #{i+1}/5...")
+
+                tokens = self._get_tokens_from_devtools()
+
+                if tokens.get('bearer'):
+                    self._bearer_token = tokens['bearer']
+                    self.log(f"✓ Bearer: {self._bearer_token[:20]}...")
+
+                if tokens.get('project_id'):
+                    self._project_id = tokens['project_id']
+                    self.log(f"✓ Project: {self._project_id[:20]}...")
+
+                if tokens.get('recaptcha'):
+                    self._recaptcha_token = tokens['recaptcha']
+                    self.log(f"✓ reCAPTCHA: {self._recaptcha_token[:30]}...")
+
+                # QUAN TRỌNG: Capture sessionId (bound với recaptcha)
+                if tokens.get('session_id'):
+                    self._session_id = tokens['session_id']
+                    self.log(f"✓ sessionId: {self._session_id}")
+
+                if tokens.get('x_browser_validation'):
+                    self._x_browser_validation = tokens['x_browser_validation']
+                    self.log(f"✓ x-browser-validation: {self._x_browser_validation[:30]}...")
+
+                # v4: Capture full body for exact replay
+                if tokens.get('full_body'):
+                    self._full_body = tokens['full_body']
+                    self.log(f"✓ full_body: {len(self._full_body)} chars")
+
+                # Cần cả bearer VÀ recaptcha
+                if tokens.get('bearer') and tokens.get('recaptcha'):
+                    self.log("=== ĐÃ LẤY ĐƯỢC TOKENS! ===")
+                    # Đánh dấu Chrome đã sẵn sàng để reuse
+                    DirectFlowAPI._chrome_ready = True
+                    self.log("Chrome session ready for reuse!")
+                    return tokens
+
+            self.log("Không lấy được đủ tokens!")
+            # Vẫn đánh dấu ready nếu có bearer (recaptcha có thể lấy sau)
+            if self._bearer_token:
+                DirectFlowAPI._chrome_ready = True
+            return {'bearer': self._bearer_token, 'project_id': self._project_id, 'recaptcha': None}
+
+        except Exception as e:
+            self.log(f"Lỗi: {e}")
+            return {}
+
+    def generate_images_direct(
         self,
         prompt: str,
         count: int = 2,
         aspect_ratio: str = "IMAGE_ASPECT_RATIO_LANDSCAPE",
-        recaptcha_token: str = None,
         bearer_token: str = None,
+        recaptcha_token: str = None,
         project_id: str = None
     ) -> Tuple[bool, List[GeneratedImage], str]:
         """
-        Tạo ảnh bằng API trực tiếp.
+        Gọi API trực tiếp với tokens đã có.
 
         Args:
             prompt: Mô tả ảnh
             count: Số ảnh (1-4)
             aspect_ratio: Tỷ lệ khung hình
-            recaptcha_token: Token reCAPTCHA (nếu có sẵn)
-            bearer_token: Bearer token (nếu có sẵn)
-            project_id: Project ID (nếu có sẵn)
+            bearer_token: Bearer token (ya29.xxx)
+            recaptcha_token: reCAPTCHA token
+            project_id: Project ID
 
         Returns:
             Tuple[success, images, error]
         """
-        # Sử dụng token đã cung cấp hoặc cached
         bearer = bearer_token or self._bearer_token
+        recaptcha = recaptcha_token or self._recaptcha_token
         project = project_id or self._project_id or str(__import__('uuid').uuid4())
-        recaptcha = recaptcha_token
+        session_id = f";{int(time.time() * 1000)}"
 
         if not bearer:
             return False, [], "Thiếu Bearer token"
 
         if not recaptcha:
             return False, [], "Thiếu recaptchaToken"
-
-        # Session ID
-        session_id = self._session_id or f";{int(time.time() * 1000)}"
 
         # Build payload
         payload = {
@@ -407,7 +600,6 @@ class DirectFlowAPI:
             ]
         }
 
-        # Headers
         headers = {
             "Authorization": f"Bearer {bearer}",
             "Content-Type": "text/plain;charset=UTF-8",
@@ -415,11 +607,9 @@ class DirectFlowAPI:
             "Referer": "https://labs.google/",
         }
 
-        # API URL
         url = f"{self.BASE_URL}/v1/projects/{project}/flowMedia:batchGenerateImages"
 
-        self._log(f"POST {url}")
-        self._log(f"Prompt: {prompt[:50]}...")
+        self.log(f"POST API: {prompt[:40]}...")
 
         try:
             response = requests.post(
@@ -429,7 +619,7 @@ class DirectFlowAPI:
                 timeout=self.timeout
             )
 
-            self._log(f"Status: {response.status_code}")
+            self.log(f"Status: {response.status_code}")
 
             if response.status_code == 401:
                 return False, [], "Bearer token hết hạn (401)"
@@ -437,18 +627,17 @@ class DirectFlowAPI:
             if response.status_code == 403:
                 error_text = response.text[:200]
                 if 'recaptcha' in error_text.lower():
-                    return False, [], "recaptchaToken không hợp lệ hoặc đã dùng (403)"
+                    return False, [], "recaptchaToken đã dùng hoặc hết hạn (403)"
                 return False, [], f"Access forbidden (403): {error_text}"
 
             if response.status_code != 200:
                 return False, [], f"API error {response.status_code}: {response.text[:200]}"
 
-            # Parse response
             result = response.json()
             images = self._parse_images(result)
 
             if images:
-                self._log(f"✓ Tạo {len(images)} ảnh thành công!")
+                self.log(f"✓ Tạo {len(images)} ảnh thành công!")
                 return True, images, ""
             else:
                 return False, [], "Không có ảnh trong response"
@@ -478,6 +667,72 @@ class DirectFlowAPI:
 
         return images
 
+    def replay_chrome_payload(self) -> Tuple[bool, List[GeneratedImage], str]:
+        """
+        v4: Gửi CHÍNH XÁC payload từ Chrome để test.
+
+        Nếu method này thành công mà generate_images_direct thất bại,
+        nghĩa là payload structure của ta khác với Chrome.
+        """
+        if not self._bearer_token:
+            return False, [], "Thiếu Bearer token"
+        if not self._full_body:
+            return False, [], "Thiếu full_body (chưa capture từ Chrome)"
+        if not self._project_id:
+            return False, [], "Thiếu project_id"
+
+        self.log("=== REPLAY CHROME PAYLOAD (EXACT) ===")
+        self.log(f"Bearer: {self._bearer_token[:20]}...")
+        self.log(f"Project: {self._project_id}")
+        self.log(f"Body length: {len(self._full_body)} chars")
+        self.log(f"x-browser-validation: {self._x_browser_validation[:30] if self._x_browser_validation else 'NOT CAPTURED!'}")
+
+        url = f"{self.BASE_URL}/v1/projects/{self._project_id}/flowMedia:batchGenerateImages"
+
+        headers = {
+            "Authorization": f"Bearer {self._bearer_token}",
+            "Content-Type": "text/plain;charset=UTF-8",
+            "Origin": "https://labs.google",
+            "Referer": "https://labs.google/",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        }
+
+        # v4: Add x-browser-validation header (REQUIRED!)
+        if self._x_browser_validation:
+            headers["x-browser-validation"] = self._x_browser_validation
+            headers["x-browser-channel"] = "stable"
+            headers["x-browser-year"] = "2025"
+            self.log("✓ Added x-browser-validation headers")
+        else:
+            self.log("⚠️ WARNING: No x-browser-validation - may fail!")
+
+        self.log(f"POST {url}")
+        self.log(f"Body preview: {self._full_body[:200]}...")
+
+        try:
+            response = requests.post(
+                url,
+                headers=headers,
+                data=self._full_body,  # EXACT Chrome payload
+                timeout=self.timeout
+            )
+
+            self.log(f"Status: {response.status_code}")
+            self.log(f"Response: {response.text[:500]}")
+
+            if response.status_code == 200:
+                result = response.json()
+                images = self._parse_images(result)
+                if images:
+                    self.log(f"✓ REPLAY SUCCESS! {len(images)} images")
+                    return True, images, ""
+                return False, [], "Success but no images"
+            else:
+                return False, [], f"Status {response.status_code}: {response.text[:200]}"
+
+        except Exception as e:
+            return False, [], str(e)
+
     def download_image(
         self,
         image: GeneratedImage,
@@ -495,82 +750,85 @@ class DirectFlowAPI:
         output_path = output_dir / f"{filename}.png"
 
         try:
-            # Download từ URL
             if image.url:
-                self._log(f"Download: {image.url[:60]}...")
+                self.log(f"Download: {image.url[:60]}...")
                 response = requests.get(image.url, timeout=60)
                 if response.status_code == 200:
                     output_path.write_bytes(response.content)
                     image.local_path = output_path
-                    self._log(f"✓ Saved: {output_path}")
+                    self.log(f"✓ Saved: {output_path}")
                     return output_path
 
-            # Decode base64
             if image.base64_data:
-                self._log("Decoding base64...")
+                self.log("Decoding base64...")
                 b64 = image.base64_data
                 if "," in b64:
                     b64 = b64.split(",")[1]
                 output_path.write_bytes(base64.b64decode(b64))
                 image.local_path = output_path
-                self._log(f"✓ Saved: {output_path}")
+                self.log(f"✓ Saved: {output_path}")
                 return output_path
 
         except Exception as e:
-            self._log(f"Download error: {e}")
+            self.log(f"Download error: {e}")
 
         return None
 
 
-# ============================================================================
-# CONVENIENCE FUNCTIONS
-# ============================================================================
-
-def create_direct_api(profile_path: str = None) -> DirectFlowAPI:
-    """Tạo DirectFlowAPI instance."""
-    return DirectFlowAPI(profile_path=profile_path)
-
-
-def test_direct_api():
+def test_direct_flow():
     """Test DirectFlowAPI."""
-    print("=" * 50)
-    print("TEST DirectFlowAPI")
-    print("=" * 50)
+    print("=" * 60)
+    print("  TEST DIRECT FLOW API")
+    print("=" * 60)
 
-    api = DirectFlowAPI(verbose=True)
+    # Lấy profile path (nếu có)
+    import sys
+    profile = sys.argv[1] if len(sys.argv) > 1 else None
 
-    # Setup browser
-    print("\n1. Setup browser...")
-    if not api.setup_browser():
-        print("Setup failed!")
-        return
+    api = DirectFlowAPI(profile_path=profile, verbose=True)
 
-    # Lấy tokens
-    print("\n2. Lấy fresh tokens...")
-    tokens = api.get_fresh_tokens("beautiful mountain landscape")
+    # 1. Lấy tokens
+    print("\n[1] Extracting tokens from browser...")
+    tokens = api.extract_tokens(trigger_prompt="beautiful mountain landscape")
 
     if not tokens.get('bearer') or not tokens.get('recaptcha'):
-        print("Không lấy được tokens!")
+        print("\n❌ Không lấy được đủ tokens!")
+        print(f"   Bearer: {'✓' if tokens.get('bearer') else '✗'}")
+        print(f"   reCAPTCHA: {'✓' if tokens.get('recaptcha') else '✗'}")
         return
 
-    # Tạo ảnh
-    print("\n3. Tạo ảnh...")
-    success, images, error = api.generate_images(
-        prompt="A majestic dragon flying over mountains, 4k, detailed",
-        count=2,
-        recaptcha_token=tokens['recaptcha'],
-        bearer_token=tokens['bearer'],
-        project_id=tokens.get('projectId')
+    print(f"\n✓ Tokens captured!")
+    print(f"   Bearer: {tokens['bearer'][:20]}...")
+    print(f"   reCAPTCHA: {tokens['recaptcha'][:30]}...")
+    print(f"   Full body: {len(api._full_body) if api._full_body else 0} chars")
+
+    # 2. TEST: Replay EXACT Chrome payload
+    print("\n[2] TEST: Replay EXACT Chrome payload...")
+    success, images, error = api.replay_chrome_payload()
+
+    if success:
+        print(f"\n✅ REPLAY SUCCESS! {len(images)} ảnh")
+        print("   → Payload structure của Chrome hoạt động!")
+    else:
+        print(f"\n❌ REPLAY FAILED: {error}")
+        print("   → recaptchaToken có thể bị bound với browser session")
+
+    # 3. Gọi API với payload tự build
+    print("\n[3] Calling API with our own payload...")
+    success, images, error = api.generate_images_direct(
+        prompt="A majestic dragon flying over snowy mountains, 4k detailed",
+        count=2
     )
 
     if success:
-        print(f"\n✅ Thành công! {len(images)} ảnh")
+        print(f"\n✅ Tạo {len(images)} ảnh thành công!")
+        output_dir = Path("./test_direct_output")
         for i, img in enumerate(images):
-            path = api.download_image(img, Path("./test_output"), f"dragon_{i+1}")
-            print(f"   {path}")
+            path = api.download_image(img, output_dir, f"dragon_{i+1}")
+            print(f"   💾 {path}")
     else:
         print(f"\n❌ Thất bại: {error}")
 
 
 if __name__ == "__main__":
-    test_direct_api()
+    test_direct_flow()

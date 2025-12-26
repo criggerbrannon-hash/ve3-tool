@@ -928,86 +928,67 @@ class UnixVoiceToVideo:
         # Headless toggle
         headless_var = tk.BooleanVar(value=self._get_headless_setting())
         headless_frame = ttk.Frame(prof_tab)
-        headless_frame.pack(fill=tk.X, pady=(10, 5))
+        headless_frame.pack(fill=tk.X, pady=(5, 5))
         ttk.Checkbutton(headless_frame, text="Chạy ẩn (Headless) - Khuyến nghị khi đã đăng nhập",
                         variable=headless_var, command=lambda: self._save_headless_setting(headless_var.get())
                         ).pack(side=tk.LEFT)
 
-        # Generation Mode toggle (Chrome vs API)
-        ttk.Separator(prof_tab, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(15, 10))
-        ttk.Label(prof_tab, text="Chế độ tạo ảnh:",
-                  font=('Segoe UI', 10, 'bold')).pack(anchor=tk.W)
-        ttk.Label(prof_tab, text="Chrome: Tự động hóa trình duyệt  |  API: Gọi trực tiếp API (cần token)",
-                  foreground='gray', font=('Segoe UI', 9)).pack(anchor=tk.W, pady=(0, 5))
+        # Generation Mode + API Provider (gộp chung)
+        ttk.Separator(prof_tab, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(10, 5))
 
-        gen_mode_frame = ttk.Frame(prof_tab)
-        gen_mode_frame.pack(fill=tk.X, pady=(5, 10))
+        # Row 1: Generation Mode
+        gen_row = ttk.Frame(prof_tab)
+        gen_row.pack(fill=tk.X, pady=(0, 3))
+        ttk.Label(gen_row, text="Chế độ tạo ảnh:", font=('Segoe UI', 9, 'bold')).pack(side=tk.LEFT)
 
         current_mode = self._get_generation_mode()
         gen_mode_var = tk.StringVar(value=current_mode)
-
         def on_mode_change():
-            mode = gen_mode_var.get()
-            self._save_generation_mode(mode)
-
-        ttk.Radiobutton(gen_mode_frame, text="🌐 Chrome (Browser Automation)",
-                        variable=gen_mode_var, value="chrome",
-                        command=on_mode_change).pack(side=tk.LEFT, padx=(0, 20))
-        ttk.Radiobutton(gen_mode_frame, text="⚡ API (Direct - cần Bearer Token)",
-                        variable=gen_mode_var, value="api",
+            self._save_generation_mode(gen_mode_var.get())
+        ttk.Radiobutton(gen_row, text="🌐 Chrome", variable=gen_mode_var, value="chrome",
+                        command=on_mode_change).pack(side=tk.LEFT, padx=(10, 5))
+        ttk.Radiobutton(gen_row, text="⚡ API", variable=gen_mode_var, value="api",
                         command=on_mode_change).pack(side=tk.LEFT)
 
-        # API Provider setting (nanoai vs direct)
-        ttk.Separator(prof_tab, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(15, 10))
-        ttk.Label(prof_tab, text="API Provider (khi chọn API mode):",
-                  font=('Segoe UI', 10, 'bold')).pack(anchor=tk.W)
-        ttk.Label(prof_tab, text="Direct: Miễn phí, tự lấy token | Nanoai: Trả phí, ổn định hơn",
-                  foreground='gray', font=('Segoe UI', 9)).pack(anchor=tk.W, pady=(0, 5))
-
-        api_provider_frame = ttk.Frame(prof_tab)
-        api_provider_frame.pack(fill=tk.X, pady=(5, 10))
+        # Row 2: API Provider
+        api_row = ttk.Frame(prof_tab)
+        api_row.pack(fill=tk.X, pady=(0, 3))
+        ttk.Label(api_row, text="API Provider:", font=('Segoe UI', 9, 'bold')).pack(side=tk.LEFT)
 
         current_provider = self._get_api_provider()
         api_provider_var = tk.StringVar(value=current_provider)
-
         def on_provider_change():
-            provider = api_provider_var.get()
-            self._save_api_provider(provider)
-
-        ttk.Radiobutton(api_provider_frame, text="🆓 Direct (Miễn phí - tự capture token)",
-                        variable=api_provider_var, value="direct",
-                        command=on_provider_change).pack(side=tk.LEFT, padx=(0, 20))
-        ttk.Radiobutton(api_provider_frame, text="💰 Nanoai.pics (Trả phí - cần API key)",
-                        variable=api_provider_var, value="nanoai",
+            self._save_api_provider(api_provider_var.get())
+        ttk.Radiobutton(api_row, text="🆓 Direct (free)", variable=api_provider_var, value="direct",
+                        command=on_provider_change).pack(side=tk.LEFT, padx=(10, 5))
+        ttk.Radiobutton(api_row, text="💰 Nanoai (paid)", variable=api_provider_var, value="nanoai",
                         command=on_provider_change).pack(side=tk.LEFT)
 
-        # Parallel workers setting (for batch processing)
-        ttk.Separator(prof_tab, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(15, 10))
-        ttk.Label(prof_tab, text="Số luồng xử lý song song (Auto Batch):",
-                  font=('Segoe UI', 10, 'bold')).pack(anchor=tk.W)
-        ttk.Label(prof_tab, text="Nhiều luồng = nhanh hơn | Mỗi luồng cần 1 project riêng (token)",
-                  foreground='gray', font=('Segoe UI', 9)).pack(anchor=tk.W, pady=(0, 5))
+        # Parallel workers setting (gọn 1 dòng)
+        ttk.Separator(prof_tab, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(10, 5))
 
         parallel_frame = ttk.Frame(prof_tab)
-        parallel_frame.pack(fill=tk.X, pady=(5, 10))
+        parallel_frame.pack(fill=tk.X, pady=(0, 5))
+
+        ttk.Label(parallel_frame, text="Số luồng song song:", font=('Segoe UI', 9, 'bold')).pack(side=tk.LEFT)
 
         current_parallel = self._get_parallel_workers()
         parallel_var = tk.IntVar(value=current_parallel)
-        parallel_label = ttk.Label(parallel_frame, text=f"{current_parallel} luồng",
-                                   font=('Segoe UI', 10, 'bold'), width=12)
+        parallel_label = ttk.Label(parallel_frame, text=f"{current_parallel}",
+                                   font=('Segoe UI', 9, 'bold'), width=3)
 
         def update_parallel(val):
             num = int(float(val))
             parallel_var.set(num)
-            parallel_label.config(text=f"{num} luồng")
+            parallel_label.config(text=f"{num}")
             self._save_parallel_workers(num)
 
-        ttk.Label(parallel_frame, text="1").pack(side=tk.LEFT)
+        ttk.Label(parallel_frame, text="1").pack(side=tk.LEFT, padx=(10, 0))
         parallel_scale = ttk.Scale(parallel_frame, from_=1, to=10, orient=tk.HORIZONTAL,
-                                   variable=parallel_var, command=update_parallel, length=180)
-        parallel_scale.pack(side=tk.LEFT, padx=5)
+                                   variable=parallel_var, command=update_parallel, length=120)
+        parallel_scale.pack(side=tk.LEFT, padx=3)
         ttk.Label(parallel_frame, text="10").pack(side=tk.LEFT)
-        parallel_label.pack(side=tk.LEFT, padx=10)
+        parallel_label.pack(side=tk.LEFT, padx=(10, 0))
 
         # Buttons row 1
         prof_btn_row1 = ttk.Frame(prof_tab)
