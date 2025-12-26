@@ -375,10 +375,17 @@ class GoogleFlowAPI:
             
             if response.status_code == 401:
                 return False, [], "Authentication failed - Bearer token may be expired"
-            
+
             if response.status_code == 403:
-                return False, [], "Access forbidden - check permissions"
-            
+                # Log actual response for debugging
+                error_text = response.text[:500]
+                self._log(f"=== 403 ERROR DETAILS ===")
+                self._log(f"URL: {url}")
+                self._log(f"project_id used: {self.project_id}")
+                self._log(f"session_id used: {self.session_id}")
+                self._log(f"Response: {error_text}")
+                return False, [], f"Access forbidden (403): {error_text[:200]}"
+
             if response.status_code != 200:
                 return False, [], f"API error: {response.status_code} - {response.text[:200]}"
             
