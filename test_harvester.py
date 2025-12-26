@@ -268,6 +268,7 @@ class TokenHarvester:
         print("  COMMANDS:")
         print("    g <prompt>  - Generate image với prompt")
         print("    t           - Test lấy token")
+        print("    d           - Debug info")
         print("    q           - Quit")
         print("=" * 60)
 
@@ -279,6 +280,15 @@ class TokenHarvester:
 
             if cmd.lower() == 'q':
                 break
+            elif cmd.lower() == 'd':
+                # Debug
+                print(f"    URL: {self.driver.url}")
+                print(f"    Title: {self.driver.title}")
+                # Check grecaptcha
+                check1 = self.driver.run_js("return typeof grecaptcha")
+                check2 = self.driver.run_js("return typeof grecaptcha !== 'undefined' ? Object.keys(grecaptcha) : 'undefined'")
+                print(f"    grecaptcha type: {check1}")
+                print(f"    grecaptcha keys: {check2}")
             elif cmd.lower() == 't':
                 token = self.get_token()
                 if token:
@@ -291,7 +301,7 @@ class TokenHarvester:
                 else:
                     print("Cần nhập prompt!")
             else:
-                print("Lệnh không hợp lệ. Dùng: g <prompt>, t, q")
+                print("Lệnh không hợp lệ. Dùng: g <prompt>, t, d, q")
 
         if self.driver:
             self.driver.quit()
