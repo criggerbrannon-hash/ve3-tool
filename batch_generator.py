@@ -191,18 +191,26 @@ class BatchGenerator:
             time.sleep(0.3)
             print("    ✓ Nhập prompt")
 
-            # Nhấn Enter thật bằng pyautogui (OS-level)
-            try:
-                import pyautogui
-                pyautogui.press('enter')
-                print("    ✓ Nhấn Enter (pyautogui)")
-            except ImportError:
-                print("    ⚠️ Cần cài: pip install pyautogui")
-                # Fallback click button
-                gen_btn = self.find_generate_button()
-                if gen_btn:
+            # Click chuột thật vào nút Generate bằng pyautogui
+            gen_btn = self.find_generate_button()
+            if gen_btn:
+                try:
+                    import pyautogui
+                    # Lấy vị trí của button trên màn hình
+                    rect = gen_btn.rect
+                    # rect.midpoint hoặc tính từ location + size
+                    x = rect.location['x'] + rect.size['width'] // 2
+                    y = rect.location['y'] + rect.size['height'] // 2
+
+                    # Click chuột thật
+                    pyautogui.click(x, y)
+                    print(f"    ✓ Click tại ({x}, {y})")
+                except Exception as e:
+                    print(f"    ⚠️ pyautogui error: {e}")
                     gen_btn.click()
-                    print("    ✓ Click button")
+                    print("    ✓ Click button (DrissionPage)")
+            else:
+                print("    ❌ Không tìm thấy nút Generate")
             time.sleep(0.5)
 
         except Exception as e:
