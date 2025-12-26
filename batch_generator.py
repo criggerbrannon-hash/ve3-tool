@@ -249,10 +249,32 @@ class BatchGenerator:
             # Escape prompt for JS - replace backticks with single quotes
             safe_prompt = prompt.replace('`', "'").replace('"', '\\"')
 
-            # Call JS API using string format (avoid f-string backslash issues)
-            js_code = 'return await window.__generateImages("' + safe_prompt + '", 2);'
+            # Store result in global variable, then retrieve it
+            # First, call async function and store promise result
+            js_call = '''
+                (async () => {
+                    window.__batchResult = null;
+                    window.__batchDone = false;
+                    try {
+                        window.__batchResult = await window.__generateImages("PROMPT_HERE", 2);
+                    } catch(e) {
+                        window.__batchResult = {success: false, error: e.message};
+                    }
+                    window.__batchDone = true;
+                })();
+            '''.replace('PROMPT_HERE', safe_prompt)
 
-            result = self.driver.run_js(js_code)
+            self.driver.run_js(js_call)
+
+            # Wait for result (poll)
+            import time as t
+            for _ in range(60):  # 30 seconds max
+                done = self.driver.run_js("return window.__batchDone;")
+                if done:
+                    break
+                t.sleep(0.5)
+
+            result = self.driver.run_js("return window.__batchResult;")
 
             if not result:
                 print("    ❌ No response from JS")
