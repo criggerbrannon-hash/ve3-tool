@@ -1991,6 +1991,21 @@ class UnixVoiceToVideo:
                             results["processed"] += 1
                             if result and result.get('success'):
                                 results["success"] += 1
+                                # === XÓA FILE VOICE SAU KHI THÀNH CÔNG ===
+                                try:
+                                    if voice_path.exists():
+                                        voice_path.unlink()
+                                        self.root.after(0, lambda vp=voice_path:
+                                            self.log(f"[W{worker_id}] 🗑️ Đã xóa: {vp.name}"))
+                                        # Xóa thư mục cha nếu rỗng
+                                        parent_folder = voice_path.parent
+                                        if parent_folder.exists() and not any(parent_folder.iterdir()):
+                                            parent_folder.rmdir()
+                                            self.root.after(0, lambda pf=parent_folder:
+                                                self.log(f"[W{worker_id}] 🗑️ Xóa folder rỗng: {pf.name}"))
+                                except Exception as del_err:
+                                    self.root.after(0, lambda err=del_err:
+                                        self.log(f"[W{worker_id}] ⚠️ Không xóa được voice: {err}", "WARN"))
                             else:
                                 results["failed"] += 1
 
