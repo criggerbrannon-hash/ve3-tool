@@ -98,12 +98,23 @@ for r in payload.get("requests", []):
 print("✓ Prompt: dragon")
 print("\n⏳ Gọi API...")
 
-resp = requests.post(url, headers={
+print("\nNhập x-browser-validation header (từ Network tab, có thể bỏ qua):")
+x_browser = input("x-browser-validation (Enter để bỏ qua): ").strip()
+
+headers = {
     "Authorization": f"Bearer {bearer}",
     "Content-Type": "text/plain;charset=UTF-8",
     "Origin": "https://labs.google",
     "Referer": "https://labs.google/",
-}, data=json.dumps(payload), timeout=120)
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
+}
+
+if x_browser:
+    headers["x-browser-validation"] = x_browser
+    headers["x-browser-channel"] = "stable"
+    headers["x-browser-year"] = "2025"
+
+resp = requests.post(url, headers=headers, data=json.dumps(payload), timeout=120)
 
 print(f"Status: {resp.status_code}")
 
