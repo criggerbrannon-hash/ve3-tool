@@ -191,9 +191,16 @@ class BatchGenerator:
             time.sleep(0.3)
             print("    ✓ Nhập prompt")
 
-            # Nhấn Enter - sử dụng type() của DrissionPage
-            textarea.type(('\n',))  # tuple với key
-            print("    ✓ Nhấn Enter")
+            # Nhấn Enter - dùng run_js để focus và dispatch key
+            self.driver.run_js('''
+                const ta = document.querySelector('textarea');
+                if (ta) {
+                    ta.focus();
+                    ta.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true}));
+                    ta.dispatchEvent(new KeyboardEvent('keyup', {key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true}));
+                }
+            ''')
+            print("    ✓ Dispatch Enter")
             time.sleep(0.5)
 
         except Exception as e:
