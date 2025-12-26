@@ -167,14 +167,32 @@ class ChromeHeadersExtractor:
 
             # Connect Selenium to running Chrome
             self._log(f"Connecting Selenium to Chrome on port {self.debug_port}...")
+
+            # Kiểm tra Chrome đã sẵn sàng chưa bằng cách check port
+            import socket
+            for attempt in range(10):
+                try:
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    result = sock.connect_ex(('127.0.0.1', self.debug_port))
+                    sock.close()
+                    if result == 0:
+                        self._log(f"Chrome debug port ready!")
+                        break
+                except:
+                    pass
+                self._log(f"Waiting for debug port... attempt {attempt + 1}/10")
+                time.sleep(1)
+
             options = Options()
             options.add_experimental_option("debuggerAddress", f"127.0.0.1:{self.debug_port}")
 
-            # Enable performance logging
-            options.set_capability("goog:loggingPrefs", {"performance": "ALL"})
-
             self.driver = webdriver.Chrome(options=options)
             self._log("Connected to Chrome!")
+
+            # Navigate ngay sau khi connect
+            self._log(f"Navigating to {self.FLOW_URL}...")
+            self.driver.get(self.FLOW_URL)
+            self._log("Navigation done!")
 
             return True
 
