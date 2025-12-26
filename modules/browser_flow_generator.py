@@ -2870,7 +2870,9 @@ class BrowserFlowGenerator:
             return {"success": False, "error": f"Khong import duoc GoogleFlowAPI: {e}"}
 
         # === CHECK API PROVIDER MODE ===
-        api_provider = self.config.get('api_provider', 'direct')
+        # Default: nanoai (paid proxy) - stable and reliable
+        # Direct mode is experimental - set api_provider='direct' to test
+        api_provider = self.config.get('api_provider', 'nanoai')
         proxy_api_token = self.config.get('proxy_api_token', '')
 
         # Determine mode: direct (free) vs nanoai (paid)
