@@ -103,101 +103,56 @@ class ChromeHeadersExtractor:
 
     def start_browser(self) -> bool:
         """
-        Khởi động Chrome bằng subprocess (như người dùng thật) rồi connect Selenium.
+        Mở Chrome bằng lệnh start của Windows (đơn giản nhất).
         """
         import os
         import random
-        import subprocess
         import time
 
         try:
             from selenium import webdriver
             from selenium.webdriver.chrome.options import Options
 
-            # Find Chrome binary
-            chrome_binary = self.chrome_binary
-            if not chrome_binary or not os.path.exists(chrome_binary):
-                chrome_paths = [
-                    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-                    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-                    "/usr/bin/google-chrome",
-                    "/usr/bin/chromium-browser",
-                ]
-                for path in chrome_paths:
-                    if os.path.exists(path):
-                        chrome_binary = path
-                        break
-
-            if not chrome_binary:
-                self._log("Chrome not found!")
-                return False
-
-            self._log(f"Chrome binary: {chrome_binary}")
-
             # Random debug port
             self.debug_port = random.randint(9222, 9299)
             self._log(f"Debug port: {self.debug_port}")
 
-            # Build Chrome command - như người dùng thật mở Chrome
-            cmd = [chrome_binary]
-            cmd.append(f"--remote-debugging-port={self.debug_port}")
+            # Tạo lệnh mở Chrome - dùng start command của Windows
+            chrome_exe = self.chrome_binary or r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+
+            # Build command đơn giản
+            cmd = f'start "" "{chrome_exe}" --remote-debugging-port={self.debug_port}'
 
             if self.chrome_profile_path:
-                cmd.append(f"--user-data-dir={self.chrome_profile_path}")
-                self._log(f"User Data Dir: {self.chrome_profile_path}")
+                cmd += f' --user-data-dir="{self.chrome_profile_path}"'
 
             if self.profile_directory:
-                cmd.append(f"--profile-directory={self.profile_directory}")
-                self._log(f"Profile Directory: {self.profile_directory}")
+                cmd += f' --profile-directory="{self.profile_directory}"'
 
-            # Mở Chrome bằng subprocess (như click vào icon Chrome)
-            self._log(f"Launching Chrome...")
-            self._log(f"Command: {' '.join(cmd[:3])}...")
+            # Thêm URL để mở ngay
+            cmd += f' "{self.FLOW_URL}"'
 
-            # Start Chrome process
-            self._chrome_process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
+            self._log(f"Running: {cmd[:100]}...")
 
-            # Đợi Chrome khởi động
-            self._log("Waiting for Chrome to start (5s)...")
-            time.sleep(5)
+            # Chạy lệnh start (như gõ trong Run dialog)
+            os.system(cmd)
 
-            # Connect Selenium to running Chrome
-            self._log(f"Connecting Selenium to Chrome on port {self.debug_port}...")
+            # Đợi Chrome mở
+            self._log("Waiting for Chrome (8s)...")
+            time.sleep(8)
 
-            # Kiểm tra Chrome đã sẵn sàng chưa bằng cách check port
-            import socket
-            for attempt in range(10):
-                try:
-                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    result = sock.connect_ex(('127.0.0.1', self.debug_port))
-                    sock.close()
-                    if result == 0:
-                        self._log(f"Chrome debug port ready!")
-                        break
-                except:
-                    pass
-                self._log(f"Waiting for debug port... attempt {attempt + 1}/10")
-                time.sleep(1)
-
+            # Connect Selenium
+            self._log(f"Connecting to Chrome...")
             options = Options()
             options.add_experimental_option("debuggerAddress", f"127.0.0.1:{self.debug_port}")
 
             self.driver = webdriver.Chrome(options=options)
-            self._log("Connected to Chrome!")
-
-            # Navigate ngay sau khi connect
-            self._log(f"Navigating to {self.FLOW_URL}...")
-            self.driver.get(self.FLOW_URL)
-            self._log("Navigation done!")
+            self._log("Connected!")
 
             return True
 
         except Exception as e:
-            self._log(f"Error starting browser: {e}")
+            self._log(f"Error: {e}")
             import traceback
             traceback.print_exc()
             return False
