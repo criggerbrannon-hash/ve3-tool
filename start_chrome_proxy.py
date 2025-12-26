@@ -10,7 +10,7 @@ import os
 import sys
 
 # Import proxy server
-from ipv6_rotate_proxy import IPv6Rotator, ProxyServer, IPV6_LIST, PROXY_PORT
+from ipv6_rotate_proxy import IPv6Rotator, ProxyServer, IPV6_LIST, PROXY_PORT, PROXY_HOST
 
 def find_chrome():
     paths = [

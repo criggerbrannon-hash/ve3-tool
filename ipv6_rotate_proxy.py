@@ -311,6 +311,35 @@ class SOCKS5Handler(threading.Thread):
                 break
 
 
+class ProxyServer(threading.Thread):
+    """Proxy server that can run as background thread"""
+
+    def __init__(self, rotator: IPv6Rotator):
+        super().__init__()
+        self.rotator = rotator
+        self.daemon = True
+        self.server = None
+
+    def run(self):
+        self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server.bind((PROXY_HOST, PROXY_PORT))
+        self.server.listen(100)
+        print(f"[PROXY] Running on {PROXY_HOST}:{PROXY_PORT}")
+
+        while True:
+            try:
+                client, addr = self.server.accept()
+                handler = SOCKS5Handler(client, addr, self.rotator)
+                handler.start()
+            except:
+                break
+
+    def stop(self):
+        if self.server:
+            self.server.close()
+
+
 def main():
     print("=" * 60)
     print("  IPv6 ROTATING PROXY SERVER")
