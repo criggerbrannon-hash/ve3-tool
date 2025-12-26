@@ -35,8 +35,12 @@ SITE_KEY = "6LdsFiUsAAAAAIjVDZcuLhaHiDn5nnHVXVRQGeMV"
 # JS để lấy token
 JS_GET_TOKEN = """
 (async function() {
-    if (typeof grecaptcha === 'undefined' || !grecaptcha.enterprise) {
-        return {error: 'grecaptcha not found'};
+    // Check if grecaptcha exists
+    if (typeof grecaptcha === 'undefined') {
+        return {error: 'grecaptcha undefined'};
+    }
+    if (!grecaptcha.enterprise) {
+        return {error: 'grecaptcha.enterprise not found'};
     }
 
     try {
@@ -47,6 +51,17 @@ JS_GET_TOKEN = """
     }
 })();
 """ % SITE_KEY
+
+# JS để check grecaptcha status
+JS_CHECK_RECAPTCHA = """
+(function() {
+    return {
+        grecaptcha: typeof grecaptcha !== 'undefined',
+        enterprise: typeof grecaptcha !== 'undefined' && !!grecaptcha.enterprise,
+        ready: typeof grecaptcha !== 'undefined' && typeof grecaptcha.enterprise !== 'undefined' && typeof grecaptcha.enterprise.execute === 'function'
+    };
+})();
+"""
 
 
 class TokenHarvester:
@@ -63,13 +78,19 @@ class TokenHarvester:
 
         # Get Bearer
         print("\n[1] BEARER TOKEN")
-        self.bearer = input("    Paste: ").strip().replace("Bearer ", "")
+        self.bearer = input("    Paste: ").strip().replace("Bearer ", "").replace("bearer ", "")
 
         print("\n[2] X-BROWSER-VALIDATION (optional)")
         self.x_browser = input("    Paste (Enter to skip): ").strip()
 
+        print("\n[3] URL (Enter = mặc định image-fx)")
+        print("    Ví dụ: https://labs.google/fx/vi/tools/flow/project/xxx")
+        custom_url = input("    URL: ").strip()
+        if not custom_url:
+            custom_url = "https://labs.google/fx/tools/image-fx"
+
         # Open Chrome
-        print("\n[3] Mở Chrome...")
+        print("\n[4] Mở Chrome...")
         options = ChromiumOptions()
         options.set_argument("--start-maximized")
 
@@ -79,9 +100,11 @@ class TokenHarvester:
             print(f"    ❌ Lỗi: {e}")
             return
 
-        # Go to labs.google
-        print("\n[4] Đi tới labs.google...")
-        self.driver.get("https://labs.google/fx/tools/image-fx")
+        print("    ✓ Chrome đã mở")
+
+        # Go to URL
+        print(f"\n[5] Đi tới {custom_url[:60]}...")
+        self.driver.get(custom_url)
         time.sleep(3)
 
         # Check login
@@ -91,11 +114,19 @@ class TokenHarvester:
             time.sleep(2)
 
         # Wait for grecaptcha
-        print("\n[5] Chờ reCAPTCHA load...")
-        time.sleep(3)
+        print("\n[6] Chờ reCAPTCHA load...")
+        for i in range(10):
+            time.sleep(1)
+            status = self.driver.run_js(JS_CHECK_RECAPTCHA)
+            print(f"    Check {i+1}: {status}")
+            if status and status.get('ready'):
+                print("    ✓ grecaptcha.enterprise ready!")
+                break
+        else:
+            print("    ⚠️ grecaptcha chưa sẵn sàng sau 10s")
 
         # Test get token
-        print("\n[6] Test lấy token...")
+        print("\n[7] Test lấy token...")
         token_result = self.get_token()
 
         if token_result:
@@ -103,8 +134,7 @@ class TokenHarvester:
             print(f"    Length: {len(token_result)}")
         else:
             print("    ❌ Không lấy được token!")
-            print("    Có thể grecaptcha chưa load hoặc site key sai")
-            return
+            print("    Tiếp tục vào menu...")
 
         # Menu
         self.menu()
