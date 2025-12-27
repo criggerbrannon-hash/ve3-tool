@@ -656,13 +656,14 @@ class DrissionFlowAPI:
         self.log("    ✗ Không lấy được recaptchaToken mới", "ERROR")
         return False
 
-    def call_api(self, prompt: str = None) -> Tuple[List[GeneratedImage], Optional[str]]:
+    def call_api(self, prompt: str = None, num_images: int = 1) -> Tuple[List[GeneratedImage], Optional[str]]:
         """
         Gọi API với captured tokens.
         Giống batch_generator.py - lấy payload từ browser mỗi lần.
 
         Args:
             prompt: Prompt (nếu None, dùng payload đã capture)
+            num_images: Số ảnh cần tạo (mặc định 1)
 
         Returns:
             Tuple[list of GeneratedImage, error message]
@@ -677,6 +678,18 @@ class DrissionFlowAPI:
         original_payload = self.driver.run_js("return window._payload;")
         if not original_payload:
             return [], "No payload captured"
+
+        # Sửa số ảnh trong payload
+        try:
+            payload_data = json.loads(original_payload)
+            # Tìm và sửa numImages trong requests[0].imageGenerationConfig
+            if "requests" in payload_data and payload_data["requests"]:
+                for req in payload_data["requests"]:
+                    if "imageGenerationConfig" in req:
+                        req["imageGenerationConfig"]["numImages"] = num_images
+            original_payload = json.dumps(payload_data)
+        except Exception as e:
+            self.log(f"⚠️ Không sửa được numImages: {e}", "WARN")
 
         # Headers
         headers = {
