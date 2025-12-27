@@ -2870,16 +2870,48 @@ class BrowserFlowGenerator:
             return {"success": False, "error": f"Khong import duoc GoogleFlowAPI: {e}"}
 
         # === CHECK API PROVIDER MODE ===
-        # Default: nanoai (paid proxy) - stable and reliable
-        # Direct mode is experimental - set api_provider='direct' to test
+        # Modes:
+        # - 'drission': DrissionPage + interceptor (miễn phí, ổn định nhất)
+        # - 'direct': PyAutoGUI + DevTools (miễn phí, cần focus)
+        # - 'nanoai': Proxy nanoai.pics (trả phí, không cần Chrome)
         api_provider = self.config.get('api_provider', 'nanoai')
         proxy_api_token = self.config.get('proxy_api_token', '')
 
-        # Determine mode: direct (free) vs nanoai (paid)
+        # Determine mode
+        use_drission = (api_provider == 'drission')
         use_direct = (api_provider == 'direct')
         use_proxy = (api_provider == 'nanoai' and bool(proxy_api_token))
 
-        # Initialize DirectFlowAPI for direct mode
+        # === DRISSION MODE: DrissionPage + Interceptor (RECOMMENDED) ===
+        drission_api = None
+        if use_drission:
+            try:
+                from modules.drission_flow_api import DrissionFlowAPI
+                proxy_port = self.config.get('proxy_port', 1080)
+                use_ipv6_proxy = self.config.get('use_ipv6_proxy', True)
+
+                drission_api = DrissionFlowAPI(
+                    profile_dir=self._get_profile_path() or "./chrome_profile",
+                    proxy_port=proxy_port,
+                    use_proxy=use_ipv6_proxy,
+                    verbose=self.verbose,
+                    log_callback=self._log
+                )
+                self._log("🚀 Drission mode: DrissionPage + Interceptor (miễn phí)")
+                self._log(f"   Proxy: {'ON (port ' + str(proxy_port) + ')' if use_ipv6_proxy else 'OFF'}")
+
+                # Setup Chrome và đợi user chọn project
+                if not drission_api.setup():
+                    self._log("❌ DrissionFlowAPI setup failed!", "error")
+                    return {"success": False, "error": "DrissionFlowAPI setup failed"}
+
+            except ImportError as e:
+                self._log(f"Khong import duoc DrissionFlowAPI: {e}", "warn")
+                self._log("Fallback to nanoai mode...", "warn")
+                use_drission = False
+                use_proxy = bool(proxy_api_token)
+
+        # === DIRECT MODE: PyAutoGUI + DevTools (legacy) ===
         direct_api = None
         if use_direct:
             try:
@@ -2895,9 +2927,26 @@ class BrowserFlowGenerator:
                 use_direct = False
                 use_proxy = bool(proxy_api_token)
 
+        # === NANOAI MODE: Proxy (paid) ===
         if use_proxy:
             self._log("💰 Nanoai mode: Sử dụng proxy nanoai.pics (trả phí)")
 
+        # === DRISSION MODE: Xử lý riêng vì DrissionFlowAPI tự quản lý tokens ===
+        if use_drission and drission_api:
+            if not prompts:
+                return {"success": False, "error": "Khong co prompts"}
+
+            self._log(f"Tong: {len(prompts)} prompts")
+            self._log(f"Mode: 🚀 DRISSION (DrissionPage + Interceptor)")
+
+            # Store reference
+            self._drission_api = drission_api
+            self._use_drission = True
+
+            # Drission mode sử dụng luồng generate riêng
+            return self._generate_images_drission_mode(prompts, output_dir, excel_path)
+
+        # === DIRECT/NANOAI MODE: Cần bearer token ===
         # Check bearer token
         if not bearer_token:
             bearer_token = self.config.get('flow_bearer_token', '')
@@ -2980,6 +3029,7 @@ class BrowserFlowGenerator:
         # Store direct_api reference for use in generation loop
         self._direct_api = direct_api
         self._use_direct = use_direct
+        self._use_drission = False
 
         # Map aspect ratio
         ar_setting = self.config.get('flow_aspect_ratio', 'landscape')
@@ -3208,6 +3258,145 @@ class BrowserFlowGenerator:
         # Summary
         self._log("\n" + "=" * 60)
         self._log("HOAN THANH (API MODE)")
+        self._log("=" * 60)
+        self._log(f"Tong: {self.stats['total']}")
+        self._log(f"Thanh cong: {self.stats['success']}")
+        self._log(f"That bai: {self.stats['failed']}")
+        self._log(f"Bo qua: {self.stats['skipped']}")
+
+        return {
+            "success": True,
+            "stats": self.stats.copy()
+        }
+
+    def _generate_images_drission_mode(
+        self,
+        prompts: List[Dict[str, Any]],
+        output_dir: Path,
+        excel_path: Optional[Path] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate images sử dụng DrissionFlowAPI (DrissionPage + Interceptor).
+
+        Flow:
+        1. DrissionFlowAPI đã setup sẵn Chrome + interceptor
+        2. Mỗi prompt: gửi qua Chrome để capture tokens → gọi API → save ảnh
+        3. Lưu vào output_dir và cập nhật Excel nếu có
+
+        Args:
+            prompts: Danh sách prompts
+            output_dir: Thư mục lưu ảnh
+            excel_path: Path đến Excel file (optional)
+
+        Returns:
+            Dict với stats
+        """
+        from modules.excel_manager import PromptWorkbook
+
+        self._log("=" * 60)
+        self._log("DRISSION MODE - Generate Images")
+        self._log("=" * 60)
+
+        drission_api = getattr(self, '_drission_api', None)
+        if not drission_api:
+            return {"success": False, "error": "DrissionFlowAPI chưa được khởi tạo"}
+
+        # Reset stats
+        self.stats = {"total": len(prompts), "success": 0, "failed": 0, "skipped": 0}
+
+        # Load Excel workbook
+        workbook = None
+        if excel_path and Path(excel_path).exists():
+            try:
+                workbook = PromptWorkbook(excel_path)
+                workbook.load_or_create()
+            except Exception as e:
+                self._log(f"Warning: Khong load duoc Excel: {e}", "warn")
+
+        # Ensure output dir exists
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        for i, prompt_data in enumerate(prompts):
+            pid = str(prompt_data.get('id', i + 1))
+            prompt = prompt_data.get('prompt', '')
+
+            if not prompt:
+                self._log(f"[{i+1}/{len(prompts)}] ID: {pid} - Skip (prompt rong)", "warn")
+                self.stats["skipped"] += 1
+                continue
+
+            # Skip DO_NOT_GENERATE markers
+            if prompt.strip().upper() == "DO_NOT_GENERATE":
+                self._log(f"[{i+1}/{len(prompts)}] ID: {pid} - Skip (DO_NOT_GENERATE)")
+                self.stats["skipped"] += 1
+                continue
+
+            # Check if image already exists
+            output_file = output_dir / f"{pid}.png"
+            if output_file.exists():
+                self._log(f"[{i+1}/{len(prompts)}] ID: {pid} - Skip (da co anh)")
+                self.stats["skipped"] += 1
+                continue
+
+            self._log(f"[{i+1}/{len(prompts)}] ID: {pid}")
+            self._log(f"   Prompt: {prompt[:60]}...")
+
+            try:
+                # Generate image using DrissionFlowAPI
+                success, images, error = drission_api.generate_image(
+                    prompt=prompt,
+                    save_dir=output_dir,
+                    filename=pid
+                )
+
+                if success and images:
+                    self._log(f"   ✓ Thành công! Saved {len(images)} image(s)")
+                    self.stats["success"] += 1
+
+                    # Update Excel if available
+                    if workbook and images[0].local_path:
+                        try:
+                            workbook.update_image_path(int(pid), str(images[0].local_path))
+                            workbook.update_status(int(pid), "done")
+                        except:
+                            pass
+
+                    # Get media_name for video generation cache
+                    if images[0].media_name:
+                        self._log(f"   Media name: {images[0].media_name[:40]}...")
+                else:
+                    self._log(f"   ✗ Thất bại: {error}", "error")
+                    self.stats["failed"] += 1
+
+                    # Check for token expiry
+                    if error and "401" in str(error):
+                        self._log("❌ Bearer token hết hạn!", "error")
+                        break
+
+            except Exception as e:
+                self._log(f"   ✗ Exception: {e}", "error")
+                self.stats["failed"] += 1
+
+            # Rate limit
+            time.sleep(1)
+
+        # Cleanup
+        try:
+            drission_api.close()
+        except:
+            pass
+
+        # Save workbook
+        if workbook:
+            try:
+                workbook.save()
+            except:
+                pass
+
+        # Summary
+        self._log("=" * 60)
+        self._log("HOAN THANH (DRISSION MODE)")
         self._log("=" * 60)
         self._log(f"Tong: {self.stats['total']}")
         self._log(f"Thanh cong: {self.stats['success']}")
