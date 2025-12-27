@@ -256,14 +256,15 @@ class BatchGenerator:
         if self.xbv:
             headers["x-browser-validation"] = self.xbv
 
-        # Build requests array như format chuẩn của Flow API
+        # Build requests array - recaptchaToken PHẢI ở trong clientContext
         requests_data = []
         for i in range(count):
             requests_data.append({
                 "clientContext": {
                     "sessionId": self.session_id or f";{int(time.time() * 1000)}",
                     "projectId": self.project_id,
-                    "tool": "IMAGE_FX"
+                    "tool": "IMAGE_FX",
+                    "recaptchaToken": self.recaptcha_token  # ← ĐÚNG: trong clientContext
                 },
                 "seed": random.randint(100000, 999999),
                 "imageModelName": "GEM_PIX_2",
@@ -278,8 +279,7 @@ class BatchGenerator:
                 "projectId": self.project_id,
                 "tool": "IMAGE_FX"
             },
-            "requests": requests_data,
-            "recaptchaToken": self.recaptcha_token  # Cần recaptchaToken từ Chrome
+            "requests": requests_data
         }
 
         try:
