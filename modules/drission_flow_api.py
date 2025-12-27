@@ -54,28 +54,37 @@ class GeneratedImage:
 
 
 # JS Interceptor - Capture tokens và CANCEL request
+# Cải tiến: Intercept cả fetch và XHR, abort đúng cách
 JS_INTERCEPTOR = '''
-window._tk=null;window._pj=null;window._xbv=null;window._rct=null;window._payload=null;window._sid=null;window._url=null;
 (function(){
-    if(window.__interceptReady) return 'ALREADY_READY';
+    // Reset tokens
+    window._tk=null;window._pj=null;window._xbv=null;window._rct=null;
+    window._payload=null;window._sid=null;window._url=null;
+    window._intercepted = false;
+
+    if(window.__interceptReady) {
+        console.log('[INTERCEPTOR] Already ready');
+        return 'ALREADY_READY';
+    }
     window.__interceptReady = true;
 
-    var orig = window.fetch;
+    // === INTERCEPT FETCH ===
+    var origFetch = window.fetch;
     window.fetch = function(url, opts) {
-        var urlStr = typeof url === 'string' ? url : url.url;
+        var urlStr = typeof url === 'string' ? url : (url.url || '');
 
         // Match các pattern của Google Flow API
         if (urlStr.includes('aisandbox') && (urlStr.includes('batchGenerate') || urlStr.includes('flowMedia') || urlStr.includes('generateContent'))) {
-            console.log('[INTERCEPT] Capturing request to:', urlStr);
+            console.log('[INTERCEPT-FETCH] Capturing:', urlStr.substring(0, 80));
 
             // Capture URL gốc
             window._url = urlStr;
+            window._intercepted = true;
 
             // Extract projectId from URL
             var match = urlStr.match(/\\/projects\\/([a-f0-9\\-]+)/i);
             if (match && match[1]) {
                 window._pj = match[1];
-                console.log('[TOKEN] projectId from URL:', window._pj);
             }
 
             // Capture từ headers
@@ -83,11 +92,10 @@ window._tk=null;window._pj=null;window._xbv=null;window._rct=null;window._payloa
                 var h = opts.headers;
                 if (h['Authorization']) {
                     window._tk = h['Authorization'].replace('Bearer ', '');
-                    console.log('[TOKEN] Bearer captured!');
+                    console.log('[TOKEN] Bearer: OK');
                 }
                 if (h['x-browser-validation']) {
                     window._xbv = h['x-browser-validation'];
-                    console.log('[TOKEN] x-browser-validation captured!');
                 }
             }
 
@@ -104,24 +112,75 @@ window._tk=null;window._pj=null;window._xbv=null;window._rct=null;window._payloa
                     }
                     if (body.recaptchaToken) {
                         window._rct = body.recaptchaToken;
-                        console.log('[TOKEN] recaptchaToken captured (root)!');
-                    } else if (body.requests && body.requests[0] && body.requests[0].clientContext && body.requests[0].clientContext.recaptchaToken) {
-                        window._rct = body.requests[0].clientContext.recaptchaToken;
-                        console.log('[TOKEN] recaptchaToken captured (requests[0])!');
+                        console.log('[TOKEN] recaptcha: OK (root)');
+                    } else if (body.requests && body.requests[0]) {
+                        var req = body.requests[0];
+                        if (req.clientContext && req.clientContext.recaptchaToken) {
+                            window._rct = req.clientContext.recaptchaToken;
+                            console.log('[TOKEN] recaptcha: OK (requests[0])');
+                        } else if (req.recaptchaToken) {
+                            window._rct = req.recaptchaToken;
+                            console.log('[TOKEN] recaptcha: OK (requests[0].recaptchaToken)');
+                        }
                     }
                 } catch(e) {
-                    console.log('[ERROR] Parse body failed:', e);
+                    console.log('[ERROR] Parse body:', e.message);
                 }
             }
 
-            // CANCEL request - return fake response để token không bị dùng
-            console.log('[INTERCEPT] Request CANCELLED, tokens captured!');
-            return Promise.resolve(new Response(JSON.stringify({cancelled:true})));
+            // CANCEL - Return fake successful response
+            console.log('[INTERCEPT] REQUEST BLOCKED! Token saved.');
+            return Promise.resolve(new Response(
+                JSON.stringify({"cancelled": true, "message": "Intercepted by VE3"}),
+                {status: 200, statusText: 'OK', headers: {'Content-Type': 'application/json'}}
+            ));
         }
 
-        return orig.apply(this, arguments);
+        return origFetch.apply(this, arguments);
     };
-    console.log('[INTERCEPTOR] Ready - will capture batchGenerateImages requests');
+
+    // === INTERCEPT XMLHttpRequest ===
+    var origXHROpen = XMLHttpRequest.prototype.open;
+    var origXHRSend = XMLHttpRequest.prototype.send;
+
+    XMLHttpRequest.prototype.open = function(method, url) {
+        this._url = url;
+        this._method = method;
+        return origXHROpen.apply(this, arguments);
+    };
+
+    XMLHttpRequest.prototype.send = function(body) {
+        var urlStr = this._url || '';
+        if (urlStr.includes('aisandbox') && (urlStr.includes('batchGenerate') || urlStr.includes('flowMedia'))) {
+            console.log('[INTERCEPT-XHR] Blocking:', urlStr.substring(0, 80));
+            window._url = urlStr;
+            window._intercepted = true;
+
+            if (body) {
+                window._payload = body;
+                try {
+                    var parsed = JSON.parse(body);
+                    if (parsed.recaptchaToken) {
+                        window._rct = parsed.recaptchaToken;
+                    }
+                } catch(e) {}
+            }
+
+            // Fake response - don't actually send
+            var self = this;
+            setTimeout(function() {
+                Object.defineProperty(self, 'status', {value: 200});
+                Object.defineProperty(self, 'responseText', {value: '{"cancelled":true}'});
+                Object.defineProperty(self, 'readyState', {value: 4});
+                if (self.onreadystatechange) self.onreadystatechange();
+                if (self.onload) self.onload();
+            }, 100);
+            return;
+        }
+        return origXHRSend.apply(this, arguments);
+    };
+
+    console.log('[INTERCEPTOR] Ready - fetch + XHR hooked');
     return 'READY';
 })();
 '''
@@ -458,6 +517,7 @@ class DrissionFlowAPI:
             window._payload = null;
             window._sid = null;
             window._url = null;
+            window._intercepted = false;
         """)
 
     def _capture_tokens(self, prompt: str, timeout: int = 15) -> bool:
@@ -473,10 +533,11 @@ class DrissionFlowAPI:
         """
         self.log(f"Capture tokens với prompt: {prompt[:50]}...")
 
-        # Reset trước
+        # Reset và inject interceptor
         self._reset_tokens()
         time.sleep(0.3)
-        self.driver.run_js(JS_INTERCEPTOR)
+        inject_result = self.driver.run_js(JS_INTERCEPTOR)
+        self.log(f"  Interceptor: {inject_result}")
 
         # Tìm và gửi prompt
         textarea = self._find_textarea()
@@ -491,8 +552,8 @@ class DrissionFlowAPI:
         textarea.input('\n')  # Enter để gửi
         self.log("✓ Đã gửi prompt, đợi capture...")
 
-        # Đợi tokens
-        time.sleep(3)  # Đợi recaptcha generate
+        # Đợi tokens - thời gian đủ để recaptcha generate
+        time.sleep(4)
 
         for i in range(timeout):
             tokens = self.driver.run_js("""
@@ -503,7 +564,8 @@ class DrissionFlowAPI:
                     rct: window._rct,
                     sid: window._sid,
                     url: window._url,
-                    payload: window._payload
+                    payload: window._payload,
+                    intercepted: window._intercepted
                 };
             """)
 
@@ -513,8 +575,13 @@ class DrissionFlowAPI:
                 self.log(f"  recaptcha: {'✓' if tokens.get('rct') else '✗'}")
                 self.log(f"  projectId: {'✓' if tokens.get('pj') else '✗'}")
                 self.log(f"  URL: {'✓' if tokens.get('url') else '✗'}")
+                self.log(f"  Intercepted: {'✓' if tokens.get('intercepted') else '✗'}")
 
             if tokens.get("tk") and tokens.get("rct"):
+                # Kiểm tra request có bị intercept không
+                if not tokens.get("intercepted"):
+                    self.log("⚠️ Request không bị intercept - token có thể đã dùng!", "WARN")
+
                 self.bearer_token = f"Bearer {tokens['tk']}"
                 self.project_id = tokens.get("pj")
                 self.session_id = tokens.get("sid")
@@ -525,6 +592,8 @@ class DrissionFlowAPI:
 
                 self.log("✓ Got Bearer token!")
                 self.log("✓ Got recaptchaToken!")
+                if tokens.get("intercepted"):
+                    self.log("✓ Request đã bị BLOCK - token còn fresh!")
                 if self.captured_url:
                     self.log(f"✓ URL: {self.captured_url[:60]}...")
                 return True
