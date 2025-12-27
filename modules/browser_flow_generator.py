@@ -2877,16 +2877,36 @@ class BrowserFlowGenerator:
         proxy_port = self.config.get('proxy_port', 1080)
         use_ipv6_proxy = self.config.get('use_ipv6_proxy', True)
 
+        # Webshare rotating proxy config (nested dict from GUI settings)
+        webshare_cfg = self.config.get('webshare_proxy', {})
+        webshare_api_key = webshare_cfg.get('api_key', '')
+        webshare_username = webshare_cfg.get('username', '')
+        webshare_password = webshare_cfg.get('password', '')
+        webshare_endpoint = webshare_cfg.get('endpoint', '')
+        use_webshare = webshare_cfg.get('enabled', False)
+
+        # Nếu dùng Webshare, tắt IPv6 proxy
+        if use_webshare and webshare_api_key and webshare_endpoint:
+            use_ipv6_proxy = False
+
         drission_api = DrissionFlowAPI(
             profile_dir=self._get_profile_path() or "./chrome_profile",
             proxy_port=proxy_port,
             use_proxy=use_ipv6_proxy,
             verbose=self.verbose,
-            log_callback=self._log
+            log_callback=self._log,
+            # Webshare params
+            webshare_api_key=webshare_api_key if use_webshare else None,
+            webshare_username=webshare_username if use_webshare else None,
+            webshare_password=webshare_password if use_webshare else None,
+            webshare_endpoint=webshare_endpoint if use_webshare else None
         )
 
         self._log("🚀 DrissionPage + Interceptor")
-        self._log(f"   Proxy: {'ON (port ' + str(proxy_port) + ')' if use_ipv6_proxy else 'OFF'}")
+        if use_webshare and webshare_endpoint:
+            self._log(f"   Proxy: Webshare ({webshare_endpoint})")
+        else:
+            self._log(f"   Proxy: {'IPv6 (port ' + str(proxy_port) + ')' if use_ipv6_proxy else 'OFF'}")
 
         # Setup Chrome và đợi user chọn project
         if not drission_api.setup():

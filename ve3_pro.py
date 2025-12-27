@@ -1237,7 +1237,91 @@ class UnixVoiceToVideo:
         api_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         api_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
-        # Tab 3: Token
+        # Tab 3: Proxy (Webshare)
+        proxy_tab = ttk.Frame(notebook, padding=15)
+        notebook.add(proxy_tab, text="  🌐 Proxy  ")
+
+        ttk.Label(proxy_tab, text="Webshare.io Rotating Proxy",
+                  font=('Segoe UI', 11, 'bold')).pack(anchor=tk.W, pady=(0, 5))
+        ttk.Label(proxy_tab, text="Proxy xoay tự động - tự đổi IP khi bị lỗi 403",
+                  foreground='gray').pack(anchor=tk.W, pady=(0, 10))
+
+        ws_link = ttk.Label(proxy_tab, text="🔗 Đăng ký tại webshare.io",
+                           foreground='blue', cursor='hand2')
+        ws_link.pack(anchor=tk.W)
+        ws_link.bind('<Button-1>', lambda e: webbrowser.open("https://webshare.io"))
+
+        # Load existing config
+        proxy_config = self._load_proxy_config()
+
+        # API Key
+        ttk.Label(proxy_tab, text="API Key:", font=('Segoe UI', 9, 'bold')).pack(anchor=tk.W, pady=(10, 0))
+        ws_api_entry = ttk.Entry(proxy_tab, width=60, font=('Consolas', 9))
+        ws_api_entry.pack(fill=tk.X, pady=(2, 5))
+        ws_api_entry.insert(0, proxy_config.get('api_key', ''))
+
+        # Username
+        ttk.Label(proxy_tab, text="Username:", font=('Segoe UI', 9, 'bold')).pack(anchor=tk.W)
+        ws_user_entry = ttk.Entry(proxy_tab, width=60, font=('Consolas', 9))
+        ws_user_entry.pack(fill=tk.X, pady=(2, 5))
+        ws_user_entry.insert(0, proxy_config.get('username', ''))
+
+        # Password
+        ttk.Label(proxy_tab, text="Password:", font=('Segoe UI', 9, 'bold')).pack(anchor=tk.W)
+        ws_pass_entry = ttk.Entry(proxy_tab, width=60, font=('Consolas', 9), show='*')
+        ws_pass_entry.pack(fill=tk.X, pady=(2, 5))
+        ws_pass_entry.insert(0, proxy_config.get('password', ''))
+
+        # Endpoint
+        ttk.Label(proxy_tab, text="Endpoint (vd: p.webshare.io:80):", font=('Segoe UI', 9, 'bold')).pack(anchor=tk.W)
+        ws_endpoint_entry = ttk.Entry(proxy_tab, width=60, font=('Consolas', 9))
+        ws_endpoint_entry.pack(fill=tk.X, pady=(2, 5))
+        ws_endpoint_entry.insert(0, proxy_config.get('endpoint', ''))
+
+        # Enable checkbox
+        ws_enabled_var = tk.BooleanVar(value=proxy_config.get('enabled', False))
+        ttk.Checkbutton(proxy_tab, text="Bật Webshare Proxy (tự động xoay IP khi lỗi)",
+                        variable=ws_enabled_var).pack(anchor=tk.W, pady=(10, 5))
+
+        # Buttons
+        proxy_btn_frame = ttk.Frame(proxy_tab)
+        proxy_btn_frame.pack(fill=tk.X, pady=(10, 0))
+
+        def save_proxy_config():
+            config = {
+                'api_key': ws_api_entry.get().strip(),
+                'username': ws_user_entry.get().strip(),
+                'password': ws_pass_entry.get().strip(),
+                'endpoint': ws_endpoint_entry.get().strip(),
+                'enabled': ws_enabled_var.get()
+            }
+            self._save_proxy_config(config)
+            messagebox.showinfo("Đã lưu", "Proxy config đã được lưu!")
+
+        def test_proxy():
+            try:
+                from webshare_proxy import create_webshare_proxy
+                proxy = create_webshare_proxy(
+                    api_key=ws_api_entry.get().strip(),
+                    username=ws_user_entry.get().strip(),
+                    password=ws_pass_entry.get().strip(),
+                    endpoint=ws_endpoint_entry.get().strip()
+                )
+                success, msg = proxy.test_connection()
+                if success:
+                    messagebox.showinfo("Test OK", f"Kết nối thành công!\n{msg}")
+                else:
+                    messagebox.showerror("Test Failed", f"Lỗi kết nối:\n{msg}")
+            except Exception as e:
+                messagebox.showerror("Lỗi", f"Không thể test:\n{e}")
+
+        ttk.Button(proxy_btn_frame, text="💾 Lưu Config", command=save_proxy_config).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(proxy_btn_frame, text="🧪 Test Proxy", command=test_proxy).pack(side=tk.LEFT)
+
+        ttk.Label(proxy_tab, text="\nHướng dẫn:\n1. Đăng ký webshare.io\n2. Copy API Key từ Dashboard\n3. Copy Username/Password từ Proxy List\n4. Copy Endpoint (vd: p.webshare.io:80)",
+                  foreground='#666', font=('Segoe UI', 9)).pack(anchor=tk.W, pady=(10, 0))
+
+        # Tab 4: Token
         token_tab = ttk.Frame(notebook, padding=15)
         notebook.add(token_tab, text="  🔑 Token  ")
 
@@ -1482,6 +1566,35 @@ class UnixVoiceToVideo:
             self.log(f"Headless mode: {'ON' if headless else 'OFF'}", "OK")
         except Exception as e:
             print(f"Save headless error: {e}")
+
+    def _load_proxy_config(self) -> dict:
+        """Load Webshare proxy config from settings."""
+        try:
+            import yaml
+            config_path = CONFIG_DIR / "settings.yaml"
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+                return config.get('webshare_proxy', {})
+        except:
+            pass
+        return {}
+
+    def _save_proxy_config(self, proxy_config: dict):
+        """Save Webshare proxy config to settings."""
+        try:
+            import yaml
+            config_path = CONFIG_DIR / "settings.yaml"
+            config = {}
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+            config['webshare_proxy'] = proxy_config
+            with open(config_path, 'w', encoding='utf-8') as f:
+                yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+            self.log(f"Webshare proxy: {'ON' if proxy_config.get('enabled') else 'OFF'}", "OK")
+        except Exception as e:
+            print(f"Save proxy config error: {e}")
 
     def _get_generation_mode(self) -> str:
         """Get generation mode from config: 'chrome' or 'api'."""
