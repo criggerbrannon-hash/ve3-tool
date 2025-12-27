@@ -3017,24 +3017,15 @@ class BrowserFlowGenerator:
                         self._log("❌ Bearer token hết hạn!", "error")
                         break
 
-                    # Check for 403 - restart Chrome immediately
+                    # Check for 403 - restart Chrome với proxy toggle
                     # (generate_image already retried 3 times internally)
                     if error and "403" in str(error):
                         consecutive_403 += 1
-                        self._log(f"⚠️ Lỗi 403 (đã retry 3 lần) - Restart Chrome ngay...", "warn")
+                        self._log(f"⚠️ Lỗi 403 (đã retry 3 lần) - Đổi proxy và restart Chrome...", "warn")
                         try:
-                            # Close current Chrome
-                            drission_api.close()
-
-                            # Clear blocked IPs - new session gets fresh start
-                            if drission_api._proxy_server and hasattr(drission_api._proxy_server, 'rotator'):
-                                drission_api._proxy_server.rotator.clear_blocked()
-
-                            time.sleep(3)
-
-                            # Re-setup Chrome - will get new session
-                            if drission_api.setup():
-                                self._log("✓ Chrome đã restart thành công!", "info")
+                            # Restart Chrome với proxy toggle (ON→OFF hoặc OFF→ON)
+                            if drission_api.restart_with_toggled_proxy():
+                                self._log("✓ Chrome đã restart với proxy mới!", "info")
                                 consecutive_403 = 0
 
                                 # Retry current prompt with new Chrome session
