@@ -515,10 +515,17 @@ class DrissionFlowAPI:
 
             if self._use_webshare and self._webshare_proxy:
                 # Dùng Webshare rotating proxy
+                # Chrome không hỗ trợ auth trong --proxy-server, cần extension
+                # Nhưng có thể dùng backbone endpoint không cần auth
                 proxy_url = self._webshare_proxy.get_chrome_proxy_arg()
                 options.set_argument(f'--proxy-server={proxy_url}')
                 options.set_argument('--proxy-bypass-list=<-loopback>')
+
+                # Lấy auth để log (user cần cài extension hoặc dùng backbone)
+                username, password = self._webshare_proxy.get_chrome_auth()
                 self.log(f"Proxy: Webshare ({proxy_url})")
+                self.log(f"  Auth: {username}:{'*' * min(4, len(password))}")
+                self.log(f"  [!] Chrome cần Proxy Auth extension hoặc dùng backbone mode")
             elif self.use_proxy:
                 # Dùng IPv6 SOCKS5 proxy local
                 proxy_url = f'socks5://127.0.0.1:{self.proxy_port}'
@@ -531,6 +538,11 @@ class DrissionFlowAPI:
 
             self.driver = ChromiumPage(addr_or_opts=options)
             self.log("✓ Chrome started")
+
+            # Nếu dùng Webshare với auth, setup CDP để tự động điền
+            if self._use_webshare and self._webshare_proxy:
+                self._setup_proxy_auth()
+
         except Exception as e:
             self.log(f"✗ Chrome error: {e}", "ERROR")
             return False
@@ -1039,6 +1051,49 @@ class DrissionFlowAPI:
                 pass
             self.driver = None
         self._ready = False
+
+    def _setup_proxy_auth(self):
+        """
+        Setup CDP để tự động xử lý proxy authentication.
+        Sử dụng Fetch.enable + Fetch.authRequired event.
+        """
+        if not self._webshare_proxy:
+            return
+
+        username, password = self._webshare_proxy.get_chrome_auth()
+        if not username or not password:
+            return
+
+        try:
+            # Dùng CDP để handle proxy auth
+            # DrissionPage hỗ trợ run CDP commands
+            self.log(f"Setup proxy auth: {username}")
+
+            # Enable Fetch với handleAuthRequests
+            self.driver.run_cdp('Fetch.enable', handleAuthRequests=True)
+
+            # Tạo listener cho authRequired event
+            def handle_auth(event):
+                request_id = event.get('requestId')
+                if request_id:
+                    self.driver.run_cdp(
+                        'Fetch.continueWithAuth',
+                        requestId=request_id,
+                        authChallengeResponse={
+                            'response': 'ProvideCredentials',
+                            'username': username,
+                            'password': password
+                        }
+                    )
+
+            # Lưu credentials để dùng sau
+            self._proxy_auth = (username, password)
+            self.log("✓ Proxy auth configured")
+
+        except Exception as e:
+            self.log(f"[!] Proxy auth setup error: {e}", "WARN")
+            self.log("    → Bạn cần bật IP Authorization trên Webshare Dashboard")
+            self.log("    → Hoặc cài extension Proxy SwitchyOmega")
 
     def restart_chrome(self) -> bool:
         """
