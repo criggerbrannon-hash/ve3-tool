@@ -246,6 +246,12 @@ class BatchGenerator:
 
         url = f"{self.BASE_URL}/v1/projects/{self.project_id}/flowMedia:batchGenerateImages"
 
+        # Proxy - cùng proxy với Chrome để IP match với reCAPTCHA token
+        proxies = {
+            "http": "socks5://127.0.0.1:1080",
+            "https": "socks5://127.0.0.1:1080"
+        }
+
         headers = {
             "Authorization": self.bearer,
             "Content-Type": "text/plain;charset=UTF-8",
@@ -283,7 +289,7 @@ class BatchGenerator:
         }
 
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=120)
+            resp = requests.post(url, headers=headers, json=payload, timeout=120, proxies=proxies)
 
             if resp.status_code == 200:
                 data = resp.json()
@@ -295,9 +301,9 @@ class BatchGenerator:
                     if gen_image.get("encodedImage"):
                         images.append(gen_image["encodedImage"])  # base64 image
                     elif gen_image.get("fifeUrl"):
-                        # Download from URL
+                        # Download from URL (cũng qua proxy)
                         try:
-                            img_resp = requests.get(gen_image["fifeUrl"], timeout=60)
+                            img_resp = requests.get(gen_image["fifeUrl"], timeout=60, proxies=proxies)
                             if img_resp.status_code == 200:
                                 images.append(base64.b64encode(img_resp.content).decode())
                         except:
