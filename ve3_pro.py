@@ -1254,43 +1254,80 @@ class UnixVoiceToVideo:
         # Load existing config
         proxy_config = self._load_proxy_config()
 
-        # Endpoint (quan trọng nhất)
-        ttk.Label(proxy_tab, text="Proxy Endpoint:", font=('Segoe UI', 9, 'bold')).pack(anchor=tk.W, pady=(15, 0))
-        ttk.Label(proxy_tab, text="IP:PORT từ Webshare (vd: 166.88.64.59:6442 hoặc p.webshare.io:80)",
+        # Proxy File (danh sách proxy)
+        file_frame = ttk.LabelFrame(proxy_tab, text="📁 Proxy List File (khuyến nghị)", padding=10)
+        file_frame.pack(fill=tk.X, pady=(10, 10))
+
+        ttk.Label(file_frame, text="File chứa danh sách proxy (format: IP:PORT:USER:PASS mỗi dòng)",
                   foreground='gray', font=('Segoe UI', 8)).pack(anchor=tk.W)
-        ws_endpoint_entry = ttk.Entry(proxy_tab, width=60, font=('Consolas', 10))
-        ws_endpoint_entry.pack(fill=tk.X, pady=(2, 10))
-        ws_endpoint_entry.insert(0, proxy_config.get('endpoint', '166.88.64.59:6442'))
 
-        # IP Authorization mode note
-        ttk.Label(proxy_tab, text="⚡ IP Authorization: Bật trên Webshare Dashboard → không cần username/password",
-                  foreground='green', font=('Segoe UI', 8)).pack(anchor=tk.W, pady=(0, 10))
+        file_entry_frame = ttk.Frame(file_frame)
+        file_entry_frame.pack(fill=tk.X, pady=(5, 0))
 
-        # Optional: Username/Password (nếu không dùng IP Authorization)
-        opt_frame = ttk.LabelFrame(proxy_tab, text="Tùy chọn (nếu không dùng IP Authorization)", padding=10)
-        opt_frame.pack(fill=tk.X, pady=(5, 10))
+        ws_file_entry = ttk.Entry(file_entry_frame, width=50, font=('Consolas', 9))
+        ws_file_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ws_file_entry.insert(0, proxy_config.get('proxy_file', 'config/proxies.txt'))
 
-        # Username
-        ttk.Label(opt_frame, text="Username:", font=('Segoe UI', 9)).pack(anchor=tk.W)
-        ws_user_entry = ttk.Entry(opt_frame, width=50, font=('Consolas', 9))
-        ws_user_entry.pack(fill=tk.X, pady=(2, 5))
+        def browse_proxy_file():
+            from tkinter import filedialog
+            path = filedialog.askopenfilename(
+                title="Chọn file proxy list",
+                filetypes=[("Text files", "*.txt"), ("All files", "*.*")]
+            )
+            if path:
+                ws_file_entry.delete(0, tk.END)
+                ws_file_entry.insert(0, path)
+
+        ttk.Button(file_entry_frame, text="📂", width=3, command=browse_proxy_file).pack(side=tk.LEFT, padx=(5, 0))
+
+        # Count proxies in file
+        proxy_count_label = ttk.Label(file_frame, text="", foreground='green', font=('Segoe UI', 9))
+        proxy_count_label.pack(anchor=tk.W, pady=(5, 0))
+
+        def update_proxy_count():
+            path = ws_file_entry.get().strip()
+            if path and Path(path).exists():
+                try:
+                    lines = Path(path).read_text().strip().split('\n')
+                    count = sum(1 for l in lines if l.strip() and not l.startswith('#'))
+                    proxy_count_label.config(text=f"✓ Tìm thấy {count} proxies trong file")
+                except:
+                    proxy_count_label.config(text="")
+            else:
+                proxy_count_label.config(text="")
+
+        ws_file_entry.bind('<FocusOut>', lambda e: update_proxy_count())
+        update_proxy_count()
+
+        # Single Endpoint (fallback)
+        single_frame = ttk.LabelFrame(proxy_tab, text="🔗 Single Proxy (nếu không có file)", padding=10)
+        single_frame.pack(fill=tk.X, pady=(5, 10))
+
+        ttk.Label(single_frame, text="Endpoint (IP:PORT):", font=('Segoe UI', 9)).pack(anchor=tk.W)
+        ws_endpoint_entry = ttk.Entry(single_frame, width=50, font=('Consolas', 9))
+        ws_endpoint_entry.pack(fill=tk.X, pady=(2, 5))
+        ws_endpoint_entry.insert(0, proxy_config.get('endpoint', ''))
+
+        cred_frame = ttk.Frame(single_frame)
+        cred_frame.pack(fill=tk.X)
+
+        ttk.Label(cred_frame, text="User:", font=('Segoe UI', 9)).pack(side=tk.LEFT)
+        ws_user_entry = ttk.Entry(cred_frame, width=20, font=('Consolas', 9))
+        ws_user_entry.pack(side=tk.LEFT, padx=(2, 10))
         ws_user_entry.insert(0, proxy_config.get('username', ''))
 
-        # Password
-        ttk.Label(opt_frame, text="Password:", font=('Segoe UI', 9)).pack(anchor=tk.W)
-        ws_pass_entry = ttk.Entry(opt_frame, width=50, font=('Consolas', 9), show='*')
-        ws_pass_entry.pack(fill=tk.X, pady=(2, 5))
+        ttk.Label(cred_frame, text="Pass:", font=('Segoe UI', 9)).pack(side=tk.LEFT)
+        ws_pass_entry = ttk.Entry(cred_frame, width=20, font=('Consolas', 9), show='*')
+        ws_pass_entry.pack(side=tk.LEFT, padx=(2, 0))
         ws_pass_entry.insert(0, proxy_config.get('password', ''))
 
-        # API Key (optional)
-        ttk.Label(opt_frame, text="API Key (optional):", font=('Segoe UI', 9)).pack(anchor=tk.W)
-        ws_api_entry = ttk.Entry(opt_frame, width=50, font=('Consolas', 9))
-        ws_api_entry.pack(fill=tk.X, pady=(2, 0))
+        # API Key (hidden)
+        ws_api_entry = ttk.Entry(proxy_tab)
         ws_api_entry.insert(0, proxy_config.get('api_key', ''))
 
         # Enable checkbox
         ws_enabled_var = tk.BooleanVar(value=proxy_config.get('enabled', False))
-        ttk.Checkbutton(proxy_tab, text="✅ Bật Webshare Proxy (thay thế IPv6 local)",
+        ttk.Checkbutton(proxy_tab, text="✅ Bật Webshare Proxy (100 proxies xoay tự động)",
                         variable=ws_enabled_var).pack(anchor=tk.W, pady=(10, 5))
 
         # Buttons
@@ -1303,32 +1340,47 @@ class UnixVoiceToVideo:
                 'username': ws_user_entry.get().strip(),
                 'password': ws_pass_entry.get().strip(),
                 'endpoint': ws_endpoint_entry.get().strip(),
+                'proxy_file': ws_file_entry.get().strip(),
                 'enabled': ws_enabled_var.get()
             }
             self._save_proxy_config(config)
+            update_proxy_count()
             messagebox.showinfo("Đã lưu", "Proxy config đã được lưu!")
 
         def test_proxy():
             try:
-                from webshare_proxy import create_webshare_proxy
-                proxy = create_webshare_proxy(
-                    api_key=ws_api_entry.get().strip(),
-                    username=ws_user_entry.get().strip(),
-                    password=ws_pass_entry.get().strip(),
-                    endpoint=ws_endpoint_entry.get().strip()
-                )
-                success, msg = proxy.test_connection()
-                if success:
-                    messagebox.showinfo("Test OK", f"Kết nối thành công!\n{msg}")
+                from webshare_proxy import init_proxy_manager
+                proxy_file = ws_file_entry.get().strip()
+
+                if proxy_file and Path(proxy_file).exists():
+                    manager = init_proxy_manager(
+                        username=ws_user_entry.get().strip(),
+                        password=ws_pass_entry.get().strip(),
+                        proxy_file=proxy_file
+                    )
                 else:
-                    messagebox.showerror("Test Failed", f"Lỗi kết nối:\n{msg}")
+                    manager = init_proxy_manager(
+                        username=ws_user_entry.get().strip(),
+                        password=ws_pass_entry.get().strip(),
+                        proxy_list=[f"{ws_endpoint_entry.get().strip()}:{ws_user_entry.get().strip()}:{ws_pass_entry.get().strip()}"]
+                    )
+
+                if manager.proxies:
+                    success, msg = manager.test_current()
+                    stats = manager.get_stats()
+                    if success:
+                        messagebox.showinfo("Test OK", f"Kết nối thành công!\n{msg}\n\nTotal: {stats['total']} proxies")
+                    else:
+                        messagebox.showerror("Test Failed", f"Lỗi kết nối:\n{msg}")
+                else:
+                    messagebox.showerror("Lỗi", "Không load được proxy nào!")
             except Exception as e:
                 messagebox.showerror("Lỗi", f"Không thể test:\n{e}")
 
         ttk.Button(proxy_btn_frame, text="💾 Lưu Config", command=save_proxy_config).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(proxy_btn_frame, text="🧪 Test Proxy", command=test_proxy).pack(side=tk.LEFT)
 
-        ttk.Label(proxy_tab, text="\nHướng dẫn:\n1. Đăng ký webshare.io → Mua proxy\n2. Vào Proxy List → Copy IP:PORT (endpoint)\n3. Bật IP Authorization trên Dashboard\n4. Tick checkbox 'Bật Webshare Proxy' → Lưu",
+        ttk.Label(proxy_tab, text="\nHướng dẫn:\n1. Tạo file config/proxies.txt với danh sách proxy\n2. Format mỗi dòng: IP:PORT:USER:PASS\n3. Tick 'Bật Webshare Proxy' → Lưu\n4. Tool sẽ tự xoay proxy khi bị block (403)",
                   foreground='#666', font=('Segoe UI', 9)).pack(anchor=tk.W, pady=(10, 0))
 
         # Tab 4: Token

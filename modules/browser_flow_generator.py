@@ -2877,17 +2877,63 @@ class BrowserFlowGenerator:
         proxy_port = self.config.get('proxy_port', 1080)
         use_ipv6_proxy = self.config.get('use_ipv6_proxy', True)
 
-        # Webshare rotating proxy config (nested dict from GUI settings)
+        # Webshare proxy config (nested dict from GUI settings)
         webshare_cfg = self.config.get('webshare_proxy', {})
         webshare_api_key = webshare_cfg.get('api_key', '')
         webshare_username = webshare_cfg.get('username', '')
         webshare_password = webshare_cfg.get('password', '')
         webshare_endpoint = webshare_cfg.get('endpoint', '')
+        webshare_proxy_file = webshare_cfg.get('proxy_file', '')
         use_webshare = webshare_cfg.get('enabled', False)
 
-        # Nếu dùng Webshare, tắt IPv6 proxy
-        if use_webshare and webshare_api_key and webshare_endpoint:
-            use_ipv6_proxy = False
+        # Khởi tạo Webshare Proxy Manager nếu enabled
+        if use_webshare:
+            use_ipv6_proxy = False  # Tắt IPv6 proxy khi dùng Webshare
+
+            try:
+                from webshare_proxy import init_proxy_manager, get_proxy_manager
+
+                # Load proxy list từ file hoặc API
+                proxy_list = None
+                if webshare_proxy_file:
+                    self._log(f"Loading proxies from: {webshare_proxy_file}")
+                else:
+                    # Kiểm tra file mặc định
+                    default_proxy_file = Path("config/proxies.txt")
+                    if default_proxy_file.exists():
+                        webshare_proxy_file = str(default_proxy_file)
+                        self._log(f"Found default proxy file: {webshare_proxy_file}")
+
+                manager = init_proxy_manager(
+                    api_key=webshare_api_key,
+                    username=webshare_username,
+                    password=webshare_password,
+                    proxy_file=webshare_proxy_file if webshare_proxy_file else None
+                )
+
+                # Nếu không có proxy từ file, thử single endpoint
+                if not manager.proxies and webshare_endpoint:
+                    from webshare_proxy import ProxyInfo
+                    proxy = ProxyInfo(
+                        host=webshare_endpoint.split(':')[0],
+                        port=int(webshare_endpoint.split(':')[1]) if ':' in webshare_endpoint else 80,
+                        username=webshare_username,
+                        password=webshare_password
+                    )
+                    manager.proxies.append(proxy)
+
+                if manager.proxies:
+                    self._log(f"✓ Loaded {len(manager.proxies)} proxies")
+                    self._log(f"  Current: {manager.current_proxy.endpoint}")
+                else:
+                    self._log("⚠️ No proxies loaded, falling back to IPv6", "WARN")
+                    use_webshare = False
+                    use_ipv6_proxy = True
+
+            except Exception as e:
+                self._log(f"⚠️ Webshare init error: {e}", "WARN")
+                use_webshare = False
+                use_ipv6_proxy = True
 
         drission_api = DrissionFlowAPI(
             profile_dir=self._get_profile_path() or "./chrome_profile",
@@ -2895,16 +2941,14 @@ class BrowserFlowGenerator:
             use_proxy=use_ipv6_proxy,
             verbose=self.verbose,
             log_callback=self._log,
-            # Webshare params
-            webshare_api_key=webshare_api_key if use_webshare else None,
-            webshare_username=webshare_username if use_webshare else None,
-            webshare_password=webshare_password if use_webshare else None,
-            webshare_endpoint=webshare_endpoint if use_webshare else None
+            # Webshare params - dùng flag thay vì pass params riêng lẻ
+            webshare_enabled=use_webshare
         )
 
         self._log("🚀 DrissionPage + Interceptor")
-        if use_webshare and webshare_endpoint:
-            self._log(f"   Proxy: Webshare ({webshare_endpoint})")
+        if use_webshare:
+            manager = get_proxy_manager()
+            self._log(f"   Proxy: Webshare Pool ({len(manager.proxies)} proxies)")
         else:
             self._log(f"   Proxy: {'IPv6 (port ' + str(proxy_port) + ')' if use_ipv6_proxy else 'OFF'}")
 

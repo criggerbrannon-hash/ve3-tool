@@ -221,11 +221,8 @@ class DrissionFlowAPI:
         use_proxy: bool = True,  # BẬT proxy - chạy ipv6_rotate_proxy.py trước
         verbose: bool = True,
         log_callback: Optional[Callable] = None,
-        # Webshare proxy config
-        webshare_api_key: str = None,
-        webshare_username: str = None,
-        webshare_password: str = None,
-        webshare_endpoint: str = None,
+        # Webshare proxy - dùng global proxy manager
+        webshare_enabled: bool = False,
     ):
         """
         Khởi tạo DrissionFlowAPI.
@@ -237,10 +234,7 @@ class DrissionFlowAPI:
             use_proxy: Có dùng proxy không (cần chạy ipv6_rotate_proxy.py)
             verbose: In log chi tiết
             log_callback: Callback để log (msg, level)
-            webshare_api_key: Webshare API key (nếu dùng Webshare)
-            webshare_username: Webshare proxy username
-            webshare_password: Webshare proxy password
-            webshare_endpoint: Webshare rotating endpoint (e.g., p.webshare.io:80)
+            webshare_enabled: Dùng Webshare proxy (phải init_proxy_manager trước)
         """
         self.profile_dir = Path(profile_dir)
         self.chrome_port = chrome_port
@@ -256,18 +250,22 @@ class DrissionFlowAPI:
         self._proxy_server = None
         self._proxy_started = False
 
-        # Webshare Proxy
+        # Webshare Proxy - dùng global manager
         self._webshare_proxy = None
-        self._use_webshare = False
-        if webshare_api_key and webshare_endpoint and WEBSHARE_AVAILABLE:
-            self._webshare_proxy = create_webshare_proxy(
-                api_key=webshare_api_key,
-                username=webshare_username,
-                password=webshare_password,
-                endpoint=webshare_endpoint
-            )
-            self._use_webshare = True
-            self.log(f"✓ Webshare proxy configured: {webshare_endpoint}")
+        self._use_webshare = webshare_enabled
+        if webshare_enabled and WEBSHARE_AVAILABLE:
+            try:
+                from webshare_proxy import get_proxy_manager, WebshareProxy
+                manager = get_proxy_manager()
+                if manager.proxies:
+                    self._webshare_proxy = WebshareProxy()  # Wrapper cho manager
+                    self.log(f"✓ Webshare: {len(manager.proxies)} proxies, current: {manager.current_proxy.endpoint}")
+                else:
+                    self._use_webshare = False
+                    self.log("⚠️ Webshare: No proxies loaded", "WARN")
+            except Exception as e:
+                self._use_webshare = False
+                self.log(f"⚠️ Webshare init error: {e}", "WARN")
 
         # Captured tokens
         self.bearer_token: Optional[str] = None

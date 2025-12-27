@@ -1,239 +1,398 @@
 #!/usr/bin/env python3
 """
-Webshare.io Rotating Proxy Integration
-======================================
-Tích hợp proxy xoay từ Webshare.io.
+Webshare.io Proxy Manager with Rotation
+========================================
+Quản lý pool 100 proxy từ Webshare với auto-rotation.
 
-2 chế độ:
-1. Rotating Endpoint (p.webshare.io:80): Mỗi request = IP mới tự động
-2. Direct Proxy (IP:PORT): IP cố định, cần replace thủ công
-
-Cách dùng:
-1. Đăng ký tại https://webshare.io
-2. Vào Proxy List → Copy username, password
-3. Dùng endpoint: p.webshare.io:80 (hoặc :1080 cho SOCKS5)
-4. Thêm -rotate vào username để bật auto-rotate
+Features:
+- Load proxy list từ file hoặc API
+- Tự động xoay sang proxy khác khi bị block
+- Đánh dấu proxy bị block để tránh dùng lại
+- Hỗ trợ cả username/password và IP Authorization
 """
 
 import os
 import requests
 import time
-from typing import Optional, Dict, Tuple
-from dataclasses import dataclass
+import random
+from typing import Optional, Dict, Tuple, List
+from dataclasses import dataclass, field
+from pathlib import Path
 
 
 @dataclass
-class WebshareConfig:
-    """Cấu hình Webshare proxy."""
-    api_key: str = ""
-    proxy_username: str = ""
-    proxy_password: str = ""
-
-    # Endpoint: p.webshare.io:80 hoặc IP:PORT
-    endpoint: str = ""
-
-    # Auto thêm -rotate vào username nếu dùng rotating endpoint
-    auto_rotate_suffix: bool = True
+class ProxyInfo:
+    """Thông tin một proxy."""
+    host: str
+    port: int
+    username: str = ""
+    password: str = ""
+    blocked: bool = False
+    last_used: float = 0
+    fail_count: int = 0
 
     @property
-    def is_rotating_endpoint(self) -> bool:
-        """Check xem có phải rotating endpoint không."""
-        return "webshare.io" in self.endpoint.lower()
-
-    @property
-    def effective_username(self) -> str:
-        """Username với -rotate suffix nếu cần."""
-        username = self.proxy_username
-        if self.is_rotating_endpoint and self.auto_rotate_suffix:
-            if not username.endswith("-rotate"):
-                username = f"{username}-rotate"
-        return username
-
-    @property
-    def is_ip_auth_mode(self) -> bool:
-        """Check xem có dùng IP Authorization mode không (không cần username/password)."""
-        return not self.proxy_username or not self.proxy_password
+    def endpoint(self) -> str:
+        return f"{self.host}:{self.port}"
 
     @property
     def proxy_url(self) -> str:
-        """URL proxy đầy đủ cho requests library."""
-        if self.proxy_username and self.proxy_password:
-            return f"http://{self.effective_username}:{self.proxy_password}@{self.endpoint}"
-        # IP Authorization mode - không cần auth
-        return f"http://{self.endpoint}"
+        """URL cho requests library."""
+        if self.username and self.password:
+            return f"http://{self.username}:{self.password}@{self.host}:{self.port}"
+        return f"http://{self.host}:{self.port}"
 
     @property
-    def socks5_url(self) -> str:
-        """URL SOCKS5 proxy."""
-        if self.proxy_username and self.proxy_password:
-            return f"socks5://{self.effective_username}:{self.proxy_password}@{self.endpoint}"
-        return f"socks5://{self.endpoint}"
+    def chrome_url(self) -> str:
+        """URL cho Chrome --proxy-server (không có auth)."""
+        return f"http://{self.host}:{self.port}"
+
+    @classmethod
+    def from_string(cls, line: str) -> Optional['ProxyInfo']:
+        """
+        Parse proxy từ string.
+        Formats:
+        - IP:PORT:USER:PASS
+        - IP:PORT (IP Authorization)
+        - USER:PASS@IP:PORT
+        """
+        line = line.strip()
+        if not line or line.startswith('#'):
+            return None
+
+        try:
+            # Format: IP:PORT:USER:PASS
+            if line.count(':') == 3:
+                parts = line.split(':')
+                return cls(
+                    host=parts[0],
+                    port=int(parts[1]),
+                    username=parts[2],
+                    password=parts[3]
+                )
+            # Format: USER:PASS@IP:PORT
+            elif '@' in line:
+                auth, endpoint = line.rsplit('@', 1)
+                user, pwd = auth.split(':', 1)
+                host, port = endpoint.split(':')
+                return cls(host=host, port=int(port), username=user, password=pwd)
+            # Format: IP:PORT (IP Authorization)
+            elif line.count(':') == 1:
+                host, port = line.split(':')
+                return cls(host=host, port=int(port))
+        except:
+            pass
+        return None
 
 
-class WebshareProxy:
+class WebshareProxyManager:
     """
-    Webshare.io Proxy Manager.
+    Quản lý pool proxy với auto-rotation.
 
-    Với Rotating Endpoint (p.webshare.io):
-    - Mỗi request = IP mới tự động
-    - Không cần gọi API để rotate
-    - Restart Chrome để lấy IP mới
-
-    Với Direct Proxy (IP cố định):
-    - Cần gọi API refresh để đổi IP
+    Khi một proxy bị block (403), tự động chuyển sang proxy khác.
     """
 
     API_BASE = "https://proxy.webshare.io/api/v2"
 
-    def __init__(self, config: WebshareConfig):
-        self.config = config
-        self.rotate_count = 0
-        self.last_rotate_time = 0
-        self.min_rotate_interval = 3  # Tối thiểu 3 giây
-        self.current_ip = None
-        self._request_count = 0
+    def __init__(
+        self,
+        api_key: str = "",
+        default_username: str = "",
+        default_password: str = ""
+    ):
+        self.api_key = api_key
+        self.default_username = default_username
+        self.default_password = default_password
 
-    def get_proxies(self) -> Dict[str, str]:
-        """Trả về dict proxies cho requests library."""
-        proxy_url = self.config.proxy_url
+        self.proxies: List[ProxyInfo] = []
+        self.current_index = 0
+        self.rotate_count = 0
+        self.block_timeout = 300  # 5 phút timeout cho blocked proxy
+
+    def load_from_list(self, proxy_lines: List[str]) -> int:
+        """
+        Load proxies từ danh sách strings.
+        Returns số proxy đã load.
+        """
+        count = 0
+        for line in proxy_lines:
+            proxy = ProxyInfo.from_string(line)
+            if proxy:
+                # Dùng default credentials nếu proxy không có
+                if not proxy.username and self.default_username:
+                    proxy.username = self.default_username
+                if not proxy.password and self.default_password:
+                    proxy.password = self.default_password
+                self.proxies.append(proxy)
+                count += 1
+        return count
+
+    def load_from_file(self, filepath: str) -> int:
+        """Load proxies từ file."""
+        path = Path(filepath)
+        if not path.exists():
+            return 0
+        lines = path.read_text().strip().split('\n')
+        return self.load_from_list(lines)
+
+    def load_from_api(self) -> int:
+        """
+        Load proxies từ Webshare API.
+        Cần API key.
+        """
+        if not self.api_key:
+            return 0
+
+        try:
+            headers = {"Authorization": f"Token {self.api_key}"}
+            resp = requests.get(
+                f"{self.API_BASE}/proxy/list/?mode=direct&page_size=100",
+                headers=headers,
+                timeout=30
+            )
+
+            if resp.status_code != 200:
+                print(f"API error: {resp.status_code}")
+                return 0
+
+            data = resp.json()
+            results = data.get('results', [])
+
+            for item in results:
+                proxy = ProxyInfo(
+                    host=item.get('proxy_address', ''),
+                    port=int(item.get('port', 0)),
+                    username=item.get('username', self.default_username),
+                    password=item.get('password', self.default_password)
+                )
+                if proxy.host and proxy.port:
+                    self.proxies.append(proxy)
+
+            return len(results)
+
+        except Exception as e:
+            print(f"API error: {e}")
+            return 0
+
+    @property
+    def current_proxy(self) -> Optional[ProxyInfo]:
+        """Proxy hiện tại đang dùng."""
+        if not self.proxies:
+            return None
+        return self.proxies[self.current_index % len(self.proxies)]
+
+    @property
+    def available_count(self) -> int:
+        """Số proxy còn dùng được (không bị block)."""
+        now = time.time()
+        return sum(
+            1 for p in self.proxies
+            if not p.blocked or (now - p.last_used > self.block_timeout)
+        )
+
+    def get_proxies_dict(self) -> Dict[str, str]:
+        """Dict proxies cho requests library."""
+        proxy = self.current_proxy
+        if not proxy:
+            return {}
         return {
-            "http": proxy_url,
-            "https": proxy_url
+            "http": proxy.proxy_url,
+            "https": proxy.proxy_url
         }
 
     def get_chrome_proxy_arg(self) -> str:
-        """
-        Trả về proxy URL cho Chrome --proxy-server argument.
-        Chrome cần restart để lấy IP mới từ rotating endpoint.
-        """
-        return f"http://{self.config.endpoint}"
+        """Proxy URL cho Chrome."""
+        proxy = self.current_proxy
+        if not proxy:
+            return ""
+        return proxy.chrome_url
 
     def get_chrome_auth(self) -> Tuple[str, str]:
-        """Trả về (username, password) cho Chrome auth."""
-        return self.config.effective_username, self.config.proxy_password
+        """Username, password cho Chrome auth."""
+        proxy = self.current_proxy
+        if not proxy:
+            return "", ""
+        return proxy.username, proxy.password
 
-    def rotate_ip(self) -> Tuple[bool, str]:
+    def mark_current_blocked(self):
+        """Đánh dấu proxy hiện tại bị block."""
+        proxy = self.current_proxy
+        if proxy:
+            proxy.blocked = True
+            proxy.fail_count += 1
+            proxy.last_used = time.time()
+
+    def rotate(self) -> Tuple[bool, str]:
         """
-        Xoay IP.
-
-        Với Rotating Endpoint: Chỉ cần đánh dấu để restart Chrome
-        Với Direct Proxy: Gọi API refresh (nếu có)
-
-        Returns:
-            Tuple[success, message]
+        Xoay sang proxy tiếp theo.
+        Returns (success, message).
         """
-        # Check cooldown
+        if not self.proxies:
+            return False, "Không có proxy nào"
+
+        if self.available_count == 0:
+            # Reset tất cả blocked proxies
+            for p in self.proxies:
+                p.blocked = False
+            return False, "Tất cả proxy đều bị block, đã reset"
+
+        # Đánh dấu current là blocked
+        self.mark_current_blocked()
+
+        # Tìm proxy tiếp theo không bị block
         now = time.time()
-        if now - self.last_rotate_time < self.min_rotate_interval:
-            wait = self.min_rotate_interval - (now - self.last_rotate_time)
-            return False, f"Cooldown: đợi {wait:.1f}s"
+        start_index = self.current_index
+        attempts = 0
 
-        self.rotate_count += 1
-        self.last_rotate_time = now
+        while attempts < len(self.proxies):
+            self.current_index = (self.current_index + 1) % len(self.proxies)
+            proxy = self.proxies[self.current_index]
 
-        if self.config.is_rotating_endpoint:
-            # Rotating endpoint: Mỗi connection mới = IP mới
-            # Chỉ cần restart Chrome là có IP mới
-            return True, f"Rotating endpoint - restart Chrome để lấy IP #{self.rotate_count}"
+            # Proxy không bị block hoặc đã hết timeout
+            if not proxy.blocked or (now - proxy.last_used > self.block_timeout):
+                proxy.blocked = False  # Reset nếu hết timeout
+                self.rotate_count += 1
+                return True, f"Rotated to {proxy.endpoint} (#{self.rotate_count})"
 
-        # Direct proxy: Thử gọi API refresh
-        if self.config.api_key:
-            try:
-                headers = {"Authorization": f"Token {self.config.api_key}"}
+            attempts += 1
 
-                # Thử refresh proxy list
-                resp = requests.post(
-                    f"{self.API_BASE}/proxy/list/refresh/",
-                    headers=headers,
-                    timeout=30
-                )
+        return False, "Không tìm được proxy khả dụng"
 
-                if resp.status_code in [200, 201, 202]:
-                    return True, f"Đã refresh proxy list #{self.rotate_count}"
-                else:
-                    return True, f"Rotate #{self.rotate_count} (API: {resp.status_code})"
-            except Exception as e:
-                return True, f"Rotate #{self.rotate_count} (no API: {e})"
+    def test_current(self) -> Tuple[bool, str]:
+        """Test proxy hiện tại."""
+        proxy = self.current_proxy
+        if not proxy:
+            return False, "Không có proxy"
 
-        return True, f"Marked for rotation #{self.rotate_count}"
-
-    def get_current_ip(self) -> Optional[str]:
-        """Lấy IP hiện tại qua proxy."""
-        try:
-            # Dùng Webshare's own IP check endpoint
-            resp = requests.get(
-                "https://ipv4.webshare.io/",
-                proxies=self.get_proxies(),
-                timeout=15
-            )
-            if resp.status_code == 200:
-                self.current_ip = resp.text.strip()
-                self._request_count += 1
-                return self.current_ip
-        except:
-            pass
-
-        # Fallback
-        try:
-            resp = requests.get(
-                "https://api.ipify.org",
-                proxies=self.get_proxies(),
-                timeout=10
-            )
-            if resp.status_code == 200:
-                self.current_ip = resp.text.strip()
-                return self.current_ip
-        except:
-            pass
-
-        return None
-
-    def test_connection(self) -> Tuple[bool, str]:
-        """Test kết nối proxy và hiển thị IP."""
         try:
             start = time.time()
-            ip = self.get_current_ip()
+            resp = requests.get(
+                "https://ipv4.webshare.io/",
+                proxies=self.get_proxies_dict(),
+                timeout=15
+            )
             elapsed = time.time() - start
 
-            if ip:
-                mode = "Rotating" if self.config.is_rotating_endpoint else "Direct"
-                return True, f"OK! IP: {ip} ({mode}, {elapsed:.1f}s)"
-            return False, "Không lấy được IP qua proxy"
+            if resp.status_code == 200:
+                ip = resp.text.strip()
+                return True, f"OK! IP: {ip} ({elapsed:.1f}s)"
+            return False, f"HTTP {resp.status_code}"
+
         except requests.exceptions.ProxyError as e:
             return False, f"Proxy error: {e}"
         except Exception as e:
-            return False, f"Connection error: {e}"
-
-    def test_rotation(self) -> Tuple[bool, str]:
-        """Test xem IP có thực sự rotate không (với rotating endpoint)."""
-        if not self.config.is_rotating_endpoint:
-            return False, "Chỉ test được với rotating endpoint"
-
-        ips = set()
-        for i in range(3):
-            ip = self.get_current_ip()
-            if ip:
-                ips.add(ip)
-            time.sleep(0.5)
-
-        if len(ips) > 1:
-            return True, f"Rotation hoạt động! Thấy {len(ips)} IPs: {', '.join(ips)}"
-        elif len(ips) == 1:
-            return True, f"Rotation có thể chậm, thấy 1 IP: {list(ips)[0]}"
-        else:
-            return False, "Không lấy được IP nào"
+            return False, f"Error: {e}"
 
     def get_stats(self) -> Dict:
-        """Thống kê proxy usage."""
+        """Thống kê."""
+        blocked = sum(1 for p in self.proxies if p.blocked)
         return {
-            "mode": "rotating" if self.config.is_rotating_endpoint else "direct",
-            "endpoint": self.config.endpoint,
-            "username": self.config.effective_username,
-            "rotate_count": self.rotate_count,
-            "request_count": self._request_count,
-            "current_ip": self.current_ip,
-            "last_rotate": self.last_rotate_time
+            "total": len(self.proxies),
+            "available": self.available_count,
+            "blocked": blocked,
+            "current": self.current_proxy.endpoint if self.current_proxy else None,
+            "rotate_count": self.rotate_count
         }
+
+
+# ============= Singleton instance =============
+_manager: Optional[WebshareProxyManager] = None
+
+
+def get_proxy_manager() -> WebshareProxyManager:
+    """Get global proxy manager instance."""
+    global _manager
+    if _manager is None:
+        _manager = WebshareProxyManager()
+    return _manager
+
+
+def init_proxy_manager(
+    api_key: str = "",
+    username: str = "",
+    password: str = "",
+    proxy_list: List[str] = None,
+    proxy_file: str = None
+) -> WebshareProxyManager:
+    """
+    Khởi tạo proxy manager.
+
+    Args:
+        api_key: Webshare API key (để auto-fetch proxy list)
+        username: Default username cho tất cả proxy
+        password: Default password
+        proxy_list: List các proxy strings
+        proxy_file: Path đến file chứa proxy list
+
+    Returns:
+        WebshareProxyManager instance
+    """
+    global _manager
+    _manager = WebshareProxyManager(
+        api_key=api_key,
+        default_username=username,
+        default_password=password
+    )
+
+    # Load từ các nguồn
+    if proxy_list:
+        count = _manager.load_from_list(proxy_list)
+        print(f"Loaded {count} proxies from list")
+
+    if proxy_file:
+        count = _manager.load_from_file(proxy_file)
+        print(f"Loaded {count} proxies from file")
+
+    if api_key and not _manager.proxies:
+        count = _manager.load_from_api()
+        print(f"Loaded {count} proxies from API")
+
+    # Shuffle để random thứ tự
+    if _manager.proxies:
+        random.shuffle(_manager.proxies)
+
+    return _manager
+
+
+# ============= Legacy compatibility =============
+# Để tương thích với code cũ
+
+class WebshareProxy:
+    """Legacy wrapper cho WebshareProxyManager."""
+
+    def __init__(self, config=None):
+        self._manager = get_proxy_manager()
+
+    def get_proxies(self) -> Dict[str, str]:
+        return self._manager.get_proxies_dict()
+
+    def get_chrome_proxy_arg(self) -> str:
+        return self._manager.get_chrome_proxy_arg()
+
+    def get_chrome_auth(self) -> Tuple[str, str]:
+        return self._manager.get_chrome_auth()
+
+    def rotate_ip(self) -> Tuple[bool, str]:
+        return self._manager.rotate()
+
+    def test_connection(self) -> Tuple[bool, str]:
+        return self._manager.test_current()
+
+    def get_stats(self) -> Dict:
+        return self._manager.get_stats()
+
+    @property
+    def config(self):
+        """Fake config cho legacy code."""
+        class FakeConfig:
+            endpoint = ""
+            is_ip_auth_mode = False
+        cfg = FakeConfig()
+        proxy = self._manager.current_proxy
+        if proxy:
+            cfg.endpoint = proxy.endpoint
+            cfg.is_ip_auth_mode = not proxy.username
+        return cfg
 
 
 def create_webshare_proxy(
@@ -243,77 +402,65 @@ def create_webshare_proxy(
     endpoint: str = None
 ) -> WebshareProxy:
     """
-    Tạo WebshareProxy instance.
-
-    Args:
-        api_key: Webshare API key (optional, dùng cho direct proxy refresh)
-        username: Proxy username (không cần -rotate suffix, tự thêm)
-        password: Proxy password
-        endpoint: Proxy endpoint
-                  - Rotating: p.webshare.io:80
-                  - Direct: 166.88.64.59:6442
-
-    Returns:
-        WebshareProxy instance
+    Factory function cho legacy compatibility.
+    Với code mới, dùng init_proxy_manager() thay thế.
     """
-    config = WebshareConfig(
-        api_key=api_key or os.environ.get("WEBSHARE_API_KEY", ""),
-        proxy_username=username or os.environ.get("WEBSHARE_USERNAME", ""),
-        proxy_password=password or os.environ.get("WEBSHARE_PASSWORD", ""),
-        endpoint=endpoint or os.environ.get("WEBSHARE_ENDPOINT", "p.webshare.io:80"),
-    )
-    return WebshareProxy(config)
+    manager = get_proxy_manager()
+
+    # Nếu chưa có proxy, thử load
+    if not manager.proxies:
+        if endpoint:
+            # Single proxy mode
+            proxy = ProxyInfo.from_string(
+                f"{endpoint}:{username or ''}:{password or ''}"
+                if username else endpoint
+            )
+            if proxy:
+                if not proxy.username and username:
+                    proxy.username = username
+                if not proxy.password and password:
+                    proxy.password = password
+                manager.proxies.append(proxy)
+
+        if api_key:
+            manager.api_key = api_key
+            manager.load_from_api()
+
+    return WebshareProxy()
 
 
 # ============= Test =============
 if __name__ == "__main__":
     import sys
 
-    print("=" * 50)
-    print("  WEBSHARE PROXY TEST")
-    print("=" * 50)
+    print("=" * 60)
+    print("  WEBSHARE PROXY MANAGER TEST")
+    print("=" * 60)
 
-    # Check args hoặc dùng env
-    if len(sys.argv) >= 4:
-        username, password, endpoint = sys.argv[1], sys.argv[2], sys.argv[3]
-        api_key = sys.argv[4] if len(sys.argv) > 4 else ""
-    else:
-        username = os.environ.get("WEBSHARE_USERNAME", "")
-        password = os.environ.get("WEBSHARE_PASSWORD", "")
-        endpoint = os.environ.get("WEBSHARE_ENDPOINT", "p.webshare.io:80")
-        api_key = os.environ.get("WEBSHARE_API_KEY", "")
+    # Test với proxy list
+    test_proxies = """
+166.88.64.59:6442:jhvbehdf:cf1bi3yvq0t1
+82.24.221.235:6086:jhvbehdf:cf1bi3yvq0t1
+92.112.200.224:6807:jhvbehdf:cf1bi3yvq0t1
+    """.strip().split('\n')
 
-    if not username or not password:
-        print("\nUsage: python webshare_proxy.py <username> <password> <endpoint> [api_key]")
-        print("\nVí dụ:")
-        print("  python webshare_proxy.py jhvbehdf cf1bi3yvq0t1 p.webshare.io:80")
-        print("\nHoặc set environment variables:")
-        print("  WEBSHARE_USERNAME, WEBSHARE_PASSWORD, WEBSHARE_ENDPOINT")
-        sys.exit(1)
+    manager = init_proxy_manager(proxy_list=test_proxies)
 
-    proxy = create_webshare_proxy(
-        api_key=api_key,
-        username=username,
-        password=password,
-        endpoint=endpoint
-    )
-
-    print(f"\nEndpoint: {endpoint}")
-    print(f"Username: {proxy.config.effective_username}")
-    print(f"Mode: {'Rotating' if proxy.config.is_rotating_endpoint else 'Direct'}")
+    print(f"\nLoaded {len(manager.proxies)} proxies")
+    print(f"Current: {manager.current_proxy.endpoint}")
 
     # Test connection
-    print("\n[1] Testing connection...")
-    success, msg = proxy.test_connection()
+    print("\n[1] Testing current proxy...")
+    success, msg = manager.test_current()
     print(f"    {'✓' if success else '✗'} {msg}")
 
-    if success and proxy.config.is_rotating_endpoint:
-        # Test rotation
-        print("\n[2] Testing IP rotation (3 requests)...")
-        success, msg = proxy.test_rotation()
-        print(f"    {'✓' if success else '✗'} {msg}")
+    # Test rotation
+    print("\n[2] Testing rotation...")
+    for i in range(3):
+        success, msg = manager.rotate()
+        print(f"    {msg}")
 
     # Stats
     print("\n[3] Stats:")
-    for k, v in proxy.get_stats().items():
+    for k, v in manager.get_stats().items():
         print(f"    {k}: {v}")
