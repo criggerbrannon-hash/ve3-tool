@@ -48,6 +48,13 @@ window._tk=null;window._pj=null;window._xbv=null;window._rct=null;window._payloa
         if (urlStr.includes('aisandbox-pa.googleapis.com') && urlStr.includes('batchGenerateImages')) {
             console.log('[INTERCEPT] Capturing request...');
 
+            // Extract projectId from URL: /v1/projects/{projectId}/flowMedia:batchGenerateImages
+            var match = urlStr.match(/\/projects\/([^\/]+)\//);
+            if (match && match[1]) {
+                window._pj = match[1];
+                console.log('[TOKEN] projectId from URL:', window._pj);
+            }
+
             // Capture từ headers
             if (opts && opts.headers) {
                 var h = opts.headers;
@@ -66,10 +73,13 @@ window._tk=null;window._pj=null;window._xbv=null;window._rct=null;window._payloa
                 window._payload = opts.body;
                 try {
                     var body = JSON.parse(opts.body);
-                    // projectId và sessionId
+                    // sessionId from clientContext
                     if (body.clientContext) {
-                        window._pj = body.clientContext.projectId;
                         window._sid = body.clientContext.sessionId;
+                        // Fallback projectId from body if not in URL
+                        if (!window._pj && body.clientContext.projectId) {
+                            window._pj = body.clientContext.projectId;
+                        }
                     }
                     // recaptchaToken có thể ở root hoặc trong requests[0]
                     if (body.recaptchaToken) {
