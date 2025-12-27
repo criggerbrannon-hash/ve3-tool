@@ -236,6 +236,10 @@ def resolve_ipv6_direct(domain: str) -> str:
     return None
 
 
+# Chế độ IPv6-only: từ chối kết nối với domain không có IPv6
+IPV6_ONLY_MODE = True
+
+
 class IPv6Rotator:
     # Thời gian block IPv6 khi bị rate limit (giây)
     BLOCK_DURATION = 300  # 5 phút
@@ -411,22 +415,35 @@ class SOCKS5Handler(threading.Thread):
                     except:
                         pass
 
-                    # 3. Nếu vẫn không có IPv6, fallback to IPv4
+                    # 3. Nếu vẫn không có IPv6
                     if is_ipv4 is None:
-                        try:
-                            dest_addr = socket.gethostbyname(original_domain)
-                            is_ipv4 = True
-                            print(f"[DNS] {original_domain} → {dest_addr} (IPv4 fallback)")
-                        except:
+                        if IPV6_ONLY_MODE:
+                            # Chế độ IPv6-only: từ chối kết nối
+                            print(f"[BLOCKED] {original_domain} - No IPv6 (IPv6-only mode)")
                             self.client.send(b'\x05\x04\x00\x01\x00\x00\x00\x00\x00\x00')
                             return
+                        else:
+                            # Fallback to IPv4
+                            try:
+                                dest_addr = socket.gethostbyname(original_domain)
+                                is_ipv4 = True
+                                print(f"[DNS] {original_domain} → {dest_addr} (IPv4 fallback)")
+                            except:
+                                self.client.send(b'\x05\x04\x00\x01\x00\x00\x00\x00\x00\x00')
+                                return
 
             if is_ipv4:
-                # For IPv4 destinations, connect directly (can't use IPv6 source)
-                remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                remote.settimeout(30)
-                remote.connect((dest_addr, dest_port))
-                print(f"[PROXY] direct → {dest_addr}:{dest_port}")
+                if IPV6_ONLY_MODE:
+                    # Chế độ IPv6-only: từ chối kết nối IPv4 direct
+                    print(f"[BLOCKED] {dest_addr}:{dest_port} - IPv4 direct blocked")
+                    self.client.send(b'\x05\x02\x00\x01\x00\x00\x00\x00\x00\x00')
+                    return
+                else:
+                    # For IPv4 destinations, connect directly (can't use IPv6 source)
+                    remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    remote.settimeout(30)
+                    remote.connect((dest_addr, dest_port))
+                    print(f"[PROXY] direct → {dest_addr}:{dest_port}")
             else:
                 # For IPv6 destinations, use our rotating IPv6
                 remote = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
@@ -525,6 +542,7 @@ def main():
         return
 
     print(f"[INFO] Starting SOCKS5 proxy on {PROXY_HOST}:{PROXY_PORT}")
+    print(f"[MODE] IPv6-only mode: {'ON (sẽ block IPv4 fallback)' if IPV6_ONLY_MODE else 'OFF'}")
     print(f"\n[USAGE] Start Chrome with proxy:")
     print(f'  chrome.exe --proxy-server="socks5://127.0.0.1:1080" --remote-debugging-port=9222')
     print("\n" + "=" * 60)
