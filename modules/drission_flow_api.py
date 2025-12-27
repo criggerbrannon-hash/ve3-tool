@@ -146,7 +146,7 @@ class DrissionFlowAPI:
         profile_dir: str = "./chrome_profile",
         chrome_port: int = 9333,
         proxy_port: int = 1080,
-        use_proxy: bool = False,  # Mặc định TẮT - chỉ bật khi có proxy server
+        use_proxy: bool = True,  # BẬT proxy - chạy ipv6_rotate_proxy.py trước
         verbose: bool = True,
         log_callback: Optional[Callable] = None
     ):
@@ -157,7 +157,7 @@ class DrissionFlowAPI:
             profile_dir: Thư mục Chrome profile
             chrome_port: Port cho Chrome debugging
             proxy_port: Port của SOCKS5 proxy (IPv6)
-            use_proxy: Có dùng proxy không (mặc định TẮT)
+            use_proxy: Có dùng proxy không (cần chạy ipv6_rotate_proxy.py)
             verbose: In log chi tiết
             log_callback: Callback để log (msg, level)
         """
@@ -677,7 +677,7 @@ class DrissionFlowAPI:
 def create_drission_api(
     profile_dir: str = "./chrome_profile",
     proxy_port: int = 1080,
-    use_proxy: bool = False,  # Mặc định TẮT
+    use_proxy: bool = True,  # BẬT proxy
     log_callback: Optional[Callable] = None
 ) -> DrissionFlowAPI:
     """
@@ -686,7 +686,7 @@ def create_drission_api(
     Args:
         profile_dir: Thư mục Chrome profile
         proxy_port: Port SOCKS5 proxy
-        use_proxy: Có dùng proxy không (mặc định TẮT)
+        use_proxy: Có dùng proxy không (cần chạy ipv6_rotate_proxy.py)
         log_callback: Callback để log
 
     Returns:

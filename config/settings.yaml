@@ -26,8 +26,9 @@ flow_delay: 3.0
 
 # DrissionPage Settings (Image Generation)
 # Sử dụng DrissionPage + Interceptor để tạo ảnh
+# QUAN TRỌNG: Chạy ipv6_rotate_proxy.py trước khi dùng tool!
 proxy_port: 1080              # Port SOCKS5 proxy cho IPv6 rotation
-use_ipv6_proxy: false         # Mặc định TẮT - chỉ bật khi có proxy server chạy
+use_ipv6_proxy: true          # BẬT proxy để xoay IP tránh bị Google block
 
 # ============================================================================
 # VIDEO GENERATION (VEO 3) Settings
