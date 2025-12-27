@@ -647,13 +647,13 @@ class UnixVoiceToVideo:
         pending = 0
         for subfolder in self.batch_voice_folder.iterdir():
             if subfolder.is_dir():
-                for voice_file in subfolder.glob("*.mp3"):
-                    # Check if video already exists (PROJECTS/voice_stem/voice_stem.mp4)
-                    done_video = self.batch_done_folder / voice_file.stem / f"{voice_file.stem}.mp4"
-                    if not done_video.exists():
-                        pending += 1
-                for voice_file in subfolder.glob("*.wav"):
-                    done_video = self.batch_done_folder / voice_file.stem / f"{voice_file.stem}.mp4"
+                # Check for any voice file in subfolder
+                voice_files = list(subfolder.glob("*.mp3")) + list(subfolder.glob("*.wav"))
+                if voice_files:
+                    # Use FOLDER NAME for project, not voice file name
+                    # voice/ep1/audio.mp3 → PROJECTS/ep1/ep1.mp4
+                    project_name = subfolder.name
+                    done_video = self.batch_done_folder / project_name / f"{project_name}.mp4"
                     if not done_video.exists():
                         pending += 1
         return pending
@@ -1875,21 +1875,29 @@ class UnixVoiceToVideo:
                 if not subfolder.is_dir():
                     continue
 
-                for voice_file in sorted(subfolder.glob("*.mp3")) + sorted(subfolder.glob("*.wav")):
-                    # Output folder = done/voice_stem (không có subfolder)
-                    # Ví dụ: voice/ar34-t1/ar34-0023.mp3 → done/ar34-0023/
-                    output_folder = self.batch_done_folder / voice_file.stem
+                # Get first voice file in subfolder
+                voice_files = sorted(subfolder.glob("*.mp3")) + sorted(subfolder.glob("*.wav"))
+                if not voice_files:
+                    continue
 
-                    # Check if video already exists
-                    final_video = output_folder / f"{voice_file.stem}.mp4"
-                    if final_video.exists():
-                        continue
+                voice_file = voice_files[0]  # Use first voice file found
 
-                    pending_files.append({
-                        'voice_path': voice_file,
-                        'output_folder': output_folder,
-                        'subfolder': subfolder.name
-                    })
+                # Output folder = PROJECTS/folder_name (dùng TÊN THƯ MỤC, không phải tên file)
+                # Ví dụ: voice/AR36-0030/audio.mp3 → PROJECTS/AR36-0030/AR36-0030.mp4
+                project_name = subfolder.name
+                output_folder = self.batch_done_folder / project_name
+
+                # Check if video already exists
+                final_video = output_folder / f"{project_name}.mp4"
+                if final_video.exists():
+                    continue
+
+                pending_files.append({
+                    'voice_path': voice_file,
+                    'output_folder': output_folder,
+                    'subfolder': subfolder.name,
+                    'project_name': project_name  # Add project name for later use
+                })
 
             if not pending_files:
                 self.root.after(0, lambda: self.log("✅ Không có file mới cần xử lý!", "OK"))
