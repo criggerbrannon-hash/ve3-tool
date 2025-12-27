@@ -160,16 +160,18 @@ class BatchGenerator:
 
         print("\n[2] Mở Chrome...")
         try:
-            options = ChromiumOptions()
-            if self.use_proxy:
-                options.set_argument(f'--proxy-server=socks5://127.0.0.1:{PROXY_PORT}')
-            # Dùng profile cố định trong thư mục tool
             import os
             profile_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chrome_profile")
             os.makedirs(profile_dir, exist_ok=True)
-            options.set_argument(f'--user-data-dir={profile_dir}')
             print(f"    → Profile: {profile_dir}")
-            options.auto_port()
+
+            options = ChromiumOptions()
+            # Set profile path using DrissionPage method
+            options.set_user_data_path(profile_dir)
+            options.set_local_port(9333)  # Port cố định
+            if self.use_proxy:
+                options.set_argument(f'--proxy-server=socks5://127.0.0.1:{PROXY_PORT}')
+
             self.driver = ChromiumPage(addr_or_opts=options)
             print(f"    ✓ Chrome opened" + (" (with proxy)" if self.use_proxy else " (no proxy)"))
         except Exception as e:
