@@ -55,8 +55,9 @@ window._tk=null;window._pj=null;window._xbv=null;window._rct=null;window._payloa
     window.fetch = function(url, opts) {
         var urlStr = typeof url === 'string' ? url : url.url;
 
-        if (urlStr.includes('aisandbox-pa.googleapis.com') && urlStr.includes('batchGenerateImages')) {
-            console.log('[INTERCEPT] Capturing request...');
+        // Match nhiều pattern hơn
+        if (urlStr.includes('aisandbox') && (urlStr.includes('batchGenerate') || urlStr.includes('flowMedia') || urlStr.includes('generateContent'))) {
+            console.log('[INTERCEPT] Capturing request to:', urlStr.substring(0, 100));
 
             // Extract projectId from URL: /v1/projects/{projectId}/flowMedia:batchGenerateImages
             // hoặc /projects/{projectId}:batchGenerateImages
