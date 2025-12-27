@@ -156,12 +156,32 @@ class BatchGenerator:
             options.auto_port()  # Tự động chọn port debug
             self.driver = ChromiumPage(addr_or_opts=options)
             print(f"    ✓ Chrome opened")
-            print(f"    ✓ URL: {self.driver.url}")
         except Exception as e:
             print(f"    ✗ {e}")
             return False
 
-        print("\n[3] Inject interceptor...")
+        # Navigate to Google Flow
+        print("\n[3] Vào Google Flow...")
+        self.driver.get("https://aisandbox.google.com/")
+        time.sleep(2)
+        print(f"    ✓ URL: {self.driver.url}")
+
+        # Wait for user to login if needed
+        print("\n[4] Đợi đăng nhập...")
+        print("    → Nếu cần đăng nhập, hãy đăng nhập trong Chrome")
+        for i in range(60):  # Wait up to 60 seconds
+            textarea = self.find_textarea()
+            if textarea:
+                print("    ✓ Đã sẵn sàng!")
+                break
+            time.sleep(1)
+            if i % 10 == 9:
+                print(f"    ... đợi {i+1}s")
+        else:
+            print("    ✗ Timeout - không tìm thấy textarea")
+            return False
+
+        print("\n[5] Inject interceptor...")
         # Reset completely
         self.driver.run_js("""
             window.__interceptReady = false;
@@ -361,7 +381,7 @@ class BatchGenerator:
         - Mỗi prompt: gửi qua Chrome để lấy recaptchaToken mới
         - Sau đó gọi API với token đó để tạo 4 ảnh
         """
-        print(f"\n[3] Bắt đầu batch {len(prompts)} prompts...")
+        print(f"\n[6] Bắt đầu batch {len(prompts)} prompts...")
 
         for idx, prompt in enumerate(prompts, 1):
             self.stats["total"] += 1
