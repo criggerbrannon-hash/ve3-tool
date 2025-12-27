@@ -49,7 +49,9 @@ JS_INTERCEPTOR = '''
     window.fetch = function(url, opts) {
         const urlStr = typeof url === 'string' ? url : url.url;
 
-        if (urlStr.includes('aisandbox-pa.googleapis.com') && urlStr.includes('batchGenerateImages')) {
+        if (urlStr.includes('aisandbox-pa.googleapis.com')) {
+            console.log('[INTERCEPT] URL:', urlStr.substring(0, 80));
+
             // Capture Bearer token from headers
             if (opts?.headers) {
                 let auth = opts.headers.Authorization || opts.headers.authorization;
@@ -123,10 +125,14 @@ class BatchGenerator:
             return False
 
         print("\n[2] Inject interceptor...")
-        self.driver.run_js("window.__interceptReady = false; window.__captured = [];")
+        # Reset old interceptor state
+        self.driver.run_js("""
+            window.__interceptReady = false;
+            window.__captured = {token: null, projectId: null, sessionId: null, recaptchaToken: null};
+        """)
         time.sleep(0.3)
-        self.driver.run_js(JS_INTERCEPTOR)
-        print("    ✓ OK")
+        result = self.driver.run_js(JS_INTERCEPTOR)
+        print(f"    ✓ Interceptor: {result}")
 
         return True
 
@@ -158,19 +164,29 @@ class BatchGenerator:
         for i in range(30):
             time.sleep(1)
             captured = self.driver.run_js("return window.__captured || {};")
+
+            # Debug: show what was captured
+            if i == 5 or i == 15 or i == 25:
+                print(f"\n    [DEBUG] Bearer: {'YES' if captured.get('token') else 'NO'}")
+                print(f"    [DEBUG] recaptcha: {'YES' if captured.get('recaptchaToken') else 'NO'}")
+                print(f"    [DEBUG] projectId: {'YES' if captured.get('projectId') else 'NO'}")
+
             if captured and captured.get("token") and captured.get("recaptchaToken"):
                 self.bearer = captured.get("token")
                 self.project_id = captured.get("projectId")
                 self.session_id = captured.get("sessionId")
                 self.recaptcha_token = captured.get("recaptchaToken")
-                print(f"    ✓ Got Bearer token!")
+                print(f"\n    ✓ Got Bearer token!")
                 print(f"    ✓ Got recaptchaToken!")
                 if self.project_id:
                     print(f"    ✓ Project ID: {self.project_id[:20]}...")
                 return True
             print(f"    {i+1}s...", end="\r")
 
-        print("    ✗ Không lấy được đủ tokens")
+        print("\n    ✗ Không lấy được đủ tokens")
+        # Show what was captured for debugging
+        print(f"    Bearer: {'YES' if captured.get('token') else 'NO'}")
+        print(f"    recaptcha: {'YES' if captured.get('recaptchaToken') else 'NO'}")
         return False
 
     def refresh_recaptcha(self, prompt):
