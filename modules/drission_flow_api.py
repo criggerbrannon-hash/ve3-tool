@@ -482,10 +482,18 @@ class DrissionFlowAPI:
         try:
             options = ChromiumOptions()
             options.set_user_data_path(str(self.profile_dir))
-            options.set_local_port(self.chrome_port)
+
+            # Dùng port ngẫu nhiên để buộc start Chrome mới
+            import random
+            new_port = random.randint(9400, 9500)
+            options.set_local_port(new_port)
+            self.log(f"Chrome debug port: {new_port}")
 
             if self.use_proxy:
+                # Đảm bảo Chrome dùng proxy cho TẤT CẢ traffic
                 options.set_argument(f'--proxy-server=socks5://127.0.0.1:{self.proxy_port}')
+                options.set_argument('--proxy-bypass-list=<-loopback>')  # Chỉ bypass localhost
+                options.set_argument('--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1')  # Force proxy DNS
                 self.log(f"Proxy: socks5://127.0.0.1:{self.proxy_port}")
             else:
                 self.log("Proxy: OFF (direct connection)")
@@ -726,24 +734,15 @@ class DrissionFlowAPI:
         if self.x_browser_validation:
             headers["x-browser-validation"] = self.x_browser_validation
 
-        # Proxy
-        proxies = None
-        if self.use_proxy:
-            proxies = {
-                "http": f"socks5://127.0.0.1:{self.proxy_port}",
-                "https": f"socks5://127.0.0.1:{self.proxy_port}"
-            }
-
         self.log(f"→ Calling API with captured payload ({len(original_payload)} chars)...")
 
         try:
-            # Dùng data= vì original_payload đã là JSON string
+            # Gọi API không cần proxy - chỉ cần token từ Chrome
             resp = requests.post(
                 url,
                 headers=headers,
                 data=original_payload,
-                timeout=120,
-                proxies=proxies
+                timeout=120
             )
 
             if resp.status_code == 200:
