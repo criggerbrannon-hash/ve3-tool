@@ -731,12 +731,21 @@ class DrissionFlowAPI:
         self.log(f"→ Calling API with captured payload ({len(original_payload)} chars)...")
 
         try:
-            # Gọi API không cần proxy - chỉ cần token từ Chrome
+            # API call cũng phải qua proxy để IP match với Chrome (recaptcha token)
+            proxies = None
+            if self.use_proxy:
+                proxies = {
+                    "http": f"socks5://127.0.0.1:{self.proxy_port}",
+                    "https": f"socks5://127.0.0.1:{self.proxy_port}"
+                }
+                self.log(f"→ Using proxy for API call")
+
             resp = requests.post(
                 url,
                 headers=headers,
                 data=original_payload,
-                timeout=120
+                timeout=120,
+                proxies=proxies
             )
 
             if resp.status_code == 200:
