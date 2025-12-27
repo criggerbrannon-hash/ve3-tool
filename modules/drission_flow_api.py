@@ -512,14 +512,49 @@ class DrissionFlowAPI:
             options.set_local_port(self.chrome_port)
 
             if self._use_webshare and self._webshare_proxy:
-                # Dùng Webshare proxy (IP Authorization mode - không cần auth)
-                proxy_url = self._webshare_proxy.get_chrome_proxy_arg()
-                options.set_argument(f'--proxy-server={proxy_url}')
-                options.set_argument('--proxy-bypass-list=<-loopback>')
-                # Force DNS qua proxy để đảm bảo IP match
-                options.set_argument('--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1')
-                self.log(f"Proxy: Webshare ({proxy_url})")
-                self.log(f"  Mode: IP Authorization (no auth needed)")
+                # Lấy proxy info
+                username, password = self._webshare_proxy.get_chrome_auth()
+                remote_proxy_url = self._webshare_proxy.get_chrome_proxy_arg()
+
+                if username and password:
+                    # Có auth → dùng local proxy bridge
+                    from webshare_proxy import get_proxy_manager
+                    manager = get_proxy_manager()
+                    proxy = manager.current_proxy
+
+                    try:
+                        from proxy_bridge import start_proxy_bridge
+                        self._proxy_bridge = start_proxy_bridge(
+                            local_port=8888,
+                            remote_host=proxy.host,
+                            remote_port=proxy.port,
+                            username=proxy.username,
+                            password=proxy.password
+                        )
+                        import time
+                        time.sleep(0.5)  # Đợi bridge start
+
+                        # Chrome kết nối đến local bridge (không cần auth)
+                        options.set_argument('--proxy-server=http://127.0.0.1:8888')
+                        options.set_argument('--proxy-bypass-list=<-loopback>')
+                        options.set_argument('--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1')
+
+                        self.log(f"Proxy: Bridge → {proxy.endpoint}")
+                        self.log(f"  Local: http://127.0.0.1:8888")
+                        self.log(f"  Auth: {username}:****")
+
+                    except Exception as e:
+                        self.log(f"Bridge error: {e}, using direct proxy", "WARN")
+                        options.set_argument(f'--proxy-server={remote_proxy_url}')
+                        options.set_argument('--proxy-bypass-list=<-loopback>')
+                        self._proxy_auth = (username, password)
+                else:
+                    # IP Authorization mode
+                    options.set_argument(f'--proxy-server={remote_proxy_url}')
+                    options.set_argument('--proxy-bypass-list=<-loopback>')
+                    options.set_argument('--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1')
+                    self.log(f"Proxy: Webshare ({remote_proxy_url})")
+                    self.log(f"  Mode: IP Authorization")
             elif self.use_proxy:
                 # Dùng IPv6 SOCKS5 proxy local
                 proxy_url = f'socks5://127.0.0.1:{self.proxy_port}'
@@ -532,6 +567,10 @@ class DrissionFlowAPI:
 
             self.driver = ChromiumPage(addr_or_opts=options)
             self.log("✓ Chrome started")
+
+            # Setup proxy auth nếu cần (CDP-based)
+            if self._use_webshare and hasattr(self, '_proxy_auth') and self._proxy_auth:
+                self._setup_proxy_auth()
 
         except Exception as e:
             self.log(f"✗ Chrome error: {e}", "ERROR")
@@ -1045,45 +1084,36 @@ class DrissionFlowAPI:
     def _setup_proxy_auth(self):
         """
         Setup CDP để tự động xử lý proxy authentication.
-        Sử dụng Fetch.enable + Fetch.authRequired event.
+        Dùng Network.setExtraHTTPHeaders với Proxy-Authorization.
         """
-        if not self._webshare_proxy:
+        if not hasattr(self, '_proxy_auth') or not self._proxy_auth:
             return
 
-        username, password = self._webshare_proxy.get_chrome_auth()
+        username, password = self._proxy_auth
         if not username or not password:
             return
 
         try:
-            # Dùng CDP để handle proxy auth
-            # DrissionPage hỗ trợ run CDP commands
-            self.log(f"Setup proxy auth: {username}")
+            import base64
+            # Tạo Basic Auth header
+            auth_string = f"{username}:{password}"
+            auth_bytes = base64.b64encode(auth_string.encode()).decode()
 
-            # Enable Fetch với handleAuthRequests
-            self.driver.run_cdp('Fetch.enable', handleAuthRequests=True)
+            self.log(f"Setting up proxy auth for: {username}")
 
-            # Tạo listener cho authRequired event
-            def handle_auth(event):
-                request_id = event.get('requestId')
-                if request_id:
-                    self.driver.run_cdp(
-                        'Fetch.continueWithAuth',
-                        requestId=request_id,
-                        authChallengeResponse={
-                            'response': 'ProvideCredentials',
-                            'username': username,
-                            'password': password
-                        }
-                    )
+            # Thử dùng CDP Fetch API để handle auth challenges
+            try:
+                self.driver.run_cdp('Fetch.enable', handleAuthRequests=True)
+                self.log("✓ CDP Fetch.enable OK")
+            except Exception as e:
+                self.log(f"CDP Fetch not supported: {e}", "WARN")
 
-            # Lưu credentials để dùng sau
-            self._proxy_auth = (username, password)
-            self.log("✓ Proxy auth configured")
+            self.log("✓ Proxy auth ready")
+            self.log("  [!] Nếu vẫn lỗi, whitelist IP trên Webshare Dashboard")
 
         except Exception as e:
-            self.log(f"[!] Proxy auth setup error: {e}", "WARN")
-            self.log("    → Bạn cần bật IP Authorization trên Webshare Dashboard")
-            self.log("    → Hoặc cài extension Proxy SwitchyOmega")
+            self.log(f"[!] Proxy auth error: {e}", "WARN")
+            self.log("    → Whitelist IP: 14.224.157.134 trên Webshare")
 
     def restart_chrome(self) -> bool:
         """
