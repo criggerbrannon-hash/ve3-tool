@@ -554,6 +554,14 @@ class DrissionFlowAPI:
         """
         self.log(f"    Prompt: {prompt[:50]}...")
 
+        # QUAN TRỌNG: Reset tokens trước khi capture để đợi giá trị MỚI
+        # Nếu không reset, sẽ lấy tokens cũ từ lần capture trước!
+        self.driver.run_js("""
+            window._rct = null;
+            window._payload = null;
+            window._url = null;
+        """)
+
         # Tìm và gửi prompt
         textarea = self._find_textarea()
         if not textarea:
