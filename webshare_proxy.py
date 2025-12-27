@@ -50,10 +50,16 @@ class WebshareConfig:
         return username
 
     @property
+    def is_ip_auth_mode(self) -> bool:
+        """Check xem có dùng IP Authorization mode không (không cần username/password)."""
+        return not self.proxy_username or not self.proxy_password
+
+    @property
     def proxy_url(self) -> str:
         """URL proxy đầy đủ cho requests library."""
         if self.proxy_username and self.proxy_password:
             return f"http://{self.effective_username}:{self.proxy_password}@{self.endpoint}"
+        # IP Authorization mode - không cần auth
         return f"http://{self.endpoint}"
 
     @property

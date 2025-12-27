@@ -1241,9 +1241,9 @@ class UnixVoiceToVideo:
         proxy_tab = ttk.Frame(notebook, padding=15)
         notebook.add(proxy_tab, text="  🌐 Proxy  ")
 
-        ttk.Label(proxy_tab, text="Webshare.io Rotating Proxy",
+        ttk.Label(proxy_tab, text="Webshare.io Proxy",
                   font=('Segoe UI', 11, 'bold')).pack(anchor=tk.W, pady=(0, 5))
-        ttk.Label(proxy_tab, text="Proxy xoay tự động - tự đổi IP khi bị lỗi 403",
+        ttk.Label(proxy_tab, text="Sử dụng proxy Webshare thay cho IPv6 local - tự restart Chrome khi lỗi 403",
                   foreground='gray').pack(anchor=tk.W, pady=(0, 10))
 
         ws_link = ttk.Label(proxy_tab, text="🔗 Đăng ký tại webshare.io",
@@ -1254,33 +1254,43 @@ class UnixVoiceToVideo:
         # Load existing config
         proxy_config = self._load_proxy_config()
 
-        # API Key
-        ttk.Label(proxy_tab, text="API Key:", font=('Segoe UI', 9, 'bold')).pack(anchor=tk.W, pady=(10, 0))
-        ws_api_entry = ttk.Entry(proxy_tab, width=60, font=('Consolas', 9))
-        ws_api_entry.pack(fill=tk.X, pady=(2, 5))
-        ws_api_entry.insert(0, proxy_config.get('api_key', ''))
+        # Endpoint (quan trọng nhất)
+        ttk.Label(proxy_tab, text="Proxy Endpoint:", font=('Segoe UI', 9, 'bold')).pack(anchor=tk.W, pady=(15, 0))
+        ttk.Label(proxy_tab, text="IP:PORT từ Webshare (vd: 166.88.64.59:6442 hoặc p.webshare.io:80)",
+                  foreground='gray', font=('Segoe UI', 8)).pack(anchor=tk.W)
+        ws_endpoint_entry = ttk.Entry(proxy_tab, width=60, font=('Consolas', 10))
+        ws_endpoint_entry.pack(fill=tk.X, pady=(2, 10))
+        ws_endpoint_entry.insert(0, proxy_config.get('endpoint', '166.88.64.59:6442'))
+
+        # IP Authorization mode note
+        ttk.Label(proxy_tab, text="⚡ IP Authorization: Bật trên Webshare Dashboard → không cần username/password",
+                  foreground='green', font=('Segoe UI', 8)).pack(anchor=tk.W, pady=(0, 10))
+
+        # Optional: Username/Password (nếu không dùng IP Authorization)
+        opt_frame = ttk.LabelFrame(proxy_tab, text="Tùy chọn (nếu không dùng IP Authorization)", padding=10)
+        opt_frame.pack(fill=tk.X, pady=(5, 10))
 
         # Username
-        ttk.Label(proxy_tab, text="Username:", font=('Segoe UI', 9, 'bold')).pack(anchor=tk.W)
-        ws_user_entry = ttk.Entry(proxy_tab, width=60, font=('Consolas', 9))
+        ttk.Label(opt_frame, text="Username:", font=('Segoe UI', 9)).pack(anchor=tk.W)
+        ws_user_entry = ttk.Entry(opt_frame, width=50, font=('Consolas', 9))
         ws_user_entry.pack(fill=tk.X, pady=(2, 5))
         ws_user_entry.insert(0, proxy_config.get('username', ''))
 
         # Password
-        ttk.Label(proxy_tab, text="Password:", font=('Segoe UI', 9, 'bold')).pack(anchor=tk.W)
-        ws_pass_entry = ttk.Entry(proxy_tab, width=60, font=('Consolas', 9), show='*')
+        ttk.Label(opt_frame, text="Password:", font=('Segoe UI', 9)).pack(anchor=tk.W)
+        ws_pass_entry = ttk.Entry(opt_frame, width=50, font=('Consolas', 9), show='*')
         ws_pass_entry.pack(fill=tk.X, pady=(2, 5))
         ws_pass_entry.insert(0, proxy_config.get('password', ''))
 
-        # Endpoint
-        ttk.Label(proxy_tab, text="Endpoint (vd: p.webshare.io:80):", font=('Segoe UI', 9, 'bold')).pack(anchor=tk.W)
-        ws_endpoint_entry = ttk.Entry(proxy_tab, width=60, font=('Consolas', 9))
-        ws_endpoint_entry.pack(fill=tk.X, pady=(2, 5))
-        ws_endpoint_entry.insert(0, proxy_config.get('endpoint', ''))
+        # API Key (optional)
+        ttk.Label(opt_frame, text="API Key (optional):", font=('Segoe UI', 9)).pack(anchor=tk.W)
+        ws_api_entry = ttk.Entry(opt_frame, width=50, font=('Consolas', 9))
+        ws_api_entry.pack(fill=tk.X, pady=(2, 0))
+        ws_api_entry.insert(0, proxy_config.get('api_key', ''))
 
         # Enable checkbox
         ws_enabled_var = tk.BooleanVar(value=proxy_config.get('enabled', False))
-        ttk.Checkbutton(proxy_tab, text="Bật Webshare Proxy (tự động xoay IP khi lỗi)",
+        ttk.Checkbutton(proxy_tab, text="✅ Bật Webshare Proxy (thay thế IPv6 local)",
                         variable=ws_enabled_var).pack(anchor=tk.W, pady=(10, 5))
 
         # Buttons
@@ -1318,7 +1328,7 @@ class UnixVoiceToVideo:
         ttk.Button(proxy_btn_frame, text="💾 Lưu Config", command=save_proxy_config).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(proxy_btn_frame, text="🧪 Test Proxy", command=test_proxy).pack(side=tk.LEFT)
 
-        ttk.Label(proxy_tab, text="\nHướng dẫn:\n1. Đăng ký webshare.io\n2. Copy API Key từ Dashboard\n3. Copy Username/Password từ Proxy List\n4. Copy Endpoint (vd: p.webshare.io:80)",
+        ttk.Label(proxy_tab, text="\nHướng dẫn:\n1. Đăng ký webshare.io → Mua proxy\n2. Vào Proxy List → Copy IP:PORT (endpoint)\n3. Bật IP Authorization trên Dashboard\n4. Tick checkbox 'Bật Webshare Proxy' → Lưu",
                   foreground='#666', font=('Segoe UI', 9)).pack(anchor=tk.W, pady=(10, 0))
 
         # Tab 4: Token

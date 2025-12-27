@@ -514,18 +514,14 @@ class DrissionFlowAPI:
             options.set_local_port(self.chrome_port)
 
             if self._use_webshare and self._webshare_proxy:
-                # Dùng Webshare rotating proxy
-                # Chrome không hỗ trợ auth trong --proxy-server, cần extension
-                # Nhưng có thể dùng backbone endpoint không cần auth
+                # Dùng Webshare proxy (IP Authorization mode - không cần auth)
                 proxy_url = self._webshare_proxy.get_chrome_proxy_arg()
                 options.set_argument(f'--proxy-server={proxy_url}')
                 options.set_argument('--proxy-bypass-list=<-loopback>')
-
-                # Lấy auth để log (user cần cài extension hoặc dùng backbone)
-                username, password = self._webshare_proxy.get_chrome_auth()
+                # Force DNS qua proxy để đảm bảo IP match
+                options.set_argument('--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1')
                 self.log(f"Proxy: Webshare ({proxy_url})")
-                self.log(f"  Auth: {username}:{'*' * min(4, len(password))}")
-                self.log(f"  [!] Chrome cần Proxy Auth extension hoặc dùng backbone mode")
+                self.log(f"  Mode: IP Authorization (no auth needed)")
             elif self.use_proxy:
                 # Dùng IPv6 SOCKS5 proxy local
                 proxy_url = f'socks5://127.0.0.1:{self.proxy_port}'
@@ -538,10 +534,6 @@ class DrissionFlowAPI:
 
             self.driver = ChromiumPage(addr_or_opts=options)
             self.log("✓ Chrome started")
-
-            # Nếu dùng Webshare với auth, setup CDP để tự động điền
-            if self._use_webshare and self._webshare_proxy:
-                self._setup_proxy_auth()
 
         except Exception as e:
             self.log(f"✗ Chrome error: {e}", "ERROR")
