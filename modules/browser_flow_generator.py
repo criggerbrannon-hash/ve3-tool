@@ -2874,10 +2874,8 @@ class BrowserFlowGenerator:
         except ImportError as e:
             return {"success": False, "error": f"Khong import duoc DrissionFlowAPI: {e}. Cài đặt: pip install DrissionPage"}
 
-        proxy_port = self.config.get('proxy_port', 1080)
-        use_ipv6_proxy = self.config.get('use_ipv6_proxy', False)  # Default OFF - prefer Webshare
-
         # Webshare proxy config (nested dict from GUI settings)
+        # IPv6 proxy đã bị bỏ - chỉ dùng Webshare
         webshare_cfg = self.config.get('webshare_proxy', {})
         webshare_api_key = webshare_cfg.get('api_key', '')
         webshare_username = webshare_cfg.get('username', '')
@@ -2888,7 +2886,6 @@ class BrowserFlowGenerator:
 
         # Khởi tạo Webshare Proxy Manager nếu enabled
         if use_webshare:
-            use_ipv6_proxy = False  # Tắt IPv6 proxy khi dùng Webshare
 
             try:
                 from webshare_proxy import init_proxy_manager, get_proxy_manager
@@ -2926,22 +2923,17 @@ class BrowserFlowGenerator:
                     self._log(f"✓ Loaded {len(manager.proxies)} proxies")
                     self._log(f"  Current: {manager.current_proxy.endpoint}")
                 else:
-                    self._log("⚠️ No proxies loaded, falling back to IPv6", "WARN")
+                    self._log("⚠️ No proxies loaded - chạy không có proxy", "WARN")
                     use_webshare = False
-                    use_ipv6_proxy = True
 
             except Exception as e:
-                self._log(f"⚠️ Webshare init error: {e}", "WARN")
+                self._log(f"⚠️ Webshare init error: {e} - chạy không có proxy", "WARN")
                 use_webshare = False
-                use_ipv6_proxy = True
 
         drission_api = DrissionFlowAPI(
             profile_dir=self._get_profile_path() or "./chrome_profile",
-            proxy_port=proxy_port,
-            use_proxy=use_ipv6_proxy,
             verbose=self.verbose,
             log_callback=self._log,
-            # Webshare params - dùng flag thay vì pass params riêng lẻ
             webshare_enabled=use_webshare
         )
 
@@ -2950,7 +2942,7 @@ class BrowserFlowGenerator:
             manager = get_proxy_manager()
             self._log(f"   Proxy: Webshare Pool ({len(manager.proxies)} proxies)")
         else:
-            self._log(f"   Proxy: {'IPv6 (port ' + str(proxy_port) + ')' if use_ipv6_proxy else 'OFF'}")
+            self._log("   Proxy: OFF (không có proxy)")
 
         # Setup Chrome và đợi user chọn project
         if not drission_api.setup():

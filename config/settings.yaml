@@ -26,8 +26,7 @@ flow_delay: 3.0
 
 # DrissionPage Settings (Image Generation)
 # Sử dụng DrissionPage + Interceptor để tạo ảnh
-proxy_port: 1080              # Port SOCKS5 proxy cho IPv6 rotation (không cần nếu dùng Webshare)
-use_ipv6_proxy: false         # TẮT IPv6 proxy khi dùng Webshare
+# IPv6 proxy đã bị bỏ - chỉ dùng Webshare
 
 # Webshare Proxy Pool (100 proxies datacenter)
 # Tự động xoay proxy khi bị block 403
@@ -59,19 +58,12 @@ video_model: "fast"
 video_paygate_tier: "PAYGATE_TIER_TWO"
 
 # ============================================================================
-# PROXY API Configuration (Bypass Captcha)
+# PROXY API Configuration (ĐÃ BỎ - không dùng nanoai.pics nữa)
 # ============================================================================
-# Sử dụng proxy API để bypass reCAPTCHA khi gọi trực tiếp Google API
-# Proxy endpoint: flow-api.nanoai.pics
-
-# Bật/tắt proxy mode
-use_proxy: true
-
-# Token cho proxy API (lấy từ nanoai.pics)
-proxy_api_token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ODMsInJvbGUiOjMsImlhdCI6MTc2NjQxOTE4OX0.D8tvSOeFpXCEgRL_ovWcp_A7pDZvGoOL5kVQRsuuUmc"
-
-# Proxy API endpoint (có thể thay đổi nếu cần)
-proxy_api_url: "https://flow-api.nanoai.pics/api/fix/create-video-veo3"
+# Chỉ dùng Webshare proxy pool, không dùng nanoai.pics
+use_proxy: false
+proxy_api_token: ""
+proxy_api_url: ""
 
 # ============================================================================
 # AI API Configuration (Cho tạo prompts từ SRT)
@@ -175,10 +167,10 @@ early_video_start: 10
 # ============================================================================
 # Su dung browser automation thay cho API (khong can bearer token)
 
-# Generation mode: "chrome" (browser automation) or "api" (direct API call)
-# Chrome mode: Dung Playwright/Selenium dieu khien trinh duyet, khong can token
-# API mode: Goi truc tiep batchGenerateImages API, can bearer token (mac dinh)
-generation_mode: "api"
+# Generation mode: "chrome" (browser automation) - CHỈ dùng Chrome mode
+# Chrome mode: Dùng DrissionPage điều khiển trình duyệt + Webshare proxy
+# API mode: Đã bỏ (không dùng nanoai.pics nữa)
+generation_mode: "chrome"
 
 # Parallel mode: So luong browser chay song song (1-5)
 # Nhieu browser = nhanh hon, nhung can nhieu RAM va profile

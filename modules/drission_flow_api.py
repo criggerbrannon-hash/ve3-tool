@@ -31,18 +31,7 @@ except ImportError:
     ChromiumPage = None
     ChromiumOptions = None
 
-# IPv6 Proxy imports
-PROXY_AVAILABLE = False
-try:
-    from ipv6_rotate_proxy import IPv6Rotator, ProxyServer, IPV6_LIST, PROXY_PORT
-    PROXY_AVAILABLE = True
-except ImportError:
-    IPv6Rotator = None
-    ProxyServer = None
-    IPV6_LIST = []
-    PROXY_PORT = 1080
-
-# Webshare Proxy imports
+# Webshare Proxy imports (IPv6 proxy đã bị bỏ)
 WEBSHARE_AVAILABLE = False
 try:
     from webshare_proxy import WebshareProxy, get_proxy_manager, init_proxy_manager
@@ -217,12 +206,13 @@ class DrissionFlowAPI:
         self,
         profile_dir: str = "./chrome_profile",
         chrome_port: int = 0,  # 0 = auto-generate unique port (parallel-safe)
-        proxy_port: int = 1080,
-        use_proxy: bool = False,  # TẮT IPv6 proxy (prefer Webshare)
         verbose: bool = True,
         log_callback: Optional[Callable] = None,
         # Webshare proxy - dùng global proxy manager
         webshare_enabled: bool = True,  # BẬT Webshare proxy by default
+        # Legacy params (ignored)
+        proxy_port: int = 1080,
+        use_proxy: bool = False,
     ):
         """
         Khởi tạo DrissionFlowAPI.
@@ -230,8 +220,6 @@ class DrissionFlowAPI:
         Args:
             profile_dir: Thư mục Chrome profile
             chrome_port: Port cho Chrome debugging (0 = auto-generate unique port)
-            proxy_port: Port của SOCKS5 proxy (IPv6) - chỉ dùng khi use_proxy=True
-            use_proxy: Dùng IPv6 local proxy (default False - ưu tiên Webshare)
             verbose: In log chi tiết
             log_callback: Callback để log (msg, level)
             webshare_enabled: Dùng Webshare proxy pool (default True)
@@ -242,17 +230,11 @@ class DrissionFlowAPI:
             self.chrome_port = random.randint(9222, 9999)
         else:
             self.chrome_port = chrome_port
-        self.proxy_port = proxy_port
-        self.use_proxy = use_proxy
         self.verbose = verbose
         self.log_callback = log_callback
 
         # Chrome/DrissionPage
         self.driver: Optional[ChromiumPage] = None
-
-        # IPv6 Proxy server
-        self._proxy_server = None
-        self._proxy_started = False
 
         # Webshare Proxy - dùng global manager
         self._webshare_proxy = None
@@ -505,12 +487,6 @@ class DrissionFlowAPI:
         self.log("  DRISSION FLOW API - Setup")
         self.log("=" * 50)
 
-        # 0. Khởi động proxy server tự động (nếu use_proxy=True và không dùng Webshare)
-        if self.use_proxy and not self._use_webshare:
-            if not self._start_proxy_server():
-                self.log("⚠️ Tiếp tục không có proxy...", "WARN")
-                self.use_proxy = False
-
         # 1. Tạo thư mục profile
         self.profile_dir.mkdir(parents=True, exist_ok=True)
         self.log(f"Profile: {self.profile_dir}")
@@ -569,15 +545,8 @@ class DrissionFlowAPI:
                     options.set_argument('--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1')
                     self.log(f"Proxy: Webshare ({remote_proxy_url})")
                     self.log(f"  Mode: IP Authorization")
-            elif self.use_proxy:
-                # Dùng IPv6 SOCKS5 proxy local
-                proxy_url = f'socks5://127.0.0.1:{self.proxy_port}'
-                options.set_argument(f'--proxy-server={proxy_url}')
-                options.set_argument('--proxy-bypass-list=<-loopback>')
-                options.set_argument('--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1')
-                self.log(f"Proxy: {proxy_url} (IPv6-only + DNS qua proxy)")
             else:
-                self.log("Proxy: OFF (direct connection)")
+                self.log("⚠️ Webshare proxy không sẵn sàng - chạy không có proxy", "WARN")
 
             self.driver = ChromiumPage(addr_or_opts=options)
             self.log("✓ Chrome started")
