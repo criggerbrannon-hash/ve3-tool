@@ -2949,6 +2949,10 @@ class BrowserFlowGenerator:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
+        # Track consecutive 403 errors for Chrome restart
+        consecutive_403 = 0
+        MAX_CONSECUTIVE_403 = 3  # Restart Chrome after this many 403s
+
         for i, prompt_data in enumerate(prompts):
             pid = str(prompt_data.get('id', i + 1))
             prompt = prompt_data.get('prompt', '')
@@ -2964,8 +2968,14 @@ class BrowserFlowGenerator:
                 self.stats["skipped"] += 1
                 continue
 
+            # Xác định thư mục lưu: nv* -> nv_path, còn lại -> img_path
+            if pid.lower().startswith('nv'):
+                save_dir = self.nv_path
+            else:
+                save_dir = output_dir
+
             # Check if image already exists
-            output_file = output_dir / f"{pid}.png"
+            output_file = save_dir / f"{pid}.png"
             if output_file.exists():
                 self._log(f"[{i+1}/{len(prompts)}] ID: {pid} - Skip (da co anh)")
                 self.stats["skipped"] += 1
@@ -2978,13 +2988,14 @@ class BrowserFlowGenerator:
                 # Generate image using DrissionFlowAPI
                 success, images, error = drission_api.generate_image(
                     prompt=prompt,
-                    save_dir=output_dir,
+                    save_dir=save_dir,
                     filename=pid
                 )
 
                 if success and images:
                     self._log(f"   ✓ Thành công! Saved {len(images)} image(s)")
                     self.stats["success"] += 1
+                    consecutive_403 = 0  # Reset counter on success
 
                     # Update Excel if available
                     if workbook and images[0].local_path:
@@ -3005,6 +3016,26 @@ class BrowserFlowGenerator:
                     if error and "401" in str(error):
                         self._log("❌ Bearer token hết hạn!", "error")
                         break
+
+                    # Check for 403 and restart Chrome if too many consecutive
+                    if error and "403" in str(error):
+                        consecutive_403 += 1
+                        if consecutive_403 >= MAX_CONSECUTIVE_403:
+                            self._log(f"⚠️ {consecutive_403} lỗi 403 liên tiếp - Restart Chrome với proxy mới...", "warn")
+                            try:
+                                # Close current Chrome
+                                drission_api.close()
+                                time.sleep(2)
+                                # Re-setup with same project
+                                if drission_api.setup():
+                                    self._log("✓ Chrome đã restart thành công!", "info")
+                                    consecutive_403 = 0
+                                else:
+                                    self._log("✗ Không restart được Chrome", "error")
+                                    break
+                            except Exception as e:
+                                self._log(f"✗ Restart error: {e}", "error")
+                                break
 
             except Exception as e:
                 self._log(f"   ✗ Exception: {e}", "error")
