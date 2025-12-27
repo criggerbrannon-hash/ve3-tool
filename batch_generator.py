@@ -304,62 +304,66 @@ class BatchGenerator:
             time.sleep(1)
         return False
 
-    def call_api(self, prompt, count=4):
-        """Gọi API batchGenerateImages - dùng payload gốc từ Chrome"""
-        if not self.project_id:
-            return [], "No project_id captured"
+    def call_api(self, prompt, count=1):
+        """Gọi API generateContent - KHÔNG cần project_id"""
 
-        # Lấy payload gốc mà Chrome định gửi
-        original_payload = self.driver.run_js("return window._payload;")
-        if not original_payload:
-            return [], "No payload captured"
-
-        url = f"{self.BASE_URL}/v1/projects/{self.project_id}/flowMedia:batchGenerateImages"
+        # URL không cần project_id
+        url = f"{self.BASE_URL}/v1beta/models/imagen-3.0-capability-001:generateContent"
 
         # Proxy - cùng proxy với Chrome để IP match với reCAPTCHA token
-        proxies = {
-            "http": "socks5://127.0.0.1:1080",
-            "https": "socks5://127.0.0.1:1080"
-        }
+        proxies = None
+        if self.use_proxy:
+            proxies = {
+                "http": "socks5://127.0.0.1:1080",
+                "https": "socks5://127.0.0.1:1080"
+            }
 
         headers = {
             "Authorization": self.bearer,
-            "Content-Type": "text/plain;charset=UTF-8",
+            "Content-Type": "application/json",
             "Origin": "https://labs.google",
             "Referer": "https://labs.google/fx/vi/tools/flow",
         }
-        # Add x-browser-validation if captured
         if self.xbv:
             headers["x-browser-validation"] = self.xbv
 
-        # Dùng payload gốc từ Chrome (đã là JSON string)
-        print(f"    → Payload length: {len(original_payload)} chars")
+        # Body đơn giản hơn
+        payload = {
+            "imageGenerationConfig": {
+                "numberOfImages": count,
+                "aspectRatio": "IMAGE_ASPECT_RATIO_LANDSCAPE"  # 16:9
+            },
+            "modelInput": {
+                "prompt": prompt
+            }
+        }
+
+        print(f"    → Calling API...")
 
         try:
-            # Dùng data= thay vì json= vì original_payload đã là string
-            resp = requests.post(url, headers=headers, data=original_payload, timeout=120, proxies=proxies)
+            resp = requests.post(url, headers=headers, json=payload, timeout=120, proxies=proxies)
 
             if resp.status_code == 200:
                 data = resp.json()
                 images = []
 
-                # Parse response - images in media[].image.generatedImage.encodedImage
-                for media_item in data.get("media", []):
-                    gen_image = media_item.get("image", {}).get("generatedImage", {})
-                    if gen_image.get("encodedImage"):
-                        images.append(gen_image["encodedImage"])  # base64 image
-                    elif gen_image.get("fifeUrl"):
-                        # Download from URL (cũng qua proxy)
-                        try:
-                            img_resp = requests.get(gen_image["fifeUrl"], timeout=60, proxies=proxies)
-                            if img_resp.status_code == 200:
-                                images.append(base64.b64encode(img_resp.content).decode())
-                        except:
-                            pass
+                # Parse response
+                for media_item in data.get("media", data.get("images", [])):
+                    if isinstance(media_item, dict):
+                        gen_image = media_item.get("image", {}).get("generatedImage", media_item)
+                        if gen_image.get("encodedImage"):
+                            images.append(gen_image["encodedImage"])
+                        elif gen_image.get("fifeUrl"):
+                            try:
+                                img_resp = requests.get(gen_image["fifeUrl"], timeout=60, proxies=proxies)
+                                if img_resp.status_code == 200:
+                                    images.append(base64.b64encode(img_resp.content).decode())
+                            except:
+                                pass
 
                 return images, None
             else:
-                return [], f"{resp.status_code}: {resp.text[:100]}"
+                return [], f"{resp.status_code}: {resp.text[:200]}"
 
         except Exception as e:
             return [], str(e)
