@@ -15,6 +15,7 @@ import os
 import requests
 import time
 import random
+import threading
 from typing import Optional, Dict, Tuple, List
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -108,6 +109,7 @@ class WebshareProxyManager:
         self.current_index = 0
         self.rotate_count = 0
         self.block_timeout = 300  # 5 phút timeout cho blocked proxy
+        self._lock = threading.Lock()  # Lock để thread-safe khi rotate
 
     def load_from_list(self, proxy_lines: List[str]) -> int:
         """
@@ -190,9 +192,29 @@ class WebshareProxyManager:
             if not p.blocked or (now - p.last_used > self.block_timeout)
         )
 
-    def get_proxies_dict(self) -> Dict[str, str]:
+    def get_proxy_for_worker(self, worker_id: int) -> Optional[ProxyInfo]:
+        """
+        Lấy proxy dành riêng cho worker (parallel mode).
+        Mỗi worker dùng proxy khác nhau để tối ưu hóa.
+
+        Args:
+            worker_id: ID của worker (0, 1, 2, ...)
+
+        Returns:
+            ProxyInfo cho worker đó
+        """
+        if not self.proxies:
+            return None
+        # Mỗi worker dùng proxy ở index khác nhau
+        idx = worker_id % len(self.proxies)
+        return self.proxies[idx]
+
+    def get_proxies_dict(self, worker_id: int = None) -> Dict[str, str]:
         """Dict proxies cho requests library."""
-        proxy = self.current_proxy
+        if worker_id is not None:
+            proxy = self.get_proxy_for_worker(worker_id)
+        else:
+            proxy = self.current_proxy
         if not proxy:
             return {}
         return {
@@ -200,16 +222,22 @@ class WebshareProxyManager:
             "https": proxy.proxy_url
         }
 
-    def get_chrome_proxy_arg(self) -> str:
+    def get_chrome_proxy_arg(self, worker_id: int = None) -> str:
         """Proxy URL cho Chrome."""
-        proxy = self.current_proxy
+        if worker_id is not None:
+            proxy = self.get_proxy_for_worker(worker_id)
+        else:
+            proxy = self.current_proxy
         if not proxy:
             return ""
         return proxy.chrome_url
 
-    def get_chrome_auth(self) -> Tuple[str, str]:
+    def get_chrome_auth(self, worker_id: int = None) -> Tuple[str, str]:
         """Username, password cho Chrome auth."""
-        proxy = self.current_proxy
+        if worker_id is not None:
+            proxy = self.get_proxy_for_worker(worker_id)
+        else:
+            proxy = self.current_proxy
         if not proxy:
             return "", ""
         return proxy.username, proxy.password
@@ -224,39 +252,40 @@ class WebshareProxyManager:
 
     def rotate(self) -> Tuple[bool, str]:
         """
-        Xoay sang proxy tiếp theo.
+        Xoay sang proxy tiếp theo (thread-safe).
         Returns (success, message).
         """
-        if not self.proxies:
-            return False, "Không có proxy nào"
+        with self._lock:  # Thread-safe rotation
+            if not self.proxies:
+                return False, "Không có proxy nào"
 
-        if self.available_count == 0:
-            # Reset tất cả blocked proxies
-            for p in self.proxies:
-                p.blocked = False
-            return False, "Tất cả proxy đều bị block, đã reset"
+            if self.available_count == 0:
+                # Reset tất cả blocked proxies
+                for p in self.proxies:
+                    p.blocked = False
+                return False, "Tất cả proxy đều bị block, đã reset"
 
-        # Đánh dấu current là blocked
-        self.mark_current_blocked()
+            # Đánh dấu current là blocked
+            self.mark_current_blocked()
 
-        # Tìm proxy tiếp theo không bị block
-        now = time.time()
-        start_index = self.current_index
-        attempts = 0
+            # Tìm proxy tiếp theo không bị block
+            now = time.time()
+            start_index = self.current_index
+            attempts = 0
 
-        while attempts < len(self.proxies):
-            self.current_index = (self.current_index + 1) % len(self.proxies)
-            proxy = self.proxies[self.current_index]
+            while attempts < len(self.proxies):
+                self.current_index = (self.current_index + 1) % len(self.proxies)
+                proxy = self.proxies[self.current_index]
 
-            # Proxy không bị block hoặc đã hết timeout
-            if not proxy.blocked or (now - proxy.last_used > self.block_timeout):
-                proxy.blocked = False  # Reset nếu hết timeout
-                self.rotate_count += 1
-                return True, f"Rotated to {proxy.endpoint} (#{self.rotate_count})"
+                # Proxy không bị block hoặc đã hết timeout
+                if not proxy.blocked or (now - proxy.last_used > self.block_timeout):
+                    proxy.blocked = False  # Reset nếu hết timeout
+                    self.rotate_count += 1
+                    return True, f"Rotated to {proxy.endpoint} (#{self.rotate_count})"
 
-            attempts += 1
+                attempts += 1
 
-        return False, "Không tìm được proxy khả dụng"
+            return False, "Không tìm được proxy khả dụng"
 
     def test_current(self) -> Tuple[bool, str]:
         """Test proxy hiện tại."""
@@ -295,15 +324,18 @@ class WebshareProxyManager:
         }
 
 
-# ============= Singleton instance =============
+# ============= Singleton instance (Thread-Safe) =============
 _manager: Optional[WebshareProxyManager] = None
+_manager_lock = threading.Lock()  # Lock để đảm bảo thread-safe
 
 
 def get_proxy_manager() -> WebshareProxyManager:
-    """Get global proxy manager instance."""
+    """Get global proxy manager instance (thread-safe)."""
     global _manager
     if _manager is None:
-        _manager = WebshareProxyManager()
+        with _manager_lock:
+            if _manager is None:  # Double-check locking pattern
+                _manager = WebshareProxyManager()
     return _manager
 
 
@@ -312,10 +344,14 @@ def init_proxy_manager(
     username: str = "",
     password: str = "",
     proxy_list: List[str] = None,
-    proxy_file: str = None
+    proxy_file: str = None,
+    force_reinit: bool = False
 ) -> WebshareProxyManager:
     """
-    Khởi tạo proxy manager.
+    Khởi tạo proxy manager (thread-safe).
+
+    QUAN TRỌNG: Mặc định chỉ init 1 lần để tránh race condition
+    khi nhiều threads gọi đồng thời.
 
     Args:
         api_key: Webshare API key (để auto-fetch proxy list)
@@ -323,33 +359,41 @@ def init_proxy_manager(
         password: Default password
         proxy_list: List các proxy strings
         proxy_file: Path đến file chứa proxy list
+        force_reinit: Force re-init (default False để thread-safe)
 
     Returns:
         WebshareProxyManager instance
     """
     global _manager
-    _manager = WebshareProxyManager(
-        api_key=api_key,
-        default_username=username,
-        default_password=password
-    )
 
-    # Load từ các nguồn
-    if proxy_list:
-        count = _manager.load_from_list(proxy_list)
-        print(f"Loaded {count} proxies from list")
+    with _manager_lock:
+        # Nếu đã init rồi và không force, trả về manager hiện tại
+        if _manager is not None and _manager.proxies and not force_reinit:
+            return _manager
 
-    if proxy_file:
-        count = _manager.load_from_file(proxy_file)
-        print(f"Loaded {count} proxies from file")
+        # Tạo manager mới
+        _manager = WebshareProxyManager(
+            api_key=api_key,
+            default_username=username,
+            default_password=password
+        )
 
-    if api_key and not _manager.proxies:
-        count = _manager.load_from_api()
-        print(f"Loaded {count} proxies from API")
+        # Load từ các nguồn
+        if proxy_list:
+            count = _manager.load_from_list(proxy_list)
+            print(f"Loaded {count} proxies from list")
 
-    # Shuffle để random thứ tự
-    if _manager.proxies:
-        random.shuffle(_manager.proxies)
+        if proxy_file:
+            count = _manager.load_from_file(proxy_file)
+            print(f"Loaded {count} proxies from file")
+
+        if api_key and not _manager.proxies:
+            count = _manager.load_from_api()
+            print(f"Loaded {count} proxies from API")
+
+        # Shuffle để random thứ tự
+        if _manager.proxies:
+            random.shuffle(_manager.proxies)
 
     return _manager
 
@@ -358,19 +402,19 @@ def init_proxy_manager(
 # Để tương thích với code cũ
 
 class WebshareProxy:
-    """Legacy wrapper cho WebshareProxyManager."""
+    """Legacy wrapper cho WebshareProxyManager với hỗ trợ worker_id cho parallel mode."""
 
     def __init__(self, config=None):
         self._manager = get_proxy_manager()
 
-    def get_proxies(self) -> Dict[str, str]:
-        return self._manager.get_proxies_dict()
+    def get_proxies(self, worker_id: int = None) -> Dict[str, str]:
+        return self._manager.get_proxies_dict(worker_id)
 
-    def get_chrome_proxy_arg(self) -> str:
-        return self._manager.get_chrome_proxy_arg()
+    def get_chrome_proxy_arg(self, worker_id: int = None) -> str:
+        return self._manager.get_chrome_proxy_arg(worker_id)
 
-    def get_chrome_auth(self) -> Tuple[str, str]:
-        return self._manager.get_chrome_auth()
+    def get_chrome_auth(self, worker_id: int = None) -> Tuple[str, str]:
+        return self._manager.get_chrome_auth(worker_id)
 
     def rotate_ip(self) -> Tuple[bool, str]:
         return self._manager.rotate()

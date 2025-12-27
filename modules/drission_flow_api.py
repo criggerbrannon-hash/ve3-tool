@@ -210,6 +210,8 @@ class DrissionFlowAPI:
         log_callback: Optional[Callable] = None,
         # Webshare proxy - dùng global proxy manager
         webshare_enabled: bool = True,  # BẬT Webshare proxy by default
+        # Parallel worker support
+        worker_id: int = None,  # Worker ID để dùng proxy riêng cho parallel mode
         # Legacy params (ignored)
         proxy_port: int = 1080,
         use_proxy: bool = False,
@@ -223,6 +225,7 @@ class DrissionFlowAPI:
             verbose: In log chi tiết
             log_callback: Callback để log (msg, level)
             webshare_enabled: Dùng Webshare proxy pool (default True)
+            worker_id: ID của worker để dùng proxy riêng (parallel mode)
         """
         self.profile_dir = Path(profile_dir)
         # Auto-generate unique port for parallel execution
@@ -232,6 +235,7 @@ class DrissionFlowAPI:
             self.chrome_port = chrome_port
         self.verbose = verbose
         self.log_callback = log_callback
+        self.worker_id = worker_id  # Lưu worker_id cho parallel mode
 
         # Chrome/DrissionPage
         self.driver: Optional[ChromiumPage] = None
@@ -245,7 +249,12 @@ class DrissionFlowAPI:
                 manager = get_proxy_manager()
                 if manager.proxies:
                     self._webshare_proxy = WebshareProxy()  # Wrapper cho manager
-                    self.log(f"✓ Webshare: {len(manager.proxies)} proxies, current: {manager.current_proxy.endpoint}")
+                    # Hiển thị proxy đang dùng (theo worker_id nếu có)
+                    if worker_id is not None:
+                        proxy = manager.get_proxy_for_worker(worker_id)
+                        self.log(f"✓ Webshare [W{worker_id}]: {len(manager.proxies)} proxies, using: {proxy.endpoint}")
+                    else:
+                        self.log(f"✓ Webshare: {len(manager.proxies)} proxies, current: {manager.current_proxy.endpoint}")
                 else:
                     self._use_webshare = False
                     self.log("⚠️ Webshare: No proxies loaded", "WARN")
@@ -475,15 +484,19 @@ class DrissionFlowAPI:
             options.set_local_port(self.chrome_port)
 
             if self._use_webshare and self._webshare_proxy:
-                # Lấy proxy info
-                username, password = self._webshare_proxy.get_chrome_auth()
-                remote_proxy_url = self._webshare_proxy.get_chrome_proxy_arg()
+                # Lấy proxy info - dùng worker_id nếu có (parallel mode)
+                username, password = self._webshare_proxy.get_chrome_auth(self.worker_id)
+                remote_proxy_url = self._webshare_proxy.get_chrome_proxy_arg(self.worker_id)
 
                 if username and password:
                     # Có auth → dùng local proxy bridge
                     from webshare_proxy import get_proxy_manager
                     manager = get_proxy_manager()
-                    proxy = manager.current_proxy
+                    # Dùng proxy riêng cho worker_id (parallel mode)
+                    if self.worker_id is not None:
+                        proxy = manager.get_proxy_for_worker(self.worker_id)
+                    else:
+                        proxy = manager.current_proxy
 
                     try:
                         from proxy_bridge import start_proxy_bridge
