@@ -474,26 +474,16 @@ class DrissionFlowAPI:
         self.profile_dir.mkdir(parents=True, exist_ok=True)
         self.log(f"Profile: {self.profile_dir}")
 
-        # 2. Kill Chrome cũ để đảm bảo proxy mới được áp dụng
-        self._kill_chrome()
-
-        # 3. Khởi tạo Chrome MỚI với proxy
+        # 2. Khởi tạo Chrome với proxy
         self.log("Khởi động Chrome...")
         try:
             options = ChromiumOptions()
             options.set_user_data_path(str(self.profile_dir))
-
-            # Dùng port ngẫu nhiên để buộc start Chrome mới
-            import random
-            new_port = random.randint(9400, 9500)
-            options.set_local_port(new_port)
-            self.log(f"Chrome debug port: {new_port}")
+            options.set_local_port(self.chrome_port)
 
             if self.use_proxy:
-                # Đảm bảo Chrome dùng proxy cho TẤT CẢ traffic
-                options.set_argument(f'--proxy-server=socks5://127.0.0.1:{self.proxy_port}')
-                options.set_argument('--proxy-bypass-list=<-loopback>')  # Chỉ bypass localhost
-                options.set_argument('--host-resolver-rules=MAP * ~NOTFOUND , EXCLUDE 127.0.0.1')  # Force proxy DNS
+                # Dùng set_proxy() của DrissionPage
+                options.set_proxy(f'socks5://127.0.0.1:{self.proxy_port}')
                 self.log(f"Proxy: socks5://127.0.0.1:{self.proxy_port}")
             else:
                 self.log("Proxy: OFF (direct connection)")
