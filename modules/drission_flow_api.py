@@ -766,14 +766,38 @@ class DrissionFlowAPI:
         if not original_payload:
             return [], "No payload captured"
 
-        # Sửa số ảnh trong payload
+        # Sửa số ảnh trong payload - FORCE 1 ảnh
         try:
             payload_data = json.loads(original_payload)
-            # Tìm và sửa numImages trong requests[0].imageGenerationConfig
+            modified = False
+
+            # Tìm và sửa numImages - thử nhiều path khác nhau
             if "requests" in payload_data and payload_data["requests"]:
                 for req in payload_data["requests"]:
+                    # Path 1: imageGenerationConfig.numImages
                     if "imageGenerationConfig" in req:
+                        old_count = req["imageGenerationConfig"].get("numImages", "N/A")
                         req["imageGenerationConfig"]["numImages"] = num_images
+                        modified = True
+                        self.log(f"   → numImages: {old_count} → {num_images}")
+
+                    # Path 2: generationConfig.numImages (alternative path)
+                    if "generationConfig" in req:
+                        old_count = req["generationConfig"].get("numImages", "N/A")
+                        req["generationConfig"]["numImages"] = num_images
+                        modified = True
+                        self.log(f"   → generationConfig.numImages: {old_count} → {num_images}")
+
+            # Path 3: Top-level imageGenerationConfig
+            if "imageGenerationConfig" in payload_data:
+                old_count = payload_data["imageGenerationConfig"].get("numImages", "N/A")
+                payload_data["imageGenerationConfig"]["numImages"] = num_images
+                modified = True
+                self.log(f"   → top-level numImages: {old_count} → {num_images}")
+
+            if not modified:
+                self.log(f"⚠️ Không tìm thấy numImages trong payload - có thể tạo 2 ảnh!", "WARN")
+
             original_payload = json.dumps(payload_data)
         except Exception as e:
             self.log(f"⚠️ Không sửa được numImages: {e}", "WARN")
@@ -794,8 +818,8 @@ class DrissionFlowAPI:
             # API call qua Webshare proxy để IP match với Chrome
             proxies = None
             if self._use_webshare and self._webshare_proxy:
-                proxies = self._webshare_proxy.get_proxies()
-                self.log(f"→ Using Webshare proxy for API call")
+                proxies = self._webshare_proxy.get_proxies(self.worker_id)
+                self.log(f"→ Using Webshare proxy for API call (worker_id={self.worker_id})")
 
             resp = requests.post(
                 url,
@@ -939,7 +963,7 @@ class DrissionFlowAPI:
                     try:
                         proxies = None
                         if self._use_webshare and self._webshare_proxy:
-                            proxies = self._webshare_proxy.get_proxies()
+                            proxies = self._webshare_proxy.get_proxies(self.worker_id)
                         resp = requests.get(img.url, timeout=60, proxies=proxies)
                         if resp.status_code == 200:
                             img_path = save_dir / f"{fname}.png"
