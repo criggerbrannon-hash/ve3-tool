@@ -125,8 +125,14 @@ class BatchGenerator:
             return False
 
         print("\n[2] Inject interceptor...")
-        # Reset old interceptor state
+        # Reset completely - restore original fetch if needed
         self.driver.run_js("""
+            // Store original fetch if not already stored
+            if (!window.__origFetch) {
+                window.__origFetch = window.fetch;
+            }
+            // Restore original fetch to remove old wrappers
+            window.fetch = window.__origFetch;
             window.__interceptReady = false;
             window.__captured = {token: null, projectId: null, sessionId: null, recaptchaToken: null};
         """)
