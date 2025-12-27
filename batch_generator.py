@@ -177,6 +177,8 @@ class BatchGenerator:
                 options.set_argument(f'--proxy-server=socks5://127.0.0.1:{PROXY_PORT}')
                 # Block IPv4: chỉ bypass loopback, tất cả traffic khác qua proxy IPv6
                 options.set_argument('--proxy-bypass-list=<-loopback>')
+                # Force DNS qua proxy (giống VPN behavior)
+                options.set_argument('--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1')
 
             self.driver = ChromiumPage(addr_or_opts=options)
             print(f"    ✓ Chrome opened" + (" (with proxy, IPv6-only)" if self.use_proxy else " (no proxy)"))

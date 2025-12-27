@@ -482,13 +482,16 @@ class DrissionFlowAPI:
             options.set_local_port(self.chrome_port)
 
             if self.use_proxy:
-                # SOCKS5 proxy với remote DNS resolution
-                # socks5:// = local DNS, socks5h:// = remote DNS qua proxy
+                # Dùng socks:// để Chrome làm DNS qua proxy (giống VPN)
+                # socks5:// = local DNS (bị leak)
+                # socks:// = remote DNS qua proxy
                 proxy_url = f'socks5://127.0.0.1:{self.proxy_port}'
                 options.set_argument(f'--proxy-server={proxy_url}')
                 # Chỉ bypass loopback, tất cả traffic khác qua proxy
                 options.set_argument('--proxy-bypass-list=<-loopback>')
-                self.log(f"Proxy: {proxy_url} (IPv6-only mode)")
+                # Force DNS qua proxy (giống VPN behavior)
+                options.set_argument('--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1')
+                self.log(f"Proxy: {proxy_url} (IPv6-only + DNS qua proxy)")
             else:
                 self.log("Proxy: OFF (direct connection)")
 
