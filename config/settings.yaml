@@ -58,12 +58,18 @@ video_model: "fast"
 video_paygate_tier: "PAYGATE_TIER_TWO"
 
 # ============================================================================
-# PROXY API Configuration (ĐÃ BỎ - không dùng nanoai.pics nữa)
+# PROXY API Configuration (Bypass Captcha qua nanoai.pics)
 # ============================================================================
-# Chỉ dùng Webshare proxy pool, không dùng nanoai.pics
-use_proxy: false
-proxy_api_token: ""
-proxy_api_url: ""
+# Sử dụng proxy API để bypass reCAPTCHA khi gọi trực tiếp Google API
+
+# Bật/tắt proxy mode
+use_proxy: true
+
+# Token cho proxy API (lấy từ nanoai.pics)
+proxy_api_token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6ODMsInJvbGUiOjMsImlhdCI6MTc2NjQxOTE4OX0.D8tvSOeFpXCEgRL_ovWcp_A7pDZvGoOL5kVQRsuuUmc"
+
+# Proxy API endpoint
+proxy_api_url: "https://flow-api.nanoai.pics/api/fix/create-video-veo3"
 
 # ============================================================================
 # AI API Configuration (Cho tạo prompts từ SRT)
@@ -167,10 +173,10 @@ early_video_start: 10
 # ============================================================================
 # Su dung browser automation thay cho API (khong can bearer token)
 
-# Generation mode: "chrome" (browser automation) - CHỈ dùng Chrome mode
-# Chrome mode: Dùng DrissionPage điều khiển trình duyệt + Webshare proxy
-# API mode: Đã bỏ (không dùng nanoai.pics nữa)
-generation_mode: "chrome"
+# Generation mode: "api" hoặc "chrome"
+# API mode: Gọi trực tiếp API qua nanoai.pics (nhanh, ổn định)
+# Chrome mode: Dùng DrissionPage + Webshare proxy (backup)
+generation_mode: "api"
 
 # Parallel mode: So luong browser chay song song (1-5)
 # Nhieu browser = nhanh hon, nhung can nhieu RAM va profile
