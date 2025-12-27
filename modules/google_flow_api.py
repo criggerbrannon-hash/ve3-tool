@@ -262,7 +262,7 @@ class GoogleFlowAPI:
     def generate_images(
         self,
         prompt: str,
-        count: int = 2,
+        count: int = 1,  # Default 1 image (changed from 2)
         aspect_ratio: AspectRatio = AspectRatio.LANDSCAPE,
         model: ImageModel = ImageModel.GEM_PIX_2,
         image_inputs: Optional[List[ImageInput]] = None,
@@ -1071,7 +1071,7 @@ class GoogleFlowAPI:
         self,
         prompt: str,
         output_dir: Path,
-        count: int = 2,
+        count: int = 1,  # Default 1 image
         aspect_ratio: AspectRatio = AspectRatio.LANDSCAPE,
         prefix: str = "flow",
         reference_images: Optional[List[GeneratedImage]] = None,
@@ -2100,7 +2100,7 @@ def quick_generate(
     prompt: str,
     token: str,
     output_dir: str = "./output",
-    count: int = 2,
+    count: int = 1,  # Default 1 image
     aspect_ratio: str = "landscape"
 ) -> List[str]:
     """
