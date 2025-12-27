@@ -350,8 +350,8 @@ class BatchGenerator:
                     continue
 
             # Bước 2: Gọi API với recaptchaToken vừa lấy
-            print("    → Gọi API tạo 4 ảnh...")
-            images, error = self.call_api(prompt, count=4)
+            print("    → Gọi API tạo 1 ảnh...")
+            images, error = self.call_api(prompt, count=1)
 
             if error:
                 print(f"    ✗ API Error: {error}")
