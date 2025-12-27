@@ -7,6 +7,7 @@ Capture Bearer token từ Chrome, gọi API generateContent.
 
 import json
 import time
+import random
 import requests
 import base64
 from pathlib import Path
@@ -264,7 +265,7 @@ class BatchGenerator:
                     "projectId": self.project_id,
                     "tool": "IMAGE_FX"
                 },
-                "seed": int(time.time() * 1000) + i,
+                "seed": random.randint(100000, 999999),
                 "imageModelName": "GEM_PIX_2",
                 "imageAspectRatio": "IMAGE_ASPECT_RATIO_LANDSCAPE",
                 "prompt": prompt,
