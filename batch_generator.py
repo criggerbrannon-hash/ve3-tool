@@ -126,10 +126,9 @@ class BatchGenerator:
         print("=" * 60)
 
         print("\n[1] Kết nối Chrome port 9222...")
-        options = ChromiumOptions()
         try:
-            options.set_local_port(9222)
-            self.driver = ChromiumPage(addr_or_opts=options)
+            # Kết nối tới Chrome đang chạy, KHÔNG mở Chrome mới
+            self.driver = ChromiumPage(addr_or_opts="127.0.0.1:9222")
             print(f"    ✓ URL: {self.driver.url}")
         except Exception as e:
             print(f"    ✗ {e}")
