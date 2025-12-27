@@ -5,7 +5,7 @@ VE3 Tool - DrissionPage Flow API
 Gọi Google Flow API trực tiếp bằng DrissionPage.
 
 Flow:
-1. Tự động khởi động IPv6 proxy server (nếu use_proxy=True)
+1. Sử dụng Webshare proxy pool (tự động xoay khi bị block)
 2. Mở Chrome với proxy → Vào Google Flow → Đợi user chọn project
 3. Inject JS Interceptor để capture tokens + CANCEL request
 4. Gọi API trực tiếp với captured URL + payload
@@ -272,31 +272,6 @@ class DrissionFlowAPI:
             print(f"[{timestamp}] [{level}] {msg}")
         if self.log_callback:
             self.log_callback(msg, level)
-
-    def _start_proxy_server(self) -> bool:
-        """Khởi động IPv6 proxy server tự động."""
-        if not PROXY_AVAILABLE:
-            self.log("⚠️ ipv6_rotate_proxy.py không tìm thấy!", "WARN")
-            self.log("   Chạy: python ipv6_rotate_proxy.py trong terminal khác", "WARN")
-            return False
-
-        if self._proxy_started:
-            return True
-
-        try:
-            self.log("Khởi động IPv6 Proxy Server...")
-            rotator = IPv6Rotator(IPV6_LIST)
-            self._proxy_server = ProxyServer(rotator)
-            self._proxy_server.start()
-            self._proxy_started = True
-            time.sleep(0.5)  # Đợi server start
-            self.log(f"✓ Proxy server running on 127.0.0.1:{PROXY_PORT}")
-            self.log(f"  → {len(rotator.ipv6_list)} IPv6 addresses available")
-            return True
-        except Exception as e:
-            self.log(f"✗ Không khởi động được proxy: {e}", "ERROR")
-            self.log("  → Kiểm tra đã chạy add_ipv6.bat chưa?", "WARN")
-            return False
 
     def _auto_setup_project(self, timeout: int = 60) -> bool:
         """
@@ -803,19 +778,11 @@ class DrissionFlowAPI:
         self.log(f"→ Calling API with captured payload ({len(original_payload)} chars)...")
 
         try:
-            # API call cũng phải qua proxy để IP match với Chrome (recaptcha token)
+            # API call qua Webshare proxy để IP match với Chrome
             proxies = None
             if self._use_webshare and self._webshare_proxy:
-                # Dùng Webshare proxy
                 proxies = self._webshare_proxy.get_proxies()
                 self.log(f"→ Using Webshare proxy for API call")
-            elif self.use_proxy:
-                # Dùng IPv6 SOCKS5 proxy local
-                proxies = {
-                    "http": f"socks5://127.0.0.1:{self.proxy_port}",
-                    "https": f"socks5://127.0.0.1:{self.proxy_port}"
-                }
-                self.log(f"→ Using IPv6 proxy for API call")
 
             resp = requests.post(
                 url,
@@ -920,14 +887,6 @@ class DrissionFlowAPI:
                                 continue
                             else:
                                 return False, [], "Không restart được Chrome sau khi xoay IP"
-                    elif self._proxy_server and hasattr(self._proxy_server, 'rotator'):
-                        # Đánh dấu IPv6 bị block và restart
-                        self._proxy_server.rotator.mark_blocked()
-                        if attempt < max_retries - 1:
-                            self.log("  → Restart Chrome với IPv6 mới...")
-                            self.restart_chrome()
-                            time.sleep(3)
-                            continue
 
                     if attempt < max_retries - 1:
                         self.log(f"  → Đợi 5s rồi retry...", "WARN")
@@ -966,11 +925,8 @@ class DrissionFlowAPI:
                     # Download from URL
                     try:
                         proxies = None
-                        if self.use_proxy:
-                            proxies = {
-                                "http": f"socks5://127.0.0.1:{self.proxy_port}",
-                                "https": f"socks5://127.0.0.1:{self.proxy_port}"
-                            }
+                        if self._use_webshare and self._webshare_proxy:
+                            proxies = self._webshare_proxy.get_proxies()
                         resp = requests.get(img.url, timeout=60, proxies=proxies)
                         if resp.status_code == 200:
                             img_path = save_dir / f"{fname}.png"
@@ -1126,14 +1082,9 @@ class DrissionFlowAPI:
         # Close Chrome hiện tại
         self.close()
 
-        # Clear blocked IPs nếu dùng IPv6
-        if not self._use_webshare and self._proxy_server and hasattr(self._proxy_server, 'rotator'):
-            self._proxy_server.rotator.clear_blocked()
-
         time.sleep(2)
 
-        # Restart Chrome với proxy - VÀO LẠI PROJECT CŨ
-        self.use_proxy = True  # Luôn dùng proxy khi restart
+        # Restart Chrome với Webshare proxy - VÀO LẠI PROJECT CŨ
 
         # Lấy saved project URL để vào lại đúng project
         saved_project_url = getattr(self, '_current_project_url', None)
@@ -1156,8 +1107,6 @@ class DrissionFlowAPI:
 # Factory function
 def create_drission_api(
     profile_dir: str = "./chrome_profile",
-    proxy_port: int = 1080,
-    use_proxy: bool = False,  # TẮT IPv6 (prefer Webshare)
     log_callback: Optional[Callable] = None,
     webshare_enabled: bool = True,  # BẬT Webshare by default
 ) -> DrissionFlowAPI:
@@ -1166,18 +1115,14 @@ def create_drission_api(
 
     Args:
         profile_dir: Thư mục Chrome profile
-        proxy_port: Port SOCKS5 proxy
-        use_proxy: Có dùng proxy không (cần chạy ipv6_rotate_proxy.py)
         log_callback: Callback để log
-        webshare_enabled: Dùng Webshare proxy pool (phải init_proxy_manager trước)
+        webshare_enabled: Dùng Webshare proxy pool (default True)
 
     Returns:
         DrissionFlowAPI instance
     """
     return DrissionFlowAPI(
         profile_dir=profile_dir,
-        proxy_port=proxy_port,
-        use_proxy=use_proxy,
         log_callback=log_callback,
         webshare_enabled=webshare_enabled,
     )
