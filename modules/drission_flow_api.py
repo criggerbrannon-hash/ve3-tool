@@ -423,6 +423,26 @@ class DrissionFlowAPI:
         self.log("⚠️ Không phát hiện được ảnh, tiếp tục...", "WARN")
         return True  # Vẫn return True để tiếp tục
 
+    def _kill_chrome(self):
+        """Kill tất cả Chrome processes để đảm bảo proxy mới được áp dụng."""
+        import subprocess
+        import sys
+
+        try:
+            if sys.platform == 'win32':
+                # Windows
+                subprocess.run(['taskkill', '/f', '/im', 'chrome.exe'],
+                             capture_output=True, timeout=10)
+            else:
+                # Linux/Mac
+                subprocess.run(['pkill', '-f', 'chrome'],
+                             capture_output=True, timeout=10)
+            self.log("✓ Killed existing Chrome processes")
+            time.sleep(1)
+        except Exception as e:
+            # Không sao nếu không kill được (có thể không có Chrome đang chạy)
+            pass
+
     def setup(self, wait_for_project: bool = True, timeout: int = 120, warm_up: bool = False) -> bool:
         """
         Setup Chrome và inject interceptor.
@@ -454,7 +474,10 @@ class DrissionFlowAPI:
         self.profile_dir.mkdir(parents=True, exist_ok=True)
         self.log(f"Profile: {self.profile_dir}")
 
-        # 2. Khởi tạo Chrome
+        # 2. Kill Chrome cũ để đảm bảo proxy mới được áp dụng
+        self._kill_chrome()
+
+        # 3. Khởi tạo Chrome MỚI với proxy
         self.log("Khởi động Chrome...")
         try:
             options = ChromiumOptions()
@@ -464,6 +487,8 @@ class DrissionFlowAPI:
             if self.use_proxy:
                 options.set_argument(f'--proxy-server=socks5://127.0.0.1:{self.proxy_port}')
                 self.log(f"Proxy: socks5://127.0.0.1:{self.proxy_port}")
+            else:
+                self.log("Proxy: OFF (direct connection)")
 
             self.driver = ChromiumPage(addr_or_opts=options)
             self.log("✓ Chrome started")
