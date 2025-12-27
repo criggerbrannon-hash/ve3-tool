@@ -409,13 +409,81 @@ class DrissionFlowAPI:
         self.log("✗ Timeout - chưa chọn dự án", "ERROR")
         return False
 
-    def setup(self, wait_for_project: bool = True, timeout: int = 120) -> bool:
+    def _warm_up_session(self, dummy_prompt: str = "a simple test image") -> bool:
+        """
+        Warm up session bằng cách tạo 1 ảnh thật trong Chrome.
+        Điều này "activate" session và làm cho tokens hợp lệ.
+
+        Args:
+            dummy_prompt: Prompt đơn giản để warm up
+
+        Returns:
+            True nếu thành công
+        """
+        self.log("=" * 50)
+        self.log("  WARM UP SESSION")
+        self.log("=" * 50)
+        self.log("→ Tạo 1 ảnh trong Chrome để activate session...")
+        self.log(f"  Prompt: {dummy_prompt[:50]}...")
+
+        # Tìm textarea và gửi prompt
+        textarea = self._find_textarea()
+        if not textarea:
+            self.log("✗ Không tìm thấy textarea", "ERROR")
+            return False
+
+        textarea.clear()
+        time.sleep(0.2)
+        textarea.input(dummy_prompt)
+        time.sleep(0.3)
+        textarea.input('\n')
+        self.log("✓ Đã gửi prompt, đợi Chrome tạo ảnh...")
+
+        # Đợi ảnh được tạo - kiểm tra bằng cách tìm img elements mới
+        # hoặc đợi loading indicator biến mất
+        self.log("→ Đợi ảnh được tạo (có thể mất 10-30s)...")
+
+        for i in range(60):  # Đợi tối đa 60s
+            time.sleep(2)
+
+            # Kiểm tra có ảnh được tạo không
+            # Tìm elements chứa ảnh generated
+            check_result = self.driver.run_js("""
+                // Tìm các img elements có src chứa base64 hoặc googleusercontent
+                var imgs = document.querySelectorAll('img');
+                var found = 0;
+                for (var img of imgs) {
+                    var src = img.src || '';
+                    if (src.includes('data:image') || src.includes('googleusercontent') || src.includes('ggpht')) {
+                        // Kiểm tra kích thước - ảnh generated thường lớn
+                        if (img.naturalWidth > 200 || img.width > 200) {
+                            found++;
+                        }
+                    }
+                }
+                return {found: found, loading: !!document.querySelector('[data-loading="true"]')};
+            """)
+
+            if check_result and check_result.get('found', 0) > 0:
+                self.log(f"✓ Phát hiện {check_result['found']} ảnh!")
+                time.sleep(2)  # Đợi thêm để ổn định
+                self.log("✓ Session đã được warm up!")
+                return True
+
+            if i % 5 == 4:
+                self.log(f"  ... đợi {(i+1)*2}s")
+
+        self.log("⚠️ Không phát hiện được ảnh, tiếp tục...", "WARN")
+        return True  # Vẫn return True để tiếp tục
+
+    def setup(self, wait_for_project: bool = True, timeout: int = 120, warm_up: bool = True) -> bool:
         """
         Setup Chrome và inject interceptor.
 
         Args:
             wait_for_project: Đợi user chọn project
             timeout: Timeout đợi project (giây)
+            warm_up: Tạo 1 ảnh trong Chrome trước để activate session
 
         Returns:
             True nếu thành công
@@ -486,7 +554,12 @@ class DrissionFlowAPI:
             self.log("✗ Timeout - không tìm thấy textarea", "ERROR")
             return False
 
-        # 6. Inject interceptor
+        # 6. Warm up session (tạo 1 ảnh trong Chrome để activate)
+        if warm_up:
+            if not self._warm_up_session():
+                self.log("⚠️ Warm up không thành công, tiếp tục...", "WARN")
+
+        # 7. Inject interceptor (SAU khi warm up)
         self.log("Inject interceptor...")
         self._reset_tokens()
         result = self.driver.run_js(JS_INTERCEPTOR)
