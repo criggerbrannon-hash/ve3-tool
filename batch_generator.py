@@ -188,22 +188,36 @@ class BatchGenerator:
         time.sleep(2)
         print(f"    ✓ URL: {self.driver.url}")
 
-        # Wait for user to login if needed
-        print("\n[4] Đợi đăng nhập...")
-        print("    → Nếu cần đăng nhập, hãy đăng nhập trong Chrome")
-        for i in range(60):  # Wait up to 60 seconds
+        # Wait for user to select/create a project
+        print("\n[4] Đợi chọn dự án...")
+        print("    → Click vào dự án có sẵn hoặc tạo dự án mới")
+        print("    → URL cần có dạng: .../project/{id}")
+        for i in range(120):  # Wait up to 2 minutes
+            current_url = self.driver.url
+            if "/project/" in current_url:
+                print(f"    ✓ Đã vào dự án!")
+                print(f"    ✓ URL: {current_url}")
+                break
+            time.sleep(1)
+            if i % 15 == 14:
+                print(f"    ... đợi {i+1}s - hãy click chọn dự án")
+        else:
+            print("    ✗ Timeout - chưa chọn dự án")
+            return False
+
+        # Wait for textarea (project loaded)
+        print("\n[5] Đợi project load...")
+        for i in range(30):
             textarea = self.find_textarea()
             if textarea:
                 print("    ✓ Đã sẵn sàng!")
                 break
             time.sleep(1)
-            if i % 10 == 9:
-                print(f"    ... đợi {i+1}s")
         else:
             print("    ✗ Timeout - không tìm thấy textarea")
             return False
 
-        print("\n[5] Inject interceptor...")
+        print("\n[6] Inject interceptor...")
         # Reset completely
         self.driver.run_js("""
             window.__interceptReady = false;
@@ -213,6 +227,7 @@ class BatchGenerator:
             window._rct = null;
             window._payload = null;
             window._sid = null;
+            window._url = null;
         """)
         time.sleep(0.3)
         result = self.driver.run_js(JS_INTERCEPTOR)
@@ -392,7 +407,7 @@ class BatchGenerator:
         - Mỗi prompt: gửi qua Chrome để lấy recaptchaToken mới
         - Sau đó gọi API với token đó để tạo 4 ảnh
         """
-        print(f"\n[6] Bắt đầu batch {len(prompts)} prompts...")
+        print(f"\n[7] Bắt đầu batch {len(prompts)} prompts...")
 
         for idx, prompt in enumerate(prompts, 1):
             self.stats["total"] += 1
