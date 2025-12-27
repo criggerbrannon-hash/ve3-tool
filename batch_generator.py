@@ -59,10 +59,13 @@ window._tk=null;window._pj=null;window._xbv=null;window._rct=null;window._payloa
             console.log('[INTERCEPT] Capturing request...');
 
             // Extract projectId from URL: /v1/projects/{projectId}/flowMedia:batchGenerateImages
-            var match = urlStr.match(/\/projects\/([^\/]+)\//);
+            // hoặc /projects/{projectId}:batchGenerateImages
+            var match = urlStr.match(/\/projects\/([a-f0-9\-]+)/i);
             if (match && match[1]) {
                 window._pj = match[1];
                 console.log('[TOKEN] projectId from URL:', window._pj);
+            } else {
+                console.log('[TOKEN] projectId NOT FOUND in URL:', urlStr);
             }
 
             // Capture từ headers
