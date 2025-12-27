@@ -2614,8 +2614,20 @@ class SmartEngine:
             self.log(f"  Voice duration: {total_duration:.1f}s")
 
             # Tính duration mỗi media = start_time[i+1] - start_time[i]
+            # FIX: Media đầu tiên phải kéo dài từ 0:00 đến khi media kế tiếp bắt đầu
+            # Điều này đảm bảo ảnh/video xuất hiện đúng với timing srt_start trong Excel
             for i, item in enumerate(media_items):
-                if i < len(media_items) - 1:
+                if i == 0:
+                    # Media đầu tiên: bắt đầu từ 0:00, kéo dài đến khi media tiếp theo bắt đầu
+                    if len(media_items) > 1:
+                        # Duration = next_item.start (không trừ item['start'])
+                        # Ví dụ: media 1 start=2.5s, media 2 start=5.5s
+                        # → media 1 duration = 5.5s (hiển thị từ 0:00 đến 5.5s)
+                        item['duration'] = media_items[1]['start']
+                    else:
+                        # Chỉ có 1 media: kéo dài hết voice
+                        item['duration'] = total_duration
+                elif i < len(media_items) - 1:
                     item['duration'] = media_items[i + 1]['start'] - item['start']
                 else:
                     # Media cuối: kéo dài đến hết voice
@@ -2629,12 +2641,17 @@ class SmartEngine:
             # Windows fix: Don't use context manager - manual cleanup with retry
             temp_dir = tempfile.mkdtemp()
             try:
-                # Debug: show first few media items
-                self.log(f"  First media: {Path(media_items[0]['path']).resolve()}")
-                for i in range(min(3, len(media_items))):
+                # Debug: show timing - ảnh sẽ xuất hiện ở vị trí nào trong video
+                self.log(f"  Timing (tuân thủ srt_start từ Excel):")
+                video_time = 0.0  # Vị trí trong video output
+                for i in range(min(5, len(media_items))):
                     item = media_items[i]
                     media_type = "🎬" if item['is_video'] else "🖼️"
-                    self.log(f"    {media_type} #{item['id']}: start={item['start']:.1f}s, dur={item['duration']:.1f}s")
+                    end_time = video_time + item['duration']
+                    self.log(f"    {media_type} #{item['id']}: {video_time:.1f}s → {end_time:.1f}s (srt_start={item['start']:.1f}s, dur={item['duration']:.1f}s)")
+                    video_time = end_time
+                if len(media_items) > 5:
+                    self.log(f"    ... và {len(media_items) - 5} clips khác")
 
                 # Video không có audio
                 temp_video = Path(temp_dir) / "temp_video.mp4"
