@@ -216,7 +216,7 @@ class DrissionFlowAPI:
     def __init__(
         self,
         profile_dir: str = "./chrome_profile",
-        chrome_port: int = 9333,
+        chrome_port: int = 0,  # 0 = auto-generate unique port (parallel-safe)
         proxy_port: int = 1080,
         use_proxy: bool = True,  # BẬT proxy - chạy ipv6_rotate_proxy.py trước
         verbose: bool = True,
@@ -229,7 +229,7 @@ class DrissionFlowAPI:
 
         Args:
             profile_dir: Thư mục Chrome profile
-            chrome_port: Port cho Chrome debugging
+            chrome_port: Port cho Chrome debugging (0 = auto-generate unique port)
             proxy_port: Port của SOCKS5 proxy (IPv6)
             use_proxy: Có dùng proxy không (cần chạy ipv6_rotate_proxy.py)
             verbose: In log chi tiết
@@ -237,7 +237,11 @@ class DrissionFlowAPI:
             webshare_enabled: Dùng Webshare proxy (phải init_proxy_manager trước)
         """
         self.profile_dir = Path(profile_dir)
-        self.chrome_port = chrome_port
+        # Auto-generate unique port for parallel execution
+        if chrome_port == 0:
+            self.chrome_port = random.randint(9222, 9999)
+        else:
+            self.chrome_port = chrome_port
         self.proxy_port = proxy_port
         self.use_proxy = use_proxy
         self.verbose = verbose
@@ -510,6 +514,7 @@ class DrissionFlowAPI:
         # 1. Tạo thư mục profile
         self.profile_dir.mkdir(parents=True, exist_ok=True)
         self.log(f"Profile: {self.profile_dir}")
+        self.log(f"Chrome port: {self.chrome_port}")
 
         # 2. Khởi tạo Chrome với proxy
         self.log("Khởi động Chrome...")
@@ -531,8 +536,10 @@ class DrissionFlowAPI:
 
                     try:
                         from proxy_bridge import start_proxy_bridge
+                        # Unique bridge port based on chrome_port (parallel-safe)
+                        bridge_port = 8800 + (self.chrome_port % 100)
                         self._proxy_bridge = start_proxy_bridge(
-                            local_port=8888,
+                            local_port=bridge_port,
                             remote_host=proxy.host,
                             remote_port=proxy.port,
                             username=proxy.username,
@@ -542,12 +549,12 @@ class DrissionFlowAPI:
                         time.sleep(0.5)  # Đợi bridge start
 
                         # Chrome kết nối đến local bridge (không cần auth)
-                        options.set_argument('--proxy-server=http://127.0.0.1:8888')
+                        options.set_argument(f'--proxy-server=http://127.0.0.1:{bridge_port}')
                         options.set_argument('--proxy-bypass-list=<-loopback>')
                         options.set_argument('--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1')
 
                         self.log(f"Proxy: Bridge → {proxy.endpoint}")
-                        self.log(f"  Local: http://127.0.0.1:8888")
+                        self.log(f"  Local: http://127.0.0.1:{bridge_port}")
                         self.log(f"  Auth: {username}:****")
 
                     except Exception as e:
