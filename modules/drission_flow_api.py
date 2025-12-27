@@ -45,12 +45,12 @@ except ImportError:
 # Webshare Proxy imports
 WEBSHARE_AVAILABLE = False
 try:
-    from webshare_proxy import WebshareProxy, WebshareConfig, create_webshare_proxy
+    from webshare_proxy import WebshareProxy, get_proxy_manager, init_proxy_manager
     WEBSHARE_AVAILABLE = True
 except ImportError:
     WebshareProxy = None
-    WebshareConfig = None
-    create_webshare_proxy = None
+    get_proxy_manager = None
+    init_proxy_manager = None
 
 
 @dataclass
