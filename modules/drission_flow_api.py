@@ -473,7 +473,13 @@ class DrissionFlowAPI:
             # Không sao nếu không kill được (có thể không có Chrome đang chạy)
             pass
 
-    def setup(self, wait_for_project: bool = True, timeout: int = 120, warm_up: bool = False) -> bool:
+    def setup(
+        self,
+        wait_for_project: bool = True,
+        timeout: int = 120,
+        warm_up: bool = False,
+        project_url: str = None
+    ) -> bool:
         """
         Setup Chrome và inject interceptor.
         Giống batch_generator.py - không cần warm_up.
@@ -482,6 +488,7 @@ class DrissionFlowAPI:
             wait_for_project: Đợi user chọn project
             timeout: Timeout đợi project (giây)
             warm_up: Tạo 1 ảnh trong Chrome trước (default False - không cần)
+            project_url: URL project cố định (nếu có, sẽ vào thẳng project này)
 
         Returns:
             True nếu thành công
@@ -576,12 +583,19 @@ class DrissionFlowAPI:
             self.log(f"✗ Chrome error: {e}", "ERROR")
             return False
 
-        # 3. Vào Google Flow
-        self.log("Vào Google Flow...")
+        # 3. Vào Google Flow (hoặc project cố định nếu có)
+        target_url = project_url if project_url else self.FLOW_URL
+        self.log(f"Vào: {target_url[:60]}...")
         try:
-            self.driver.get(self.FLOW_URL)
+            self.driver.get(target_url)
             time.sleep(3)
             self.log(f"✓ URL: {self.driver.url}")
+
+            # Lưu project_url để dùng khi retry
+            if "/project/" in self.driver.url:
+                self._current_project_url = self.driver.url
+                self.log(f"  → Saved project URL for retry")
+
         except Exception as e:
             self.log(f"✗ Navigation error: {e}", "ERROR")
             return False
@@ -593,6 +607,10 @@ class DrissionFlowAPI:
                 self.log("Auto setup project...")
                 if not self._auto_setup_project(timeout):
                     return False
+                # Lưu project URL sau khi tạo mới
+                if "/project/" in self.driver.url:
+                    self._current_project_url = self.driver.url
+                    self.log(f"  → New project URL saved")
             else:
                 self.log("✓ Đã ở trong project!")
 
@@ -1138,9 +1156,15 @@ class DrissionFlowAPI:
 
         time.sleep(2)
 
-        # Restart Chrome với proxy
+        # Restart Chrome với proxy - VÀO LẠI PROJECT CŨ
         self.use_proxy = True  # Luôn dùng proxy khi restart
-        if self.setup():
+
+        # Lấy saved project URL để vào lại đúng project
+        saved_project_url = getattr(self, '_current_project_url', None)
+        if saved_project_url:
+            self.log(f"  → Reusing project: {saved_project_url[:50]}...")
+
+        if self.setup(project_url=saved_project_url):
             self.log("✓ Chrome restarted thành công!")
             return True
         else:
@@ -1159,11 +1183,7 @@ def create_drission_api(
     proxy_port: int = 1080,
     use_proxy: bool = True,  # BẬT proxy
     log_callback: Optional[Callable] = None,
-    # Webshare config
-    webshare_api_key: str = None,
-    webshare_username: str = None,
-    webshare_password: str = None,
-    webshare_endpoint: str = None,
+    webshare_enabled: bool = False,
 ) -> DrissionFlowAPI:
     """
     Tạo DrissionFlowAPI instance.
@@ -1173,10 +1193,7 @@ def create_drission_api(
         proxy_port: Port SOCKS5 proxy
         use_proxy: Có dùng proxy không (cần chạy ipv6_rotate_proxy.py)
         log_callback: Callback để log
-        webshare_api_key: Webshare API key
-        webshare_username: Webshare proxy username
-        webshare_password: Webshare proxy password
-        webshare_endpoint: Webshare rotating endpoint
+        webshare_enabled: Dùng Webshare proxy pool (phải init_proxy_manager trước)
 
     Returns:
         DrissionFlowAPI instance
@@ -1186,8 +1203,5 @@ def create_drission_api(
         proxy_port=proxy_port,
         use_proxy=use_proxy,
         log_callback=log_callback,
-        webshare_api_key=webshare_api_key,
-        webshare_username=webshare_username,
-        webshare_password=webshare_password,
-        webshare_endpoint=webshare_endpoint,
+        webshare_enabled=webshare_enabled,
     )
