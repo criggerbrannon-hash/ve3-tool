@@ -175,7 +175,7 @@ class BatchGenerator:
 
         # Navigate to Google Flow
         print("\n[3] Vào Google Flow...")
-        self.driver.get("https://aisandbox.google.com/")
+        self.driver.get("https://labs.google/fx/vi/tools/flow")
         time.sleep(2)
         print(f"    ✓ URL: {self.driver.url}")
 
@@ -314,8 +314,8 @@ class BatchGenerator:
         headers = {
             "Authorization": self.bearer,
             "Content-Type": "text/plain;charset=UTF-8",
-            "Origin": "https://aisandbox.google.com",
-            "Referer": "https://aisandbox.google.com/",
+            "Origin": "https://labs.google",
+            "Referer": "https://labs.google/fx/vi/tools/flow",
         }
         # Add x-browser-validation if captured
         if self.xbv:
