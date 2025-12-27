@@ -10,6 +10,7 @@ import time
 import random
 import requests
 import base64
+import threading
 from pathlib import Path
 
 try:
@@ -17,6 +18,14 @@ try:
 except ImportError:
     print("Cần cài đặt: pip install DrissionPage requests")
     exit(1)
+
+# Import proxy server
+try:
+    from ipv6_rotate_proxy import IPv6Rotator, ProxyServer, IPV6_LIST, PROXY_PORT
+    HAS_PROXY = True
+except ImportError:
+    HAS_PROXY = False
+    PROXY_PORT = 1080
 
 OUTPUT_DIR = Path("./batch_output")
 OUTPUT_DIR.mkdir(exist_ok=True)
@@ -119,22 +128,40 @@ class BatchGenerator:
         self.recaptcha_token = None
         self.xbv = None  # x-browser-validation header
         self.stats = {"total": 0, "success": 0, "failed": 0}
+        self.proxy_server = None
 
     def setup(self):
         print("=" * 60)
         print("  BATCH GENERATOR (Full Auto + API)")
         print("=" * 60)
 
-        print("\n[1] Kết nối Chrome port 9222...")
+        # Start proxy server first
+        print("\n[1] Khởi động proxy IPv6...")
+        if HAS_PROXY:
+            try:
+                rotator = IPv6Rotator(IPV6_LIST)
+                self.proxy_server = ProxyServer(rotator)
+                self.proxy_server.start()
+                print(f"    ✓ Proxy running at 127.0.0.1:{PROXY_PORT}")
+            except Exception as e:
+                print(f"    ✗ Proxy error: {e}")
+                print("    → Tiếp tục không có proxy...")
+        else:
+            print("    → Không tìm thấy ipv6_rotate_proxy, tiếp tục không có proxy")
+
+        print("\n[2] Mở Chrome với proxy...")
         try:
-            # Kết nối tới Chrome đang chạy, KHÔNG mở Chrome mới
-            self.driver = ChromiumPage(addr_or_opts="127.0.0.1:9222")
+            options = ChromiumOptions()
+            options.set_argument(f'--proxy-server=socks5://127.0.0.1:{PROXY_PORT}')
+            options.auto_port()  # Tự động chọn port debug
+            self.driver = ChromiumPage(addr_or_opts=options)
+            print(f"    ✓ Chrome opened")
             print(f"    ✓ URL: {self.driver.url}")
         except Exception as e:
             print(f"    ✗ {e}")
             return False
 
-        print("\n[2] Inject interceptor...")
+        print("\n[3] Inject interceptor...")
         # Reset completely
         self.driver.run_js("""
             window.__interceptReady = false;
