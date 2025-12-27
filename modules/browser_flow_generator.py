@@ -2898,8 +2898,8 @@ class BrowserFlowGenerator:
         # Store reference
         self._drission_api = drission_api
 
-        # Generate images
-        return self._generate_images_drission_mode(prompts, output_dir, excel_path)
+        # Generate images - use self.img_path as output directory
+        return self._generate_images_drission_mode(prompts, self.img_path, excel_path)
 
     def _generate_images_drission_mode(
         self,

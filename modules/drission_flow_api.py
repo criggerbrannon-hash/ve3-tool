@@ -126,6 +126,55 @@ window._tk=null;window._pj=null;window._xbv=null;window._rct=null;window._payloa
 })();
 '''
 
+# JS để click "Dự án mới"
+JS_CLICK_NEW_PROJECT = '''
+(function() {
+    var btns = document.querySelectorAll('button');
+    for (var b of btns) {
+        var text = b.textContent || '';
+        if (text.includes('Dự án mới') || text.includes('New project')) {
+            b.click();
+            console.log('[AUTO] Clicked: Du an moi');
+            return 'CLICKED';
+        }
+    }
+    return 'NOT_FOUND';
+})();
+'''
+
+# JS để chọn "Tạo hình ảnh" từ dropdown
+JS_SELECT_IMAGE_MODE = '''
+(async function() {
+    // 1. Click dropdown
+    var dropdown = document.querySelector('button[role="combobox"]');
+    if (!dropdown) {
+        console.log('[AUTO] Dropdown not found');
+        return 'NO_DROPDOWN';
+    }
+    dropdown.click();
+    console.log('[AUTO] Clicked dropdown');
+
+    // 2. Đợi dropdown mở
+    await new Promise(r => setTimeout(r, 500));
+
+    // 3. Tìm và click "Tạo hình ảnh"
+    var allElements = document.querySelectorAll('*');
+    for (var el of allElements) {
+        var text = el.textContent || '';
+        if (text === 'Tạo hình ảnh' || text.includes('Tạo hình ảnh từ văn bản') ||
+            text === 'Generate image' || text.includes('Generate image from text')) {
+            var rect = el.getBoundingClientRect();
+            if (rect.height > 10 && rect.height < 80 && rect.width > 50) {
+                el.click();
+                console.log('[AUTO] Clicked: Tao hinh anh');
+                return 'CLICKED';
+            }
+        }
+    }
+    return 'NOT_FOUND';
+})();
+'''
+
 
 class DrissionFlowAPI:
     """
@@ -227,6 +276,80 @@ class DrissionFlowAPI:
             self.log("  → Kiểm tra đã chạy add_ipv6.bat chưa?", "WARN")
             return False
 
+    def _auto_setup_project(self, timeout: int = 60) -> bool:
+        """
+        Tự động setup project:
+        1. Click "Dự án mới" (New project)
+        2. Chọn "Tạo hình ảnh" (Generate image)
+        3. Đợi vào project
+
+        Args:
+            timeout: Timeout tổng (giây)
+
+        Returns:
+            True nếu thành công
+        """
+        self.log("→ Đang tự động tạo dự án mới...")
+
+        # 1. Đợi trang load và tìm button "Dự án mới"
+        for i in range(15):
+            result = self.driver.run_js(JS_CLICK_NEW_PROJECT)
+            if result == 'CLICKED':
+                self.log("✓ Clicked 'Dự án mới'")
+                time.sleep(2)
+                break
+            time.sleep(1)
+            if i == 5:
+                self.log("  ... đợi button 'Dự án mới' xuất hiện...")
+        else:
+            self.log("✗ Không tìm thấy button 'Dự án mới'", "ERROR")
+            self.log("→ Hãy click thủ công vào dự án", "WARN")
+            # Fallback: đợi user click thủ công
+            return self._wait_for_project_manual(timeout)
+
+        # 2. Chọn "Tạo hình ảnh" từ dropdown
+        time.sleep(1)
+        for i in range(10):
+            result = self.driver.run_js(JS_SELECT_IMAGE_MODE)
+            if result == 'CLICKED':
+                self.log("✓ Chọn 'Tạo hình ảnh'")
+                time.sleep(2)
+                break
+            time.sleep(0.5)
+        else:
+            self.log("⚠️ Không tìm thấy dropdown - có thể đã ở mode đúng", "WARN")
+
+        # 3. Đợi vào project
+        self.log("→ Đợi vào project...")
+        for i in range(timeout):
+            current_url = self.driver.url
+            if "/project/" in current_url:
+                self.log(f"✓ Đã vào dự án!")
+                return True
+            time.sleep(1)
+            if i % 10 == 9:
+                self.log(f"  ... đợi {i+1}s")
+
+        self.log("✗ Timeout - chưa vào được dự án", "ERROR")
+        return False
+
+    def _wait_for_project_manual(self, timeout: int = 60) -> bool:
+        """Fallback: đợi user chọn project thủ công."""
+        self.log("Đợi chọn dự án thủ công...")
+        self.log("→ Click vào dự án có sẵn hoặc tạo dự án mới")
+
+        for i in range(timeout):
+            current_url = self.driver.url
+            if "/project/" in current_url:
+                self.log(f"✓ Đã vào dự án!")
+                return True
+            time.sleep(1)
+            if i % 15 == 14:
+                self.log(f"... đợi {i+1}s - hãy click chọn dự án")
+
+        self.log("✗ Timeout - chưa chọn dự án", "ERROR")
+        return False
+
     def setup(self, wait_for_project: bool = True, timeout: int = 120) -> bool:
         """
         Setup Chrome và inject interceptor.
@@ -277,29 +400,21 @@ class DrissionFlowAPI:
         self.log("Vào Google Flow...")
         try:
             self.driver.get(self.FLOW_URL)
-            time.sleep(2)
+            time.sleep(3)
             self.log(f"✓ URL: {self.driver.url}")
         except Exception as e:
             self.log(f"✗ Navigation error: {e}", "ERROR")
             return False
 
-        # 4. Đợi user chọn project
+        # 4. Auto setup project (click "Dự án mới" + chọn "Tạo hình ảnh")
         if wait_for_project:
-            self.log("Đợi chọn dự án...")
-            self.log("→ Click vào dự án có sẵn hoặc tạo dự án mới")
-            self.log("→ URL cần có dạng: .../project/{id}")
-
-            for i in range(timeout):
-                current_url = self.driver.url
-                if "/project/" in current_url:
-                    self.log(f"✓ Đã vào dự án!")
-                    break
-                time.sleep(1)
-                if i % 15 == 14:
-                    self.log(f"... đợi {i+1}s - hãy click chọn dự án")
+            # Kiểm tra đã ở trong project chưa
+            if "/project/" not in self.driver.url:
+                self.log("Auto setup project...")
+                if not self._auto_setup_project(timeout):
+                    return False
             else:
-                self.log("✗ Timeout - chưa chọn dự án", "ERROR")
-                return False
+                self.log("✓ Đã ở trong project!")
 
         # 5. Đợi textarea sẵn sàng
         self.log("Đợi project load...")
