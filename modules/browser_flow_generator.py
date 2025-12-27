@@ -2546,7 +2546,7 @@ class BrowserFlowGenerator:
                 # Generate image - co retry khi token het han
                 success, images, error = api.generate_images(
                     prompt=prompt,
-                    count=self.config.get('flow_image_count', 2),
+                    count=self.config.get('flow_image_count', 1),  # Default 1 ảnh
                     aspect_ratio=aspect_ratio,
                     image_inputs=[inp.to_dict() for inp in image_inputs] if image_inputs else None
                 )
@@ -2567,7 +2567,7 @@ class BrowserFlowGenerator:
                             # Retry generation
                             success, images, error = api.generate_images(
                                 prompt=prompt,
-                                count=self.config.get('flow_image_count', 2),
+                                count=self.config.get('flow_image_count', 1),  # Default 1 ảnh
                                 aspect_ratio=aspect_ratio,
                                 image_inputs=[inp.to_dict() for inp in image_inputs] if image_inputs else None
                             )

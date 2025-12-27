@@ -20,15 +20,23 @@ chrome_profile: "C:\\Users\\admin\\AppData\\Local\\Google\\Chrome\\User Data\\Pr
 flow_bearer_token: ""
 flow_project_id: ""
 flow_aspect_ratio: "landscape"
-flow_image_count: 2
+flow_image_count: 1
 flow_timeout: 120
 flow_delay: 3.0
 
 # DrissionPage Settings (Image Generation)
 # Sử dụng DrissionPage + Interceptor để tạo ảnh
-# QUAN TRỌNG: Chạy ipv6_rotate_proxy.py trước khi dùng tool!
-proxy_port: 1080              # Port SOCKS5 proxy cho IPv6 rotation
-use_ipv6_proxy: true          # BẬT proxy để xoay IP tránh bị Google block
+proxy_port: 1080              # Port SOCKS5 proxy cho IPv6 rotation (không cần nếu dùng Webshare)
+use_ipv6_proxy: false         # TẮT IPv6 proxy khi dùng Webshare
+
+# Webshare Proxy Pool (100 proxies datacenter)
+# Tự động xoay proxy khi bị block 403
+webshare_proxy:
+  enabled: true               # BẬT Webshare proxy pool
+  proxy_file: "config/proxies.txt"  # File chứa danh sách proxy
+  username: ""                # (optional) Default username nếu không có trong file
+  password: ""                # (optional) Default password
+  api_key: ""                 # (optional) Webshare API key
 
 # ============================================================================
 # VIDEO GENERATION (VEO 3) Settings
