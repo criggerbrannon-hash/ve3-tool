@@ -120,7 +120,7 @@ window._tk=null;window._pj=null;window._xbv=null;window._rct=null;window._payloa
 class BatchGenerator:
     BASE_URL = "https://aisandbox-pa.googleapis.com"
 
-    def __init__(self):
+    def __init__(self, use_proxy=True):
         self.driver = None
         self.bearer = None
         self.project_id = None
@@ -129,33 +129,40 @@ class BatchGenerator:
         self.xbv = None  # x-browser-validation header
         self.stats = {"total": 0, "success": 0, "failed": 0}
         self.proxy_server = None
+        self.use_proxy = use_proxy
 
     def setup(self):
         print("=" * 60)
         print("  BATCH GENERATOR (Full Auto + API)")
         print("=" * 60)
 
-        # Start proxy server first
-        print("\n[1] Khởi động proxy IPv6...")
-        if HAS_PROXY:
-            try:
-                rotator = IPv6Rotator(IPV6_LIST)
-                self.proxy_server = ProxyServer(rotator)
-                self.proxy_server.start()
-                print(f"    ✓ Proxy running at 127.0.0.1:{PROXY_PORT}")
-            except Exception as e:
-                print(f"    ✗ Proxy error: {e}")
-                print("    → Tiếp tục không có proxy...")
+        # Start proxy server first (if enabled)
+        if self.use_proxy:
+            print("\n[1] Khởi động proxy IPv6...")
+            if HAS_PROXY:
+                try:
+                    rotator = IPv6Rotator(IPV6_LIST)
+                    self.proxy_server = ProxyServer(rotator)
+                    self.proxy_server.start()
+                    print(f"    ✓ Proxy running at 127.0.0.1:{PROXY_PORT}")
+                except Exception as e:
+                    print(f"    ✗ Proxy error: {e}")
+                    print("    → Tiếp tục không có proxy...")
+                    self.use_proxy = False
+            else:
+                print("    → Không tìm thấy ipv6_rotate_proxy")
+                self.use_proxy = False
         else:
-            print("    → Không tìm thấy ipv6_rotate_proxy, tiếp tục không có proxy")
+            print("\n[1] Chạy KHÔNG có proxy (test mode)")
 
-        print("\n[2] Mở Chrome với proxy...")
+        print("\n[2] Mở Chrome...")
         try:
             options = ChromiumOptions()
-            options.set_argument(f'--proxy-server=socks5://127.0.0.1:{PROXY_PORT}')
+            if self.use_proxy:
+                options.set_argument(f'--proxy-server=socks5://127.0.0.1:{PROXY_PORT}')
             options.auto_port()  # Tự động chọn port debug
             self.driver = ChromiumPage(addr_or_opts=options)
-            print(f"    ✓ Chrome opened")
+            print(f"    ✓ Chrome opened" + (" (with proxy)" if self.use_proxy else " (no proxy)"))
         except Exception as e:
             print(f"    ✗ {e}")
             return False
@@ -431,7 +438,13 @@ class BatchGenerator:
 
 
 def main():
-    gen = BatchGenerator()
+    import sys
+    use_proxy = "--no-proxy" not in sys.argv
+
+    if not use_proxy:
+        print("[MODE] Running WITHOUT proxy (test mode)\n")
+
+    gen = BatchGenerator(use_proxy=use_proxy)
     if not gen.setup():
         return
 
