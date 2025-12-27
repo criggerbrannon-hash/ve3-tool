@@ -46,7 +46,7 @@ DEFAULT_PROMPTS = [
 # JS capture tokens - based on chrome_token_extractor.py
 # CANCEL request để script tự gọi API
 JS_INTERCEPTOR = '''
-window._tk=null;window._pj=null;window._xbv=null;window._rct=null;window._payload=null;window._sid=null;
+window._tk=null;window._pj=null;window._xbv=null;window._rct=null;window._payload=null;window._sid=null;window._url=null;
 (function(){
     if(window.__interceptReady) return 'ALREADY_READY';
     window.__interceptReady = true;
@@ -57,10 +57,12 @@ window._tk=null;window._pj=null;window._xbv=null;window._rct=null;window._payloa
 
         // Match nhiều pattern hơn
         if (urlStr.includes('aisandbox') && (urlStr.includes('batchGenerate') || urlStr.includes('flowMedia') || urlStr.includes('generateContent'))) {
-            console.log('[INTERCEPT] Capturing request to:', urlStr.substring(0, 100));
+            console.log('[INTERCEPT] Capturing request to:', urlStr);
+
+            // Capture URL gốc
+            window._url = urlStr;
 
             // Extract projectId from URL: /v1/projects/{projectId}/flowMedia:batchGenerateImages
-            // hoặc /projects/{projectId}:batchGenerateImages
             var match = urlStr.match(/\/projects\/([a-f0-9\-]+)/i);
             if (match && match[1]) {
                 window._pj = match[1];
@@ -131,6 +133,7 @@ class BatchGenerator:
         self.session_id = None
         self.recaptcha_token = None
         self.xbv = None  # x-browser-validation header
+        self.captured_url = None  # URL gốc từ Chrome
         self.stats = {"total": 0, "success": 0, "failed": 0}
         self.proxy_server = None
         self.use_proxy = use_proxy
@@ -251,7 +254,8 @@ class BatchGenerator:
                     pj: window._pj,
                     xbv: window._xbv,
                     rct: window._rct,
-                    sid: window._sid
+                    sid: window._sid,
+                    url: window._url
                 };
             """)
 
@@ -260,6 +264,7 @@ class BatchGenerator:
                 print(f"    [DEBUG] Bearer: {'YES' if tokens.get('tk') else 'NO'}")
                 print(f"    [DEBUG] recaptcha: {'YES' if tokens.get('rct') else 'NO'}")
                 print(f"    [DEBUG] projectId: {'YES' if tokens.get('pj') else 'NO'}")
+                print(f"    [DEBUG] URL: {'YES' if tokens.get('url') else 'NO'}")
 
             if tokens.get("tk") and tokens.get("rct"):
                 self.bearer = f"Bearer {tokens['tk']}"
@@ -267,10 +272,11 @@ class BatchGenerator:
                 self.session_id = tokens.get("sid")
                 self.recaptcha_token = tokens.get("rct")
                 self.xbv = tokens.get("xbv")
+                self.captured_url = tokens.get("url")
                 print(f"    ✓ Got Bearer token!")
                 print(f"    ✓ Got recaptchaToken!")
-                if self.project_id:
-                    print(f"    ✓ Project ID: {self.project_id[:20]}...")
+                if self.captured_url:
+                    print(f"    ✓ Captured URL: {self.captured_url[:60]}...")
                 return True
 
             time.sleep(1)
@@ -305,12 +311,21 @@ class BatchGenerator:
         return False
 
     def call_api(self, prompt, count=1):
-        """Gọi API generateContent - KHÔNG cần project_id"""
+        """Gọi API batchGenerateImages - dùng captured_url từ Chrome"""
 
-        # URL không cần project_id
-        url = f"{self.BASE_URL}/v1beta/models/imagen-3.0-capability-001:generateContent"
+        # Dùng URL gốc từ Chrome
+        if not self.captured_url:
+            return [], "No URL captured from Chrome"
 
-        # Proxy - cùng proxy với Chrome để IP match với reCAPTCHA token
+        url = self.captured_url
+        print(f"    → URL: {url[:80]}...")
+
+        # Lấy payload gốc từ Chrome
+        original_payload = self.driver.run_js("return window._payload;")
+        if not original_payload:
+            return [], "No payload captured"
+
+        # Proxy
         proxies = None
         if self.use_proxy:
             proxies = {
@@ -320,30 +335,18 @@ class BatchGenerator:
 
         headers = {
             "Authorization": self.bearer,
-            "Content-Type": "application/json",
-            "Origin": "https://aisandbox.withgoogle.com",
-            "Referer": "https://aisandbox.withgoogle.com/",
+            "Content-Type": "text/plain;charset=UTF-8",
+            "Origin": "https://labs.google",
+            "Referer": "https://labs.google/",
         }
-
-        print(f"    → URL: {url}")
         if self.xbv:
             headers["x-browser-validation"] = self.xbv
 
-        # Body đơn giản hơn
-        payload = {
-            "imageGenerationConfig": {
-                "numberOfImages": count,
-                "aspectRatio": "IMAGE_ASPECT_RATIO_LANDSCAPE"  # 16:9
-            },
-            "modelInput": {
-                "prompt": prompt
-            }
-        }
-
-        print(f"    → Calling API...")
+        print(f"    → Calling API with captured payload ({len(original_payload)} chars)...")
 
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=120, proxies=proxies)
+            # Dùng data= vì original_payload đã là JSON string
+            resp = requests.post(url, headers=headers, data=original_payload, timeout=120, proxies=proxies)
 
             if resp.status_code == 200:
                 data = resp.json()
