@@ -304,9 +304,14 @@ class BatchGenerator:
         return False
 
     def call_api(self, prompt, count=4):
-        """Gọi API batchGenerateImages"""
+        """Gọi API batchGenerateImages - dùng payload gốc từ Chrome"""
         if not self.project_id:
             return [], "No project_id captured"
+
+        # Lấy payload gốc mà Chrome định gửi
+        original_payload = self.driver.run_js("return window._payload;")
+        if not original_payload:
+            return [], "No payload captured"
 
         url = f"{self.BASE_URL}/v1/projects/{self.project_id}/flowMedia:batchGenerateImages"
 
@@ -326,34 +331,12 @@ class BatchGenerator:
         if self.xbv:
             headers["x-browser-validation"] = self.xbv
 
-        # Build requests array - recaptchaToken PHẢI ở trong clientContext
-        requests_data = []
-        for i in range(count):
-            requests_data.append({
-                "clientContext": {
-                    "sessionId": self.session_id or f";{int(time.time() * 1000)}",
-                    "projectId": self.project_id,
-                    "tool": "IMAGE_FX",
-                    "recaptchaToken": self.recaptcha_token  # ← ĐÚNG: trong clientContext
-                },
-                "seed": random.randint(100000, 999999),
-                "imageModelName": "GEM_PIX_2",
-                "imageAspectRatio": "IMAGE_ASPECT_RATIO_LANDSCAPE",
-                "prompt": prompt,
-                "imageInputs": []
-            })
-
-        payload = {
-            "clientContext": {
-                "sessionId": self.session_id or f";{int(time.time() * 1000)}",
-                "projectId": self.project_id,
-                "tool": "IMAGE_FX"
-            },
-            "requests": requests_data
-        }
+        # Dùng payload gốc từ Chrome (đã là JSON string)
+        print(f"    → Payload length: {len(original_payload)} chars")
 
         try:
-            resp = requests.post(url, headers=headers, json=payload, timeout=120, proxies=proxies)
+            # Dùng data= thay vì json= vì original_payload đã là string
+            resp = requests.post(url, headers=headers, data=original_payload, timeout=120, proxies=proxies)
 
             if resp.status_code == 200:
                 data = resp.json()
