@@ -47,7 +47,7 @@ JS_INTERCEPTOR = '''
             try {
                 const body = JSON.parse(opts.body);
 
-                // Lấy Authorization từ headers (có thể là object hoặc Headers)
+                // Lấy Authorization từ headers
                 let bearer = null;
                 if (opts.headers) {
                     if (opts.headers.Authorization) {
@@ -64,14 +64,24 @@ JS_INTERCEPTOR = '''
                     }
                 }
 
+                // recaptchaToken có thể ở nhiều vị trí
+                let recaptchaToken = body.recaptchaToken
+                    || body.requests?.[0]?.clientContext?.recaptchaToken
+                    || body.requests?.[0]?.recaptchaToken
+                    || null;
+
+                let projectId = body.requests?.[0]?.clientContext?.projectId
+                    || body.clientContext?.projectId
+                    || null;
+
                 window.__tokens = {
                     bearer: bearer,
-                    recaptchaToken: body.recaptchaToken || null,
-                    projectId: body.requests?.[0]?.clientContext?.projectId || null,
+                    recaptchaToken: recaptchaToken,
+                    projectId: projectId,
                     timestamp: Date.now()
                 };
                 console.log('[CAPTURED] Bearer:', bearer ? 'YES' : 'NO');
-                console.log('[CAPTURED] recaptchaToken:', body.recaptchaToken ? 'YES' : 'NO');
+                console.log('[CAPTURED] recaptchaToken:', recaptchaToken ? 'YES' : 'NO');
             } catch(e) {
                 console.log('[CAPTURE ERROR]', e);
             }
