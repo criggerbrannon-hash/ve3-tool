@@ -952,37 +952,33 @@ class DrissionFlowAPI:
             self.driver = None
         self._ready = False
 
-    def restart_with_toggled_proxy(self) -> bool:
+    def restart_chrome(self) -> bool:
         """
-        Restart Chrome với proxy toggle (on→off hoặc off→on).
-        Dùng khi bị 403 - đổi proxy để có IP mới cho Chrome.
+        Restart Chrome với proxy mới (IPv6 khác).
+        Dùng khi bị 403 - cần IP mới cho Chrome.
 
         Returns:
             True nếu restart thành công
         """
-        old_proxy = self.use_proxy
-        self.use_proxy = not self.use_proxy
-
-        self.log(f"🔄 Đổi proxy: {'ON' if old_proxy else 'OFF'} → {'ON' if self.use_proxy else 'OFF'}")
+        self.log("🔄 Restart Chrome với proxy mới...")
 
         # Close Chrome hiện tại
         self.close()
 
-        # Clear blocked IPs nếu có
+        # Clear blocked IPs để có IPv6 mới
         if self._proxy_server and hasattr(self._proxy_server, 'rotator'):
             self._proxy_server.rotator.clear_blocked()
 
         time.sleep(2)
 
-        # Restart Chrome với proxy mới
+        # Restart Chrome với proxy
+        self.use_proxy = True  # Luôn dùng proxy khi restart
         if self.setup():
-            self.log(f"✓ Chrome restarted với proxy {'ON' if self.use_proxy else 'OFF'}")
+            self.log("✓ Chrome restarted thành công!")
             return True
         else:
-            # Nếu fail, thử lại với proxy setting cũ
-            self.log(f"⚠️ Restart fail, thử lại với proxy {'ON' if old_proxy else 'OFF'}...")
-            self.use_proxy = old_proxy
-            return self.setup()
+            self.log("✗ Không restart được Chrome", "ERROR")
+            return False
 
     @property
     def is_ready(self) -> bool:
