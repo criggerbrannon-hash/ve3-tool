@@ -4,16 +4,11 @@ VE3 Tool - DrissionPage Flow API
 ================================
 Gọi Google Flow API trực tiếp bằng DrissionPage.
 
-Flow (giống batch_generator.py):
-1. Mở Chrome với proxy IPv6 (SOCKS5)
-2. Vào Google Flow → Đợi user chọn project
+Flow:
+1. Tự động khởi động IPv6 proxy server (nếu use_proxy=True)
+2. Mở Chrome với proxy → Vào Google Flow → Đợi user chọn project
 3. Inject JS Interceptor để capture tokens + CANCEL request
 4. Gọi API trực tiếp với captured URL + payload
-
-Ưu điểm so với DirectFlowAPI cũ:
-- Dùng DrissionPage thay vì pyautogui (ổn định hơn)
-- Interceptor CANCEL request → token không bị dùng
-- Hỗ trợ IPv6 proxy rotation
 """
 
 import json
@@ -21,6 +16,7 @@ import time
 import random
 import base64
 import requests
+import threading
 from pathlib import Path
 from typing import Optional, Tuple, List, Dict, Any, Callable
 from dataclasses import dataclass
@@ -34,6 +30,17 @@ try:
 except ImportError:
     ChromiumPage = None
     ChromiumOptions = None
+
+# IPv6 Proxy imports
+PROXY_AVAILABLE = False
+try:
+    from ipv6_rotate_proxy import IPv6Rotator, ProxyServer, IPV6_LIST, PROXY_PORT
+    PROXY_AVAILABLE = True
+except ImportError:
+    IPv6Rotator = None
+    ProxyServer = None
+    IPV6_LIST = []
+    PROXY_PORT = 1080
 
 
 @dataclass
@@ -171,6 +178,10 @@ class DrissionFlowAPI:
         # Chrome/DrissionPage
         self.driver: Optional[ChromiumPage] = None
 
+        # IPv6 Proxy server
+        self._proxy_server = None
+        self._proxy_started = False
+
         # Captured tokens
         self.bearer_token: Optional[str] = None
         self.project_id: Optional[str] = None
@@ -191,6 +202,31 @@ class DrissionFlowAPI:
         if self.log_callback:
             self.log_callback(msg, level)
 
+    def _start_proxy_server(self) -> bool:
+        """Khởi động IPv6 proxy server tự động."""
+        if not PROXY_AVAILABLE:
+            self.log("⚠️ ipv6_rotate_proxy.py không tìm thấy!", "WARN")
+            self.log("   Chạy: python ipv6_rotate_proxy.py trong terminal khác", "WARN")
+            return False
+
+        if self._proxy_started:
+            return True
+
+        try:
+            self.log("Khởi động IPv6 Proxy Server...")
+            rotator = IPv6Rotator(IPV6_LIST)
+            self._proxy_server = ProxyServer(rotator)
+            self._proxy_server.start()
+            self._proxy_started = True
+            time.sleep(0.5)  # Đợi server start
+            self.log(f"✓ Proxy server running on 127.0.0.1:{PROXY_PORT}")
+            self.log(f"  → {len(rotator.ipv6_list)} IPv6 addresses available")
+            return True
+        except Exception as e:
+            self.log(f"✗ Không khởi động được proxy: {e}", "ERROR")
+            self.log("  → Kiểm tra đã chạy add_ipv6.bat chưa?", "WARN")
+            return False
+
     def setup(self, wait_for_project: bool = True, timeout: int = 120) -> bool:
         """
         Setup Chrome và inject interceptor.
@@ -209,6 +245,12 @@ class DrissionFlowAPI:
         self.log("=" * 50)
         self.log("  DRISSION FLOW API - Setup")
         self.log("=" * 50)
+
+        # 0. Khởi động proxy server tự động (nếu use_proxy=True)
+        if self.use_proxy:
+            if not self._start_proxy_server():
+                self.log("⚠️ Tiếp tục không có proxy...", "WARN")
+                self.use_proxy = False
 
         # 1. Tạo thư mục profile
         self.profile_dir.mkdir(parents=True, exist_ok=True)
