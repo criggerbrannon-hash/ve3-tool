@@ -321,9 +321,11 @@ class BatchGenerator:
         headers = {
             "Authorization": self.bearer,
             "Content-Type": "application/json",
-            "Origin": "https://labs.google",
-            "Referer": "https://labs.google/fx/vi/tools/flow",
+            "Origin": "https://aisandbox.withgoogle.com",
+            "Referer": "https://aisandbox.withgoogle.com/",
         }
+
+        print(f"    → URL: {url}")
         if self.xbv:
             headers["x-browser-validation"] = self.xbv
 
