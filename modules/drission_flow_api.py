@@ -218,11 +218,11 @@ class DrissionFlowAPI:
         profile_dir: str = "./chrome_profile",
         chrome_port: int = 0,  # 0 = auto-generate unique port (parallel-safe)
         proxy_port: int = 1080,
-        use_proxy: bool = True,  # BẬT proxy - chạy ipv6_rotate_proxy.py trước
+        use_proxy: bool = False,  # TẮT IPv6 proxy (prefer Webshare)
         verbose: bool = True,
         log_callback: Optional[Callable] = None,
         # Webshare proxy - dùng global proxy manager
-        webshare_enabled: bool = False,
+        webshare_enabled: bool = True,  # BẬT Webshare proxy by default
     ):
         """
         Khởi tạo DrissionFlowAPI.
@@ -230,11 +230,11 @@ class DrissionFlowAPI:
         Args:
             profile_dir: Thư mục Chrome profile
             chrome_port: Port cho Chrome debugging (0 = auto-generate unique port)
-            proxy_port: Port của SOCKS5 proxy (IPv6)
-            use_proxy: Có dùng proxy không (cần chạy ipv6_rotate_proxy.py)
+            proxy_port: Port của SOCKS5 proxy (IPv6) - chỉ dùng khi use_proxy=True
+            use_proxy: Dùng IPv6 local proxy (default False - ưu tiên Webshare)
             verbose: In log chi tiết
             log_callback: Callback để log (msg, level)
-            webshare_enabled: Dùng Webshare proxy (phải init_proxy_manager trước)
+            webshare_enabled: Dùng Webshare proxy pool (default True)
         """
         self.profile_dir = Path(profile_dir)
         # Auto-generate unique port for parallel execution
@@ -1188,9 +1188,9 @@ class DrissionFlowAPI:
 def create_drission_api(
     profile_dir: str = "./chrome_profile",
     proxy_port: int = 1080,
-    use_proxy: bool = True,  # BẬT proxy
+    use_proxy: bool = False,  # TẮT IPv6 (prefer Webshare)
     log_callback: Optional[Callable] = None,
-    webshare_enabled: bool = False,
+    webshare_enabled: bool = True,  # BẬT Webshare by default
 ) -> DrissionFlowAPI:
     """
     Tạo DrissionFlowAPI instance.

@@ -2875,7 +2875,7 @@ class BrowserFlowGenerator:
             return {"success": False, "error": f"Khong import duoc DrissionFlowAPI: {e}. Cài đặt: pip install DrissionPage"}
 
         proxy_port = self.config.get('proxy_port', 1080)
-        use_ipv6_proxy = self.config.get('use_ipv6_proxy', True)
+        use_ipv6_proxy = self.config.get('use_ipv6_proxy', False)  # Default OFF - prefer Webshare
 
         # Webshare proxy config (nested dict from GUI settings)
         webshare_cfg = self.config.get('webshare_proxy', {})
@@ -2883,8 +2883,8 @@ class BrowserFlowGenerator:
         webshare_username = webshare_cfg.get('username', '')
         webshare_password = webshare_cfg.get('password', '')
         webshare_endpoint = webshare_cfg.get('endpoint', '')
-        webshare_proxy_file = webshare_cfg.get('proxy_file', '')
-        use_webshare = webshare_cfg.get('enabled', False)
+        webshare_proxy_file = webshare_cfg.get('proxy_file', 'config/proxies.txt')  # Default file
+        use_webshare = webshare_cfg.get('enabled', True)  # Default ON - Webshare enabled by default
 
         # Khởi tạo Webshare Proxy Manager nếu enabled
         if use_webshare:
