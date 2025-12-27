@@ -754,15 +754,17 @@ class DrissionFlowAPI:
         self,
         prompt: str,
         save_dir: Optional[Path] = None,
-        filename: str = None
+        filename: str = None,
+        max_retries: int = 3
     ) -> Tuple[bool, List[GeneratedImage], Optional[str]]:
         """
-        Generate image - full flow.
+        Generate image - full flow với retry khi gặp 403.
 
         Args:
             prompt: Prompt mô tả ảnh
             save_dir: Thư mục lưu ảnh (optional)
             filename: Tên file (không có extension)
+            max_retries: Số lần retry khi gặp 403 (mặc định 3)
 
         Returns:
             Tuple[success, list of images, error]
@@ -770,18 +772,44 @@ class DrissionFlowAPI:
         if not self._ready:
             return False, [], "API chưa setup! Gọi setup() trước."
 
-        # 1. Capture tokens với prompt
-        if not self._capture_tokens(prompt):
-            return False, [], "Không capture được tokens"
+        last_error = None
 
-        # 2. Gọi API
-        images, error = self.call_api()
+        for attempt in range(max_retries):
+            # 1. Capture tokens với prompt (mỗi lần retry lấy token mới)
+            if not self._capture_tokens(prompt):
+                return False, [], "Không capture được tokens"
 
-        if error:
-            return False, [], error
+            # 2. Gọi API
+            images, error = self.call_api()
 
-        if not images:
-            return False, [], "Không có ảnh trong response"
+            if error:
+                last_error = error
+
+                # Nếu lỗi 403, đánh dấu IPv6 và retry với token mới
+                if "403" in error:
+                    self.log(f"⚠️ 403 error (attempt {attempt+1}/{max_retries})", "WARN")
+
+                    # Đánh dấu IPv6 bị block
+                    if self._proxy_server and hasattr(self._proxy_server, 'rotator'):
+                        self._proxy_server.rotator.mark_blocked()
+
+                    if attempt < max_retries - 1:
+                        self.log(f"  → Đợi 3s rồi retry với token mới...", "WARN")
+                        time.sleep(3)
+                        continue
+                    else:
+                        return False, [], error
+                else:
+                    # Lỗi khác, không retry
+                    return False, [], error
+
+            if not images:
+                return False, [], "Không có ảnh trong response"
+
+            # Thành công!
+            break
+        else:
+            return False, [], last_error or "Max retries exceeded"
 
         # 3. Download và save nếu cần
         if save_dir:

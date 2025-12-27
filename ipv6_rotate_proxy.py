@@ -237,6 +237,9 @@ def resolve_ipv6_direct(domain: str) -> str:
 
 
 class IPv6Rotator:
+    # Thời gian block IPv6 khi bị rate limit (giây)
+    BLOCK_DURATION = 300  # 5 phút
+
     def __init__(self, ipv6_list: List[str]):
         # Filter only bindable IPs
         print("[INFO] Testing IPv6 addresses...")
@@ -256,13 +259,54 @@ class IPv6Rotator:
         self.index = 0
         self.lock = threading.Lock()
         self.usage_count = {ip: 0 for ip in self.ipv6_list}
+        self.blocked_until = {}  # ip -> timestamp khi hết block
+        self.last_used = None  # IPv6 vừa dùng
 
     def get_next(self) -> str:
         with self.lock:
+            now = time.time()
+
+            # Tìm IPv6 không bị block
+            attempts = 0
+            while attempts < len(self.ipv6_list):
+                ip = self.ipv6_list[self.index]
+                self.index = (self.index + 1) % len(self.ipv6_list)
+
+                # Kiểm tra có bị block không
+                if ip in self.blocked_until:
+                    if now < self.blocked_until[ip]:
+                        attempts += 1
+                        continue
+                    else:
+                        # Hết thời gian block
+                        del self.blocked_until[ip]
+                        print(f"[PROXY] ✓ Unblocked: {ip}")
+
+                self.usage_count[ip] += 1
+                self.last_used = ip
+                return ip
+
+            # Nếu tất cả đều bị block, dùng cái ít bị block nhất
             ip = self.ipv6_list[self.index]
-            self.usage_count[ip] += 1
             self.index = (self.index + 1) % len(self.ipv6_list)
+            self.usage_count[ip] += 1
+            self.last_used = ip
+            print(f"[PROXY] ⚠️ All IPs blocked, using: {ip}")
             return ip
+
+    def mark_blocked(self, ip: str = None):
+        """Đánh dấu IPv6 bị block (rate limited)."""
+        with self.lock:
+            if ip is None:
+                ip = self.last_used
+            if ip:
+                self.blocked_until[ip] = time.time() + self.BLOCK_DURATION
+                print(f"[PROXY] ✗ Blocked for {self.BLOCK_DURATION}s: {ip}")
+
+    def get_blocked_count(self) -> int:
+        """Số IPv6 đang bị block."""
+        now = time.time()
+        return sum(1 for t in self.blocked_until.values() if now < t)
 
     def stats(self):
         return dict(self.usage_count)
