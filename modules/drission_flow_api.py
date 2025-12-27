@@ -54,37 +54,31 @@ class GeneratedImage:
 
 
 # JS Interceptor - Capture tokens và CANCEL request
-# Cải tiến: Intercept cả fetch và XHR, abort đúng cách
+# Giống batch_generator.py - đã test hoạt động
 JS_INTERCEPTOR = '''
+window._tk=null;window._pj=null;window._xbv=null;window._rct=null;window._payload=null;window._sid=null;window._url=null;
 (function(){
-    // Reset tokens
-    window._tk=null;window._pj=null;window._xbv=null;window._rct=null;
-    window._payload=null;window._sid=null;window._url=null;
-    window._intercepted = false;
-
-    if(window.__interceptReady) {
-        console.log('[INTERCEPTOR] Already ready');
-        return 'ALREADY_READY';
-    }
+    if(window.__interceptReady) return 'ALREADY_READY';
     window.__interceptReady = true;
 
-    // === INTERCEPT FETCH ===
-    var origFetch = window.fetch;
+    var orig = window.fetch;
     window.fetch = function(url, opts) {
-        var urlStr = typeof url === 'string' ? url : (url.url || '');
+        var urlStr = typeof url === 'string' ? url : url.url;
 
-        // Match các pattern của Google Flow API
+        // Match nhiều pattern hơn
         if (urlStr.includes('aisandbox') && (urlStr.includes('batchGenerate') || urlStr.includes('flowMedia') || urlStr.includes('generateContent'))) {
-            console.log('[INTERCEPT-FETCH] Capturing:', urlStr.substring(0, 80));
+            console.log('[INTERCEPT] Capturing request to:', urlStr);
 
             // Capture URL gốc
             window._url = urlStr;
-            window._intercepted = true;
 
-            // Extract projectId from URL
+            // Extract projectId from URL: /v1/projects/{projectId}/flowMedia:batchGenerateImages
             var match = urlStr.match(/\\/projects\\/([a-f0-9\\-]+)/i);
             if (match && match[1]) {
                 window._pj = match[1];
+                console.log('[TOKEN] projectId from URL:', window._pj);
+            } else {
+                console.log('[TOKEN] projectId NOT FOUND in URL:', urlStr);
             }
 
             // Capture từ headers
@@ -92,10 +86,11 @@ JS_INTERCEPTOR = '''
                 var h = opts.headers;
                 if (h['Authorization']) {
                     window._tk = h['Authorization'].replace('Bearer ', '');
-                    console.log('[TOKEN] Bearer: OK');
+                    console.log('[TOKEN] Bearer captured!');
                 }
                 if (h['x-browser-validation']) {
                     window._xbv = h['x-browser-validation'];
+                    console.log('[TOKEN] x-browser-validation captured!');
                 }
             }
 
@@ -104,83 +99,35 @@ JS_INTERCEPTOR = '''
                 window._payload = opts.body;
                 try {
                     var body = JSON.parse(opts.body);
+                    // sessionId from clientContext
                     if (body.clientContext) {
                         window._sid = body.clientContext.sessionId;
+                        // Fallback projectId from body if not in URL
                         if (!window._pj && body.clientContext.projectId) {
                             window._pj = body.clientContext.projectId;
                         }
                     }
+                    // recaptchaToken có thể ở root hoặc trong requests[0]
                     if (body.recaptchaToken) {
                         window._rct = body.recaptchaToken;
-                        console.log('[TOKEN] recaptcha: OK (root)');
-                    } else if (body.requests && body.requests[0]) {
-                        var req = body.requests[0];
-                        if (req.clientContext && req.clientContext.recaptchaToken) {
-                            window._rct = req.clientContext.recaptchaToken;
-                            console.log('[TOKEN] recaptcha: OK (requests[0])');
-                        } else if (req.recaptchaToken) {
-                            window._rct = req.recaptchaToken;
-                            console.log('[TOKEN] recaptcha: OK (requests[0].recaptchaToken)');
-                        }
+                        console.log('[TOKEN] recaptchaToken captured (root)!');
+                    } else if (body.requests && body.requests[0] && body.requests[0].clientContext && body.requests[0].clientContext.recaptchaToken) {
+                        window._rct = body.requests[0].clientContext.recaptchaToken;
+                        console.log('[TOKEN] recaptchaToken captured (requests[0])!');
                     }
                 } catch(e) {
-                    console.log('[ERROR] Parse body:', e.message);
+                    console.log('[ERROR] Parse body failed:', e);
                 }
             }
 
-            // CANCEL - Return fake successful response
-            console.log('[INTERCEPT] REQUEST BLOCKED! Token saved.');
-            return Promise.resolve(new Response(
-                JSON.stringify({"cancelled": true, "message": "Intercepted by VE3"}),
-                {status: 200, statusText: 'OK', headers: {'Content-Type': 'application/json'}}
-            ));
+            // CANCEL request - return fake response
+            console.log('[INTERCEPT] Request cancelled, tokens captured!');
+            return Promise.resolve(new Response(JSON.stringify({cancelled:true})));
         }
 
-        return origFetch.apply(this, arguments);
+        return orig.apply(this, arguments);
     };
-
-    // === INTERCEPT XMLHttpRequest ===
-    var origXHROpen = XMLHttpRequest.prototype.open;
-    var origXHRSend = XMLHttpRequest.prototype.send;
-
-    XMLHttpRequest.prototype.open = function(method, url) {
-        this._url = url;
-        this._method = method;
-        return origXHROpen.apply(this, arguments);
-    };
-
-    XMLHttpRequest.prototype.send = function(body) {
-        var urlStr = this._url || '';
-        if (urlStr.includes('aisandbox') && (urlStr.includes('batchGenerate') || urlStr.includes('flowMedia'))) {
-            console.log('[INTERCEPT-XHR] Blocking:', urlStr.substring(0, 80));
-            window._url = urlStr;
-            window._intercepted = true;
-
-            if (body) {
-                window._payload = body;
-                try {
-                    var parsed = JSON.parse(body);
-                    if (parsed.recaptchaToken) {
-                        window._rct = parsed.recaptchaToken;
-                    }
-                } catch(e) {}
-            }
-
-            // Fake response - don't actually send
-            var self = this;
-            setTimeout(function() {
-                Object.defineProperty(self, 'status', {value: 200});
-                Object.defineProperty(self, 'responseText', {value: '{"cancelled":true}'});
-                Object.defineProperty(self, 'readyState', {value: 4});
-                if (self.onreadystatechange) self.onreadystatechange();
-                if (self.onload) self.onload();
-            }, 100);
-            return;
-        }
-        return origXHRSend.apply(this, arguments);
-    };
-
-    console.log('[INTERCEPTOR] Ready - fetch + XHR hooked');
+    console.log('[INTERCEPTOR] Ready - will capture batchGenerateImages requests');
     return 'READY';
 })();
 '''
@@ -476,14 +423,15 @@ class DrissionFlowAPI:
         self.log("⚠️ Không phát hiện được ảnh, tiếp tục...", "WARN")
         return True  # Vẫn return True để tiếp tục
 
-    def setup(self, wait_for_project: bool = True, timeout: int = 120, warm_up: bool = True) -> bool:
+    def setup(self, wait_for_project: bool = True, timeout: int = 120, warm_up: bool = False) -> bool:
         """
         Setup Chrome và inject interceptor.
+        Giống batch_generator.py - không cần warm_up.
 
         Args:
             wait_for_project: Đợi user chọn project
             timeout: Timeout đợi project (giây)
-            warm_up: Tạo 1 ảnh trong Chrome trước để activate session
+            warm_up: Tạo 1 ảnh trong Chrome trước (default False - không cần)
 
         Returns:
             True nếu thành công
@@ -580,7 +528,7 @@ class DrissionFlowAPI:
         return None
 
     def _reset_tokens(self):
-        """Reset captured tokens trong browser."""
+        """Reset captured tokens trong browser. Giống batch_generator.py."""
         self.driver.run_js("""
             window.__interceptReady = false;
             window._tk = null;
@@ -590,12 +538,12 @@ class DrissionFlowAPI:
             window._payload = null;
             window._sid = null;
             window._url = null;
-            window._intercepted = false;
         """)
 
-    def _capture_tokens(self, prompt: str, timeout: int = 15) -> bool:
+    def _capture_tokens(self, prompt: str, timeout: int = 10) -> bool:
         """
-        Gửi prompt để trigger capture tokens.
+        Gửi prompt để capture tất cả tokens cần thiết.
+        Giống batch_generator.py get_tokens().
 
         Args:
             prompt: Prompt để gửi
@@ -604,13 +552,7 @@ class DrissionFlowAPI:
         Returns:
             True nếu capture thành công
         """
-        self.log(f"Capture tokens với prompt: {prompt[:50]}...")
-
-        # Reset và inject interceptor
-        self._reset_tokens()
-        time.sleep(0.3)
-        inject_result = self.driver.run_js(JS_INTERCEPTOR)
-        self.log(f"  Interceptor: {inject_result}")
+        self.log(f"    Prompt: {prompt[:50]}...")
 
         # Tìm và gửi prompt
         textarea = self._find_textarea()
@@ -623,11 +565,12 @@ class DrissionFlowAPI:
         textarea.input(prompt)
         time.sleep(0.3)
         textarea.input('\n')  # Enter để gửi
-        self.log("✓ Đã gửi prompt, đợi capture...")
+        self.log("    ✓ Đã gửi, đợi capture...")
 
-        # Đợi tokens - thời gian đủ để recaptcha generate
-        time.sleep(4)
+        # Đợi 3 giây theo hướng dẫn (giống batch_generator.py)
+        time.sleep(3)
 
+        # Đọc tokens từ window variables
         for i in range(timeout):
             tokens = self.driver.run_js("""
                 return {
@@ -636,49 +579,40 @@ class DrissionFlowAPI:
                     xbv: window._xbv,
                     rct: window._rct,
                     sid: window._sid,
-                    url: window._url,
-                    payload: window._payload,
-                    intercepted: window._intercepted
+                    url: window._url
                 };
             """)
 
-            # Debug log
+            # Debug output (giống batch_generator.py)
             if i == 0 or i == 5:
-                self.log(f"  Bearer: {'✓' if tokens.get('tk') else '✗'}")
-                self.log(f"  recaptcha: {'✓' if tokens.get('rct') else '✗'}")
-                self.log(f"  projectId: {'✓' if tokens.get('pj') else '✗'}")
-                self.log(f"  URL: {'✓' if tokens.get('url') else '✗'}")
-                self.log(f"  Intercepted: {'✓' if tokens.get('intercepted') else '✗'}")
+                self.log(f"    [DEBUG] Bearer: {'YES' if tokens.get('tk') else 'NO'}")
+                self.log(f"    [DEBUG] recaptcha: {'YES' if tokens.get('rct') else 'NO'}")
+                self.log(f"    [DEBUG] projectId: {'YES' if tokens.get('pj') else 'NO'}")
+                self.log(f"    [DEBUG] URL: {'YES' if tokens.get('url') else 'NO'}")
 
             if tokens.get("tk") and tokens.get("rct"):
-                # Kiểm tra request có bị intercept không
-                if not tokens.get("intercepted"):
-                    self.log("⚠️ Request không bị intercept - token có thể đã dùng!", "WARN")
-
                 self.bearer_token = f"Bearer {tokens['tk']}"
                 self.project_id = tokens.get("pj")
                 self.session_id = tokens.get("sid")
                 self.recaptcha_token = tokens.get("rct")
                 self.x_browser_validation = tokens.get("xbv")
                 self.captured_url = tokens.get("url")
-                self.captured_payload = tokens.get("payload")
 
-                self.log("✓ Got Bearer token!")
-                self.log("✓ Got recaptchaToken!")
-                if tokens.get("intercepted"):
-                    self.log("✓ Request đã bị BLOCK - token còn fresh!")
+                self.log("    ✓ Got Bearer token!")
+                self.log("    ✓ Got recaptchaToken!")
                 if self.captured_url:
-                    self.log(f"✓ URL: {self.captured_url[:60]}...")
+                    self.log(f"    ✓ Captured URL: {self.captured_url[:60]}...")
                 return True
 
             time.sleep(1)
 
-        self.log("✗ Không lấy được đủ tokens", "ERROR")
+        self.log("    ✗ Không lấy được đủ tokens", "ERROR")
         return False
 
-    def refresh_recaptcha(self, prompt: str = "test image") -> bool:
+    def refresh_recaptcha(self, prompt: str) -> bool:
         """
-        Lấy recaptchaToken mới (Chrome đã mở).
+        Gửi prompt mới để lấy fresh recaptchaToken.
+        Giống batch_generator.py refresh_recaptcha().
 
         Args:
             prompt: Prompt để trigger recaptcha
@@ -686,10 +620,8 @@ class DrissionFlowAPI:
         Returns:
             True nếu thành công
         """
-        self.log("Refresh recaptchaToken...")
-
-        # Reset chỉ recaptcha
-        self.driver.run_js("window._rct = null; window._payload = null;")
+        # Reset captured data (chỉ rct - giống batch_generator.py)
+        self.driver.run_js("window._rct = null;")
 
         textarea = self._find_textarea()
         if not textarea:
@@ -701,23 +633,25 @@ class DrissionFlowAPI:
         time.sleep(0.3)
         textarea.input('\n')
 
+        # Đợi 3 giây
         time.sleep(3)
 
+        # Wait for new token
         for i in range(10):
-            tokens = self.driver.run_js("return {rct: window._rct, payload: window._payload};")
-            if tokens.get("rct"):
-                self.recaptcha_token = tokens["rct"]
-                self.captured_payload = tokens.get("payload")
-                self.log("✓ Got new recaptchaToken!")
+            rct = self.driver.run_js("return window._rct;")
+            if rct:
+                self.recaptcha_token = rct
+                self.log("    ✓ Got new recaptchaToken!")
                 return True
             time.sleep(1)
 
-        self.log("✗ Không lấy được recaptchaToken mới", "ERROR")
+        self.log("    ✗ Không lấy được recaptchaToken mới", "ERROR")
         return False
 
     def call_api(self, prompt: str = None) -> Tuple[List[GeneratedImage], Optional[str]]:
         """
         Gọi API với captured tokens.
+        Giống batch_generator.py - lấy payload từ browser mỗi lần.
 
         Args:
             prompt: Prompt (nếu None, dùng payload đã capture)
@@ -728,11 +662,13 @@ class DrissionFlowAPI:
         if not self.captured_url:
             return [], "No URL captured"
 
-        if not self.captured_payload:
-            return [], "No payload captured"
-
         url = self.captured_url
-        self.log(f"→ API: {url[:80]}...")
+        self.log(f"→ URL: {url[:80]}...")
+
+        # Lấy payload gốc từ Chrome (giống batch_generator.py)
+        original_payload = self.driver.run_js("return window._payload;")
+        if not original_payload:
+            return [], "No payload captured"
 
         # Headers
         headers = {
@@ -752,13 +688,14 @@ class DrissionFlowAPI:
                 "https": f"socks5://127.0.0.1:{self.proxy_port}"
             }
 
-        self.log(f"→ Calling API ({len(self.captured_payload)} chars payload)...")
+        self.log(f"→ Calling API with captured payload ({len(original_payload)} chars)...")
 
         try:
+            # Dùng data= vì original_payload đã là JSON string
             resp = requests.post(
                 url,
                 headers=headers,
-                data=self.captured_payload,
+                data=original_payload,
                 timeout=120,
                 proxies=proxies
             )
