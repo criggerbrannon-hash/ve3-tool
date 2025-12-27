@@ -160,7 +160,13 @@ class BatchGenerator:
             options = ChromiumOptions()
             if self.use_proxy:
                 options.set_argument(f'--proxy-server=socks5://127.0.0.1:{PROXY_PORT}')
-            options.auto_port()  # Tự động chọn port debug
+            # Dùng Chrome profile có sẵn của user
+            import os
+            user_data = os.path.expandvars(r'%LOCALAPPDATA%\Google\Chrome\User Data')
+            if os.path.exists(user_data):
+                options.set_argument(f'--user-data-dir={user_data}')
+                print(f"    → Using profile: {user_data}")
+            options.auto_port()
             self.driver = ChromiumPage(addr_or_opts=options)
             print(f"    ✓ Chrome opened" + (" (with proxy)" if self.use_proxy else " (no proxy)"))
         except Exception as e:
