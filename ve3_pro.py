@@ -950,20 +950,6 @@ class UnixVoiceToVideo:
         ttk.Radiobutton(gen_row, text="⚡ API", variable=gen_mode_var, value="api",
                         command=on_mode_change).pack(side=tk.LEFT)
 
-        # Row 2: API Provider
-        api_row = ttk.Frame(prof_tab)
-        api_row.pack(fill=tk.X, pady=(0, 3))
-        ttk.Label(api_row, text="API Provider:", font=('Segoe UI', 9, 'bold')).pack(side=tk.LEFT)
-
-        current_provider = self._get_api_provider()
-        api_provider_var = tk.StringVar(value=current_provider)
-        def on_provider_change():
-            self._save_api_provider(api_provider_var.get())
-        ttk.Radiobutton(api_row, text="🆓 Direct (free)", variable=api_provider_var, value="direct",
-                        command=on_provider_change).pack(side=tk.LEFT, padx=(10, 5))
-        ttk.Radiobutton(api_row, text="💰 Nanoai (paid)", variable=api_provider_var, value="nanoai",
-                        command=on_provider_change).pack(side=tk.LEFT)
-
         # Parallel workers setting (gọn 1 dòng)
         ttk.Separator(prof_tab, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(10, 5))
 
@@ -1526,36 +1512,6 @@ class UnixVoiceToVideo:
             self.log(f"Generation mode: {mode_name}", "OK")
         except Exception as e:
             print(f"Save generation_mode error: {e}")
-
-    def _get_api_provider(self) -> str:
-        """Get API provider from config: 'direct' or 'nanoai'."""
-        try:
-            import yaml
-            config_path = CONFIG_DIR / "settings.yaml"
-            if config_path.exists():
-                with open(config_path, 'r', encoding='utf-8') as f:
-                    config = yaml.safe_load(f) or {}
-                return config.get('api_provider', 'direct')
-        except:
-            pass
-        return 'direct'  # Default: Direct (miễn phí)
-
-    def _save_api_provider(self, provider: str):
-        """Save API provider to config: 'direct' or 'nanoai'."""
-        try:
-            import yaml
-            config_path = CONFIG_DIR / "settings.yaml"
-            config = {}
-            if config_path.exists():
-                with open(config_path, 'r', encoding='utf-8') as f:
-                    config = yaml.safe_load(f) or {}
-            config['api_provider'] = provider
-            with open(config_path, 'w', encoding='utf-8') as f:
-                yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
-            provider_name = "Direct (Miễn phí)" if provider == 'direct' else "Nanoai.pics (Trả phí)"
-            self.log(f"API Provider: {provider_name}", "OK")
-        except Exception as e:
-            print(f"Save api_provider error: {e}")
 
     def _get_parallel_workers(self) -> int:
         """Get number of parallel workers from config."""

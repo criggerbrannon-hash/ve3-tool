@@ -24,10 +24,10 @@ flow_image_count: 2
 flow_timeout: 120
 flow_delay: 3.0
 
-# API Provider: "direct" hoặc "nanoai"
-# - direct: Miễn phí, tự capture token từ browser (mặc định)
-# - nanoai: Trả phí qua nanoai.pics, ổn định hơn
-api_provider: "direct"
+# DrissionPage Settings (Image Generation)
+# Sử dụng DrissionPage + Interceptor để tạo ảnh
+proxy_port: 1080              # Port SOCKS5 proxy cho IPv6 rotation
+use_ipv6_proxy: true          # Bật/tắt IPv6 proxy
 
 # ============================================================================
 # VIDEO GENERATION (VEO 3) Settings
