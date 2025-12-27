@@ -308,6 +308,14 @@ class IPv6Rotator:
         now = time.time()
         return sum(1 for t in self.blocked_until.values() if now < t)
 
+    def clear_blocked(self):
+        """Xóa tất cả blocked IPs - dùng khi restart Chrome session."""
+        with self.lock:
+            count = len(self.blocked_until)
+            self.blocked_until.clear()
+            if count > 0:
+                print(f"[PROXY] ✓ Cleared {count} blocked IPs")
+
     def stats(self):
         return dict(self.usage_count)
 

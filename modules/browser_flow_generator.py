@@ -3017,25 +3017,47 @@ class BrowserFlowGenerator:
                         self._log("❌ Bearer token hết hạn!", "error")
                         break
 
-                    # Check for 403 and restart Chrome if too many consecutive
+                    # Check for 403 - restart Chrome immediately
+                    # (generate_image already retried 3 times internally)
                     if error and "403" in str(error):
                         consecutive_403 += 1
-                        if consecutive_403 >= MAX_CONSECUTIVE_403:
-                            self._log(f"⚠️ {consecutive_403} lỗi 403 liên tiếp - Restart Chrome với proxy mới...", "warn")
-                            try:
-                                # Close current Chrome
-                                drission_api.close()
-                                time.sleep(2)
-                                # Re-setup with same project
-                                if drission_api.setup():
-                                    self._log("✓ Chrome đã restart thành công!", "info")
-                                    consecutive_403 = 0
+                        self._log(f"⚠️ Lỗi 403 (đã retry 3 lần) - Restart Chrome ngay...", "warn")
+                        try:
+                            # Close current Chrome
+                            drission_api.close()
+
+                            # Clear blocked IPs - new session gets fresh start
+                            if drission_api._proxy_server and hasattr(drission_api._proxy_server, 'rotator'):
+                                drission_api._proxy_server.rotator.clear_blocked()
+
+                            time.sleep(3)
+
+                            # Re-setup Chrome - will get new session
+                            if drission_api.setup():
+                                self._log("✓ Chrome đã restart thành công!", "info")
+                                consecutive_403 = 0
+
+                                # Retry current prompt with new Chrome session
+                                self._log(f"→ Retry prompt: {pid}...", "info")
+                                success2, images2, error2 = drission_api.generate_image(
+                                    prompt=prompt,
+                                    save_dir=save_dir,
+                                    filename=pid
+                                )
+                                if success2 and images2:
+                                    self._log(f"   ✓ Retry thành công! Saved {len(images2)} image(s)")
+                                    self.stats["success"] += 1
+                                    self.stats["failed"] -= 1  # Undo the fail count
+                                    if images2[0].media_name:
+                                        self._log(f"   Media name: {images2[0].media_name[:40]}...")
                                 else:
-                                    self._log("✗ Không restart được Chrome", "error")
-                                    break
-                            except Exception as e:
-                                self._log(f"✗ Restart error: {e}", "error")
+                                    self._log(f"   ✗ Retry vẫn thất bại: {error2}", "error")
+                            else:
+                                self._log("✗ Không restart được Chrome", "error")
                                 break
+                        except Exception as e:
+                            self._log(f"✗ Restart error: {e}", "error")
+                            break
 
             except Exception as e:
                 self._log(f"   ✗ Exception: {e}", "error")
