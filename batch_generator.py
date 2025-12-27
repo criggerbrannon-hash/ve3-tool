@@ -33,66 +33,65 @@ DEFAULT_PROMPTS = [
     "a vintage car on route 66 at sunset",
 ]
 
-# JS capture Authorization header + projectId + sessionId + recaptchaToken
+# JS capture tokens - based on chrome_token_extractor.py
+# CANCEL request để script tự gọi API
 JS_INTERCEPTOR = '''
+window._tk=null;window._pj=null;window._xbv=null;window._rct=null;window._payload=null;window._sid=null;
 (function(){
     if(window.__interceptReady) return 'ALREADY_READY';
     window.__interceptReady = true;
-    window.__captured = {
-        token: null,
-        projectId: null,
-        sessionId: null,
-        recaptchaToken: null
-    };
 
-    const origFetch = window.fetch;
+    var orig = window.fetch;
     window.fetch = function(url, opts) {
-        const urlStr = typeof url === 'string' ? url : url.url;
+        var urlStr = typeof url === 'string' ? url : url.url;
 
-        if (urlStr.includes('aisandbox-pa.googleapis.com')) {
-            console.log('[INTERCEPT] URL:', urlStr.substring(0, 80));
+        if (urlStr.includes('aisandbox-pa.googleapis.com') && urlStr.includes('batchGenerateImages')) {
+            console.log('[INTERCEPT] Capturing request...');
 
-            // Capture Bearer token from headers
-            if (opts?.headers) {
-                let auth = opts.headers.Authorization || opts.headers.authorization;
-                if (!auth && typeof opts.headers === 'object') {
-                    for (let key in opts.headers) {
-                        if (key.toLowerCase() === 'authorization') {
-                            auth = opts.headers[key];
-                            break;
-                        }
-                    }
+            // Capture từ headers
+            if (opts && opts.headers) {
+                var h = opts.headers;
+                if (h['Authorization']) {
+                    window._tk = h['Authorization'].replace('Bearer ', '');
+                    console.log('[TOKEN] Bearer captured!');
                 }
-                if (auth && auth.startsWith('Bearer ')) {
-                    window.__captured.token = auth;
-                    console.log('[CAPTURED] Bearer token!');
+                if (h['x-browser-validation']) {
+                    window._xbv = h['x-browser-validation'];
+                    console.log('[TOKEN] x-browser-validation captured!');
                 }
             }
 
-            // Capture projectId, sessionId and recaptchaToken from body
-            if (opts?.body) {
+            // Capture payload và recaptchaToken
+            if (opts && opts.body) {
+                window._payload = opts.body;
                 try {
-                    const body = JSON.parse(opts.body);
+                    var body = JSON.parse(opts.body);
+                    // projectId và sessionId
                     if (body.clientContext) {
-                        if (body.clientContext.projectId) {
-                            window.__captured.projectId = body.clientContext.projectId;
-                            console.log('[CAPTURED] projectId:', body.clientContext.projectId);
-                        }
-                        if (body.clientContext.sessionId) {
-                            window.__captured.sessionId = body.clientContext.sessionId;
-                        }
+                        window._pj = body.clientContext.projectId;
+                        window._sid = body.clientContext.sessionId;
                     }
-                    // recaptchaToken nằm ở root level
+                    // recaptchaToken có thể ở root hoặc trong requests[0]
                     if (body.recaptchaToken) {
-                        window.__captured.recaptchaToken = body.recaptchaToken;
-                        console.log('[CAPTURED] recaptchaToken!');
+                        window._rct = body.recaptchaToken;
+                        console.log('[TOKEN] recaptchaToken captured (root)!');
+                    } else if (body.requests && body.requests[0] && body.requests[0].clientContext && body.requests[0].clientContext.recaptchaToken) {
+                        window._rct = body.requests[0].clientContext.recaptchaToken;
+                        console.log('[TOKEN] recaptchaToken captured (requests[0])!');
                     }
-                } catch(e) {}
+                } catch(e) {
+                    console.log('[ERROR] Parse body failed:', e);
+                }
             }
+
+            // CANCEL request - return fake response
+            console.log('[INTERCEPT] Request cancelled, tokens captured!');
+            return Promise.resolve(new Response(JSON.stringify({cancelled:true})));
         }
-        return origFetch.apply(this, arguments);
+
+        return orig.apply(this, arguments);
     };
-    console.log('[INTERCEPTOR] Ready');
+    console.log('[INTERCEPTOR] Ready - will capture batchGenerateImages requests');
     return 'READY';
 })();
 '''
@@ -107,6 +106,7 @@ class BatchGenerator:
         self.project_id = None
         self.session_id = None
         self.recaptcha_token = None
+        self.xbv = None  # x-browser-validation header
         self.stats = {"total": 0, "success": 0, "failed": 0}
 
     def setup(self):
@@ -125,16 +125,15 @@ class BatchGenerator:
             return False
 
         print("\n[2] Inject interceptor...")
-        # Reset completely - restore original fetch if needed
+        # Reset completely
         self.driver.run_js("""
-            // Store original fetch if not already stored
-            if (!window.__origFetch) {
-                window.__origFetch = window.fetch;
-            }
-            // Restore original fetch to remove old wrappers
-            window.fetch = window.__origFetch;
             window.__interceptReady = false;
-            window.__captured = {token: null, projectId: null, sessionId: null, recaptchaToken: null};
+            window._tk = null;
+            window._pj = null;
+            window._xbv = null;
+            window._rct = null;
+            window._payload = null;
+            window._sid = null;
         """)
         time.sleep(0.3)
         result = self.driver.run_js(JS_INTERCEPTOR)
@@ -154,7 +153,6 @@ class BatchGenerator:
 
     def get_tokens(self, prompt):
         """Gửi prompt để capture tất cả tokens cần thiết"""
-        print(f"\n[3] Gửi prompt để lấy tokens...")
         print(f"    Prompt: {prompt[:50]}...")
 
         textarea = self.find_textarea()
@@ -164,41 +162,50 @@ class BatchGenerator:
             textarea.input(prompt)
             time.sleep(0.3)
             textarea.input('\n')
-            print("    ✓ Đã gửi")
+            print("    ✓ Đã gửi, đợi capture...")
 
-        print("    Đợi capture tokens...")
-        for i in range(30):
-            time.sleep(1)
-            captured = self.driver.run_js("return window.__captured || {};")
+        # Đợi 3 giây theo hướng dẫn
+        time.sleep(3)
 
-            # Debug: show what was captured
-            if i == 5 or i == 15 or i == 25:
-                print(f"\n    [DEBUG] Bearer: {'YES' if captured.get('token') else 'NO'}")
-                print(f"    [DEBUG] recaptcha: {'YES' if captured.get('recaptchaToken') else 'NO'}")
-                print(f"    [DEBUG] projectId: {'YES' if captured.get('projectId') else 'NO'}")
+        # Đọc tokens từ window variables
+        for i in range(10):
+            tokens = self.driver.run_js("""
+                return {
+                    tk: window._tk,
+                    pj: window._pj,
+                    xbv: window._xbv,
+                    rct: window._rct,
+                    sid: window._sid
+                };
+            """)
 
-            if captured and captured.get("token") and captured.get("recaptchaToken"):
-                self.bearer = captured.get("token")
-                self.project_id = captured.get("projectId")
-                self.session_id = captured.get("sessionId")
-                self.recaptcha_token = captured.get("recaptchaToken")
-                print(f"\n    ✓ Got Bearer token!")
+            # Debug output
+            if i == 0 or i == 5:
+                print(f"    [DEBUG] Bearer: {'YES' if tokens.get('tk') else 'NO'}")
+                print(f"    [DEBUG] recaptcha: {'YES' if tokens.get('rct') else 'NO'}")
+                print(f"    [DEBUG] projectId: {'YES' if tokens.get('pj') else 'NO'}")
+
+            if tokens.get("tk") and tokens.get("rct"):
+                self.bearer = f"Bearer {tokens['tk']}"
+                self.project_id = tokens.get("pj")
+                self.session_id = tokens.get("sid")
+                self.recaptcha_token = tokens.get("rct")
+                self.xbv = tokens.get("xbv")
+                print(f"    ✓ Got Bearer token!")
                 print(f"    ✓ Got recaptchaToken!")
                 if self.project_id:
                     print(f"    ✓ Project ID: {self.project_id[:20]}...")
                 return True
-            print(f"    {i+1}s...", end="\r")
 
-        print("\n    ✗ Không lấy được đủ tokens")
-        # Show what was captured for debugging
-        print(f"    Bearer: {'YES' if captured.get('token') else 'NO'}")
-        print(f"    recaptcha: {'YES' if captured.get('recaptchaToken') else 'NO'}")
+            time.sleep(1)
+
+        print("    ✗ Không lấy được đủ tokens")
         return False
 
     def refresh_recaptcha(self, prompt):
         """Gửi prompt mới để lấy fresh recaptchaToken"""
         # Reset captured data
-        self.driver.run_js("window.__captured.recaptchaToken = null;")
+        self.driver.run_js("window._rct = null;")
 
         textarea = self.find_textarea()
         if textarea:
@@ -208,13 +215,17 @@ class BatchGenerator:
             time.sleep(0.3)
             textarea.input('\n')
 
+        # Đợi 3 giây
+        time.sleep(3)
+
         # Wait for new token
-        for i in range(15):
-            time.sleep(1)
-            captured = self.driver.run_js("return window.__captured || {};")
-            if captured and captured.get("recaptchaToken"):
-                self.recaptcha_token = captured.get("recaptchaToken")
+        for i in range(10):
+            rct = self.driver.run_js("return window._rct;")
+            if rct:
+                self.recaptcha_token = rct
+                print(f"    ✓ Got new recaptchaToken!")
                 return True
+            time.sleep(1)
         return False
 
     def call_api(self, prompt, count=4):
@@ -230,6 +241,9 @@ class BatchGenerator:
             "Origin": "https://aisandbox.google.com",
             "Referer": "https://aisandbox.google.com/",
         }
+        # Add x-browser-validation if captured
+        if self.xbv:
+            headers["x-browser-validation"] = self.xbv
 
         # Build requests array như format chuẩn của Flow API
         requests_data = []
