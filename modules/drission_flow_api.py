@@ -210,10 +210,6 @@ class DrissionFlowAPI:
         log_callback: Optional[Callable] = None,
         # Webshare proxy - dùng global proxy manager
         webshare_enabled: bool = True,  # BẬT Webshare proxy by default
-        # Parallel worker support
-        worker_id: int = None,  # Worker ID để dùng proxy riêng cho parallel mode
-        # Headless mode
-        use_headless: bool = False,  # Default False - Google Flow cần UI để đăng nhập
         # Legacy params (ignored)
         proxy_port: int = 1080,
         use_proxy: bool = False,
@@ -227,7 +223,6 @@ class DrissionFlowAPI:
             verbose: In log chi tiết
             log_callback: Callback để log (msg, level)
             webshare_enabled: Dùng Webshare proxy pool (default True)
-            worker_id: ID của worker để dùng proxy riêng (parallel mode)
         """
         self.profile_dir = Path(profile_dir)
         # Auto-generate unique port for parallel execution
@@ -237,8 +232,6 @@ class DrissionFlowAPI:
             self.chrome_port = chrome_port
         self.verbose = verbose
         self.log_callback = log_callback
-        self.worker_id = worker_id  # Lưu worker_id cho parallel mode
-        self.use_headless = use_headless  # Headless mode cho server/parallel
 
         # Chrome/DrissionPage
         self.driver: Optional[ChromiumPage] = None
@@ -252,12 +245,7 @@ class DrissionFlowAPI:
                 manager = get_proxy_manager()
                 if manager.proxies:
                     self._webshare_proxy = WebshareProxy()  # Wrapper cho manager
-                    # Hiển thị proxy đang dùng (theo worker_id nếu có)
-                    if worker_id is not None:
-                        proxy = manager.get_proxy_for_worker(worker_id)
-                        self.log(f"✓ Webshare [W{worker_id}]: {len(manager.proxies)} proxies, using: {proxy.endpoint}")
-                    else:
-                        self.log(f"✓ Webshare: {len(manager.proxies)} proxies, current: {manager.current_proxy.endpoint}")
+                    self.log(f"✓ Webshare: {len(manager.proxies)} proxies, current: {manager.current_proxy.endpoint}")
                 else:
                     self._use_webshare = False
                     self.log("⚠️ Webshare: No proxies loaded", "WARN")
@@ -486,22 +474,16 @@ class DrissionFlowAPI:
             options.set_user_data_path(str(self.profile_dir))
             options.set_local_port(self.chrome_port)
 
-            # KHÔNG dùng headless - Google Flow cần UI để đăng nhập và bypass captcha
-
             if self._use_webshare and self._webshare_proxy:
-                # Lấy proxy info - dùng worker_id nếu có (parallel mode)
-                username, password = self._webshare_proxy.get_chrome_auth(self.worker_id)
-                remote_proxy_url = self._webshare_proxy.get_chrome_proxy_arg(self.worker_id)
+                # Lấy proxy info
+                username, password = self._webshare_proxy.get_chrome_auth()
+                remote_proxy_url = self._webshare_proxy.get_chrome_proxy_arg()
 
                 if username and password:
                     # Có auth → dùng local proxy bridge
                     from webshare_proxy import get_proxy_manager
                     manager = get_proxy_manager()
-                    # Dùng proxy riêng cho worker_id (parallel mode)
-                    if self.worker_id is not None:
-                        proxy = manager.get_proxy_for_worker(self.worker_id)
-                    else:
-                        proxy = manager.current_proxy
+                    proxy = manager.current_proxy
 
                     try:
                         from proxy_bridge import start_proxy_bridge
@@ -771,38 +753,14 @@ class DrissionFlowAPI:
         if not original_payload:
             return [], "No payload captured"
 
-        # Sửa số ảnh trong payload - FORCE 1 ảnh
+        # Sửa số ảnh trong payload
         try:
             payload_data = json.loads(original_payload)
-            modified = False
-
-            # Tìm và sửa numImages - thử nhiều path khác nhau
+            # Tìm và sửa numImages trong requests[0].imageGenerationConfig
             if "requests" in payload_data and payload_data["requests"]:
                 for req in payload_data["requests"]:
-                    # Path 1: imageGenerationConfig.numImages
                     if "imageGenerationConfig" in req:
-                        old_count = req["imageGenerationConfig"].get("numImages", "N/A")
                         req["imageGenerationConfig"]["numImages"] = num_images
-                        modified = True
-                        self.log(f"   → numImages: {old_count} → {num_images}")
-
-                    # Path 2: generationConfig.numImages (alternative path)
-                    if "generationConfig" in req:
-                        old_count = req["generationConfig"].get("numImages", "N/A")
-                        req["generationConfig"]["numImages"] = num_images
-                        modified = True
-                        self.log(f"   → generationConfig.numImages: {old_count} → {num_images}")
-
-            # Path 3: Top-level imageGenerationConfig
-            if "imageGenerationConfig" in payload_data:
-                old_count = payload_data["imageGenerationConfig"].get("numImages", "N/A")
-                payload_data["imageGenerationConfig"]["numImages"] = num_images
-                modified = True
-                self.log(f"   → top-level numImages: {old_count} → {num_images}")
-
-            if not modified:
-                self.log(f"⚠️ Không tìm thấy numImages trong payload - có thể tạo 2 ảnh!", "WARN")
-
             original_payload = json.dumps(payload_data)
         except Exception as e:
             self.log(f"⚠️ Không sửa được numImages: {e}", "WARN")
@@ -823,8 +781,8 @@ class DrissionFlowAPI:
             # API call qua Webshare proxy để IP match với Chrome
             proxies = None
             if self._use_webshare and self._webshare_proxy:
-                proxies = self._webshare_proxy.get_proxies(self.worker_id)
-                self.log(f"→ Using Webshare proxy for API call (worker_id={self.worker_id})")
+                proxies = self._webshare_proxy.get_proxies()
+                self.log(f"→ Using Webshare proxy for API call")
 
             resp = requests.post(
                 url,
@@ -968,7 +926,7 @@ class DrissionFlowAPI:
                     try:
                         proxies = None
                         if self._use_webshare and self._webshare_proxy:
-                            proxies = self._webshare_proxy.get_proxies(self.worker_id)
+                            proxies = self._webshare_proxy.get_proxies()
                         resp = requests.get(img.url, timeout=60, proxies=proxies)
                         if resp.status_code == 200:
                             img_path = save_dir / f"{fname}.png"

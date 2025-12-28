@@ -71,8 +71,7 @@ class BrowserFlowGenerator:
         profile_name: str = "main",
         headless: bool = False,
         verbose: bool = True,
-        config_path: str = "config/settings.yaml",
-        worker_id: int = None  # Worker ID cho parallel mode
+        config_path: str = "config/settings.yaml"
     ):
         """
         Khoi tao BrowserFlowGenerator.
@@ -83,7 +82,6 @@ class BrowserFlowGenerator:
             headless: Chay an (khong hien UI) - nen False lan dau de dang nhap
             verbose: In log chi tiet
             config_path: Duong dan file config
-            worker_id: ID của worker để dùng proxy riêng (parallel mode)
         """
         if not SELENIUM_AVAILABLE:
             raise ImportError(
@@ -95,7 +93,6 @@ class BrowserFlowGenerator:
         self.profile_name = profile_name
         self.headless = headless
         self.verbose = verbose
-        self.worker_id = worker_id  # Lưu worker_id cho parallel mode
 
         # Load config
         self.config = {}
@@ -155,32 +152,21 @@ class BrowserFlowGenerator:
             print(f"[{timestamp}] {icons.get(level, '')} {message}")
 
     def _get_profile_path(self) -> Optional[str]:
-        """Lấy Chrome profile path từ config hoặc default.
-
-        Khi parallel mode (worker_id set), tạo profile riêng cho mỗi worker.
-        """
-        # Base profile path từ settings.yaml
+        """Lấy Chrome profile path từ config hoặc default."""
+        # Từ settings.yaml
         chrome_profile = self.config.get('chrome_profile', '')
         if chrome_profile:
             profile_path = Path(chrome_profile)
-            if not profile_path.exists():
-                # Thử resolve từ project root
-                profile_path = Path.cwd() / chrome_profile
-        else:
-            # Fallback: dùng tool profile
-            if hasattr(self, 'profile_dir') and self.profile_dir:
-                profile_path = self.profile_dir
-            else:
-                profile_path = Path.cwd() / "chrome_profile"
+            if profile_path.exists():
+                return str(profile_path)
+            # Thử resolve từ project root
+            abs_path = Path.cwd() / chrome_profile
+            if abs_path.exists():
+                return str(abs_path)
 
-        # Parallel mode: tạo profile riêng cho mỗi worker
-        if hasattr(self, 'worker_id') and self.worker_id is not None:
-            profile_path = Path(str(profile_path) + f"_worker{self.worker_id}")
-            profile_path.mkdir(parents=True, exist_ok=True)
-            return str(profile_path)
-
-        if profile_path.exists():
-            return str(profile_path)
+        # Fallback: dùng tool profile
+        if hasattr(self, 'profile_dir') and self.profile_dir:
+            return str(self.profile_dir)
 
         return None
 
@@ -2948,8 +2934,7 @@ class BrowserFlowGenerator:
             profile_dir=self._get_profile_path() or "./chrome_profile",
             verbose=self.verbose,
             log_callback=self._log,
-            webshare_enabled=use_webshare,
-            worker_id=self.worker_id  # Truyền worker_id cho parallel mode
+            webshare_enabled=use_webshare
         )
 
         self._log("🚀 DrissionPage + Interceptor")
