@@ -758,17 +758,25 @@ class DrissionFlowAPI:
             payload_data = json.loads(original_payload)
             modified = False
 
+            # DEBUG: In ra cấu trúc payload để debug
+            self.log(f"   [DEBUG] Payload keys: {list(payload_data.keys())}")
+
             # Tìm và sửa numImages - thử nhiều path khác nhau
             if "requests" in payload_data and payload_data["requests"]:
-                for req in payload_data["requests"]:
+                for i, req in enumerate(payload_data["requests"]):
+                    self.log(f"   [DEBUG] requests[{i}] keys: {list(req.keys())}")
                     if "imageGenerationConfig" in req:
                         old_val = req["imageGenerationConfig"].get("numImages", "N/A")
                         req["imageGenerationConfig"]["numImages"] = num_images
                         self.log(f"   → numImages: {old_val} → {num_images}")
                         modified = True
+                    else:
+                        self.log(f"   [DEBUG] No imageGenerationConfig in requests[{i}]")
 
             if not modified:
                 self.log(f"⚠️ Không tìm thấy numImages trong payload!", "WARN")
+                # In thêm 200 ký tự đầu của payload để debug
+                self.log(f"   [DEBUG] Payload preview: {original_payload[:300]}...", "WARN")
 
             original_payload = json.dumps(payload_data)
         except Exception as e:
