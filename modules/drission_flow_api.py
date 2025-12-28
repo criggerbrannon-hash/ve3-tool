@@ -753,14 +753,23 @@ class DrissionFlowAPI:
         if not original_payload:
             return [], "No payload captured"
 
-        # Sửa số ảnh trong payload
+        # Sửa số ảnh trong payload - FORCE 1 ảnh
         try:
             payload_data = json.loads(original_payload)
-            # Tìm và sửa numImages trong requests[0].imageGenerationConfig
+            modified = False
+
+            # Tìm và sửa numImages - thử nhiều path khác nhau
             if "requests" in payload_data and payload_data["requests"]:
                 for req in payload_data["requests"]:
                     if "imageGenerationConfig" in req:
+                        old_val = req["imageGenerationConfig"].get("numImages", "N/A")
                         req["imageGenerationConfig"]["numImages"] = num_images
+                        self.log(f"   → numImages: {old_val} → {num_images}")
+                        modified = True
+
+            if not modified:
+                self.log(f"⚠️ Không tìm thấy numImages trong payload!", "WARN")
+
             original_payload = json.dumps(payload_data)
         except Exception as e:
             self.log(f"⚠️ Không sửa được numImages: {e}", "WARN")
