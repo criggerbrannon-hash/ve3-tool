@@ -107,14 +107,13 @@ class SmartEngine:
     # Chi refresh khi API tra loi 401 (authentication error)
     # Dieu nay toi uu hon vi token thuong valid lau hon 50 phut
 
-    def __init__(self, config_path: str = None, assigned_profile: str = None, worker_id: int = None):
+    def __init__(self, config_path: str = None, assigned_profile: str = None):
         """
         Initialize SmartEngine.
 
         Args:
             config_path: Path to accounts.json config file
             assigned_profile: Specific Chrome profile name to use (for parallel processing)
-            worker_id: ID của worker để dùng proxy riêng (parallel mode)
         """
         # Support VE3_CONFIG_DIR environment variable
         if config_path:
@@ -133,7 +132,6 @@ class SmartEngine:
 
         # Assigned profile for parallel processing
         self.assigned_profile = assigned_profile
-        self.worker_id = worker_id  # Lưu worker_id cho parallel mode
 
         # Resources
         self.profiles: List[Resource] = []
@@ -1408,15 +1406,11 @@ class SmartEngine:
         prefetched_project_id = None
 
         # === CHECK PRE-FETCHED TOKEN (parallel batch mode) ===
-        # Ưu tiên: pre-fetched token worker_id > self.worker_id > None
-        worker_id = getattr(self, 'worker_id', None)  # Default từ self.worker_id
         if hasattr(self, '_prefetched_token') and self._prefetched_token:
             prefetch = self._prefetched_token
             bearer_token = prefetch.get('token', '')
             prefetched_project_id = prefetch.get('project_id', '')
-            prefetch_worker_id = prefetch.get('worker_id', None)
-            if prefetch_worker_id is not None:
-                worker_id = prefetch_worker_id  # Override với worker_id từ pre-fetched token
+            worker_id = prefetch.get('worker_id', -1)
             if bearer_token:
                 self.log(f"[Worker{worker_id}] Dùng pre-fetched token (project: {prefetched_project_id[:8] if prefetched_project_id else 'N/A'}...)")
 
@@ -1442,14 +1436,13 @@ class SmartEngine:
             self.log("va copy bearer token vao settings.yaml (flow_bearer_token)", "WARN")
 
         try:
-            # Tao BrowserFlowGenerator với worker_id cho parallel mode
+            # Tao BrowserFlowGenerator
             generator = BrowserFlowGenerator(
                 project_path=str(proj_dir),
                 profile_name=profile_name,
                 headless=headless,
                 verbose=True,
-                config_path=str(settings_path),
-                worker_id=worker_id  # Truyền worker_id để dùng proxy riêng
+                config_path=str(settings_path)
             )
 
             # === INJECT PRE-FETCHED PROJECT_ID nếu có ===

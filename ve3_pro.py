@@ -2356,8 +2356,8 @@ class UnixVoiceToVideo:
                     profile_name = Path(profile_path).name
                     self.root.after(0, lambda: self.log(f"\n[{voice_idx+1}/{len(voices)}] 📄 {voice_path.name} → Worker {worker_id} ({profile_name})"))
 
-                    # Create engine with specific profile và worker_id cho parallel mode
-                    engine = SmartEngine(assigned_profile=profile_name, worker_id=worker_id)
+                    # Create engine with specific profile
+                    engine = SmartEngine(assigned_profile=profile_name)
 
                     # Force headless mode if enabled
                     engine.use_headless = use_headless
