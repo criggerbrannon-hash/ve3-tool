@@ -155,21 +155,32 @@ class BrowserFlowGenerator:
             print(f"[{timestamp}] {icons.get(level, '')} {message}")
 
     def _get_profile_path(self) -> Optional[str]:
-        """Lấy Chrome profile path từ config hoặc default."""
-        # Từ settings.yaml
+        """Lấy Chrome profile path từ config hoặc default.
+
+        Khi parallel mode (worker_id set), tạo profile riêng cho mỗi worker.
+        """
+        # Base profile path từ settings.yaml
         chrome_profile = self.config.get('chrome_profile', '')
         if chrome_profile:
             profile_path = Path(chrome_profile)
-            if profile_path.exists():
-                return str(profile_path)
-            # Thử resolve từ project root
-            abs_path = Path.cwd() / chrome_profile
-            if abs_path.exists():
-                return str(abs_path)
+            if not profile_path.exists():
+                # Thử resolve từ project root
+                profile_path = Path.cwd() / chrome_profile
+        else:
+            # Fallback: dùng tool profile
+            if hasattr(self, 'profile_dir') and self.profile_dir:
+                profile_path = self.profile_dir
+            else:
+                profile_path = Path.cwd() / "chrome_profile"
 
-        # Fallback: dùng tool profile
-        if hasattr(self, 'profile_dir') and self.profile_dir:
-            return str(self.profile_dir)
+        # Parallel mode: tạo profile riêng cho mỗi worker
+        if hasattr(self, 'worker_id') and self.worker_id is not None:
+            profile_path = Path(str(profile_path) + f"_worker{self.worker_id}")
+            profile_path.mkdir(parents=True, exist_ok=True)
+            return str(profile_path)
+
+        if profile_path.exists():
+            return str(profile_path)
 
         return None
 
@@ -2938,7 +2949,8 @@ class BrowserFlowGenerator:
             verbose=self.verbose,
             log_callback=self._log,
             webshare_enabled=use_webshare,
-            worker_id=self.worker_id  # Truyền worker_id cho parallel mode
+            worker_id=self.worker_id,  # Truyền worker_id cho parallel mode
+            use_headless=self.headless  # Truyền headless mode từ config
         )
 
         self._log("🚀 DrissionPage + Interceptor")

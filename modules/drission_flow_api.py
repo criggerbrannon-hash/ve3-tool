@@ -212,6 +212,8 @@ class DrissionFlowAPI:
         webshare_enabled: bool = True,  # BẬT Webshare proxy by default
         # Parallel worker support
         worker_id: int = None,  # Worker ID để dùng proxy riêng cho parallel mode
+        # Headless mode
+        use_headless: bool = False,  # Default False - Google Flow cần UI để đăng nhập
         # Legacy params (ignored)
         proxy_port: int = 1080,
         use_proxy: bool = False,
@@ -236,6 +238,7 @@ class DrissionFlowAPI:
         self.verbose = verbose
         self.log_callback = log_callback
         self.worker_id = worker_id  # Lưu worker_id cho parallel mode
+        self.use_headless = use_headless  # Headless mode cho server/parallel
 
         # Chrome/DrissionPage
         self.driver: Optional[ChromiumPage] = None
@@ -482,6 +485,17 @@ class DrissionFlowAPI:
             options = ChromiumOptions()
             options.set_user_data_path(str(self.profile_dir))
             options.set_local_port(self.chrome_port)
+
+            # Thêm các options cần thiết cho Linux/headless
+            options.set_argument('--no-sandbox')  # Required for Linux
+            options.set_argument('--disable-dev-shm-usage')  # Prevent shared memory issues
+            options.set_argument('--disable-gpu')  # Disable GPU acceleration
+            options.set_argument('--disable-software-rasterizer')
+
+            # Headless mode - set from config or default
+            if getattr(self, 'use_headless', True):
+                options.set_argument('--headless=new')  # New headless mode
+                self.log("   Mode: Headless")
 
             if self._use_webshare and self._webshare_proxy:
                 # Lấy proxy info - dùng worker_id nếu có (parallel mode)
