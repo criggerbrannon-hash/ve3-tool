@@ -2949,8 +2949,7 @@ class BrowserFlowGenerator:
             verbose=self.verbose,
             log_callback=self._log,
             webshare_enabled=use_webshare,
-            worker_id=self.worker_id,  # Truyền worker_id cho parallel mode
-            use_headless=self.headless  # Truyền headless mode từ config
+            worker_id=self.worker_id  # Truyền worker_id cho parallel mode
         )
 
         self._log("🚀 DrissionPage + Interceptor")

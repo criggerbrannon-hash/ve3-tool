@@ -486,16 +486,7 @@ class DrissionFlowAPI:
             options.set_user_data_path(str(self.profile_dir))
             options.set_local_port(self.chrome_port)
 
-            # Thêm các options cần thiết cho Linux/headless
-            options.set_argument('--no-sandbox')  # Required for Linux
-            options.set_argument('--disable-dev-shm-usage')  # Prevent shared memory issues
-            options.set_argument('--disable-gpu')  # Disable GPU acceleration
-            options.set_argument('--disable-software-rasterizer')
-
-            # Headless mode - set from config or default
-            if getattr(self, 'use_headless', True):
-                options.set_argument('--headless=new')  # New headless mode
-                self.log("   Mode: Headless")
+            # KHÔNG dùng headless - Google Flow cần UI để đăng nhập và bypass captcha
 
             if self._use_webshare and self._webshare_proxy:
                 # Lấy proxy info - dùng worker_id nếu có (parallel mode)
