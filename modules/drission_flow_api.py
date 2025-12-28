@@ -753,34 +753,25 @@ class DrissionFlowAPI:
         if not original_payload:
             return [], "No payload captured"
 
-        # Sửa số ảnh trong payload - FORCE 1 ảnh
+        # Sửa số ảnh trong payload - FORCE đúng số lượng
+        # API dùng số lượng items trong array "requests", mỗi request = 1 ảnh
         try:
             payload_data = json.loads(original_payload)
-            modified = False
 
-            # DEBUG: In ra cấu trúc payload để debug
-            self.log(f"   [DEBUG] Payload keys: {list(payload_data.keys())}")
-
-            # Tìm và sửa numImages - thử nhiều path khác nhau
             if "requests" in payload_data and payload_data["requests"]:
-                for i, req in enumerate(payload_data["requests"]):
-                    self.log(f"   [DEBUG] requests[{i}] keys: {list(req.keys())}")
-                    if "imageGenerationConfig" in req:
-                        old_val = req["imageGenerationConfig"].get("numImages", "N/A")
-                        req["imageGenerationConfig"]["numImages"] = num_images
-                        self.log(f"   → numImages: {old_val} → {num_images}")
-                        modified = True
-                    else:
-                        self.log(f"   [DEBUG] No imageGenerationConfig in requests[{i}]")
-
-            if not modified:
-                self.log(f"⚠️ Không tìm thấy numImages trong payload!", "WARN")
-                # In thêm 200 ký tự đầu của payload để debug
-                self.log(f"   [DEBUG] Payload preview: {original_payload[:300]}...", "WARN")
+                old_count = len(payload_data["requests"])
+                if old_count > num_images:
+                    # Chỉ giữ lại num_images requests đầu tiên
+                    payload_data["requests"] = payload_data["requests"][:num_images]
+                    self.log(f"   → requests: {old_count} → {num_images}")
+                elif old_count < num_images:
+                    self.log(f"   → requests: {old_count} (giữ nguyên, không đủ để tăng)")
+                else:
+                    self.log(f"   → requests: {old_count} (đã đúng)")
 
             original_payload = json.dumps(payload_data)
         except Exception as e:
-            self.log(f"⚠️ Không sửa được numImages: {e}", "WARN")
+            self.log(f"⚠️ Không sửa được payload: {e}", "WARN")
 
         # Headers
         headers = {
