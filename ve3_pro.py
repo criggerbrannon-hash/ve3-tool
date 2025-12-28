@@ -1976,29 +1976,19 @@ class UnixVoiceToVideo:
 
     def _process_batch(self):
         """
-        Process all pending voice files from batch_voice_folder.
-        PARALLEL PROCESSING with pre-fetched tokens.
+        Process all pending voice files from batch_voice_folder - SEQUENTIAL.
+
+        Đơn giản: xử lý từng voice một, xong voice này mới đến voice tiếp theo.
+        Mỗi voice chạy như single file - mở Chrome mới, proxy mới.
 
         Structure:
-        - voice/AR16-T1/AR16-0035.mp3  →  done/AR16-T1/AR16-0035/...
-        - voice/AR16-T1/AR16-0036.mp3  →  done/AR16-T1/AR16-0036/...
-
-        Flow:
-        1. Scan pending files
-        2. Pre-fetch N tokens (1 per worker, serialized)
-        3. Run N workers in parallel (each worker processes voices sequentially)
+        - voice/AR16-T1/AR16-0035.mp3  →  PROJECTS/AR16-T1/...
         """
         try:
             from modules.smart_engine import SmartEngine
-            from concurrent.futures import ThreadPoolExecutor, as_completed
-            import queue
-            import threading
 
             # Create done folder if not exists
             self.batch_done_folder.mkdir(parents=True, exist_ok=True)
-
-            # Get settings
-            num_workers = self._get_parallel_workers()
 
             # Scan for pending voice files
             pending_files = []
@@ -2013,8 +2003,7 @@ class UnixVoiceToVideo:
 
                 voice_file = voice_files[0]  # Use first voice file found
 
-                # Output folder = PROJECTS/folder_name (dùng TÊN THƯ MỤC, không phải tên file)
-                # Ví dụ: voice/AR36-0030/audio.mp3 → PROJECTS/AR36-0030/AR36-0030.mp4
+                # Output folder = PROJECTS/folder_name
                 project_name = subfolder.name
                 output_folder = self.batch_done_folder / project_name
 
@@ -2027,7 +2016,7 @@ class UnixVoiceToVideo:
                     'voice_path': voice_file,
                     'output_folder': output_folder,
                     'subfolder': subfolder.name,
-                    'project_name': project_name  # Add project name for later use
+                    'project_name': project_name
                 })
 
             if not pending_files:
@@ -2035,235 +2024,127 @@ class UnixVoiceToVideo:
                 return
 
             total = len(pending_files)
-            actual_workers = min(num_workers, total)
-
-            self.log(f"📋 Tìm thấy {total} file cần xử lý")
-            self.log(f"⚡ Chế độ song song: {actual_workers} luồng")
+            self.log(f"📋 Tìm thấy {total} file cần xử lý - Chế độ TUẦN TỰ")
             for i, f in enumerate(pending_files[:5]):
                 self.log(f"   {i+1}. {f['subfolder']}/{f['voice_path'].name}")
             if total > 5:
                 self.log(f"   ... và {total - 5} file khác")
 
-            # ================================================================
-            # STEP 1: PRE-FETCH TOKENS (serialized - 1 Chrome at a time)
-            # ================================================================
-            self.log("")
-            self.log("=" * 50)
-            self.log(f"🔑 PRE-FETCH {actual_workers} TOKENS...")
-            self.log("=" * 50)
+            # Results tracking
+            results = {"success": 0, "failed": 0}
 
-            prefetched_tokens = []
-            token_lock = threading.Lock()
-
-            # Get first profile for token extraction
-            profiles_dir = ROOT_DIR / "chrome_profiles"
-            chrome_profiles = []
-            if profiles_dir.exists():
-                chrome_profiles = [p for p in profiles_dir.iterdir() if p.is_dir()]
-
-            if not chrome_profiles:
-                self.log("❌ Không có Chrome profile! Thêm profile trong Cài đặt.", "ERROR")
-                return
-
-            num_profiles = len(chrome_profiles)
-            self.log(f"   Có {num_profiles} Chrome profile(s)")
-            for idx, p in enumerate(chrome_profiles):
-                self.log(f"     [{idx+1}] {p.name}")
-
-            for i in range(actual_workers):
+            # Process each voice SEQUENTIALLY (like single mode)
+            for i, file_info in enumerate(pending_files):
                 if self._stop:
+                    self.log("⏹️ Đã dừng theo yêu cầu")
                     break
 
-                # Dùng profile khác nhau cho mỗi worker (round-robin)
-                profile_path = chrome_profiles[i % num_profiles]
-                self.log(f"   [{i+1}/{actual_workers}] Đang lấy token từ profile: {profile_path.name}...")
+                voice_path = file_info['voice_path']
+                output_folder = file_info['output_folder']
+
+                self.log("")
+                self.log("=" * 60)
+                self.log(f"[{i+1}/{total}] 📄 {file_info['subfolder']}/{voice_path.name}")
+                self.log("=" * 60)
 
                 try:
-                    # Create engine to get token
+                    output_folder.mkdir(parents=True, exist_ok=True)
+
+                    # Create new engine for each voice (like single mode)
                     engine = SmartEngine()
-                    engine.profiles = self.profiles
-                    engine.chrome_path = self.chrome_path
+                    self._engine = engine
 
-                    # Get a new token (opens new project) - MỖI WORKER DÙNG PROFILE RIÊNG
-                    token_data = engine._prefetch_token_for_worker(str(profile_path), i)
+                    def log_cb(msg):
+                        level = "INFO"
+                        if "[OK]" in msg or "OK!" in msg or "✓" in msg:
+                            level = "OK"
+                        elif "[ERROR]" in msg or "ERROR" in msg or "✗" in msg:
+                            level = "ERROR"
+                        elif "[WARN]" in msg or "⚠️" in msg:
+                            level = "WARN"
+                        self.root.after(0, lambda m=msg, l=level: self.log(m, l))
 
-                    if token_data and token_data.get('token'):
-                        prefetched_tokens.append(token_data)
-                        self.log(f"   [{i+1}/{actual_workers}] ✅ Token OK (project: {token_data.get('project_id', 'N/A')[:8]}...)")
+                    # Run like single mode
+                    result = engine.run(
+                        str(voice_path),
+                        output_dir=str(output_folder),
+                        callback=log_cb
+                    )
+
+                    if result and result.get('success'):
+                        results["success"] += 1
+                        self.log(f"✅ Xong: {voice_path.name}", "OK")
+
+                        # Cleanup voice files after success
+                        try:
+                            import shutil
+                            stem = voice_path.stem
+                            parent_folder = voice_path.parent
+                            voice_root = self.batch_voice_folder
+
+                            # 1. Xóa file voice chính
+                            if voice_path.exists():
+                                voice_path.unlink()
+                                self.log(f"🗑️ Xóa: {voice_path.name}")
+
+                            # 2. Xóa .txt trong cùng thư mục
+                            txt_in_folder = parent_folder / f"{stem}.txt"
+                            if txt_in_folder.exists():
+                                txt_in_folder.unlink()
+
+                            # 3. Xóa .dgt trong cùng thư mục
+                            dgt_in_folder = parent_folder / f"{stem}.dgt"
+                            if dgt_in_folder.exists():
+                                dgt_in_folder.unlink()
+
+                            # 4. Xóa thư mục con
+                            sub_folder = parent_folder / stem
+                            if sub_folder.exists() and sub_folder.is_dir():
+                                shutil.rmtree(sub_folder)
+
+                            # 5. Lưu trữ .txt từ voice root
+                            txt_in_root = voice_root / f"{stem}.txt"
+                            if txt_in_root.exists():
+                                done_archive = voice_root / "done"
+                                done_archive.mkdir(parents=True, exist_ok=True)
+                                shutil.copy2(txt_in_root, done_archive / f"{stem}.txt")
+                                txt_in_root.unlink()
+
+                            # 6. Xóa thư mục cha nếu rỗng
+                            if parent_folder.exists() and not any(parent_folder.iterdir()):
+                                parent_folder.rmdir()
+
+                        except Exception as del_err:
+                            self.log(f"⚠️ Lỗi cleanup: {del_err}", "WARN")
                     else:
-                        self.log(f"   [{i+1}/{actual_workers}] ⚠️ Token FAILED", "WARN")
-                        prefetched_tokens.append(None)
+                        results["failed"] += 1
+                        err_msg = result.get('error', 'Unknown') if result else 'No result'
+                        self.log(f"❌ Lỗi: {err_msg}", "ERROR")
 
                 except Exception as e:
-                    self.log(f"   [{i+1}/{actual_workers}] ❌ Error: {e}", "ERROR")
-                    prefetched_tokens.append(None)
+                    import traceback
+                    traceback.print_exc()
+                    self.log(f"❌ Exception: {e}", "ERROR")
+                    results["failed"] += 1
 
-            valid_tokens = [t for t in prefetched_tokens if t]
-            self.log(f"🔑 Pre-fetched: {len(valid_tokens)}/{actual_workers} tokens OK")
+                # Update progress
+                progress = ((i + 1) / total) * 100
+                self.root.after(0, lambda p=progress: self.progress_var.set(p))
+                self.root.after(0, lambda c=i+1, t=total, s=results['success'], f=results['failed']:
+                    self.progress_label.config(text=f"Xong {c}/{t} | ✅ {s} | ❌ {f}"))
 
-            if not valid_tokens:
-                self.log("❌ Không lấy được token nào! Kiểm tra Chrome profile.", "ERROR")
-                return
-
-            # ================================================================
-            # STEP 2: PARALLEL PROCESSING
-            # ================================================================
+            # Summary
             self.log("")
-            self.log("=" * 50)
-            self.log(f"🚀 BẮT ĐẦU XỬ LÝ SONG SONG ({len(valid_tokens)} luồng)")
-            self.log("=" * 50)
-
-            # Create work queue
-            work_queue = queue.Queue()
-            for f in pending_files:
-                work_queue.put(f)
-
-            # Results tracking
-            results_lock = threading.Lock()
-            results = {"success": 0, "failed": 0, "processed": 0}
-
-            def worker_func(worker_id: int, token_data: dict):
-                """Worker function - processes voices from queue."""
-                while not self._stop:
-                    try:
-                        file_info = work_queue.get_nowait()
-                    except queue.Empty:
-                        break
-
-                    voice_path = file_info['voice_path']
-                    output_folder = file_info['output_folder']
-
-                    self.root.after(0, lambda wp=voice_path, wid=worker_id:
-                        self.log(f"[W{wid}] 🎙️ {wp.name}"))
-
-                    try:
-                        output_folder.mkdir(parents=True, exist_ok=True)
-
-                        engine = SmartEngine()
-
-                        # Pass pre-fetched token to engine
-                        if token_data:
-                            engine._prefetched_token = token_data
-
-                        def log_cb(msg, wid=worker_id):
-                            level = "INFO"
-                            if "[OK]" in msg or "OK!" in msg:
-                                level = "OK"
-                            elif "[ERROR]" in msg or "ERROR" in msg:
-                                level = "ERROR"
-                            elif "[WARN]" in msg:
-                                level = "WARN"
-                            self.root.after(0, lambda: self.log(f"[W{wid}] {msg}", level))
-
-                        result = engine.run(
-                            str(voice_path),
-                            output_dir=str(output_folder),
-                            callback=log_cb
-                        )
-
-                        with results_lock:
-                            results["processed"] += 1
-                            if result and result.get('success'):
-                                results["success"] += 1
-                                # === XÓA CÁC FILE LIÊN QUAN SAU KHI THÀNH CÔNG ===
-                                try:
-                                    import shutil
-                                    stem = voice_path.stem  # AR16-0035
-                                    parent_folder = voice_path.parent  # voice/AR16-T1/
-                                    voice_root = self.batch_voice_folder  # voice/
-
-                                    # 1. Xóa file voice chính (.mp3/.wav)
-                                    if voice_path.exists():
-                                        voice_path.unlink()
-                                        self.root.after(0, lambda vp=voice_path:
-                                            self.log(f"[W{worker_id}] 🗑️ Xóa: {vp.name}"))
-
-                                    # 2. Xóa .txt trong cùng thư mục (voice/AR16-T1/AR16-0035.txt)
-                                    txt_in_folder = parent_folder / f"{stem}.txt"
-                                    if txt_in_folder.exists():
-                                        txt_in_folder.unlink()
-                                        self.root.after(0, lambda: self.log(f"[W{worker_id}] 🗑️ Xóa: {stem}.txt"))
-
-                                    # 3. Xóa .dgt trong cùng thư mục (voice/AR16-T1/AR16-0035.dgt)
-                                    dgt_in_folder = parent_folder / f"{stem}.dgt"
-                                    if dgt_in_folder.exists():
-                                        dgt_in_folder.unlink()
-                                        self.root.after(0, lambda: self.log(f"[W{worker_id}] 🗑️ Xóa: {stem}.dgt"))
-
-                                    # 4. Xóa thư mục con (voice/AR16-T1/AR16-0035/)
-                                    sub_folder = parent_folder / stem
-                                    if sub_folder.exists() and sub_folder.is_dir():
-                                        shutil.rmtree(sub_folder)
-                                        self.root.after(0, lambda sf=sub_folder:
-                                            self.log(f"[W{worker_id}] 🗑️ Xóa folder: {sf.name}/"))
-
-                                    # 5. Copy .txt từ voice root sang voice/done/ (lưu trữ)
-                                    txt_in_root = voice_root / f"{stem}.txt"
-                                    if txt_in_root.exists():
-                                        done_archive = voice_root / "done"
-                                        done_archive.mkdir(parents=True, exist_ok=True)
-                                        shutil.copy2(txt_in_root, done_archive / f"{stem}.txt")
-                                        txt_in_root.unlink()
-                                        self.root.after(0, lambda: self.log(f"[W{worker_id}] 📦 Lưu trữ: {stem}.txt → voice/done/"))
-
-                                    # 6. Xóa thư mục cha nếu rỗng
-                                    if parent_folder.exists() and not any(parent_folder.iterdir()):
-                                        parent_folder.rmdir()
-                                        self.root.after(0, lambda pf=parent_folder:
-                                            self.log(f"[W{worker_id}] 🗑️ Xóa folder rỗng: {pf.name}"))
-
-                                except Exception as del_err:
-                                    self.root.after(0, lambda err=del_err:
-                                        self.log(f"[W{worker_id}] ⚠️ Lỗi xóa file: {err}", "WARN"))
-                            else:
-                                results["failed"] += 1
-
-                            # Update progress
-                            progress = (results["processed"] / total) * 100
-                            self.root.after(0, lambda p=progress: self.progress_var.set(p))
-                            self.root.after(0, lambda: self.progress_label.config(
-                                text=f"Xong: {results['processed']}/{total} | OK: {results['success']} | Fail: {results['failed']}"
-                            ))
-
-                    except Exception as e:
-                        with results_lock:
-                            results["processed"] += 1
-                            results["failed"] += 1
-                        self.root.after(0, lambda err=e, wid=worker_id:
-                            self.log(f"[W{wid}] ❌ {err}", "ERROR"))
-
-                    work_queue.task_done()
-
-            # Start workers
-            with ThreadPoolExecutor(max_workers=len(valid_tokens)) as executor:
-                futures = []
-                for i, token_data in enumerate(valid_tokens):
-                    future = executor.submit(worker_func, i, token_data)
-                    futures.append(future)
-
-                # Wait for all workers to complete
-                for future in as_completed(futures):
-                    try:
-                        future.result()
-                    except Exception as e:
-                        self.log(f"Worker error: {e}", "ERROR")
-
-            # ================================================================
-            # SUMMARY
-            # ================================================================
-            self.log("")
-            self.log("=" * 50)
-            self.log("🏁 HOÀN THÀNH BATCH")
-            self.log(f"   Tổng: {total} | ✅ OK: {results['success']} | ❌ Fail: {results['failed']}")
-            self.log(f"   Luồng: {len(valid_tokens)} workers")
-            self.log("=" * 50)
+            self.log("=" * 60)
+            self.log(f"📊 TỔNG KẾT: {results['success']} ✅ | {results['failed']} ❌", "OK")
+            self.log("=" * 60)
 
             self.root.after(0, lambda: self.progress_var.set(100))
             self.root.after(0, lambda: self.progress_label.config(text="Hoàn thành!"))
 
             new_pending = self._count_pending_voices()
-            self.root.after(0, lambda: self.input_info_label.config(
-                text=f"📂 voice → done | {new_pending} file chờ xử lý"
+            self.root.after(0, lambda np=new_pending: self.input_info_label.config(
+                text=f"📂 voice → done | {np} file chờ xử lý"
             ))
 
         except Exception as e:
@@ -2275,139 +2156,86 @@ class UnixVoiceToVideo:
             self.root.after(0, self._reset_ui)
 
     def _process_folder(self):
-        """Process folder with multiple voice files - PARALLEL with headless Chrome."""
+        """
+        Process folder with multiple voice files - SEQUENTIAL (like single mode).
+
+        Đơn giản: xử lý từng voice một, xong voice này mới đến voice tiếp theo.
+        Mỗi voice chạy như single file - mở Chrome mới, proxy mới.
+        """
         try:
             from modules.smart_engine import SmartEngine
-            from concurrent.futures import ThreadPoolExecutor, as_completed
 
             folder = Path(self.input_path.get())
-            voices = list(folder.glob("*.mp3")) + list(folder.glob("*.wav"))
+            voices = sorted(list(folder.glob("*.mp3")) + list(folder.glob("*.wav")))
 
             if not voices:
                 self.root.after(0, lambda: messagebox.showerror("Lỗi", "Không tìm thấy file voice nào!"))
                 return
 
-            self.log(f"📁 Tìm thấy {len(voices)} file voice")
-
-            # Get settings
-            num_parallel = self._get_parallel_workers()
-            use_headless = self._get_headless_setting()
-
-            # Get Chrome profiles from chrome_profiles/ directory (GUI creates profiles here)
-            chrome_profiles = []
-            profiles_dir = ROOT_DIR / "chrome_profiles"
-
-            # Debug: Log exact path being scanned
-            self.log(f"📂 Scan profiles: {profiles_dir.resolve()}")
-
-            if profiles_dir.exists():
-                # List all items in directory
-                all_items = list(profiles_dir.iterdir())
-                self.log(f"   Tìm thấy {len(all_items)} items")
-
-                for item in all_items:
-                    if item.is_dir() and not item.name.startswith('.'):
-                        chrome_profiles.append(str(item))
-                        self.log(f"   ✓ {item.name}")
-                    else:
-                        self.log(f"   ✗ {item.name} (không phải thư mục)")
-            else:
-                self.log(f"   ⚠️ Thư mục không tồn tại, tạo mới...")
-                profiles_dir.mkdir(exist_ok=True)
-
-            # Fallback: Load from accounts.json (additional profiles)
-            try:
-                accounts_path = CONFIG_DIR / "accounts.json"
-                if accounts_path.exists():
-                    with open(accounts_path, 'r', encoding='utf-8') as f:
-                        accounts = json.load(f)
-                    existing_paths = set(chrome_profiles)
-                    for p in accounts.get('chrome_profiles', []):
-                        if p and not p.startswith('THAY_BANG') and Path(p).exists():
-                            if p not in existing_paths:
-                                chrome_profiles.append(p)
-                                self.log(f"   + {Path(p).name} (từ accounts.json)")
-            except Exception as e:
-                self.log(f"Load accounts.json error: {e}", "WARN")
-
-            # Create default profile if none
-            if not chrome_profiles:
-                default_profile = profiles_dir / "main"
-                default_profile.mkdir(exist_ok=True)
-                chrome_profiles = [str(default_profile)]
-                self.log(f"   → Tạo profile mặc định: main")
-
-            num_profiles = len(chrome_profiles)
-            num_parallel = min(num_parallel, num_profiles, len(voices))
-
-            self.log(f"🌐 {num_profiles} profile(s) | Song song: {num_parallel} | Headless: {'ON' if use_headless else 'OFF'}")
-            for i, p in enumerate(chrome_profiles[:num_parallel]):
-                profile_name = Path(p).name
-                self.log(f"   [{i+1}] {profile_name}")
+            total = len(voices)
+            self.log(f"📁 Tìm thấy {total} file voice - Chế độ TUẦN TỰ")
+            for i, v in enumerate(voices[:5]):
+                self.log(f"   {i+1}. {v.name}")
+            if total > 5:
+                self.log(f"   ... và {total - 5} file khác")
 
             # Result tracking
-            results_lock = threading.Lock()
             total_results = {"success": 0, "failed": 0}
-            completed_count = [0]
 
-            def process_voice(voice_path, profile_path, voice_idx, worker_id):
-                """Process single voice with dedicated Chrome profile (headless)."""
+            # Process each voice sequentially (like running single files one by one)
+            for i, voice_path in enumerate(voices):
+                if self._stop:
+                    self.log("⏹️ Đã dừng theo yêu cầu")
+                    break
+
+                self.log("")
+                self.log("=" * 60)
+                self.log(f"[{i+1}/{total}] 📄 {voice_path.name}")
+                self.log("=" * 60)
+
                 try:
-                    profile_name = Path(profile_path).name
-                    self.root.after(0, lambda: self.log(f"\n[{voice_idx+1}/{len(voices)}] 📄 {voice_path.name} → Worker {worker_id} ({profile_name})"))
-
-                    # Create engine with specific profile
-                    engine = SmartEngine(assigned_profile=profile_name)
-
-                    # Force headless mode if enabled
-                    engine.use_headless = use_headless
+                    # Create new engine for each voice (like single mode)
+                    engine = SmartEngine()
+                    self._engine = engine
 
                     def log_cb(msg):
-                        self.root.after(0, lambda m=msg, w=worker_id: self.log(f"  [W{w}] {m}"))
+                        level = "INFO"
+                        if "[OK]" in msg or "OK!" in msg or "✓" in msg:
+                            level = "OK"
+                        elif "[ERROR]" in msg or "ERROR" in msg or "✗" in msg:
+                            level = "ERROR"
+                        elif "[WARN]" in msg or "⚠️" in msg:
+                            level = "WARN"
+                        self.root.after(0, lambda m=msg, l=level: self.log(m, l))
 
+                    # Run like single mode
                     result = engine.run(str(voice_path), callback=log_cb)
 
-                    with results_lock:
-                        if 'error' not in result:
-                            total_results["success"] += result.get('success', 0)
-                            total_results["failed"] += result.get('failed', 0)
-                        completed_count[0] += 1
-                        progress = (completed_count[0] / len(voices)) * 100
-                        self.root.after(0, lambda p=progress: self.update_progress(p, f"Xong {completed_count[0]}/{len(voices)}"))
+                    if 'error' not in result:
+                        total_results["success"] += result.get('success', 0)
+                        total_results["failed"] += result.get('failed', 0)
+                        self.log(f"✅ Xong: {voice_path.name}", "OK")
+                    else:
+                        total_results["failed"] += 1
+                        self.log(f"❌ Lỗi: {result.get('error', 'Unknown')}", "ERROR")
 
-                    return result
                 except Exception as e:
                     import traceback
                     traceback.print_exc()
-                    self.root.after(0, lambda err=e: self.log(f"Lỗi: {err}", "ERROR"))
-                    return {"error": str(e)}
+                    self.log(f"❌ Exception: {e}", "ERROR")
+                    total_results["failed"] += 1
 
-            # Process voices in parallel with dedicated profiles
-            with ThreadPoolExecutor(max_workers=num_parallel) as executor:
-                futures = {}
-                for i, voice in enumerate(voices):
-                    if self._stop:
-                        break
-                    # Assign worker and profile (round-robin)
-                    worker_id = i % num_parallel
-                    profile_path = chrome_profiles[worker_id % num_profiles]
-                    future = executor.submit(process_voice, voice, profile_path, i, worker_id)
-                    futures[future] = (voice, profile_path)
-
-                # Wait for completion
-                for future in as_completed(futures):
-                    if self._stop:
-                        break
-                    voice, profile = futures[future]
-                    try:
-                        future.result()
-                    except Exception as e:
-                        self.root.after(0, lambda err=e, v=voice.name: self.log(f"❌ {v}: {err}", "ERROR"))
+                # Update progress
+                progress = ((i + 1) / total) * 100
+                self.root.after(0, lambda p=progress, c=i+1, t=total:
+                    self.update_progress(p, f"Xong {c}/{t}"))
 
             # Summary
             self.root.after(0, lambda: self.update_progress(100, "Hoàn tất!"))
-            self.root.after(0, lambda s=total_results["success"], f=total_results["failed"]:
-                self.log(f"\n📊 TỔNG KẾT: {s} ✅ | {f} ❌", "OK"))
+            self.log("")
+            self.log("=" * 60)
+            self.log(f"📊 TỔNG KẾT: {total_results['success']} ✅ | {total_results['failed']} ❌", "OK")
+            self.log("=" * 60)
 
             if total_results["failed"] > 0:
                 self.root.after(0, lambda s=total_results["success"], f=total_results["failed"]:
