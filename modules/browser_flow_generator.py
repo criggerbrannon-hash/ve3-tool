@@ -3534,10 +3534,12 @@ class BrowserFlowGenerator:
                             ws = wb['config']
                             next_row = ws.max_row + 1
 
-                        # Lưu các config
+                        # Lưu các config - đầy đủ để tái sử dụng cho I2V
                         config_items = {
                             'flow_project_id': project_id,
-                            'flow_bearer_token': bearer[:50] + '...' if len(bearer) > 50 else bearer,  # Truncate for display
+                            'flow_bearer_token': bearer,  # Full token để video worker dùng
+                            'flow_recaptcha_token': recaptcha,  # Quan trọng cho I2V!
+                            'flow_x_browser_validation': x_browser_val,  # Auth header
                             'token_time': str(int(time.time()))
                         }
 

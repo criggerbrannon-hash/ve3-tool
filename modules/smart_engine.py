@@ -3561,6 +3561,9 @@ class SmartEngine:
 
                 # 1. ƯU TIÊN: Token từ Excel (sheet 'config')
                 # Đây là nguồn chính thức, được lưu khi tạo ảnh
+                excel_bearer = ''
+                excel_recaptcha = ''
+                excel_x_browser = ''
                 if proj_dir:
                     excel_files = list(proj_dir.glob("prompts/*.xlsx"))
                     if excel_files:
@@ -3572,19 +3575,33 @@ class SmartEngine:
                                 for row in ws.iter_rows(min_row=2, max_row=20, values_only=True):
                                     if row and len(row) >= 2:
                                         key = str(row[0] or '').strip().lower()
-                                        if key == 'flow_project_id' and row[1]:
-                                            project_id = str(row[1]).strip()
-                                        # Note: bearer_token trong Excel bị truncate, dùng cache
+                                        val = str(row[1] or '').strip() if row[1] else ''
+                                        if key == 'flow_project_id' and val:
+                                            project_id = val
+                                        elif key == 'flow_bearer_token' and val:
+                                            excel_bearer = val
+                                        elif key == 'flow_recaptcha_token' and val:
+                                            excel_recaptcha = val
+                                        elif key == 'flow_x_browser_validation' and val:
+                                            excel_x_browser = val
                             wb.close()
                             if project_id:
                                 self.log(f"[VIDEO] Dùng project_id từ Excel: {project_id[:8]}...")
+                            if excel_bearer:
+                                bearer_token = excel_bearer
+                                self.log(f"[VIDEO] Dùng bearer_token từ Excel")
                         except Exception as e:
                             self.log(f"[VIDEO] Không đọc được Excel: {e}", "WARN")
 
-                # 2. Token từ project cache (.media_cache.json)
-                # Đây là full token (không bị truncate)
-                recaptcha_token = ''
-                x_browser_validation = ''
+                # 2. Dùng tokens từ Excel nếu có
+                recaptcha_token = excel_recaptcha
+                x_browser_validation = excel_x_browser
+                if recaptcha_token:
+                    self.log(f"[VIDEO] Có recaptcha_token từ Excel")
+                if x_browser_validation:
+                    self.log(f"[VIDEO] Có x_browser_validation từ Excel")
+
+                # 3. FALLBACK: Token từ project cache (.media_cache.json)
                 if proj_dir:
                     cache_path = proj_dir / "prompts" / ".media_cache.json"
                     if cache_path.exists():
@@ -3593,20 +3610,26 @@ class SmartEngine:
                                 cache_data = json.load(f)
                             cached_token = cache_data.get('_bearer_token', '')
                             cached_project = cache_data.get('_project_id', '')
-                            # Quan trọng cho I2V!
-                            recaptcha_token = cache_data.get('_recaptcha_token', '')
-                            x_browser_validation = cache_data.get('_x_browser_validation', '')
-                            if cached_token:
+                            cached_recaptcha = cache_data.get('_recaptcha_token', '')
+                            cached_x_browser = cache_data.get('_x_browser_validation', '')
+
+                            # Fallback cho bearer_token
+                            if not bearer_token and cached_token:
                                 bearer_token = cached_token
-                                self.log(f"[VIDEO] Dùng token từ project cache")
+                                self.log(f"[VIDEO] Dùng bearer từ project cache")
                             if not project_id and cached_project:
                                 project_id = cached_project
-                            if recaptcha_token:
-                                self.log(f"[VIDEO] Có recaptcha_token từ cache")
+                            # Fallback cho recaptcha/x_browser
+                            if not recaptcha_token and cached_recaptcha:
+                                recaptcha_token = cached_recaptcha
+                                self.log(f"[VIDEO] Dùng recaptcha từ cache")
+                            if not x_browser_validation and cached_x_browser:
+                                x_browser_validation = cached_x_browser
+                                self.log(f"[VIDEO] Dùng x_browser từ cache")
                         except:
                             pass
 
-                # 3. FALLBACK: Token từ profiles
+                # 4. FALLBACK: Token từ profiles
                 if not bearer_token:
                     for profile in self.profiles:
                         if profile.token and self.is_token_valid(profile):
@@ -3615,7 +3638,7 @@ class SmartEngine:
                             self.log(f"[VIDEO] Dùng token từ profile: {Path(profile.value).name}")
                             break
 
-                # 3. FALLBACK: Token từ settings.yaml
+                # 5. FALLBACK: Token từ settings.yaml
                 if not bearer_token:
                     bearer_token = settings.get('flow_bearer_token', '')
                     project_id = settings.get('flow_project_id', '')
