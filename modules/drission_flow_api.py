@@ -210,6 +210,7 @@ class DrissionFlowAPI:
         log_callback: Optional[Callable] = None,
         # Webshare proxy - dùng global proxy manager
         webshare_enabled: bool = True,  # BẬT Webshare proxy by default
+        worker_id: int = 0,  # Worker ID cho proxy rotation (mỗi Chrome có proxy riêng)
         # Legacy params (ignored)
         proxy_port: int = 1080,
         use_proxy: bool = False,
@@ -223,8 +224,10 @@ class DrissionFlowAPI:
             verbose: In log chi tiết
             log_callback: Callback để log (msg, level)
             webshare_enabled: Dùng Webshare proxy pool (default True)
+            worker_id: Worker ID cho proxy rotation (mỗi Chrome có proxy riêng)
         """
         self.profile_dir = Path(profile_dir)
+        self.worker_id = worker_id  # Lưu worker_id để dùng cho proxy rotation
         # Auto-generate unique port for parallel execution
         if chrome_port == 0:
             self.chrome_port = random.randint(9222, 9999)
@@ -247,7 +250,12 @@ class DrissionFlowAPI:
                 manager = get_proxy_manager()
                 if manager.proxies:
                     self._webshare_proxy = WebshareProxy()  # Wrapper cho manager
-                    self.log(f"✓ Webshare: {len(manager.proxies)} proxies, current: {manager.current_proxy.endpoint}")
+                    # Lấy proxy cho worker này (không dùng current_proxy global)
+                    worker_proxy = manager.get_proxy_for_worker(self.worker_id)
+                    if worker_proxy:
+                        self.log(f"✓ Webshare: {len(manager.proxies)} proxies, worker {self.worker_id}: {worker_proxy.endpoint}")
+                    else:
+                        self.log(f"✓ Webshare: {len(manager.proxies)} proxies loaded")
                 else:
                     self._use_webshare = False
                     self.log("⚠️ Webshare: No proxies loaded", "WARN")
@@ -487,20 +495,24 @@ class DrissionFlowAPI:
             options.set_argument('--disable-software-rasterizer')
 
             if self._use_webshare and self._webshare_proxy:
-                # Lấy proxy info
-                username, password = self._webshare_proxy.get_chrome_auth()
-                remote_proxy_url = self._webshare_proxy.get_chrome_proxy_arg()
+                # Lấy proxy info cho worker này
+                username, password = self._webshare_proxy.get_chrome_auth(self.worker_id)
+                remote_proxy_url = self._webshare_proxy.get_chrome_proxy_arg(self.worker_id)
 
                 if username and password:
                     # Có auth → dùng local proxy bridge
                     from webshare_proxy import get_proxy_manager
                     manager = get_proxy_manager()
-                    proxy = manager.current_proxy
+                    # QUAN TRỌNG: Lấy proxy cho worker này, không dùng current_proxy global
+                    proxy = manager.get_proxy_for_worker(self.worker_id)
+                    if not proxy:
+                        self.log(f"✗ No proxy available for worker {self.worker_id}", "ERROR")
+                        return False
 
                     try:
                         from proxy_bridge import start_proxy_bridge
-                        # Unique bridge port based on chrome_port (parallel-safe)
-                        bridge_port = 8800 + (self.chrome_port % 100)
+                        # Unique bridge port based on worker_id (parallel-safe)
+                        bridge_port = 8800 + self.worker_id
                         self._proxy_bridge = start_proxy_bridge(
                             local_port=bridge_port,
                             remote_host=proxy.host,
@@ -517,7 +529,7 @@ class DrissionFlowAPI:
                         options.set_argument('--proxy-bypass-list=<-loopback>')
                         options.set_argument('--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1')
 
-                        self.log(f"Proxy: Bridge → {proxy.endpoint}")
+                        self.log(f"Proxy [Worker {self.worker_id}]: Bridge → {proxy.endpoint}")
                         self.log(f"  Local: http://127.0.0.1:{bridge_port}")
                         self.log(f"  Auth: {username}:****")
 
@@ -911,11 +923,11 @@ class DrissionFlowAPI:
                 if "403" in error:
                     self.log(f"⚠️ 403 error (attempt {attempt+1}/{max_retries})", "WARN")
 
-                    # Xoay IP proxy
+                    # Xoay IP proxy cho worker này
                     if self._use_webshare and self._webshare_proxy:
-                        # Gọi Webshare API để xoay IP
-                        success, msg = self._webshare_proxy.rotate_ip()
-                        self.log(f"  → Webshare rotate: {msg}", "WARN")
+                        # Gọi Webshare API để xoay IP cho worker
+                        success, msg = self._webshare_proxy.rotate_ip(self.worker_id)
+                        self.log(f"  → Webshare rotate [Worker {self.worker_id}]: {msg}", "WARN")
 
                         if success and attempt < max_retries - 1:
                             # Restart Chrome để nhận IP mới
@@ -1116,25 +1128,31 @@ class DrissionFlowAPI:
 
     def restart_chrome(self) -> bool:
         """
-        Restart Chrome với proxy mới.
-        - Webshare: IP đã được xoay qua API, chỉ cần restart Chrome
-        - IPv6: Clear blocked và lấy IP mới
+        Restart Chrome với proxy mới sau khi rotate.
+        Proxy đã được rotate trước khi gọi hàm này.
+        setup() sẽ lấy proxy mới từ manager.get_proxy_for_worker(worker_id).
 
         Returns:
             True nếu restart thành công
         """
         if self._use_webshare:
-            self.log("🔄 Restart Chrome với Webshare IP mới...")
+            # Lấy proxy mới để log
+            from webshare_proxy import get_proxy_manager
+            manager = get_proxy_manager()
+            new_proxy = manager.get_proxy_for_worker(self.worker_id)
+            if new_proxy:
+                self.log(f"🔄 Restart Chrome [Worker {self.worker_id}] với proxy mới: {new_proxy.endpoint}")
+            else:
+                self.log(f"🔄 Restart Chrome [Worker {self.worker_id}]...")
         else:
             self.log("🔄 Restart Chrome với proxy mới...")
 
-        # Close Chrome hiện tại
+        # Close Chrome và proxy bridge hiện tại
         self.close()
 
         time.sleep(2)
 
-        # Restart Chrome với Webshare proxy - VÀO LẠI PROJECT CŨ
-
+        # Restart Chrome với proxy mới - setup() sẽ lấy proxy từ manager
         # Lấy saved project URL để vào lại đúng project
         saved_project_url = getattr(self, '_current_project_url', None)
         if saved_project_url:
@@ -1158,6 +1176,7 @@ def create_drission_api(
     profile_dir: str = "./chrome_profile",
     log_callback: Optional[Callable] = None,
     webshare_enabled: bool = True,  # BẬT Webshare by default
+    worker_id: int = 0,  # Worker ID cho proxy rotation
 ) -> DrissionFlowAPI:
     """
     Tạo DrissionFlowAPI instance.
@@ -1166,6 +1185,7 @@ def create_drission_api(
         profile_dir: Thư mục Chrome profile
         log_callback: Callback để log
         webshare_enabled: Dùng Webshare proxy pool (default True)
+        worker_id: Worker ID cho proxy rotation (mỗi Chrome có proxy riêng)
 
     Returns:
         DrissionFlowAPI instance
@@ -1174,4 +1194,5 @@ def create_drission_api(
         profile_dir=profile_dir,
         log_callback=log_callback,
         webshare_enabled=webshare_enabled,
+        worker_id=worker_id,
     )

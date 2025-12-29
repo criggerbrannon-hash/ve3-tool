@@ -2934,7 +2934,8 @@ class BrowserFlowGenerator:
             profile_dir=self._get_profile_path() or "./chrome_profile",
             verbose=self.verbose,
             log_callback=self._log,
-            webshare_enabled=use_webshare
+            webshare_enabled=use_webshare,
+            worker_id=0  # Single mode - dùng worker_id=0
         )
 
         self._log("🚀 DrissionPage + Interceptor")
