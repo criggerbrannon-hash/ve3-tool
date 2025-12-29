@@ -943,8 +943,8 @@ class DrissionFlowAPI:
 
                     # Xoay IP proxy cho worker này
                     if self._use_webshare and self._webshare_proxy:
-                        # Gọi Webshare API để xoay IP cho worker
-                        success, msg = self._webshare_proxy.rotate_ip(self.worker_id)
+                        # Gọi Webshare API để xoay IP cho worker (lưu proxy cũ vào blocked 48h)
+                        success, msg = self._webshare_proxy.rotate_ip(self.worker_id, "403 reCAPTCHA")
                         self.log(f"  → Webshare rotate [Worker {self.worker_id}]: {msg}", "WARN")
 
                         if success and attempt < max_retries - 1:

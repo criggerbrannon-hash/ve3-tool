@@ -115,11 +115,14 @@ class WebshareProxyManager:
 
     Mỗi Chrome (worker) có proxy riêng.
     Khi bị block (403) sau 3 lần thử → xoay sang proxy khác.
+    Proxy bị block được lưu vào file và không dùng lại trong 48h.
     """
 
     API_BASE = "https://proxy.webshare.io/api/v2"
     MAX_FAIL_COUNT = 3  # Số lần fail trước khi xoay proxy
-    BLOCK_TIMEOUT = 300  # 5 phút timeout cho blocked proxy
+    BLOCK_TIMEOUT = 300  # 5 phút timeout trong memory
+    BLOCK_DURATION = 48 * 3600  # 48 giờ - thời gian không dùng lại proxy bị block
+    BLOCKED_FILE = "config/blocked_proxies.json"  # File lưu danh sách blocked
 
     def __init__(
         self,
@@ -137,6 +140,67 @@ class WebshareProxyManager:
 
         # Mapping: worker_id -> proxy_index
         self._worker_proxy_map: Dict[int, int] = {}
+
+        # Load blocked list từ file (persistent across sessions/machines)
+        self._blocked_proxies: Dict[str, dict] = self._load_blocked_list()
+
+    def _load_blocked_list(self) -> Dict[str, dict]:
+        """Load danh sách proxy bị block từ file."""
+        try:
+            blocked_file = Path(self.BLOCKED_FILE)
+            if blocked_file.exists():
+                import json
+                data = json.loads(blocked_file.read_text())
+                # Cleanup: xóa proxies đã hết 48h
+                now = time.time()
+                cleaned = {}
+                for endpoint, info in data.items():
+                    blocked_at = info.get('blocked_at', 0)
+                    if now - blocked_at < self.BLOCK_DURATION:
+                        cleaned[endpoint] = info
+                # Save cleaned list
+                if len(cleaned) != len(data):
+                    self._save_blocked_list(cleaned)
+                    print(f"[Webshare] Cleaned {len(data) - len(cleaned)} expired blocked proxies")
+                return cleaned
+        except Exception as e:
+            print(f"[Webshare] Error loading blocked list: {e}")
+        return {}
+
+    def _save_blocked_list(self, blocked_list: Dict[str, dict] = None):
+        """Lưu danh sách proxy bị block vào file."""
+        try:
+            import json
+            blocked_file = Path(self.BLOCKED_FILE)
+            blocked_file.parent.mkdir(parents=True, exist_ok=True)
+            data = blocked_list if blocked_list is not None else self._blocked_proxies
+            blocked_file.write_text(json.dumps(data, indent=2))
+        except Exception as e:
+            print(f"[Webshare] Error saving blocked list: {e}")
+
+    def _is_proxy_blocked(self, endpoint: str) -> bool:
+        """Kiểm tra proxy có bị block trong 48h không."""
+        if endpoint not in self._blocked_proxies:
+            return False
+        info = self._blocked_proxies[endpoint]
+        blocked_at = info.get('blocked_at', 0)
+        if time.time() - blocked_at >= self.BLOCK_DURATION:
+            # Đã hết 48h, xóa khỏi danh sách
+            del self._blocked_proxies[endpoint]
+            self._save_blocked_list()
+            return False
+        return True
+
+    def _add_to_blocked(self, endpoint: str, reason: str = "403"):
+        """Thêm proxy vào danh sách bị block (lưu 48h)."""
+        self._blocked_proxies[endpoint] = {
+            'blocked_at': time.time(),
+            'reason': reason,
+            'blocked_time': time.strftime('%Y-%m-%d %H:%M:%S')
+        }
+        self._save_blocked_list()
+        remaining = self.BLOCK_DURATION / 3600
+        print(f"[Webshare] Blocked {endpoint} for {remaining:.0f}h (reason: {reason})")
 
     def load_from_list(self, proxy_lines: List[str]) -> int:
         """Load proxies từ danh sách strings."""
@@ -206,6 +270,7 @@ class WebshareProxyManager:
         """
         Lấy proxy cho worker (Chrome).
         Mỗi worker có proxy riêng, không trùng nhau.
+        Skip các proxy đã bị block trong 48h (lưu trong file).
 
         Args:
             worker_id: ID của worker (0, 1, 2, ...)
@@ -217,16 +282,25 @@ class WebshareProxyManager:
             if not self.proxies:
                 return None
 
-            # Nếu worker đã có proxy, trả về proxy đó
+            # Nếu worker đã có proxy và proxy chưa bị block 48h, trả về proxy đó
             if worker_id in self._worker_proxy_map:
                 idx = self._worker_proxy_map[worker_id]
                 if idx < len(self.proxies):
-                    return self.proxies[idx]
+                    proxy = self.proxies[idx]
+                    # Kiểm tra proxy có bị block 48h không
+                    if not self._is_proxy_blocked(proxy.endpoint):
+                        return proxy
+                    # Proxy đã bị block, cần tìm proxy mới
+                    print(f"[Webshare] Worker {worker_id}'s proxy {proxy.endpoint} is blocked, finding new one...")
 
-            # Tìm proxy chưa ai dùng
+            # Tìm proxy chưa ai dùng VÀ chưa bị block 48h
             now = time.time()
             for i, proxy in enumerate(self.proxies):
-                # Proxy chưa ai dùng và không bị block
+                # Skip proxy đã bị block trong 48h
+                if self._is_proxy_blocked(proxy.endpoint):
+                    continue
+
+                # Proxy chưa ai dùng và không bị block trong memory
                 if proxy.worker_id == -1:
                     if not proxy.blocked or (now - proxy.last_used > self.BLOCK_TIMEOUT):
                         proxy.worker_id = worker_id
@@ -234,11 +308,17 @@ class WebshareProxyManager:
                         self._worker_proxy_map[worker_id] = i
                         return proxy
 
-            # Nếu không còn proxy trống, dùng round-robin
-            idx = worker_id % len(self.proxies)
-            self._worker_proxy_map[worker_id] = idx
-            self.proxies[idx].worker_id = worker_id
-            return self.proxies[idx]
+            # Nếu không còn proxy trống, tìm proxy không bị block 48h
+            for i, proxy in enumerate(self.proxies):
+                if not self._is_proxy_blocked(proxy.endpoint):
+                    self._worker_proxy_map[worker_id] = i
+                    self.proxies[i].worker_id = worker_id
+                    return self.proxies[i]
+
+            # Tất cả proxy đều bị block 48h
+            print(f"[Webshare] WARNING: All {len(self.proxies)} proxies are blocked!")
+            print(f"[Webshare] Blocked list: {len(self._blocked_proxies)} proxies")
+            return None
 
     def mark_worker_fail(self, worker_id: int) -> Tuple[bool, str]:
         """
@@ -262,12 +342,14 @@ class WebshareProxyManager:
             else:
                 return False, f"Proxy {proxy.endpoint} fail {proxy.fail_count}/{self.MAX_FAIL_COUNT}"
 
-    def rotate_worker_proxy(self, worker_id: int) -> Tuple[bool, str]:
+    def rotate_worker_proxy(self, worker_id: int, reason: str = "403") -> Tuple[bool, str]:
         """
         Xoay proxy cho worker khi bị block.
+        Proxy bị block sẽ được lưu vào file và không dùng lại trong 48h.
 
         Args:
             worker_id: ID của worker
+            reason: Lý do block (vd: "403 reCAPTCHA")
 
         Returns:
             (success, message)
@@ -276,24 +358,30 @@ class WebshareProxyManager:
             if not self.proxies:
                 return False, "Không có proxy nào"
 
-            # Đánh dấu proxy cũ là blocked
+            # Đánh dấu proxy cũ là blocked + LƯU VÀO FILE (48h)
             if worker_id in self._worker_proxy_map:
                 old_idx = self._worker_proxy_map[worker_id]
                 old_proxy = self.proxies[old_idx]
                 old_proxy.blocked = True
                 old_proxy.last_used = time.time()
                 old_proxy.worker_id = -1  # Giải phóng
-                print(f"[Webshare] Worker {worker_id}: Blocked proxy {old_proxy.endpoint}")
 
-            # Tìm proxy mới không bị block
+                # LƯU VÀO FILE ĐỂ KHÔNG DÙNG LẠI TRONG 48H
+                self._add_to_blocked(old_proxy.endpoint, reason)
+
+            # Tìm proxy mới không bị block (cả memory và file 48h)
             now = time.time()
             for i, proxy in enumerate(self.proxies):
                 # Bỏ qua proxy đang được dùng bởi worker khác
                 if proxy.worker_id != -1 and proxy.worker_id != worker_id:
                     continue
 
-                # Bỏ qua proxy bị block (chưa hết timeout)
+                # Bỏ qua proxy bị block trong memory (chưa hết 5 phút)
                 if proxy.blocked and (now - proxy.last_used < self.BLOCK_TIMEOUT):
+                    continue
+
+                # Bỏ qua proxy bị block trong file (chưa hết 48h)
+                if self._is_proxy_blocked(proxy.endpoint):
                     continue
 
                 # Tìm được proxy mới
@@ -305,22 +393,25 @@ class WebshareProxyManager:
 
                 return True, f"Rotated to {proxy.endpoint} (total rotations: {self.rotate_count})"
 
-            # Không tìm được proxy mới, reset tất cả và thử lại
-            print(f"[Webshare] Tất cả proxy bị block, đang reset...")
+            # Không tìm được proxy mới - reset memory block nhưng KHÔNG reset file block
+            available = len(self.proxies) - len(self._blocked_proxies)
+            print(f"[Webshare] Không còn proxy khả dụng! Available: {available}/{len(self.proxies)}")
+
+            # Chỉ reset memory block (5 phút), KHÔNG động đến file block (48h)
             for p in self.proxies:
-                if p.worker_id == -1:  # Chỉ reset proxy không ai dùng
+                if p.worker_id == -1 and not self._is_proxy_blocked(p.endpoint):
                     p.blocked = False
                     p.fail_count = 0
 
-            # Thử lại
+            # Thử lại - vẫn skip các proxy bị block 48h
             for i, proxy in enumerate(self.proxies):
-                if proxy.worker_id == -1:
+                if proxy.worker_id == -1 and not self._is_proxy_blocked(proxy.endpoint):
                     proxy.worker_id = worker_id
                     self._worker_proxy_map[worker_id] = i
                     self.rotate_count += 1
                     return True, f"Reset & rotated to {proxy.endpoint}"
 
-            return False, "Không tìm được proxy khả dụng"
+            return False, f"Không tìm được proxy khả dụng (blocked 48h: {len(self._blocked_proxies)})"
 
     def release_worker_proxy(self, worker_id: int):
         """Giải phóng proxy khi worker kết thúc."""
@@ -391,16 +482,33 @@ class WebshareProxyManager:
     def get_stats(self) -> Dict:
         """Thống kê."""
         with self._lock:
-            blocked = sum(1 for p in self.proxies if p.blocked)
+            blocked_memory = sum(1 for p in self.proxies if p.blocked)
+            blocked_48h = len(self._blocked_proxies)
             in_use = sum(1 for p in self.proxies if p.worker_id != -1)
+            # Available = không bị block memory VÀ không bị block 48h
+            available = sum(
+                1 for p in self.proxies
+                if not p.blocked and not self._is_proxy_blocked(p.endpoint) and p.worker_id == -1
+            )
             return {
                 "total": len(self.proxies),
                 "in_use": in_use,
-                "blocked": blocked,
-                "available": len(self.proxies) - blocked - in_use,
+                "blocked_memory": blocked_memory,
+                "blocked_48h": blocked_48h,
+                "available": available,
                 "rotate_count": self.rotate_count,
                 "workers": list(self._worker_proxy_map.keys())
             }
+
+    def get_blocked_list(self) -> Dict[str, dict]:
+        """Lấy danh sách proxy bị block 48h."""
+        return self._blocked_proxies.copy()
+
+    def clear_blocked_list(self):
+        """Xóa tất cả proxy khỏi blocked list (cho testing)."""
+        self._blocked_proxies = {}
+        self._save_blocked_list()
+        print(f"[Webshare] Cleared all blocked proxies")
 
     # ============= Legacy compatibility =============
     @property
@@ -410,22 +518,24 @@ class WebshareProxyManager:
 
     @property
     def available_count(self) -> int:
-        """Legacy: Số proxy khả dụng."""
+        """Legacy: Số proxy khả dụng (không bị block memory VÀ file)."""
         now = time.time()
         return sum(
             1 for p in self.proxies
-            if not p.blocked or (now - p.last_used > self.BLOCK_TIMEOUT)
+            if (not p.blocked or (now - p.last_used > self.BLOCK_TIMEOUT))
+            and not self._is_proxy_blocked(p.endpoint)
         )
 
-    def rotate(self) -> Tuple[bool, str]:
+    def rotate(self, reason: str = "403") -> Tuple[bool, str]:
         """Legacy: Xoay proxy (cho worker 0)."""
-        return self.rotate_worker_proxy(0)
+        return self.rotate_worker_proxy(0, reason)
 
-    def mark_current_blocked(self):
-        """Legacy: Đánh dấu proxy hiện tại bị block."""
+    def mark_current_blocked(self, reason: str = "manual"):
+        """Legacy: Đánh dấu proxy hiện tại bị block (lưu 48h)."""
         if self.proxies:
             self.proxies[0].blocked = True
             self.proxies[0].last_used = time.time()
+            self._add_to_blocked(self.proxies[0].endpoint, reason)
 
 
 # ============= Singleton instance (Thread-Safe) =============
@@ -514,8 +624,8 @@ class WebshareProxy:
     def get_chrome_auth(self, worker_id: int = None) -> Tuple[str, str]:
         return self._manager.get_chrome_auth(worker_id)
 
-    def rotate_ip(self, worker_id: int = 0) -> Tuple[bool, str]:
-        return self._manager.rotate_worker_proxy(worker_id)
+    def rotate_ip(self, worker_id: int = 0, reason: str = "403") -> Tuple[bool, str]:
+        return self._manager.rotate_worker_proxy(worker_id, reason)
 
     def mark_fail(self, worker_id: int = 0) -> Tuple[bool, str]:
         return self._manager.mark_worker_fail(worker_id)
