@@ -2286,19 +2286,90 @@ Estimated Shots: {part_info.get('estimated_shots', 5)}
 
             if gaps_found:
                 self.logger.error(f"[GAP CHECK] ⚠️ TÌM THẤY {len(gaps_found)} GAPS LỚN!")
-                self.logger.error("[GAP CHECK] Có thể do chunks bị fail hoặc SRT thiếu entries")
-                # Log chi tiết
-                for gap_sec, gap_info, _ in gaps_found:
-                    if gap_sec > 300:  # > 5 phút
-                        self.logger.error(f"[GAP CHECK] 🚨 GAP LỚN: {gap_info}")
+                self.logger.error("[GAP CHECK] Đang tự động fill từ SRT entries...")
+
+                # === AUTO-FILL GAPS TỪ SRT ===
+                for gap_sec, gap_info, gap_idx in gaps_found:
+                    if gap_sec > 30:  # Chỉ fill gaps > 30s
+                        # Tìm thời gian gap
+                        current_shot = all_shots[gap_idx]
+                        next_shot = all_shots[gap_idx + 1]
+
+                        # Parse timestamps
+                        try:
+                            current_range = current_shot.get("srt_range", "").split(" - ")
+                            next_range = next_shot.get("srt_range", "").split(" - ")
+
+                            def parse_ts(ts):
+                                parts = ts.strip().replace(",", ".").split(":")
+                                if len(parts) == 3:
+                                    return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+                                elif len(parts) == 2:
+                                    return int(parts[0]) * 60 + float(parts[1])
+                                return 0
+
+                            gap_start = parse_ts(current_range[-1]) if current_range else 0
+                            gap_end = parse_ts(next_range[0]) if next_range else 0
+
+                            # Tìm SRT entries trong khoảng gap
+                            missing_srt = []
+                            for entry in srt_entries:
+                                entry_start = entry.start_time.total_seconds()
+                                entry_end = entry.end_time.total_seconds()
+                                # Entry nằm trong gap?
+                                if entry_start >= gap_start - 5 and entry_end <= gap_end + 5:
+                                    missing_srt.append(entry)
+
+                            if missing_srt:
+                                self.logger.info(f"[GAP FILL] Tìm thấy {len(missing_srt)} SRT entries trong gap {gap_start:.0f}s - {gap_end:.0f}s")
+
+                                # Tạo fallback shots cho missing entries
+                                fill_shots = []
+                                for entry in missing_srt:
+                                    duration_seconds = (entry.end_time - entry.start_time).total_seconds()
+                                    planned_duration = min(max(duration_seconds, 3), 8)
+
+                                    shot_number_offset += 1
+                                    fill_shot = {
+                                        "shot_number": shot_number_offset,
+                                        "srt_range": f"{self._format_timedelta(entry.start_time)} - {self._format_timedelta(entry.end_time)}",
+                                        "srt_text": entry.text[:200] if entry.text else "",
+                                        "planned_duration": int(planned_duration),
+                                        "img_prompt": f"{global_style or 'Cinematic, 4K'}, medium shot, dramatic scene",
+                                        "shot_type": "MEDIUM",
+                                        "camera_angle": "EYE LEVEL",
+                                        "emotional_weight": "MEDIUM",
+                                        "reference_files": [],
+                                        "characters_in_shot": [],
+                                        "visual_description": "Auto-filled scene from SRT",
+                                        "purpose": "Gap-fill shot"
+                                    }
+                                    fill_shots.append(fill_shot)
+
+                                # Thêm vào part cuối cùng hoặc tạo part mới
+                                if all_parts:
+                                    # Tìm part phù hợp hoặc tạo mới
+                                    new_part = {
+                                        "part_number": len(all_parts) + 1,
+                                        "part_name": f"GAP FILL ({gap_start:.0f}s - {gap_end:.0f}s)",
+                                        "location": "",
+                                        "shots": fill_shots
+                                    }
+                                    all_parts.append(new_part)
+                                    self.logger.info(f"[GAP FILL] ✅ Đã thêm {len(fill_shots)} shots để fill gap")
+                        except Exception as e:
+                            self.logger.warning(f"[GAP FILL] Lỗi fill gap: {e}")
             else:
                 self.logger.info("[GAP CHECK] ✅ Không có gaps lớn")
+
+        # Đếm lại total shots sau khi fill gaps
+        total_shots_final = sum(len(p.get("shots", [])) for p in all_parts)
 
         # Merge all parts into final shooting plan
         merged_plan = {
             "shooting_plan": {
                 "total_duration": f"{int(total_duration // 60)}:{int(total_duration % 60):02d}",
-                "total_images": total_shots,
+                "total_images": total_shots_final,
                 "story_parts": all_parts
             }
         }
@@ -2306,7 +2377,7 @@ Estimated Shots: {part_info.get('estimated_shots', 5)}
         self.logger.info("=" * 50)
         self.logger.info(f"[Director CHUNKING] HOÀN THÀNH!")
         self.logger.info(f"  - Tổng parts: {len(all_parts)}")
-        self.logger.info(f"  - Tổng shots: {total_shots}")
+        self.logger.info(f"  - Tổng shots: {total_shots_final} (ban đầu: {total_shots}, fill: {total_shots_final - total_shots})")
         self.logger.info(f"  - Thời lượng: {int(total_duration // 60)} phút")
         self.logger.info("=" * 50)
 
