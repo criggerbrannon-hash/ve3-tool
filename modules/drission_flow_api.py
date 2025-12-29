@@ -476,6 +476,16 @@ class DrissionFlowAPI:
             options.set_user_data_path(str(self.profile_dir))
             options.set_local_port(self.chrome_port)
 
+            # Thêm arguments cần thiết cho Linux/headless
+            import platform
+            if platform.system() == 'Linux':
+                options.set_argument('--no-sandbox')
+                options.set_argument('--disable-dev-shm-usage')
+
+            # Disable GPU để tránh lỗi
+            options.set_argument('--disable-gpu')
+            options.set_argument('--disable-software-rasterizer')
+
             if self._use_webshare and self._webshare_proxy:
                 # Lấy proxy info
                 username, password = self._webshare_proxy.get_chrome_auth()
@@ -526,8 +536,23 @@ class DrissionFlowAPI:
             else:
                 self.log("⚠️ Webshare proxy không sẵn sàng - chạy không có proxy", "WARN")
 
-            self.driver = ChromiumPage(addr_or_opts=options)
-            self.log("✓ Chrome started")
+            # Thử khởi tạo Chrome với retry
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    self.driver = ChromiumPage(addr_or_opts=options)
+                    self.log("✓ Chrome started")
+                    break
+                except Exception as chrome_err:
+                    self.log(f"Chrome attempt {attempt+1}/{max_retries} failed: {chrome_err}", "WARN")
+                    if attempt < max_retries - 1:
+                        # Thử port khác
+                        self.chrome_port = random.randint(9222, 9999)
+                        options.set_local_port(self.chrome_port)
+                        self.log(f"  → Retry với port {self.chrome_port}...")
+                        time.sleep(2)
+                    else:
+                        raise chrome_err
 
             # Setup proxy auth nếu cần (CDP-based)
             if self._use_webshare and hasattr(self, '_proxy_auth') and self._proxy_auth:
