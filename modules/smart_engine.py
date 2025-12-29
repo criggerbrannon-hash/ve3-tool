@@ -107,13 +107,14 @@ class SmartEngine:
     # Chi refresh khi API tra loi 401 (authentication error)
     # Dieu nay toi uu hon vi token thuong valid lau hon 50 phut
 
-    def __init__(self, config_path: str = None, assigned_profile: str = None):
+    def __init__(self, config_path: str = None, assigned_profile: str = None, worker_id: int = 0):
         """
         Initialize SmartEngine.
 
         Args:
             config_path: Path to accounts.json config file
             assigned_profile: Specific Chrome profile name to use (for parallel processing)
+            worker_id: Worker ID for parallel processing (affects proxy selection, Chrome port)
         """
         # Support VE3_CONFIG_DIR environment variable
         if config_path:
@@ -132,6 +133,9 @@ class SmartEngine:
 
         # Assigned profile for parallel processing
         self.assigned_profile = assigned_profile
+
+        # Worker ID for parallel processing (proxy, Chrome port)
+        self.worker_id = worker_id
 
         # Resources
         self.profiles: List[Resource] = []
@@ -1442,7 +1446,8 @@ class SmartEngine:
                 profile_name=profile_name,
                 headless=headless,
                 verbose=True,
-                config_path=str(settings_path)
+                config_path=str(settings_path),
+                worker_id=self.worker_id  # For parallel processing
             )
 
             # === INJECT PRE-FETCHED PROJECT_ID nếu có ===
@@ -1649,7 +1654,8 @@ class SmartEngine:
                     project_path=str(proj_dir),
                     profile_name=profile_name,
                     headless=headless,
-                    verbose=True
+                    verbose=True,
+                    worker_id=self.worker_id  # For parallel processing
                 )
                 self._browser_generator = generator
                 # Restore project_id tu generator cu
@@ -2283,11 +2289,14 @@ class SmartEngine:
                 if bearer_token and proxy_token:
                     generator = BrowserFlowGenerator(
                         project_path=str(proj_dir),
-                        flow_bearer_token=bearer_token,
-                        flow_project_id=project_id,
-                        proxy_api_token=proxy_token,
-                        use_api_mode=True
+                        verbose=True,
+                        config_path=str(settings_path),
+                        worker_id=self.worker_id  # For parallel processing
                     )
+                    # Set config values
+                    generator.config['flow_bearer_token'] = bearer_token
+                    generator.config['flow_project_id'] = project_id
+                    generator.config['proxy_api_token'] = proxy_token
 
                     # Generate missing images
                     for p in retry_prompts:

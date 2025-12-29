@@ -2157,11 +2157,14 @@ class UnixVoiceToVideo:
 
     def _process_folder(self):
         """
-        Process folder with multiple voice files - SEQUENTIAL (like single mode).
+        Process folder with multiple voice files - PARALLEL mode.
 
-        Đơn giản: xử lý từng voice một, xong voice này mới đến voice tiếp theo.
-        Mỗi voice chạy như single file - mở Chrome mới, proxy mới.
+        Chạy song song nhiều voice cùng lúc, mỗi voice độc lập như chạy file đơn.
+        Mỗi worker có Chrome riêng, proxy riêng, project folder riêng.
         """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import threading
+
         try:
             from modules.smart_engine import SmartEngine
 
@@ -2173,32 +2176,33 @@ class UnixVoiceToVideo:
                 return
 
             total = len(voices)
-            self.log(f"📁 Tìm thấy {total} file voice - Chế độ TUẦN TỰ")
+            max_workers = 2  # Mặc định 2 workers song song
+
+            self.log(f"📁 Tìm thấy {total} file voice - Chế độ SONG SONG ({max_workers} workers)")
             for i, v in enumerate(voices[:5]):
                 self.log(f"   {i+1}. {v.name}")
             if total > 5:
                 self.log(f"   ... và {total - 5} file khác")
 
-            # Result tracking
-            total_results = {"success": 0, "failed": 0}
+            # Thread-safe result tracking
+            results_lock = threading.Lock()
+            total_results = {"success": 0, "failed": 0, "completed": 0}
 
-            # Process each voice sequentially (like running single files one by one)
-            for i, voice_path in enumerate(voices):
-                if self._stop:
-                    self.log("⏹️ Đã dừng theo yêu cầu")
-                    break
-
-                self.log("")
-                self.log("=" * 60)
-                self.log(f"[{i+1}/{total}] 📄 {voice_path.name}")
-                self.log("=" * 60)
+            def process_single_voice(voice_path: Path, worker_id: int) -> dict:
+                """Process a single voice file with given worker_id."""
+                voice_name = voice_path.name
+                result = {"voice": voice_name, "success": 0, "failed": 0, "error": None}
 
                 try:
-                    # Create new engine for each voice (like single mode)
-                    engine = SmartEngine()
-                    self._engine = engine
+                    # Log với worker_id để phân biệt
+                    self.root.after(0, lambda w=worker_id, v=voice_name:
+                        self.log(f"[Worker {w}] 🎬 Bắt đầu: {v}"))
+
+                    # Create new engine for this worker
+                    engine = SmartEngine(worker_id=worker_id)
 
                     def log_cb(msg):
+                        # Prefix log với worker_id
                         level = "INFO"
                         if "[OK]" in msg or "OK!" in msg or "✓" in msg:
                             level = "OK"
@@ -2206,29 +2210,66 @@ class UnixVoiceToVideo:
                             level = "ERROR"
                         elif "[WARN]" in msg or "⚠️" in msg:
                             level = "WARN"
-                        self.root.after(0, lambda m=msg, l=level: self.log(m, l))
+                        prefixed_msg = f"[W{worker_id}] {msg}"
+                        self.root.after(0, lambda m=prefixed_msg, l=level: self.log(m, l))
 
-                    # Run like single mode
-                    result = engine.run(str(voice_path), callback=log_cb)
+                    # Run engine
+                    engine_result = engine.run(str(voice_path), callback=log_cb)
 
-                    if 'error' not in result:
-                        total_results["success"] += result.get('success', 0)
-                        total_results["failed"] += result.get('failed', 0)
-                        self.log(f"✅ Xong: {voice_path.name}", "OK")
+                    if 'error' not in engine_result:
+                        result["success"] = engine_result.get('success', 0)
+                        result["failed"] = engine_result.get('failed', 0)
+                        self.root.after(0, lambda w=worker_id, v=voice_name:
+                            self.log(f"[Worker {w}] ✅ Xong: {v}", "OK"))
                     else:
-                        total_results["failed"] += 1
-                        self.log(f"❌ Lỗi: {result.get('error', 'Unknown')}", "ERROR")
+                        result["error"] = engine_result.get('error', 'Unknown')
+                        result["failed"] = 1
+                        self.root.after(0, lambda w=worker_id, v=voice_name, e=result["error"]:
+                            self.log(f"[Worker {w}] ❌ Lỗi {v}: {e}", "ERROR"))
 
                 except Exception as e:
                     import traceback
                     traceback.print_exc()
-                    self.log(f"❌ Exception: {e}", "ERROR")
-                    total_results["failed"] += 1
+                    result["error"] = str(e)
+                    result["failed"] = 1
+                    self.root.after(0, lambda w=worker_id, v=voice_name, err=e:
+                        self.log(f"[Worker {w}] ❌ Exception {v}: {err}", "ERROR"))
 
                 # Update progress
-                progress = ((i + 1) / total) * 100
-                self.root.after(0, lambda p=progress, c=i+1, t=total:
+                with results_lock:
+                    total_results["completed"] += 1
+                    total_results["success"] += result["success"]
+                    total_results["failed"] += result["failed"]
+                    completed = total_results["completed"]
+
+                progress = (completed / total) * 100
+                self.root.after(0, lambda p=progress, c=completed, t=total:
                     self.update_progress(p, f"Xong {c}/{t}"))
+
+                return result
+
+            # Run workers in parallel
+            self.log("")
+            self.log("=" * 60)
+            self.log(f"🚀 Bắt đầu xử lý song song với {max_workers} workers...")
+            self.log("=" * 60)
+
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # Submit all voices with rotating worker_id
+                futures = {}
+                for i, voice_path in enumerate(voices):
+                    if self._stop:
+                        break
+                    worker_id = i % max_workers  # Rotate worker_id: 0, 1, 0, 1, ...
+                    future = executor.submit(process_single_voice, voice_path, worker_id)
+                    futures[future] = voice_path
+
+                # Wait for completion (with stop check)
+                for future in as_completed(futures):
+                    if self._stop:
+                        self.log("⏹️ Đang dừng...", "WARN")
+                        executor.shutdown(wait=False, cancel_futures=True)
+                        break
 
             # Summary
             self.root.after(0, lambda: self.update_progress(100, "Hoàn tất!"))

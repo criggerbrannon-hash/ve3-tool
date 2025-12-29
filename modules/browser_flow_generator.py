@@ -71,7 +71,8 @@ class BrowserFlowGenerator:
         profile_name: str = "main",
         headless: bool = False,
         verbose: bool = True,
-        config_path: str = "config/settings.yaml"
+        config_path: str = "config/settings.yaml",
+        worker_id: int = 0
     ):
         """
         Khoi tao BrowserFlowGenerator.
@@ -82,6 +83,7 @@ class BrowserFlowGenerator:
             headless: Chay an (khong hien UI) - nen False lan dau de dang nhap
             verbose: In log chi tiet
             config_path: Duong dan file config
+            worker_id: Worker ID for parallel processing (affects proxy, Chrome port)
         """
         if not SELENIUM_AVAILABLE:
             raise ImportError(
@@ -93,6 +95,7 @@ class BrowserFlowGenerator:
         self.profile_name = profile_name
         self.headless = headless
         self.verbose = verbose
+        self.worker_id = worker_id  # For parallel processing
 
         # Load config
         self.config = {}
@@ -2943,7 +2946,7 @@ class BrowserFlowGenerator:
             verbose=self.verbose,
             log_callback=self._log,
             webshare_enabled=use_webshare,
-            worker_id=0  # Single mode - dùng worker_id=0
+            worker_id=self.worker_id  # Parallel mode - mỗi worker có proxy riêng
         )
 
         self._log("🚀 DrissionPage + Interceptor")
