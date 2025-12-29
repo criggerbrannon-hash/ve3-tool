@@ -3001,6 +3001,13 @@ class BrowserFlowGenerator:
         # Reset stats
         self.stats = {"total": len(prompts), "success": 0, "failed": 0, "skipped": 0}
 
+        # === LOAD MEDIA CACHE cho reference images ===
+        cached_media_names = self._load_media_cache()
+        if cached_media_names:
+            self._log(f"[CACHE] Loaded {len(cached_media_names)} media references")
+        else:
+            self._log("[CACHE] No media cache - scenes will have no reference images", "warn")
+
         # Load Excel workbook
         workbook = None
         if excel_path and Path(excel_path).exists():
@@ -3045,12 +3052,54 @@ class BrowserFlowGenerator:
             self._log(f"[{i+1}/{len(prompts)}] ID: {pid}")
             self._log(f"   Prompt: {prompt[:60]}...")
 
+            # === BUILD IMAGE_INPUTS từ reference_files và cached_media_names ===
+            image_inputs = []
+            is_reference_image = pid.lower().startswith('nv') or pid.lower().startswith('loc')
+
+            if not is_reference_image and cached_media_names:
+                # Parse reference_files từ prompt_data
+                ref_str = prompt_data.get('reference_files', '')
+                ref_files = []
+                if ref_str:
+                    try:
+                        parsed = json.loads(ref_str) if ref_str.startswith('[') else None
+                        if isinstance(parsed, list):
+                            ref_files = parsed
+                        else:
+                            ref_files = [f.strip() for f in str(ref_str).split(',') if f.strip()]
+                    except:
+                        ref_files = [f.strip() for f in str(ref_str).split(',') if f.strip()]
+
+                # Fallback: nếu không có reference, dùng nvc.png mặc định
+                if not ref_files:
+                    ref_files = ["nvc.png"]
+                    self._log(f"   [REF] No reference, using default nvc.png")
+
+                # Build image_inputs từ cached_media_names
+                for ref_file in ref_files:
+                    ref_id = ref_file.replace('.png', '').replace('.jpg', '')
+                    if ref_id in cached_media_names:
+                        media_info = cached_media_names[ref_id]
+                        media_name = media_info.get('mediaName') if isinstance(media_info, dict) else media_info
+                        if media_name:
+                            image_inputs.append({
+                                "name": media_name,
+                                "inputType": "REFERENCE"
+                            })
+                            self._log(f"   [REF] Using: {ref_id} → {media_name[:30]}...")
+
+                if image_inputs:
+                    self._log(f"   [REF] Total: {len(image_inputs)} reference images")
+                else:
+                    self._log(f"   [REF] No cached media found for references", "warn")
+
             try:
-                # Generate image using DrissionFlowAPI
+                # Generate image using DrissionFlowAPI with reference images
                 success, images, error = drission_api.generate_image(
                     prompt=prompt,
                     save_dir=save_dir,
-                    filename=pid
+                    filename=pid,
+                    image_inputs=image_inputs if image_inputs else None
                 )
 
                 if success and images:

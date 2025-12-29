@@ -788,7 +788,7 @@ class DrissionFlowAPI:
         self.log("    ✗ Không lấy được recaptchaToken mới", "ERROR")
         return False
 
-    def call_api(self, prompt: str = None, num_images: int = 1) -> Tuple[List[GeneratedImage], Optional[str]]:
+    def call_api(self, prompt: str = None, num_images: int = 1, image_inputs: Optional[List[Dict]] = None) -> Tuple[List[GeneratedImage], Optional[str]]:
         """
         Gọi API với captured tokens.
         Giống batch_generator.py - lấy payload từ browser mỗi lần.
@@ -796,6 +796,7 @@ class DrissionFlowAPI:
         Args:
             prompt: Prompt (nếu None, dùng payload đã capture)
             num_images: Số ảnh cần tạo (mặc định 1)
+            image_inputs: List of reference images [{name, inputType}]
 
         Returns:
             Tuple[list of GeneratedImage, error message]
@@ -826,6 +827,12 @@ class DrissionFlowAPI:
                     self.log(f"   → requests: {old_count} (giữ nguyên, không đủ để tăng)")
                 else:
                     self.log(f"   → requests: {old_count} (đã đúng)")
+
+                # === INJECT imageInputs cho reference images ===
+                if image_inputs:
+                    for req in payload_data["requests"]:
+                        req["imageInputs"] = image_inputs
+                    self.log(f"   → Injected {len(image_inputs)} reference image(s) into payload")
 
             original_payload = json.dumps(payload_data)
         except Exception as e:
@@ -907,7 +914,8 @@ class DrissionFlowAPI:
         prompt: str,
         save_dir: Optional[Path] = None,
         filename: str = None,
-        max_retries: int = 3
+        max_retries: int = 3,
+        image_inputs: Optional[List[Dict]] = None
     ) -> Tuple[bool, List[GeneratedImage], Optional[str]]:
         """
         Generate image - full flow với retry khi gặp 403.
@@ -917,6 +925,7 @@ class DrissionFlowAPI:
             save_dir: Thư mục lưu ảnh (optional)
             filename: Tên file (không có extension)
             max_retries: Số lần retry khi gặp 403 (mặc định 3)
+            image_inputs: List of reference images [{name, inputType}]
 
         Returns:
             Tuple[success, list of images, error]
@@ -926,13 +935,17 @@ class DrissionFlowAPI:
 
         last_error = None
 
+        # Log reference images if provided
+        if image_inputs:
+            self.log(f"→ Using {len(image_inputs)} reference image(s)")
+
         for attempt in range(max_retries):
             # 1. Capture tokens với prompt (mỗi lần retry lấy token mới)
             if not self._capture_tokens(prompt):
                 return False, [], "Không capture được tokens"
 
-            # 2. Gọi API
-            images, error = self.call_api()
+            # 2. Gọi API với image_inputs (reference images)
+            images, error = self.call_api(image_inputs=image_inputs)
 
             if error:
                 last_error = error
