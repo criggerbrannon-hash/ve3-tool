@@ -62,11 +62,12 @@ class KenBurnsIntensity:
 
 
 # Mapping intensity to values
-# Điều chỉnh cho clip ngắn 5-8 giây để chuyển động rõ ràng nhưng không quá nhanh
+# Điều chỉnh cho mượt như CapCut - chuyển động nhẹ nhàng, không chóng mặt
+# Clip 5-8s cần zoom/pan ít hơn để không bị giật
 INTENSITY_VALUES = {
-    KenBurnsIntensity.SUBTLE: {"zoom": 0.06, "pan": 0.04, "subtle": 0.02},
-    KenBurnsIntensity.NORMAL: {"zoom": 0.10, "pan": 0.06, "subtle": 0.03},  # 10% zoom, 6% pan
-    KenBurnsIntensity.STRONG: {"zoom": 0.15, "pan": 0.10, "subtle": 0.05},  # 15% zoom, 10% pan (cho clip 5-8s)
+    KenBurnsIntensity.SUBTLE: {"zoom": 0.04, "pan": 0.03, "subtle": 0.015},  # Rất nhẹ
+    KenBurnsIntensity.NORMAL: {"zoom": 0.06, "pan": 0.04, "subtle": 0.02},   # 6% zoom, 4% pan (mượt)
+    KenBurnsIntensity.STRONG: {"zoom": 0.08, "pan": 0.05, "subtle": 0.025},  # 8% zoom, 5% pan (rõ ràng nhưng không giật)
 }
 
 
@@ -80,8 +81,8 @@ class KenBurnsGenerator:
     - Không bị cắt viền đen (scale đủ lớn trước khi pan)
     """
 
-    # FPS cho zoompan (25 đủ mượt, tiết kiệm 17% thời gian so với 30)
-    ZOOMPAN_FPS = 25
+    # FPS cho zoompan (30 fps cho mượt như CapCut)
+    ZOOMPAN_FPS = 30
 
     def __init__(
         self,
@@ -271,40 +272,45 @@ class KenBurnsGenerator:
             # Scale ảnh lên lớn, dùng crop animated thay vì zoompan
             # Crop chỉ cắt vùng, không scale từng frame → nhanh hơn nhiều
 
-            # Scale lớn hơn output để có không gian pan
-            margin = 200  # pixels margin for panning
+            # Scale lớn hơn output để có không gian pan (giảm margin cho mượt hơn)
+            margin = 120  # pixels margin for panning (giảm từ 200 xuống 120 để mượt hơn)
             scaled_w = self.output_width + margin
             scaled_h = self.output_height + int(margin * 9 / 16)
 
+            # Ease function: dùng cubic ease-in-out cho mượt như CapCut
+            # p = t/duration (0 -> 1)
+            # ease = p < 0.5 ? 4*p*p*p : 1-pow(-2*p+2,3)/2
+            # Simplified for FFmpeg: 0.5-0.5*cos(PI*t/duration) (cosine ease)
+            ease_expr = f"(0.5-0.5*cos(PI*t/{duration}))"
+
             # Tính crop animation dựa trên effect
-            # t = thời gian hiện tại, duration = tổng thời gian
+            # Sử dụng ease function để chuyển động mượt
             if effect == KenBurnsEffect.ZOOM_IN:
                 # Zoom in: crop từ lớn về nhỏ (shrink crop area)
-                # Bắt đầu từ full, kết thúc ở center
-                x_expr = f"({margin}/2)*(t/{duration})"
-                y_expr = f"({int(margin * 9 / 32)})*(t/{duration})"
+                x_expr = f"({margin}/2)*{ease_expr}"
+                y_expr = f"({int(margin * 9 / 32)})*{ease_expr}"
             elif effect == KenBurnsEffect.ZOOM_OUT:
                 # Zoom out: crop từ nhỏ ra lớn
-                x_expr = f"({margin}/2)*(1-t/{duration})"
-                y_expr = f"({int(margin * 9 / 32)})*(1-t/{duration})"
+                x_expr = f"({margin}/2)*(1-{ease_expr})"
+                y_expr = f"({int(margin * 9 / 32)})*(1-{ease_expr})"
             elif effect == KenBurnsEffect.PAN_LEFT:
                 # Pan left: x đi từ phải sang trái
-                x_expr = f"{margin}*(1-t/{duration})"
+                x_expr = f"{margin}*(1-{ease_expr})"
                 y_expr = f"{int(margin * 9 / 32) // 2}"
             elif effect == KenBurnsEffect.PAN_RIGHT:
                 # Pan right: x đi từ trái sang phải
-                x_expr = f"{margin}*(t/{duration})"
+                x_expr = f"{margin}*{ease_expr}"
                 y_expr = f"{int(margin * 9 / 32) // 2}"
             elif effect == KenBurnsEffect.PAN_UP:
                 # Pan up: y đi từ dưới lên
                 x_expr = f"{margin // 2}"
-                y_expr = f"{int(margin * 9 / 16)}*(1-t/{duration})"
+                y_expr = f"{int(margin * 9 / 16)}*(1-{ease_expr})"
             elif effect == KenBurnsEffect.PAN_DOWN:
                 # Pan down: y đi từ trên xuống
                 x_expr = f"{margin // 2}"
-                y_expr = f"{int(margin * 9 / 16)}*(t/{duration})"
+                y_expr = f"{int(margin * 9 / 16)}*{ease_expr}"
             else:
-                # Default: subtle drift
+                # Default: subtle drift với sine wave (mượt)
                 x_expr = f"({margin}/2)*(0.5+0.5*sin(t/{duration}*PI))"
                 y_expr = f"({int(margin * 9 / 32)})*(0.5+0.5*cos(t/{duration}*PI))"
 
