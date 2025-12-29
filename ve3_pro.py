@@ -1522,6 +1522,12 @@ class UnixVoiceToVideo:
 
         ttk.Button(video_tab, text="💾 Lưu Compose Mode", command=save_compose_mode).pack(anchor=tk.W, pady=(5, 10))
 
+        # === TRANSITION INFO ===
+        ttk.Separator(video_tab, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=5)
+        ttk.Label(video_tab, text="Hiệu ứng chuyển cảnh:", font=('Segoe UI', 9, 'bold')).pack(anchor=tk.W)
+        ttk.Label(video_tab, text="• Random theo tỉ lệ: 20% none, 40% fade_black, 40% mix\n• Mỗi clip sẽ có hiệu ứng khác nhau để video đa dạng",
+                  foreground='gray', justify=tk.LEFT).pack(anchor=tk.W, pady=(0, 5))
+
         ttk.Separator(video_tab, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
 
         ttk.Label(video_tab, text="💡 Lưu ý:", font=('Segoe UI', 10, 'bold')).pack(anchor=tk.W)

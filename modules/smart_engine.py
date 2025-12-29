@@ -2757,6 +2757,10 @@ class SmartEngine:
                 # Fade in/out cho mỗi clip
                 import random
                 FADE_DURATION = 0.4  # 0.4 giây fade
+
+                # Transition ratio: 20% none, 40% fade_black, 40% mix
+                # Mỗi clip sẽ random theo tỉ lệ này để video đa dạng hơn
+                self.log(f"  Transition: Random (20% none, 40% fade_black, 40% mix)")
                 self.log(f"  Dang tao {len(media_items)} clips ({video_count} video, {image_count} image)...")
 
                 # Ken Burns settings từ config
@@ -2820,8 +2824,14 @@ class SmartEngine:
                     target_duration = item['duration']
 
                     # === TRANSITION EFFECTS ===
-                    # 3 loại chuyển cảnh random: none, fade_black, mix
-                    transition_type = random.choice(['none', 'fade_black', 'fade_black', 'mix'])  # 50% fade, 25% none, 25% mix
+                    # Random theo tỉ lệ: 20% none, 40% fade_black, 40% mix
+                    rand_val = random.random()
+                    if rand_val < 0.2:
+                        transition_type = 'none'       # 20%
+                    elif rand_val < 0.6:
+                        transition_type = 'fade_black' # 40%
+                    else:
+                        transition_type = 'mix'        # 40%
                     fade_out_start = max(0, target_duration - FADE_DURATION)
 
                     if transition_type == 'none':
