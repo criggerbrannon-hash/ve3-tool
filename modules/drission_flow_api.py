@@ -350,9 +350,16 @@ class DrissionFlowAPI:
         return False
 
     def _wait_for_project_manual(self, timeout: int = 60) -> bool:
-        """Fallback: đợi user chọn project thủ công."""
+        """
+        Fallback: đợi user chọn project thủ công.
+        Nếu quá lâu (30s) → tự động F5 refresh.
+        Nếu vẫn không được (60s) → restart Chrome với IP mới.
+        """
         self.log("Đợi chọn dự án thủ công...")
         self.log("→ Click vào dự án có sẵn hoặc tạo dự án mới")
+
+        REFRESH_TIMEOUT = 30  # Sau 30s không click được → F5
+        refreshed = False
 
         for i in range(timeout):
             current_url = self.driver.url
@@ -360,11 +367,25 @@ class DrissionFlowAPI:
                 self.log(f"✓ Đã vào dự án!")
                 return True
             time.sleep(1)
+
+            # Sau 30s → tự động F5 refresh
+            if i == REFRESH_TIMEOUT and not refreshed:
+                self.log(f"⚠️ Đợi quá lâu ({REFRESH_TIMEOUT}s) - Tự động F5 refresh...")
+                try:
+                    self.driver.refresh()
+                    refreshed = True
+                    time.sleep(3)  # Đợi page load
+                except Exception as e:
+                    self.log(f"  → F5 error: {e}", "WARN")
+
             if i % 15 == 14:
                 self.log(f"... đợi {i+1}s - hãy click chọn dự án")
 
         self.log("✗ Timeout - chưa chọn dự án", "ERROR")
-        return False
+
+        # Timeout → gợi ý restart với IP mới
+        self.log("→ Sẽ restart Chrome với IP mới...", "WARN")
+        return False  # Trả về False để trigger restart ở layer trên
 
     def _warm_up_session(self, dummy_prompt: str = "a simple test image") -> bool:
         """

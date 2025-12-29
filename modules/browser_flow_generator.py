@@ -2983,9 +2983,35 @@ class BrowserFlowGenerator:
         else:
             self._log("   Proxy: OFF (không có proxy)")
 
-        # Setup Chrome và đợi user chọn project
-        if not drission_api.setup():
-            self._log("❌ DrissionFlowAPI setup failed!", "error")
+        # Setup Chrome và đợi user chọn project (với retry + IP rotation)
+        MAX_SETUP_RETRIES = 3
+        setup_success = False
+
+        for setup_attempt in range(MAX_SETUP_RETRIES):
+            if drission_api.setup():
+                setup_success = True
+                break
+            else:
+                self._log(f"❌ Setup failed (attempt {setup_attempt + 1}/{MAX_SETUP_RETRIES})", "error")
+
+                if setup_attempt < MAX_SETUP_RETRIES - 1:
+                    # Rotate IP và restart Chrome
+                    self._log("🔄 Đang rotate IP và restart Chrome...", "warn")
+                    if use_webshare:
+                        try:
+                            manager = get_proxy_manager()
+                            success, msg = manager.rotate_worker_proxy(self.worker_id, "setup_timeout")
+                            self._log(f"   → {msg}")
+                            if success and drission_api.restart_chrome():
+                                self._log("✓ Chrome restarted với IP mới")
+                                import time
+                                time.sleep(3)
+                                continue
+                        except Exception as e:
+                            self._log(f"   → Rotate error: {e}", "warn")
+
+        if not setup_success:
+            self._log("❌ DrissionFlowAPI setup failed sau tất cả retries!", "error")
             return {"success": False, "error": "DrissionFlowAPI setup failed"}
 
         self._log(f"Tong: {len(prompts)} prompts")
