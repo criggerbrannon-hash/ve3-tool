@@ -278,12 +278,12 @@ class KenBurnsGenerator:
 
             # Tính crop animation dựa trên effect
             # t = thời gian hiện tại, duration = tổng thời gian
-            if effect in [KenBurnsEffect.ZOOM_IN, KenBurnsEffect.ZOOM_IN_CENTER]:
+            if effect == KenBurnsEffect.ZOOM_IN:
                 # Zoom in: crop từ lớn về nhỏ (shrink crop area)
                 # Bắt đầu từ full, kết thúc ở center
                 x_expr = f"({margin}/2)*(t/{duration})"
                 y_expr = f"({int(margin * 9 / 32)})*(t/{duration})"
-            elif effect in [KenBurnsEffect.ZOOM_OUT, KenBurnsEffect.ZOOM_OUT_CENTER]:
+            elif effect == KenBurnsEffect.ZOOM_OUT:
                 # Zoom out: crop từ nhỏ ra lớn
                 x_expr = f"({margin}/2)*(1-t/{duration})"
                 y_expr = f"({int(margin * 9 / 32)})*(1-t/{duration})"
