@@ -3174,6 +3174,7 @@ class BrowserFlowGenerator:
                     self._log(f"   [REF] No reference, using default nvc.png")
 
                 # Build image_inputs từ media_ids (Excel hoặc cache)
+                # QUAN TRỌNG: Dùng "imageInputType" (không phải "inputType") với giá trị đầy đủ
                 for ref_file in ref_files:
                     ref_id = ref_file.replace('.png', '').replace('.jpg', '')
                     # Thử Excel media_id trước
@@ -3181,7 +3182,7 @@ class BrowserFlowGenerator:
                         media_id = excel_media_ids[ref_id]
                         image_inputs.append({
                             "name": media_id,
-                            "inputType": "REFERENCE"
+                            "imageInputType": "IMAGE_INPUT_TYPE_REFERENCE"
                         })
                         self._log(f"   [REF] Using (Excel): {ref_id} → {media_id[:30]}...")
                     elif ref_id in cached_media_names:
@@ -3191,7 +3192,7 @@ class BrowserFlowGenerator:
                         if media_name:
                             image_inputs.append({
                                 "name": media_name,
-                                "inputType": "REFERENCE"
+                                "imageInputType": "IMAGE_INPUT_TYPE_REFERENCE"
                             })
                             self._log(f"   [REF] Using (cache): {ref_id} → {media_name[:30]}...")
 
