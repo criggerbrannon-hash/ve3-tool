@@ -3618,7 +3618,43 @@ class SmartEngine:
                 self.log("[VIDEO] Dùng pre-fetched token cho video generation")
 
         if not self._video_settings.get('bearer_token'):
-            self.log("[VIDEO] Chưa có token - sẽ tạo video sau khi có ảnh", "INFO")
+            self.log("[VIDEO] Chưa có token - thử lấy token mới bằng DrissionPage...")
+            try:
+                from modules.drission_flow_api import DrissionFlowAPI
+                drission_api = DrissionFlowAPI(
+                    proxy_mode=self.config.get('proxy_mode', 'local'),
+                    headless=True,
+                    verbose=False
+                )
+                if drission_api.setup():
+                    # Lấy token bằng cách trigger một request đơn giản
+                    if drission_api.bearer_token and drission_api.project_id:
+                        bearer = drission_api.bearer_token
+                        if bearer.startswith("Bearer "):
+                            bearer = bearer[7:]
+                        self._video_settings['bearer_token'] = bearer
+                        self._video_settings['project_id'] = drission_api.project_id
+                        self.log(f"[VIDEO] Lấy được token mới: {drission_api.project_id[:8]}...")
+
+                        # Lưu vào cache để dùng lại
+                        cache_path = proj_dir / "prompts" / ".media_cache.json"
+                        try:
+                            cache_data = {}
+                            if cache_path.exists():
+                                with open(cache_path, 'r', encoding='utf-8') as f:
+                                    cache_data = json.load(f)
+                            cache_data['_bearer_token'] = bearer
+                            cache_data['_project_id'] = drission_api.project_id
+                            with open(cache_path, 'w', encoding='utf-8') as f:
+                                json.dump(cache_data, f, indent=2)
+                        except:
+                            pass
+                    drission_api.close()
+            except Exception as e:
+                self.log(f"[VIDEO] Không thể lấy token mới: {e}", "WARN")
+
+        if not self._video_settings.get('bearer_token'):
+            self.log("[VIDEO] Không có token - skip video generation", "WARN")
             return
 
         self._video_worker_running = True
