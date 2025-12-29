@@ -3001,13 +3001,6 @@ class BrowserFlowGenerator:
         # Reset stats
         self.stats = {"total": len(prompts), "success": 0, "failed": 0, "skipped": 0}
 
-        # === LOAD MEDIA CACHE cho reference images ===
-        cached_media_names = self._load_media_cache()
-        if cached_media_names:
-            self._log(f"[CACHE] Loaded {len(cached_media_names)} media references")
-        else:
-            self._log("[CACHE] No media cache - scenes will have no reference images", "warn")
-
         # Load Excel workbook
         workbook = None
         if excel_path and Path(excel_path).exists():
@@ -3016,6 +3009,25 @@ class BrowserFlowGenerator:
                 workbook.load_or_create()
             except Exception as e:
                 self._log(f"Warning: Khong load duoc Excel: {e}", "warn")
+
+        # === LOAD MEDIA_IDs từ Excel (thay vì cache file) ===
+        excel_media_ids = {}
+        if workbook:
+            try:
+                excel_media_ids = workbook.get_media_ids()
+                if excel_media_ids:
+                    self._log(f"[EXCEL] Loaded {len(excel_media_ids)} media_ids from Excel")
+                else:
+                    self._log("[EXCEL] No media_ids in Excel - scenes will have no reference images", "warn")
+            except Exception as e:
+                self._log(f"Warning: Cannot load media_ids from Excel: {e}", "warn")
+
+        # Fallback to cache file nếu Excel không có data
+        cached_media_names = {}
+        if not excel_media_ids:
+            cached_media_names = self._load_media_cache()
+            if cached_media_names:
+                self._log(f"[CACHE] Fallback: Loaded {len(cached_media_names)} media references from cache")
 
         # Ensure output dir exists
         output_dir = Path(output_dir)
@@ -3052,11 +3064,14 @@ class BrowserFlowGenerator:
             self._log(f"[{i+1}/{len(prompts)}] ID: {pid}")
             self._log(f"   Prompt: {prompt[:60]}...")
 
-            # === BUILD IMAGE_INPUTS từ reference_files và cached_media_names ===
+            # === BUILD IMAGE_INPUTS từ reference_files và media_ids ===
             image_inputs = []
             is_reference_image = pid.lower().startswith('nv') or pid.lower().startswith('loc')
 
-            if not is_reference_image and cached_media_names:
+            # Merge Excel và cache media_ids (Excel ưu tiên)
+            all_media_ids = {**cached_media_names, **excel_media_ids}
+
+            if not is_reference_image and all_media_ids:
                 # Parse reference_files từ prompt_data
                 ref_str = prompt_data.get('reference_files', '')
                 ref_files = []
@@ -3075,10 +3090,19 @@ class BrowserFlowGenerator:
                     ref_files = ["nvc.png"]
                     self._log(f"   [REF] No reference, using default nvc.png")
 
-                # Build image_inputs từ cached_media_names
+                # Build image_inputs từ media_ids (Excel hoặc cache)
                 for ref_file in ref_files:
                     ref_id = ref_file.replace('.png', '').replace('.jpg', '')
-                    if ref_id in cached_media_names:
+                    # Thử Excel media_id trước
+                    if ref_id in excel_media_ids:
+                        media_id = excel_media_ids[ref_id]
+                        image_inputs.append({
+                            "name": media_id,
+                            "inputType": "REFERENCE"
+                        })
+                        self._log(f"   [REF] Using (Excel): {ref_id} → {media_id[:30]}...")
+                    elif ref_id in cached_media_names:
+                        # Fallback to cache
                         media_info = cached_media_names[ref_id]
                         media_name = media_info.get('mediaName') if isinstance(media_info, dict) else media_info
                         if media_name:
@@ -3086,12 +3110,12 @@ class BrowserFlowGenerator:
                                 "name": media_name,
                                 "inputType": "REFERENCE"
                             })
-                            self._log(f"   [REF] Using: {ref_id} → {media_name[:30]}...")
+                            self._log(f"   [REF] Using (cache): {ref_id} → {media_name[:30]}...")
 
                 if image_inputs:
                     self._log(f"   [REF] Total: {len(image_inputs)} reference images")
                 else:
-                    self._log(f"   [REF] No cached media found for references", "warn")
+                    self._log(f"   [REF] No media_id found for references", "warn")
 
             try:
                 # Generate image using DrissionFlowAPI with reference images
@@ -3115,8 +3139,33 @@ class BrowserFlowGenerator:
                         except:
                             pass
 
-                    # Get media_name for video generation cache
-                    if images[0].media_name:
+                    # === SAVE MEDIA_ID to Excel for nv/loc images ===
+                    # Cả nv* và loc* đều nằm trong sheet "characters"
+                    if images[0].media_name and is_reference_image:
+                        media_id_saved = False
+                        if workbook:
+                            try:
+                                # update_character works for both nv* and loc* (same sheet)
+                                if workbook.update_character(pid, media_id=images[0].media_name):
+                                    workbook.save()
+                                    self._log(f"   [EXCEL] Saved media_id for {pid}: {images[0].media_name[:40]}...")
+                                    excel_media_ids[pid] = images[0].media_name
+                                    media_id_saved = True
+                                else:
+                                    self._log(f"   [EXCEL] {pid} not found in characters sheet", "warn")
+                            except Exception as e:
+                                self._log(f"   [EXCEL] Cannot save media_id: {e}", "warn")
+
+                        # Fallback: save to cache file if Excel update fails
+                        if not media_id_saved:
+                            try:
+                                cached_media_names[pid] = {'mediaName': images[0].media_name}
+                                self._save_media_cache(cached_media_names)
+                                self._log(f"   [CACHE] Fallback - saved media_id for {pid}")
+                                excel_media_ids[pid] = images[0].media_name
+                            except Exception as e:
+                                self._log(f"   [CACHE] Cannot save media_id: {e}", "warn")
+                    elif images[0].media_name:
                         self._log(f"   Media name: {images[0].media_name[:40]}...")
                 else:
                     self._log(f"   ✗ Thất bại: {error}", "error")
@@ -3138,13 +3187,34 @@ class BrowserFlowGenerator:
                                 success2, images2, error2 = drission_api.generate_image(
                                     prompt=prompt,
                                     save_dir=save_dir,
-                                    filename=pid
+                                    filename=pid,
+                                    image_inputs=image_inputs if image_inputs else None
                                 )
                                 if success2 and images2:
                                     self._log(f"   ✓ Retry thành công! Saved {len(images2)} image(s)")
                                     self.stats["success"] += 1
                                     self.stats["failed"] -= 1  # Undo the fail count
-                                    if images2[0].media_name:
+                                    # Save media_id for nv/loc images
+                                    if images2[0].media_name and is_reference_image:
+                                        media_id_saved = False
+                                        if workbook:
+                                            try:
+                                                if workbook.update_character(pid, media_id=images2[0].media_name):
+                                                    workbook.save()
+                                                    self._log(f"   [EXCEL] Saved media_id for {pid}")
+                                                    excel_media_ids[pid] = images2[0].media_name
+                                                    media_id_saved = True
+                                            except:
+                                                pass
+                                        # Fallback to cache
+                                        if not media_id_saved:
+                                            try:
+                                                cached_media_names[pid] = {'mediaName': images2[0].media_name}
+                                                self._save_media_cache(cached_media_names)
+                                                excel_media_ids[pid] = images2[0].media_name
+                                            except:
+                                                pass
+                                    elif images2[0].media_name:
                                         self._log(f"   Media name: {images2[0].media_name[:40]}...")
                                 else:
                                     self._log(f"   ✗ Retry vẫn thất bại: {error2}", "error")
