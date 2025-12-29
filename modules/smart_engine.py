@@ -3498,22 +3498,47 @@ class SmartEngine:
                 bearer_token = ''
                 project_id = ''
 
-                # 1. ƯU TIÊN: Token từ project cache (.media_cache.json)
-                # Đây là token đã được cache khi tạo ảnh, dùng chung cho video
+                # 1. ƯU TIÊN: Token từ Excel (sheet 'config')
+                # Đây là nguồn chính thức, được lưu khi tạo ảnh
+                if proj_dir:
+                    excel_files = list(proj_dir.glob("prompts/*.xlsx"))
+                    if excel_files:
+                        try:
+                            import openpyxl
+                            wb = openpyxl.load_workbook(excel_files[0])
+                            if 'config' in wb.sheetnames:
+                                ws = wb['config']
+                                for row in ws.iter_rows(min_row=2, max_row=20, values_only=True):
+                                    if row and len(row) >= 2:
+                                        key = str(row[0] or '').strip().lower()
+                                        if key == 'flow_project_id' and row[1]:
+                                            project_id = str(row[1]).strip()
+                                        # Note: bearer_token trong Excel bị truncate, dùng cache
+                            wb.close()
+                            if project_id:
+                                self.log(f"[VIDEO] Dùng project_id từ Excel: {project_id[:8]}...")
+                        except Exception as e:
+                            self.log(f"[VIDEO] Không đọc được Excel: {e}", "WARN")
+
+                # 2. Token từ project cache (.media_cache.json)
+                # Đây là full token (không bị truncate)
                 if proj_dir:
                     cache_path = proj_dir / "prompts" / ".media_cache.json"
                     if cache_path.exists():
                         try:
                             with open(cache_path, 'r', encoding='utf-8') as f:
                                 cache_data = json.load(f)
-                            bearer_token = cache_data.get('_bearer_token', '')
-                            project_id = cache_data.get('_project_id', '')
-                            if bearer_token:
+                            cached_token = cache_data.get('_bearer_token', '')
+                            cached_project = cache_data.get('_project_id', '')
+                            if cached_token:
+                                bearer_token = cached_token
                                 self.log(f"[VIDEO] Dùng token từ project cache")
+                            if not project_id and cached_project:
+                                project_id = cached_project
                         except:
                             pass
 
-                # 2. FALLBACK: Token từ profiles
+                # 3. FALLBACK: Token từ profiles
                 if not bearer_token:
                     for profile in self.profiles:
                         if profile.token and self.is_token_valid(profile):

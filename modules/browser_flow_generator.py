@@ -3446,6 +3446,67 @@ class BrowserFlowGenerator:
             else:
                 self._log("Tất cả ảnh đã có, không cần retry")
 
+        # === LƯU TOKEN VÀO EXCEL + CACHE CHO VIDEO WORKER ===
+        # Quan trọng: Video worker cần token để tạo I2V
+        try:
+            if drission_api.bearer_token and drission_api.project_id:
+                bearer = drission_api.bearer_token
+                if bearer.startswith("Bearer "):
+                    bearer = bearer[7:]  # Remove "Bearer " prefix
+                project_id = drission_api.project_id
+
+                # 1. Lưu vào config để _save_media_cache có thể đọc
+                self.config['flow_bearer_token'] = bearer
+                self.config['flow_project_id'] = project_id
+
+                # 2. Lưu vào Excel (sheet config) để tái sử dụng
+                if workbook:
+                    try:
+                        import openpyxl
+                        wb = openpyxl.load_workbook(excel_path)
+
+                        # Tạo hoặc lấy sheet 'config'
+                        if 'config' not in wb.sheetnames:
+                            ws = wb.create_sheet('config')
+                            ws['A1'] = 'key'
+                            ws['B1'] = 'value'
+                            next_row = 2
+                        else:
+                            ws = wb['config']
+                            next_row = ws.max_row + 1
+
+                        # Lưu các config
+                        config_items = {
+                            'flow_project_id': project_id,
+                            'flow_bearer_token': bearer[:50] + '...' if len(bearer) > 50 else bearer,  # Truncate for display
+                            'token_time': str(int(time.time()))
+                        }
+
+                        for key, value in config_items.items():
+                            # Tìm row có key này để update
+                            found = False
+                            for row_num in range(2, ws.max_row + 1):
+                                if ws.cell(row=row_num, column=1).value == key:
+                                    ws.cell(row=row_num, column=2, value=value)
+                                    found = True
+                                    break
+                            if not found:
+                                ws.cell(row=next_row, column=1, value=key)
+                                ws.cell(row=next_row, column=2, value=value)
+                                next_row += 1
+
+                        wb.save(excel_path)
+                        wb.close()
+                        self._log(f"[EXCEL] Saved project_id + token to Excel")
+                    except Exception as e:
+                        self._log(f"[EXCEL] Warning: Cannot save to Excel: {e}", "warn")
+
+                # 3. Lưu full token vào media cache (để video worker dùng)
+                self._save_media_cache(cached_media_names)
+                self._log(f"[CACHE] Saved full token for video worker")
+        except Exception as e:
+            self._log(f"[CACHE] Warning: Cannot save token: {e}", "warn")
+
         # Cleanup (sau retry phase)
         try:
             drission_api.close()
