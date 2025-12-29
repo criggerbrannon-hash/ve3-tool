@@ -224,7 +224,12 @@ class ImageToVideoConverter:
 
         try:
             if self.use_proxy:
-                return self._upload_via_proxy(body_json)
+                result = self._upload_via_proxy(body_json)
+                if result:
+                    return result
+                # Fallback to direct upload when proxy fails
+                self._log("Proxy failed, trying direct upload...", "warn")
+                return self._upload_direct(body_json)
             else:
                 return self._upload_direct(body_json)
         except Exception as e:
@@ -255,6 +260,13 @@ class ImageToVideoConverter:
 
     def _upload_via_proxy(self, body_json: Dict) -> Optional[str]:
         """Upload qua proxy API."""
+        # Debug: check token
+        if not self.bearer_token:
+            self._log("Bearer token is empty!", "error")
+            return None
+
+        self._log(f"Using bearer token: {self.bearer_token[:20]}..." if len(self.bearer_token) > 20 else f"Bearer token: {self.bearer_token}")
+
         payload = {
             "body_json": body_json,
             "flow_auth_token": self.bearer_token,
@@ -269,7 +281,7 @@ class ImageToVideoConverter:
         )
 
         if response.status_code != 200:
-            self._log(f"Proxy upload failed: {response.status_code}", "error")
+            self._log(f"Proxy upload failed: {response.status_code} - {response.text[:200] if response.text else 'no body'}", "error")
             return None
 
         task_id = response.json().get("taskId")
@@ -345,7 +357,12 @@ class ImageToVideoConverter:
 
         try:
             if self.use_proxy:
-                return self._create_video_via_proxy(body_json)
+                result = self._create_video_via_proxy(body_json)
+                if result and result[1]:  # Has operations
+                    return result
+                # Fallback to direct when proxy fails
+                self._log("Proxy failed, trying direct video creation...", "warn")
+                return self._create_video_direct(body_json)
             else:
                 return self._create_video_direct(body_json)
         except Exception as e:
