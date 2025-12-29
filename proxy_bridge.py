@@ -44,6 +44,22 @@ class ProxyBridge:
         self.password = password
         self.running = False
         self.server_socket = None
+        self._lock = threading.Lock()  # Thread-safe upstream updates
+
+    def update_upstream(self, remote_host: str, remote_port: int,
+                        username: str = None, password: str = None):
+        """
+        Đổi proxy upstream mà không cần restart Chrome.
+        Thread-safe - có thể gọi trong khi đang xử lý requests.
+        """
+        with self._lock:
+            self.remote_host = remote_host
+            self.remote_port = remote_port
+            if username is not None:
+                self.username = username
+            if password is not None:
+                self.password = password
+        print(f"[+] Switched upstream to {remote_host}:{remote_port}")
 
     def get_proxy_auth_header(self) -> str:
         """Tạo Proxy-Authorization header."""
@@ -67,12 +83,16 @@ class ProxyBridge:
             first_line = request_str.split('\r\n')[0]
             method = first_line.split()[0]
 
-            # Kết nối đến remote proxy
+            # Kết nối đến remote proxy (thread-safe read)
+            with self._lock:
+                remote_host = self.remote_host
+                remote_port = self.remote_port
+
             remote_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             remote_socket.settimeout(30)
 
             try:
-                remote_socket.connect((self.remote_host, self.remote_port))
+                remote_socket.connect((remote_host, remote_port))
             except Exception as e:
                 print(f"[!] Cannot connect to remote proxy: {e}")
                 client_socket.close()

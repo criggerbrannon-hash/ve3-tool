@@ -244,11 +244,20 @@ class DrissionFlowAPI:
         self._use_webshare = webshare_enabled
         self._proxy_bridge = None  # Local proxy bridge
         self._bridge_port = None   # Bridge port for API calls
+        self._is_rotating_mode = False  # True = Rotating Endpoint (auto IP change)
         if webshare_enabled and WEBSHARE_AVAILABLE:
             try:
                 from webshare_proxy import get_proxy_manager, WebshareProxy
                 manager = get_proxy_manager()
-                if manager.proxies:
+
+                # Check rotating endpoint mode first
+                if manager.is_rotating_mode():
+                    self._webshare_proxy = WebshareProxy()
+                    self._is_rotating_mode = True
+                    rotating = manager.rotating_endpoint
+                    self.log(f"✓ Webshare: ROTATING ENDPOINT mode")
+                    self.log(f"  → {rotating.host}:{rotating.port}")
+                elif manager.proxies:
                     self._webshare_proxy = WebshareProxy()  # Wrapper cho manager
                     # Lấy proxy cho worker này (không dùng current_proxy global)
                     worker_proxy = manager.get_proxy_for_worker(self.worker_id)
@@ -495,57 +504,92 @@ class DrissionFlowAPI:
             options.set_argument('--disable-software-rasterizer')
 
             if self._use_webshare and self._webshare_proxy:
-                # Lấy proxy info cho worker này
-                username, password = self._webshare_proxy.get_chrome_auth(self.worker_id)
-                remote_proxy_url = self._webshare_proxy.get_chrome_proxy_arg(self.worker_id)
+                from webshare_proxy import get_proxy_manager
+                manager = get_proxy_manager()
 
-                if username and password:
-                    # Có auth → dùng local proxy bridge
-                    from webshare_proxy import get_proxy_manager
-                    manager = get_proxy_manager()
-                    # QUAN TRỌNG: Lấy proxy cho worker này, không dùng current_proxy global
-                    proxy = manager.get_proxy_for_worker(self.worker_id)
-                    if not proxy:
-                        self.log(f"✗ No proxy available for worker {self.worker_id}", "ERROR")
-                        return False
+                # === CHECK ROTATING ENDPOINT MODE ===
+                if manager.is_rotating_mode():
+                    # ROTATING ENDPOINT: Mỗi request tự động đổi IP
+                    rotating = manager.rotating_endpoint
+                    self._is_rotating_mode = True  # Flag để biết đang dùng rotating
 
                     try:
                         from proxy_bridge import start_proxy_bridge
-                        # Unique bridge port based on worker_id (parallel-safe)
                         bridge_port = 8800 + self.worker_id
                         self._proxy_bridge = start_proxy_bridge(
                             local_port=bridge_port,
-                            remote_host=proxy.host,
-                            remote_port=proxy.port,
-                            username=proxy.username,
-                            password=proxy.password
+                            remote_host=rotating.host,
+                            remote_port=rotating.port,
+                            username=rotating.username,
+                            password=rotating.password
                         )
-                        self._bridge_port = bridge_port  # LƯU ĐỂ DÙNG TRONG call_api()
-                        import time
-                        time.sleep(0.5)  # Đợi bridge start
+                        self._bridge_port = bridge_port
+                        time.sleep(0.5)
 
-                        # Chrome kết nối đến local bridge (không cần auth)
                         options.set_argument(f'--proxy-server=http://127.0.0.1:{bridge_port}')
                         options.set_argument('--proxy-bypass-list=<-loopback>')
                         options.set_argument('--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1')
 
-                        self.log(f"Proxy [Worker {self.worker_id}]: Bridge → {proxy.endpoint}")
+                        self.log(f"🔄 ROTATING ENDPOINT [Worker {self.worker_id}]")
+                        self.log(f"  → {rotating.host}:{rotating.port}")
+                        self.log(f"  → Mỗi request sẽ tự động đổi IP!")
                         self.log(f"  Local: http://127.0.0.1:{bridge_port}")
-                        self.log(f"  Auth: {username}:****")
 
                     except Exception as e:
-                        self.log(f"Bridge error: {e}, using direct proxy", "WARN")
+                        self.log(f"Bridge error: {e}", "ERROR")
+                        return False
+                else:
+                    # === DIRECT PROXY LIST MODE ===
+                    self._is_rotating_mode = False
+                    username, password = self._webshare_proxy.get_chrome_auth(self.worker_id)
+                    remote_proxy_url = self._webshare_proxy.get_chrome_proxy_arg(self.worker_id)
+
+                    if username and password:
+                        # Có auth → dùng local proxy bridge
+                        # QUAN TRỌNG: Lấy proxy cho worker này, không dùng current_proxy global
+                        proxy = manager.get_proxy_for_worker(self.worker_id)
+                        if not proxy:
+                            self.log(f"✗ No proxy available for worker {self.worker_id}", "ERROR")
+                            return False
+
+                        try:
+                            from proxy_bridge import start_proxy_bridge
+                            # Unique bridge port based on worker_id (parallel-safe)
+                            bridge_port = 8800 + self.worker_id
+                            self._proxy_bridge = start_proxy_bridge(
+                                local_port=bridge_port,
+                                remote_host=proxy.host,
+                                remote_port=proxy.port,
+                                username=proxy.username,
+                                password=proxy.password
+                            )
+                            self._bridge_port = bridge_port  # LƯU ĐỂ DÙNG TRONG call_api()
+                            import time
+                            time.sleep(0.5)  # Đợi bridge start
+
+                            # Chrome kết nối đến local bridge (không cần auth)
+                            options.set_argument(f'--proxy-server=http://127.0.0.1:{bridge_port}')
+                            options.set_argument('--proxy-bypass-list=<-loopback>')
+                            options.set_argument('--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1')
+
+                            self.log(f"Proxy [Worker {self.worker_id}]: Bridge → {proxy.endpoint}")
+                            self.log(f"  Local: http://127.0.0.1:{bridge_port}")
+                            self.log(f"  Auth: {username}:****")
+
+                        except Exception as e:
+                            self.log(f"Bridge error: {e}, using direct proxy", "WARN")
+                            options.set_argument(f'--proxy-server={remote_proxy_url}')
+                            options.set_argument('--proxy-bypass-list=<-loopback>')
+                            self._proxy_auth = (username, password)
+                    else:
+                        # IP Authorization mode
                         options.set_argument(f'--proxy-server={remote_proxy_url}')
                         options.set_argument('--proxy-bypass-list=<-loopback>')
-                        self._proxy_auth = (username, password)
-                else:
-                    # IP Authorization mode
-                    options.set_argument(f'--proxy-server={remote_proxy_url}')
-                    options.set_argument('--proxy-bypass-list=<-loopback>')
-                    options.set_argument('--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1')
-                    self.log(f"Proxy: Webshare ({remote_proxy_url})")
-                    self.log(f"  Mode: IP Authorization")
+                        options.set_argument('--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1')
+                        self.log(f"Proxy: Webshare ({remote_proxy_url})")
+                        self.log(f"  Mode: IP Authorization")
             else:
+                self._is_rotating_mode = False
                 self.log("⚠️ Webshare proxy không sẵn sàng - chạy không có proxy", "WARN")
 
             # Thử khởi tạo Chrome với retry
@@ -950,11 +994,23 @@ class DrissionFlowAPI:
             if error:
                 last_error = error
 
-                # Nếu lỗi 403, xoay IP và restart Chrome
+                # Nếu lỗi 403, xoay IP và retry
                 if "403" in error:
                     self.log(f"⚠️ 403 error (attempt {attempt+1}/{max_retries})", "WARN")
 
-                    # Xoay IP proxy cho worker này
+                    # === ROTATING ENDPOINT MODE ===
+                    # Mỗi request tự động đổi IP → chỉ cần retry, không cần restart Chrome
+                    if hasattr(self, '_is_rotating_mode') and self._is_rotating_mode:
+                        self.log(f"  → Rotating mode: IP sẽ tự đổi ở request tiếp theo")
+                        if attempt < max_retries - 1:
+                            self.log(f"  → Retry ngay (không cần restart Chrome)...")
+                            time.sleep(2)  # Đợi ngắn
+                            continue
+                        else:
+                            return False, [], error
+
+                    # === DIRECT PROXY LIST MODE ===
+                    # Cần xoay proxy và restart Chrome
                     if self._use_webshare and self._webshare_proxy:
                         # Gọi Webshare API để xoay IP cho worker (lưu proxy cũ vào blocked 48h)
                         success, msg = self._webshare_proxy.rotate_ip(self.worker_id, "403 reCAPTCHA")

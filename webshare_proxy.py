@@ -38,6 +38,26 @@ from pathlib import Path
 
 
 @dataclass
+class RotatingEndpointConfig:
+    """Config cho Rotating Endpoint mode."""
+    host: str = "p.webshare.io"
+    port: int = 80
+    username: str = ""
+    password: str = ""
+
+    @property
+    def endpoint(self) -> str:
+        return f"{self.host}:{self.port}"
+
+    @property
+    def proxy_url(self) -> str:
+        """URL cho requests library."""
+        if self.username and self.password:
+            return f"http://{self.username}:{self.password}@{self.host}:{self.port}"
+        return f"http://{self.host}:{self.port}"
+
+
+@dataclass
 class ProxyInfo:
     """Thông tin một proxy."""
     host: str
@@ -144,6 +164,11 @@ class WebshareProxyManager:
         # Load blocked list từ file (persistent across sessions/machines)
         self._blocked_proxies: Dict[str, dict] = self._load_blocked_list()
 
+        # === ROTATING ENDPOINT MODE ===
+        # Nếu enabled, mỗi request tự động đổi IP (không cần quản lý pool)
+        self.rotating_endpoint: Optional[RotatingEndpointConfig] = None
+        self._use_rotating_endpoint: bool = False
+
     def _load_blocked_list(self) -> Dict[str, dict]:
         """Load danh sách proxy bị block từ file."""
         try:
@@ -201,6 +226,90 @@ class WebshareProxyManager:
         self._save_blocked_list()
         remaining = self.BLOCK_DURATION / 3600
         print(f"[Webshare] Blocked {endpoint} for {remaining:.0f}h (reason: {reason})")
+
+    # === ROTATING ENDPOINT METHODS ===
+
+    def setup_rotating_endpoint(self, host: str = "p.webshare.io", port: int = 80,
+                                 username: str = "", password: str = "") -> bool:
+        """
+        Setup Rotating Endpoint mode.
+        Mỗi request qua endpoint này tự động đổi IP.
+
+        Args:
+            host: Rotating endpoint host (default: p.webshare.io)
+            port: Port (lấy từ Webshare dashboard)
+            username: Proxy username
+            password: Proxy password
+
+        Returns:
+            True nếu setup thành công
+        """
+        self.rotating_endpoint = RotatingEndpointConfig(
+            host=host,
+            port=port,
+            username=username or self.default_username,
+            password=password or self.default_password
+        )
+        self._use_rotating_endpoint = True
+        print(f"[Webshare] Rotating Endpoint enabled: {host}:{port}")
+        print(f"[Webshare] Each request will automatically use a NEW IP!")
+        return True
+
+    def disable_rotating_endpoint(self):
+        """Tắt Rotating Endpoint mode, quay lại Direct proxy list."""
+        self._use_rotating_endpoint = False
+        print(f"[Webshare] Rotating Endpoint disabled, using Direct proxy list")
+
+    def is_rotating_mode(self) -> bool:
+        """Check if using rotating endpoint mode."""
+        return self._use_rotating_endpoint and self.rotating_endpoint is not None
+
+    def get_rotating_proxy(self) -> Optional[RotatingEndpointConfig]:
+        """Lấy rotating endpoint config."""
+        if self.is_rotating_mode():
+            return self.rotating_endpoint
+        return None
+
+    def get_rotating_proxy_url(self) -> str:
+        """Lấy proxy URL cho rotating endpoint."""
+        if self.rotating_endpoint:
+            return self.rotating_endpoint.proxy_url
+        return ""
+
+    def test_rotating_endpoint(self) -> Tuple[bool, str]:
+        """Test rotating endpoint - gọi 2 lần để verify IP khác nhau."""
+        if not self.rotating_endpoint:
+            return False, "Rotating endpoint chưa được setup"
+
+        proxy_url = self.rotating_endpoint.proxy_url
+        proxies = {"http": proxy_url, "https": proxy_url}
+
+        ips = []
+        try:
+            for i in range(2):
+                resp = requests.get(
+                    "https://ipv4.webshare.io/",
+                    proxies=proxies,
+                    timeout=15
+                )
+                if resp.status_code == 200:
+                    ip = resp.text.strip()
+                    ips.append(ip)
+                    print(f"[Webshare] Rotating test #{i+1}: IP = {ip}")
+                else:
+                    return False, f"HTTP {resp.status_code}"
+                time.sleep(1)
+
+            if len(ips) == 2:
+                if ips[0] != ips[1]:
+                    return True, f"✓ Rotating OK! IP1={ips[0]}, IP2={ips[1]} (Different)"
+                else:
+                    return True, f"✓ Connected! IP={ips[0]} (Same - rotation may require more time)"
+
+        except Exception as e:
+            return False, f"Error: {e}"
+
+        return False, "Unknown error"
 
     def load_from_list(self, proxy_lines: List[str]) -> int:
         """Load proxies từ danh sách strings."""
@@ -271,6 +380,7 @@ class WebshareProxyManager:
         Lấy proxy cho worker (Chrome).
         Mỗi worker có proxy riêng, không trùng nhau.
         Skip các proxy đã bị block trong 48h (lưu trong file).
+        SỬ DỤNG RANDOM SELECTION để tránh nhiều máy chọn cùng proxy.
 
         Args:
             worker_id: ID của worker (0, 1, 2, ...)
@@ -293,8 +403,11 @@ class WebshareProxyManager:
                     # Proxy đã bị block, cần tìm proxy mới
                     print(f"[Webshare] Worker {worker_id}'s proxy {proxy.endpoint} is blocked, finding new one...")
 
-            # Tìm proxy chưa ai dùng VÀ chưa bị block 48h
+            # === RANDOM SELECTION ===
+            # Tìm tất cả proxy khả dụng (chưa ai dùng, chưa bị block)
             now = time.time()
+            available_indices = []
+
             for i, proxy in enumerate(self.proxies):
                 # Skip proxy đã bị block trong 48h
                 if self._is_proxy_blocked(proxy.endpoint):
@@ -303,17 +416,29 @@ class WebshareProxyManager:
                 # Proxy chưa ai dùng và không bị block trong memory
                 if proxy.worker_id == -1:
                     if not proxy.blocked or (now - proxy.last_used > self.BLOCK_TIMEOUT):
-                        proxy.worker_id = worker_id
-                        proxy.blocked = False
-                        self._worker_proxy_map[worker_id] = i
-                        return proxy
+                        available_indices.append(i)
 
-            # Nếu không còn proxy trống, tìm proxy không bị block 48h
-            for i, proxy in enumerate(self.proxies):
-                if not self._is_proxy_blocked(proxy.endpoint):
-                    self._worker_proxy_map[worker_id] = i
-                    self.proxies[i].worker_id = worker_id
-                    return self.proxies[i]
+            # Random chọn từ danh sách khả dụng
+            if available_indices:
+                chosen_idx = random.choice(available_indices)
+                proxy = self.proxies[chosen_idx]
+                proxy.worker_id = worker_id
+                proxy.blocked = False
+                self._worker_proxy_map[worker_id] = chosen_idx
+                print(f"[Webshare] Worker {worker_id}: Random selected {proxy.endpoint} (from {len(available_indices)} available)")
+                return proxy
+
+            # Nếu không còn proxy trống, random từ proxy không bị block 48h
+            fallback_indices = [
+                i for i, proxy in enumerate(self.proxies)
+                if not self._is_proxy_blocked(proxy.endpoint)
+            ]
+            if fallback_indices:
+                chosen_idx = random.choice(fallback_indices)
+                self._worker_proxy_map[worker_id] = chosen_idx
+                self.proxies[chosen_idx].worker_id = worker_id
+                print(f"[Webshare] Worker {worker_id}: Fallback to {self.proxies[chosen_idx].endpoint}")
+                return self.proxies[chosen_idx]
 
             # Tất cả proxy đều bị block 48h
             print(f"[Webshare] WARNING: All {len(self.proxies)} proxies are blocked!")
@@ -629,7 +754,11 @@ def init_proxy_manager(
     password: str = "",
     proxy_list: List[str] = None,
     proxy_file: str = None,
-    force_reinit: bool = False
+    force_reinit: bool = False,
+    # === ROTATING ENDPOINT CONFIG ===
+    rotating_endpoint: bool = False,
+    rotating_host: str = "p.webshare.io",
+    rotating_port: int = 80
 ) -> WebshareProxyManager:
     """
     Khởi tạo proxy manager (thread-safe).
@@ -642,14 +771,29 @@ def init_proxy_manager(
         proxy_file: Path đến file chứa proxy list
         force_reinit: Force re-init (default False)
 
+        # Rotating Endpoint (mỗi request tự đổi IP)
+        rotating_endpoint: True = sử dụng Rotating Endpoint mode
+        rotating_host: Host của rotating endpoint (default: p.webshare.io)
+        rotating_port: Port của rotating endpoint (từ Webshare dashboard)
+
     Returns:
         WebshareProxyManager instance
     """
     global _manager
 
     with _manager_lock:
-        if _manager is not None and _manager.proxies and not force_reinit:
-            return _manager
+        if _manager is not None and not force_reinit:
+            # Đã có manager, check xem có đủ config không
+            if rotating_endpoint and not _manager.is_rotating_mode():
+                # Cần chuyển sang rotating mode
+                _manager.setup_rotating_endpoint(
+                    host=rotating_host,
+                    port=rotating_port,
+                    username=username,
+                    password=password
+                )
+            elif _manager.proxies or _manager.is_rotating_mode():
+                return _manager
 
         _manager = WebshareProxyManager(
             api_key=api_key,
@@ -657,6 +801,17 @@ def init_proxy_manager(
             default_password=password
         )
 
+        # === ROTATING ENDPOINT MODE ===
+        if rotating_endpoint:
+            _manager.setup_rotating_endpoint(
+                host=rotating_host,
+                port=rotating_port,
+                username=username,
+                password=password
+            )
+            return _manager
+
+        # === DIRECT PROXY LIST MODE ===
         # Load từ các nguồn (ưu tiên API)
         if api_key:
             count = _manager.load_from_api()
