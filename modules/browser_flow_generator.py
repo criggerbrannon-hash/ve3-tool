@@ -3260,6 +3260,27 @@ class BrowserFlowGenerator:
                         self._log("❌ Bearer token hết hạn!", "error")
                         break
 
+                    # Check for 400 - Invalid argument (reference image expired or invalid prompt)
+                    if error and "400" in str(error):
+                        self._log(f"⚠️ Lỗi 400 - Retry không có reference images...", "warn")
+                        try:
+                            # Retry without reference images
+                            success2, images2, error2 = drission_api.generate_image(
+                                prompt=prompt,
+                                save_dir=save_dir,
+                                filename=pid,
+                                image_inputs=None  # No reference images
+                            )
+                            if success2 and images2:
+                                self._log(f"   ✓ Retry (no ref) thành công!")
+                                self.stats["success"] += 1
+                                self.stats["failed"] -= 1  # Undo fail count
+                                continue  # Move to next prompt
+                            else:
+                                self._log(f"   ✗ Retry (no ref) thất bại: {error2}", "warn")
+                        except Exception as e:
+                            self._log(f"   ✗ Retry exception: {e}", "error")
+
                     # Check for 403 - restart Chrome với proxy mới
                     if error and "403" in str(error):
                         self._log(f"⚠️ Lỗi 403 - Restart Chrome với proxy mới...", "warn")

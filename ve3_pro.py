@@ -2674,8 +2674,10 @@ class UnixVoiceToVideo:
                             self.root.after(0, lambda vid=voice_id, p=pid: self.log(f"[Voice {vid}] ✅ {p}", "OK"))
                             return (True, False)  # success, not 403
 
-                        # Check if 403 error
-                        is_403 = error and ('403' in str(error) or 'forbidden' in str(error).lower() or 'recaptcha' in str(error).lower())
+                        # Check error type
+                        error_str = str(error).lower() if error else ""
+                        is_403 = '403' in error_str or 'forbidden' in error_str or 'recaptcha' in error_str
+                        is_400 = '400' in error_str or 'invalid' in error_str
 
                         if is_403 and attempt < MAX_IMMEDIATE_RETRIES:
                             # Rotate proxy và retry ngay
@@ -2697,6 +2699,16 @@ class UnixVoiceToVideo:
                             self.root.after(0, lambda vid=voice_id, w=wait_time:
                                 self.log(f"[Voice {vid}] ⏳ Waiting {w}s before retry..."))
                             time.sleep(wait_time)
+                            continue  # Retry
+
+                        elif is_400 and attempt < MAX_IMMEDIATE_RETRIES:
+                            # Lỗi 400: Invalid argument - thử không có reference images
+                            self.root.after(0, lambda vid=voice_id, p=pid:
+                                self.log(f"[Voice {vid}] ⚠️ 400 at {p} - Retry without references...", "WARN"))
+
+                            # Retry với image_inputs rỗng
+                            image_inputs = []
+                            time.sleep(1)
                             continue  # Retry
 
                         # Lỗi khác hoặc hết retry
