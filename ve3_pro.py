@@ -2208,6 +2208,25 @@ class UnixVoiceToVideo:
                 voice_name = voice_path.name
                 result = {"voice": voice_name, "success": 0, "failed": 0, "error": None}
 
+                # === TEST PROXY TRƯỚC KHI BẮT ĐẦU ===
+                proxy_manager = None
+                current_ip = "unknown"
+                try:
+                    from webshare_proxy import get_proxy_manager
+                    proxy_manager = get_proxy_manager()
+                    if proxy_manager and proxy_manager.proxies:
+                        proxy, ip = proxy_manager.test_and_get_proxy(worker_id)
+                        if proxy:
+                            current_ip = ip
+                            self.root.after(0, lambda w=worker_id, v=voice_name, ip=current_ip:
+                                self.log(f"[Worker {w}] 🌐 IP: {ip} → {v}"))
+                        else:
+                            self.root.after(0, lambda w=worker_id, err=ip:
+                                self.log(f"[Worker {w}] ⚠️ Proxy test failed: {err}", "WARN"))
+                except Exception as e:
+                    self.root.after(0, lambda w=worker_id:
+                        self.log(f"[Worker {w}] ⚠️ Không có proxy manager", "WARN"))
+
                 try:
                     # Log với worker_id để phân biệt
                     self.root.after(0, lambda w=worker_id, v=voice_name:
@@ -2249,6 +2268,16 @@ class UnixVoiceToVideo:
                     result["failed"] = 1
                     self.root.after(0, lambda w=worker_id, v=voice_name, err=e:
                         self.log(f"[Worker {w}] ❌ Exception {v}: {err}", "ERROR"))
+
+                finally:
+                    # === RELEASE PROXY VÀ ROTATE CHO VOICE TIẾP THEO ===
+                    if proxy_manager:
+                        try:
+                            proxy_manager.release_worker_proxy(worker_id, rotate_next=True)
+                            self.root.after(0, lambda w=worker_id:
+                                self.log(f"[Worker {w}] 🔄 Proxy released, will rotate next"))
+                        except Exception as e:
+                            pass
 
                 # Update progress
                 with results_lock:

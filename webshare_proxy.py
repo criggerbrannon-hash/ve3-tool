@@ -413,14 +413,84 @@ class WebshareProxyManager:
 
             return False, f"Không tìm được proxy khả dụng (blocked 48h: {len(self._blocked_proxies)})"
 
-    def release_worker_proxy(self, worker_id: int):
-        """Giải phóng proxy khi worker kết thúc."""
+    def release_worker_proxy(self, worker_id: int, rotate_next: bool = True):
+        """
+        Giải phóng proxy khi worker kết thúc.
+
+        Args:
+            worker_id: ID của worker
+            rotate_next: True = lần gọi get_proxy_for_worker tiếp theo sẽ lấy proxy MỚI
+        """
         with self._lock:
             if worker_id in self._worker_proxy_map:
                 idx = self._worker_proxy_map[worker_id]
-                self.proxies[idx].worker_id = -1
-                self.proxies[idx].fail_count = 0
+                old_proxy = self.proxies[idx]
+                old_proxy.worker_id = -1
+                old_proxy.fail_count = 0
+                old_proxy.last_used = time.time()
+
+                if rotate_next:
+                    # Đánh dấu để lần sau lấy proxy khác
+                    old_proxy.blocked = True  # Block tạm 5 phút (memory only)
+                    print(f"[Webshare] Worker {worker_id} released {old_proxy.endpoint} (will rotate next)")
+
                 del self._worker_proxy_map[worker_id]
+
+    def test_and_get_proxy(self, worker_id: int, max_retries: int = 3) -> Tuple[Optional[ProxyInfo], str]:
+        """
+        Lấy proxy và test xem có hoạt động không.
+        Nếu fail, tự động rotate sang proxy khác.
+
+        Args:
+            worker_id: ID của worker
+            max_retries: Số lần thử tối đa
+
+        Returns:
+            (ProxyInfo, ip_address) hoặc (None, error_message)
+        """
+        for attempt in range(max_retries):
+            proxy = self.get_proxy_for_worker(worker_id)
+            if not proxy:
+                return None, "Không có proxy khả dụng"
+
+            # Test proxy
+            try:
+                resp = requests.get(
+                    "https://ipv4.webshare.io/",
+                    proxies={"http": proxy.proxy_url, "https": proxy.proxy_url},
+                    timeout=10
+                )
+                if resp.status_code == 200:
+                    ip = resp.text.strip()
+                    print(f"[Webshare] Worker {worker_id}: {proxy.endpoint} → IP: {ip}")
+                    return proxy, ip
+                else:
+                    print(f"[Webshare] Worker {worker_id}: {proxy.endpoint} → HTTP {resp.status_code}")
+            except Exception as e:
+                print(f"[Webshare] Worker {worker_id}: {proxy.endpoint} → Error: {e}")
+
+            # Rotate sang proxy khác
+            if attempt < max_retries - 1:
+                self.rotate_worker_proxy(worker_id, f"test_failed_attempt_{attempt+1}")
+
+        return None, f"Không tìm được proxy hoạt động sau {max_retries} lần thử"
+
+    def get_current_ip(self, worker_id: int) -> Optional[str]:
+        """Lấy IP hiện tại của worker."""
+        proxy = self.get_proxy_for_worker(worker_id)
+        if not proxy:
+            return None
+        try:
+            resp = requests.get(
+                "https://ipv4.webshare.io/",
+                proxies={"http": proxy.proxy_url, "https": proxy.proxy_url},
+                timeout=10
+            )
+            if resp.status_code == 200:
+                return resp.text.strip()
+        except:
+            pass
+        return None
 
     def get_proxies_dict(self, worker_id: int = None) -> Dict[str, str]:
         """Dict proxies cho requests library."""
