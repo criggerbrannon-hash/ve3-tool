@@ -2761,8 +2761,8 @@ class SmartEngine:
 
                 # Ken Burns settings từ config
                 # Video composition mode: quality, balanced, fast
-                compose_mode = "balanced"
-                kb_intensity = "normal"
+                compose_mode = "quality"  # Default: quality (mượt nhất, như CapCut)
+                kb_intensity = "strong"   # Default: strong (zoom 18%, pan 12%)
                 try:
                     import yaml
                     config_path = Path(__file__).parent.parent / "config" / "settings.yaml"
@@ -3366,7 +3366,7 @@ class SmartEngine:
                         self.log(f"[VIDEO] Dùng token từ settings.yaml")
 
                 self._video_settings = {
-                    'count': settings.get('video_count', '10'),  # Default 10 images → video
+                    'count': settings.get('video_count', '20'),  # Default 20 images → video
                     'model': settings.get('video_model', 'fast'),
                     'replace_image': settings.get('video_replace_image', True),
                     'bearer_token': bearer_token,
@@ -3533,24 +3533,41 @@ class SmartEngine:
             else:
                 self.log(f"[VIDEO] Processing: {image_id} (cần upload lại ảnh)")
 
-            try:
-                result = converter.convert_image_to_video(
-                    image_path=image_path,
-                    prompt=video_prompt,
-                    replace_image=self._video_settings.get('replace_image', True),
-                    cached_media_name=media_name  # Pass cached media_name to skip upload
-                )
+            # === RETRY LOGIC: Thử tối đa 3 lần cho mỗi video ===
+            MAX_VIDEO_RETRIES = 3
+            success = False
 
-                if result.is_completed:
-                    self._video_results['success'] += 1
-                    self.log(f"[VIDEO] OK: {image_id} -> {result.video_path.name}")
-                else:
-                    self._video_results['failed'] += 1
-                    self.log(f"[VIDEO] FAILED: {image_id} - {result.error}", "ERROR")
+            for retry in range(MAX_VIDEO_RETRIES):
+                try:
+                    if retry > 0:
+                        self.log(f"[VIDEO] Retry {retry}/{MAX_VIDEO_RETRIES}: {image_id}")
+                        time.sleep(5 * retry)  # Exponential backoff: 5s, 10s
 
-            except Exception as e:
-                self._video_results['failed'] += 1
-                self.log(f"[VIDEO] Error {image_id}: {e}", "ERROR")
+                    result = converter.convert_image_to_video(
+                        image_path=image_path,
+                        prompt=video_prompt,
+                        replace_image=self._video_settings.get('replace_image', True),
+                        cached_media_name=media_name if retry == 0 else ""  # Thử không cache nếu retry
+                    )
+
+                    if result.is_completed:
+                        self._video_results['success'] += 1
+                        self.log(f"[VIDEO] OK: {image_id} -> {result.video_path.name}")
+                        success = True
+                        break  # Thành công, thoát retry loop
+                    else:
+                        if retry < MAX_VIDEO_RETRIES - 1:
+                            self.log(f"[VIDEO] {image_id} failed: {result.error} - Will retry...", "WARN")
+                        else:
+                            self._video_results['failed'] += 1
+                            self.log(f"[VIDEO] FAILED after {MAX_VIDEO_RETRIES} retries: {image_id} - {result.error}", "ERROR")
+
+                except Exception as e:
+                    if retry < MAX_VIDEO_RETRIES - 1:
+                        self.log(f"[VIDEO] Error {image_id}: {e} - Will retry...", "WARN")
+                    else:
+                        self._video_results['failed'] += 1
+                        self.log(f"[VIDEO] Error after {MAX_VIDEO_RETRIES} retries {image_id}: {e}", "ERROR")
 
             # Delay between videos
             time.sleep(2)
@@ -3569,7 +3586,7 @@ class SmartEngine:
         self,
         voice_files: List[str],
         output_base_dir: str = None,
-        parallel_voices: int = 3,
+        parallel_voices: int = 2,  # Default: 2 voices
         callback: Callable = None
     ) -> Dict:
         """
@@ -3713,15 +3730,15 @@ def run_auto(input_path: str, callback: Callable = None) -> Dict:
 
 def run_batch_parallel(
     voice_files: List[str],
-    parallel_voices: int = 3,
+    parallel_voices: int = 2,  # Default: 2 voices
     callback: Callable = None
 ) -> Dict:
     """
     Xử lý NHIỀU voice files SONG SONG.
 
-    Ví dụ: 3 voices x 90 phút mỗi voice
-    - Tuần tự: 270 phút
-    - Song song (3 workers): ~100 phút
+    Ví dụ: 2 voices x 90 phút mỗi voice
+    - Tuần tự: 180 phút
+    - Song song (2 workers): ~95 phút
 
     Args:
         voice_files: List các file voice (.mp3, .wav)
@@ -3734,8 +3751,8 @@ def run_batch_parallel(
     Usage:
         from modules.smart_engine import run_batch_parallel
 
-        voices = ["voice1.mp3", "voice2.mp3", "voice3.mp3"]
-        result = run_batch_parallel(voices, parallel_voices=3)
+        voices = ["voice1.mp3", "voice2.mp3"]
+        result = run_batch_parallel(voices, parallel_voices=2)
         print(f"Done: {result['success']}/{result['total']}")
     """
     engine = SmartEngine()

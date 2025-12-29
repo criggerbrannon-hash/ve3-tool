@@ -1716,11 +1716,11 @@ class UnixVoiceToVideo:
                 # Priority: parallel_voices > parallel_workers > parallel_browsers
                 value = config.get('parallel_voices',
                         config.get('parallel_workers',
-                        config.get('parallel_browsers', 3)))
+                        config.get('parallel_browsers', 2)))
                 return max(1, min(10, value))
         except:
             pass
-        return 3  # Default: 3 workers
+        return 2  # Default: 2 workers
 
     def _save_parallel_workers(self, num: int):
         """Save number of parallel workers to config."""
@@ -1778,10 +1778,10 @@ class UnixVoiceToVideo:
             if config_path.exists():
                 with open(config_path, 'r', encoding='utf-8') as f:
                     config = yaml.safe_load(f) or {}
-                return str(config.get('video_count', '10'))
+                return str(config.get('video_count', '20'))
         except:
             pass
-        return '10'  # Default: 10 images to video
+        return '20'  # Default: 20 images to video
 
     def _get_video_model_setting(self) -> str:
         """Get video model setting ('fast' or 'quality')."""
@@ -1817,10 +1817,10 @@ class UnixVoiceToVideo:
             if config_path.exists():
                 with open(config_path, 'r', encoding='utf-8') as f:
                     config = yaml.safe_load(f) or {}
-                return config.get('video_compose_mode', 'fast')
+                return config.get('video_compose_mode', 'quality')
         except:
             pass
-        return 'fast'
+        return 'quality'  # Default: quality (mượt nhất, zoom/pan với easing)
 
     def _open_browser_for_login(self, profile_path: str, profile_name: str):
         """Open Chrome browser with profile for Google login."""
