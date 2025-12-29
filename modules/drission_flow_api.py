@@ -564,7 +564,6 @@ class DrissionFlowAPI:
                                 password=proxy.password
                             )
                             self._bridge_port = bridge_port  # LƯU ĐỂ DÙNG TRONG call_api()
-                            import time
                             time.sleep(0.5)  # Đợi bridge start
 
                             # Chrome kết nối đến local bridge (không cần auth)
