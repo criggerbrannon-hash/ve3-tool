@@ -266,55 +266,75 @@ class KenBurnsGenerator:
         fade = f"fade=t=in:st=0:d={fade_duration},fade=t=out:st={fade_out_start}:d={fade_duration}"
 
         if simple_mode:
-            # === BALANCED MODE: Dùng crop với 't' expression (NHANH HƠN zoompan) ===
-            # Scale ảnh lên lớn, dùng crop animated thay vì zoompan
-            # Crop chỉ cắt vùng, không scale từng frame → nhanh hơn nhiều
+            # === BALANCED MODE: Dùng zoompan nhưng với ít frame hơn để nhanh hơn ===
+            # Thay vì crop animation (gây giật), dùng zoompan với FPS thấp hơn
+            # zoompan tạo chuyển động mượt thật sự vì nó thay đổi scale
 
-            # Scale lớn hơn output để có không gian pan (giảm margin cho mượt hơn)
-            margin = 120  # pixels margin for panning (giảm từ 200 xuống 120 để mượt hơn)
-            scaled_w = self.output_width + margin
-            scaled_h = self.output_height + int(margin * 9 / 16)
+            fps = 24  # Giảm FPS để nhanh hơn (24 thay vì 30)
+            total_frames = int(duration * fps)
 
-            # Ease function: dùng cubic ease-in-out cho mượt như CapCut
-            # p = t/duration (0 -> 1)
-            # ease = p < 0.5 ? 4*p*p*p : 1-pow(-2*p+2,3)/2
-            # Simplified for FFmpeg: 0.5-0.5*cos(PI*t/duration) (cosine ease)
-            ease_expr = f"(0.5-0.5*cos(PI*t/{duration}))"
+            # Margin nhỏ hơn cho chuyển động nhẹ nhàng
+            zoom_pct = 0.05  # 5% zoom
+            pan_pct = 0.03   # 3% pan
 
-            # Tính crop animation dựa trên effect
-            # Sử dụng ease function để chuyển động mượt
+            # Cosine ease: mượt mà từ đầu đến cuối
+            ease = f"(0.5-0.5*cos(PI*on/{total_frames}))"
+
             if effect == KenBurnsEffect.ZOOM_IN:
-                # Zoom in: crop từ lớn về nhỏ (shrink crop area)
-                x_expr = f"({margin}/2)*{ease_expr}"
-                y_expr = f"({int(margin * 9 / 32)})*{ease_expr}"
+                # Zoom in: từ 1.0 đến 1.05 (zoom vào trung tâm)
+                zoom_expr = f"1+{zoom_pct}*{ease}"
+                x_expr = "(iw-iw/zoom)/2"
+                y_expr = "(ih-ih/zoom)/2"
             elif effect == KenBurnsEffect.ZOOM_OUT:
-                # Zoom out: crop từ nhỏ ra lớn
-                x_expr = f"({margin}/2)*(1-{ease_expr})"
-                y_expr = f"({int(margin * 9 / 32)})*(1-{ease_expr})"
+                # Zoom out: từ 1.05 về 1.0
+                zoom_expr = f"1+{zoom_pct}*(1-{ease})"
+                x_expr = "(iw-iw/zoom)/2"
+                y_expr = "(ih-ih/zoom)/2"
             elif effect == KenBurnsEffect.PAN_LEFT:
-                # Pan left: x đi từ phải sang trái
-                x_expr = f"{margin}*(1-{ease_expr})"
-                y_expr = f"{int(margin * 9 / 32) // 2}"
+                # Pan left: giữ zoom 1.06 để không bị viền đen, x đi từ phải sang trái
+                zoom_expr = "1.06"
+                x_expr = f"(iw-iw/zoom)*(0.5+{pan_pct}-{pan_pct}*2*{ease})"
+                y_expr = "(ih-ih/zoom)/2"
             elif effect == KenBurnsEffect.PAN_RIGHT:
                 # Pan right: x đi từ trái sang phải
-                x_expr = f"{margin}*{ease_expr}"
-                y_expr = f"{int(margin * 9 / 32) // 2}"
+                zoom_expr = "1.06"
+                x_expr = f"(iw-iw/zoom)*(0.5-{pan_pct}+{pan_pct}*2*{ease})"
+                y_expr = "(ih-ih/zoom)/2"
             elif effect == KenBurnsEffect.PAN_UP:
-                # Pan up: y đi từ dưới lên
-                x_expr = f"{margin // 2}"
-                y_expr = f"{int(margin * 9 / 16)}*(1-{ease_expr})"
+                # Pan up: y đi từ dưới lên trên
+                zoom_expr = "1.06"
+                x_expr = "(iw-iw/zoom)/2"
+                y_expr = f"(ih-ih/zoom)*(0.5+{pan_pct}-{pan_pct}*2*{ease})"
             elif effect == KenBurnsEffect.PAN_DOWN:
-                # Pan down: y đi từ trên xuống
-                x_expr = f"{margin // 2}"
-                y_expr = f"{int(margin * 9 / 16)}*{ease_expr}"
+                # Pan down: y đi từ trên xuống dưới
+                zoom_expr = "1.06"
+                x_expr = "(iw-iw/zoom)/2"
+                y_expr = f"(ih-ih/zoom)*(0.5-{pan_pct}+{pan_pct}*2*{ease})"
             else:
-                # Default: subtle drift với sine wave (mượt)
-                x_expr = f"({margin}/2)*(0.5+0.5*sin(t/{duration}*PI))"
-                y_expr = f"({int(margin * 9 / 32)})*(0.5+0.5*cos(t/{duration}*PI))"
+                # Default: subtle drift
+                zoom_expr = f"1+0.02*{ease}"
+                x_expr = "(iw-iw/zoom)/2"
+                y_expr = "(ih-ih/zoom)/2"
+
+            # Scale ảnh lên trước để zoompan có không gian làm việc
+            scale_factor = 1.15
+            scaled_w = int(self.output_width * scale_factor)
+            scaled_h = int(self.output_height * scale_factor)
+
+            zoompan = (
+                f"zoompan="
+                f"z='{zoom_expr}':"
+                f"x='{x_expr}':"
+                f"y='{y_expr}':"
+                f"d={total_frames}:"
+                f"s={self.output_width}x{self.output_height}:"
+                f"fps={fps}"
+            )
 
             full_filter = (
                 f"scale={scaled_w}:{scaled_h}:force_original_aspect_ratio=increase,"
-                f"crop={self.output_width}:{self.output_height}:{x_expr}:{y_expr},"
+                f"crop={scaled_w}:{scaled_h},"
+                f"{zoompan},"
                 f"{fade}"
             )
         else:
