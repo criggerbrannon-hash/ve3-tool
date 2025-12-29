@@ -3806,6 +3806,14 @@ class SmartEngine:
             self._video_worker_running = False
             return
 
+        # Check proxy availability trước khi bắt đầu
+        if not converter.check_proxy_available():
+            self.log("[VIDEO] ⚠️ Proxy API không hoạt động - Skip I2V, sẽ dùng Ken Burns effect!", "WARN")
+            self._video_worker_running = False
+            return
+
+        self.log("[VIDEO] Proxy API hoạt động - Bắt đầu tạo video...")
+
         while self._video_worker_running and not self.stop_flag:
             # Get next item from queue
             item = None

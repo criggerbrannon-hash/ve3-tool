@@ -125,6 +125,27 @@ class ImageToVideoConverter:
             timestamp = datetime.now().strftime("%H:%M:%S")
             print(f"[{timestamp}] [{level.upper()}] {message}")
 
+    def check_proxy_available(self) -> bool:
+        """Kiểm tra proxy API có hoạt động không."""
+        if not self.use_proxy:
+            return True  # Không dùng proxy thì ok
+
+        try:
+            response = requests.get(
+                f"{self.PROXY_BASE}/task-status?taskId=health-check",
+                headers=self._proxy_headers(),
+                timeout=10
+            )
+            # 401/403 = proxy hoạt động nhưng taskId không valid (ok)
+            # 500/503 = proxy down
+            if response.status_code in [200, 400, 401, 403, 404]:
+                return True
+            self._log(f"Proxy không hoạt động: {response.status_code}", "error")
+            return False
+        except Exception as e:
+            self._log(f"Không thể kết nối proxy: {e}", "error")
+            return False
+
     def _google_headers(self) -> Dict[str, str]:
         """Headers cho Google API."""
         return {
