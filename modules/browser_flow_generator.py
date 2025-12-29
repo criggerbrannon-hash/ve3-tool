@@ -2575,18 +2575,26 @@ class BrowserFlowGenerator:
                             self._log(f"Khong the refresh token!", "error")
 
                 if success and images:
-                    # Download best image
-                    output_file = self.img_path / f"{scene_id}.png"
+                    # Xác định thư mục lưu: nv*/loc* -> nv/, còn lại -> img/
+                    scene_id_str = str(scene_id)
+                    if scene_id_str.lower().startswith('nv') or scene_id_str.lower().startswith('loc'):
+                        save_dir = self.nv_path
+                        relative_folder = "nv"
+                    else:
+                        save_dir = self.img_path
+                        relative_folder = "img"
+
+                    output_file = save_dir / f"{scene_id}.png"
 
                     downloaded = api.download_image(
                         images[0],  # Take first image
-                        self.img_path,
+                        save_dir,
                         scene_id
                     )
 
                     if downloaded:
                         # Update Excel
-                        relative_path = f"img/{scene_id}.png"
+                        relative_path = f"{relative_folder}/{scene_id}.png"
                         workbook.update_scene(
                             scene.scene_id,
                             img_path=relative_path,
