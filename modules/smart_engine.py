@@ -2023,10 +2023,42 @@ class SmartEngine:
         if not all_prompts:
             return {"error": "no_prompts"}
 
+        # === LOAD MEDIA_IDs từ Excel để kiểm tra ===
+        excel_media_ids = {}
+        try:
+            from modules.excel_manager import PromptWorkbook
+            wb_check = PromptWorkbook(excel_path)
+            wb_check.load_or_create()
+            excel_media_ids = wb_check.get_media_ids()
+            if excel_media_ids:
+                self.log(f"  [EXCEL] Loaded {len(excel_media_ids)} media_ids: {list(excel_media_ids.keys())}")
+            else:
+                self.log(f"  [EXCEL] ⚠️ Không có media_id trong Excel", "WARN")
+        except Exception as e:
+            self.log(f"  [EXCEL] Lỗi load media_ids: {e}", "WARN")
+
         # Helper: check cả .png và .mp4 (sau I2V, ảnh .png chuyển thành .mp4)
-        def _media_exists(output_path: str) -> bool:
+        def _media_exists(output_path: str, pid: str) -> bool:
             p = Path(output_path)
-            # Check original path (.png)
+
+            # Nếu là nv*/loc* - kiểm tra thêm media_id
+            if pid.lower().startswith('nv') or pid.lower().startswith('loc'):
+                if p.exists():
+                    # Ảnh tồn tại nhưng KHÔNG có media_id → cần tạo lại
+                    has_media_id = any(k.lower() == pid.lower() for k in excel_media_ids.keys())
+                    if not has_media_id:
+                        self.log(f"  [CHECK] {pid}: Ảnh tồn tại nhưng KHÔNG có media_id → cần tạo lại")
+                        # Xóa file cũ
+                        try:
+                            p.unlink()
+                            self.log(f"  [CHECK] Đã xóa {p.name}")
+                        except:
+                            pass
+                        return False  # Cần tạo lại
+                    return True  # Có cả ảnh và media_id
+                return False  # Chưa có ảnh
+
+            # Scene images - chỉ check file tồn tại
             if p.exists():
                 return True
             # Check .mp4 variant (sau I2V)
@@ -2034,8 +2066,8 @@ class SmartEngine:
                 return True
             return False
 
-        # Filter: chi lay prompts CHUA co anh (check cả .png và .mp4)
-        prompts = [p for p in all_prompts if not _media_exists(p['output_path'])]
+        # Filter: chi lay prompts CHUA co anh (hoặc ảnh nv/loc không có media_id)
+        prompts = [p for p in all_prompts if not _media_exists(p['output_path'], p.get('id', ''))]
         existing_count = len(all_prompts) - len(prompts)
 
         if existing_count > 0:
