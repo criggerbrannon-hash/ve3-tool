@@ -3782,6 +3782,14 @@ class SmartEngine:
 
         self.log("[VIDEO] Worker loop started")
 
+        # Debug: log token info
+        bearer = self._video_settings.get('bearer_token', '')
+        project_id = self._video_settings.get('project_id', '')
+        proxy_token = self._video_settings.get('proxy_token', '')
+        self.log(f"[VIDEO] Bearer token: {bearer[:30]}..." if bearer and len(bearer) > 30 else f"[VIDEO] Bearer token: {bearer or 'EMPTY!'}")
+        self.log(f"[VIDEO] Project ID: {project_id or 'EMPTY!'}")
+        self.log(f"[VIDEO] Proxy token: {'set' if proxy_token else 'NOT SET'}")
+
         # Create converter
         try:
             converter = ImageToVideoConverter(
