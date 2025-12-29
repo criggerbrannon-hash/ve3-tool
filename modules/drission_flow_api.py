@@ -1191,6 +1191,175 @@ class DrissionFlowAPI:
         self.log(f"DONE: {results['success']}/{results['total']}")
         return results
 
+    def generate_video(
+        self,
+        media_id: str,
+        prompt: str = "Subtle motion, cinematic, slow movement",
+        aspect_ratio: str = "VIDEO_ASPECT_RATIO_LANDSCAPE",
+        video_model: str = "veo_3_0_r2v_fast_ultra",
+        max_wait: int = 300
+    ) -> Tuple[bool, Optional[str], Optional[str]]:
+        """
+        Tạo video từ ảnh (I2V) sử dụng DrissionPage - KHÔNG cần proxy nanoai.
+
+        Args:
+            media_id: Media ID của ảnh (từ generate_image)
+            prompt: Prompt mô tả chuyển động
+            aspect_ratio: Tỷ lệ video
+            video_model: Model video (fast hoặc quality)
+            max_wait: Thời gian chờ tối đa (giây)
+
+        Returns:
+            Tuple[success, video_url, error]
+        """
+        if not self._ready:
+            return False, None, "API chưa setup! Gọi setup() trước."
+
+        if not media_id:
+            return False, None, "Media ID không được để trống"
+
+        self.log(f"[I2V] Creating video from media: {media_id[:50]}...")
+
+        # Build request payload
+        session_id = f";{int(time.time() * 1000)}"
+        scene_id = f"scene-{int(time.time())}"
+
+        request_data = {
+            "aspectRatio": aspect_ratio,
+            "metadata": {"sceneId": scene_id},
+            "referenceImages": [{
+                "imageUsageType": "IMAGE_USAGE_TYPE_ASSET",
+                "mediaId": media_id
+            }],
+            "seed": int(time.time()) % 100000,
+            "textInput": {"prompt": prompt},
+            "videoModelKey": video_model
+        }
+
+        payload = {
+            "clientContext": {
+                "sessionId": session_id,
+                "projectId": self.project_id,
+                "tool": "PINHOLE",
+                "userPaygateTier": "PAYGATE_TIER_TWO"
+            },
+            "requests": [request_data]
+        }
+
+        # API URL for Image-to-Video
+        url = "https://aisandbox-pa.googleapis.com/v1/video:batchAsyncGenerateVideoReferenceImages"
+
+        # Headers
+        headers = {
+            "Authorization": self.bearer_token,
+            "Content-Type": "application/json",
+            "Origin": "https://labs.google",
+            "Referer": "https://labs.google/",
+        }
+        if self.x_browser_validation:
+            headers["x-browser-validation"] = self.x_browser_validation
+
+        self.log(f"[I2V] Calling video API...")
+
+        try:
+            # Use proxy bridge if available
+            proxies = None
+            if self._use_webshare and hasattr(self, '_bridge_port') and self._bridge_port:
+                bridge_url = f"http://127.0.0.1:{self._bridge_port}"
+                proxies = {"http": bridge_url, "https": bridge_url}
+
+            resp = requests.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=60,
+                proxies=proxies
+            )
+
+            if resp.status_code != 200:
+                error = f"{resp.status_code}: {resp.text[:200]}"
+                self.log(f"[I2V] API Error: {error}", "ERROR")
+                return False, None, error
+
+            result = resp.json()
+            operations = result.get("operations", [])
+
+            if not operations:
+                return False, None, "No operations in response"
+
+            self.log(f"[I2V] Got {len(operations)} operations, polling for result...")
+
+            # Poll for video result
+            operation_id = operations[0].get("name", "")
+            if not operation_id:
+                return False, None, "No operation ID"
+
+            video_url = self._poll_video_operation(operation_id, headers, proxies, max_wait)
+
+            if video_url:
+                self.log(f"[I2V] Video ready: {video_url[:60]}...")
+                return True, video_url, None
+            else:
+                return False, None, "Timeout waiting for video"
+
+        except Exception as e:
+            self.log(f"[I2V] Error: {e}", "ERROR")
+            return False, None, str(e)
+
+    def _poll_video_operation(
+        self,
+        operation_id: str,
+        headers: Dict,
+        proxies: Optional[Dict],
+        max_wait: int
+    ) -> Optional[str]:
+        """Poll cho video operation hoàn thành."""
+        url = f"https://aisandbox-pa.googleapis.com/v1/{operation_id}"
+
+        start_time = time.time()
+        poll_interval = 5  # Poll mỗi 5 giây
+
+        while time.time() - start_time < max_wait:
+            try:
+                resp = requests.get(
+                    url,
+                    headers=headers,
+                    timeout=30,
+                    proxies=proxies
+                )
+
+                if resp.status_code == 200:
+                    data = resp.json()
+
+                    # Check if done
+                    if data.get("done"):
+                        response = data.get("response", {})
+                        videos = response.get("generatedVideos", [])
+                        if videos:
+                            video_url = videos[0].get("video", {}).get("fifeUrl")
+                            if video_url:
+                                return video_url
+
+                        # Check error
+                        error = data.get("error", {})
+                        if error:
+                            self.log(f"[I2V] Video error: {error.get('message', error)}", "ERROR")
+                            return None
+
+                    # Still processing
+                    elapsed = int(time.time() - start_time)
+                    if elapsed % 30 == 0:  # Log every 30s
+                        self.log(f"[I2V] Still processing... ({elapsed}s)")
+
+                time.sleep(poll_interval)
+
+            except Exception as e:
+                self.log(f"[I2V] Poll error: {e}", "WARN")
+                time.sleep(poll_interval)
+
+        self.log(f"[I2V] Timeout after {max_wait}s", "ERROR")
+        return None
+
     def close(self):
         """Đóng Chrome và proxy bridge."""
         if self.driver:

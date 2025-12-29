@@ -3777,42 +3777,42 @@ class SmartEngine:
                 self.log(f"[VIDEO] Queued: {image_id}{has_media} (pending: {queue_len})")
 
     def _video_worker_loop(self, proj_dir: Path):
-        """Video generation worker loop."""
-        from modules.image_to_video import ImageToVideoConverter
+        """Video generation worker loop - dùng DrissionFlowAPI (không cần proxy nanoai)."""
+        from modules.drission_flow_api import DrissionFlowAPI
 
-        self.log("[VIDEO] Worker loop started")
+        self.log("[VIDEO] Worker loop started (DrissionPage mode)")
 
         # Debug: log token info
         bearer = self._video_settings.get('bearer_token', '')
         project_id = self._video_settings.get('project_id', '')
-        proxy_token = self._video_settings.get('proxy_token', '')
         self.log(f"[VIDEO] Bearer token: {bearer[:30]}..." if bearer and len(bearer) > 30 else f"[VIDEO] Bearer token: {bearer or 'EMPTY!'}")
         self.log(f"[VIDEO] Project ID: {project_id or 'EMPTY!'}")
-        self.log(f"[VIDEO] Proxy token: {'set' if proxy_token else 'NOT SET'}")
 
-        # Create converter
+        if not bearer or not project_id:
+            self.log("[VIDEO] ⚠️ Không có token/project_id - Skip I2V!", "WARN")
+            self._video_worker_running = False
+            return
+
+        # Create DrissionFlowAPI
         try:
-            converter = ImageToVideoConverter(
-                project_path=str(proj_dir),
-                bearer_token=self._video_settings['bearer_token'],
-                project_id=self._video_settings['project_id'] or 'default',
-                proxy_token=self._video_settings.get('proxy_token'),
-                use_proxy=bool(self._video_settings.get('proxy_token')),
-                video_model=self._video_settings.get('model', 'fast'),
-                log_callback=lambda msg, lvl: self.log(f"[VIDEO] {msg}", lvl.upper())
+            drission_api = DrissionFlowAPI(
+                proxy_mode=self.config.get('proxy_mode', 'local'),
+                headless=True,
+                verbose=False
             )
+            # Set token directly (không cần setup Chrome lại)
+            drission_api._ready = True
+            drission_api.bearer_token = f"Bearer {bearer}" if not bearer.startswith("Bearer ") else bearer
+            drission_api.project_id = project_id
+
+            self.log("[VIDEO] DrissionFlowAPI ready - Bắt đầu tạo video...")
+
         except Exception as e:
-            self.log(f"[VIDEO] Failed to create converter: {e}", "ERROR")
+            self.log(f"[VIDEO] Failed to create DrissionFlowAPI: {e}", "ERROR")
             self._video_worker_running = False
             return
 
-        # Check proxy availability trước khi bắt đầu
-        if not converter.check_proxy_available():
-            self.log("[VIDEO] ⚠️ Proxy API không hoạt động - Skip I2V, sẽ dùng Ken Burns effect!", "WARN")
-            self._video_worker_running = False
-            return
-
-        self.log("[VIDEO] Proxy API hoạt động - Bắt đầu tạo video...")
+        img_dir = proj_dir / "img"
 
         while self._video_worker_running and not self.stop_flag:
             # Get next item from queue
@@ -3828,13 +3828,15 @@ class SmartEngine:
 
             image_path = item['image_path']
             image_id = item['image_id']
-            video_prompt = item.get('video_prompt', '')
+            video_prompt = item.get('video_prompt', '') or "Subtle motion, cinematic, slow movement"
             media_name = item.get('media_name', '')  # Cached media_name from image generation
 
-            if media_name:
-                self.log(f"[VIDEO] Processing: {image_id} (sử dụng cached media_name)")
-            else:
-                self.log(f"[VIDEO] Processing: {image_id} (cần upload lại ảnh)")
+            if not media_name:
+                self.log(f"[VIDEO] Skip {image_id}: Không có media_name (cần tạo lại ảnh)", "WARN")
+                self._video_results['failed'] += 1
+                continue
+
+            self.log(f"[VIDEO] Processing: {image_id}")
 
             # === RETRY LOGIC: Thử tối đa 3 lần cho mỗi video ===
             MAX_VIDEO_RETRIES = 3
@@ -3844,26 +3846,42 @@ class SmartEngine:
                 try:
                     if retry > 0:
                         self.log(f"[VIDEO] Retry {retry}/{MAX_VIDEO_RETRIES}: {image_id}")
-                        time.sleep(5 * retry)  # Exponential backoff: 5s, 10s
+                        time.sleep(5 * retry)  # Exponential backoff
 
-                    result = converter.convert_image_to_video(
-                        image_path=image_path,
+                    # Gọi DrissionFlowAPI.generate_video()
+                    ok, video_url, error = drission_api.generate_video(
+                        media_id=media_name,
                         prompt=video_prompt,
-                        replace_image=self._video_settings.get('replace_image', True),
-                        cached_media_name=media_name if retry == 0 else ""  # Thử không cache nếu retry
+                        video_model=self._video_settings.get('model', 'veo_3_0_r2v_fast_ultra')
                     )
 
-                    if result.is_completed:
-                        self._video_results['success'] += 1
-                        self.log(f"[VIDEO] OK: {image_id} -> {result.video_path.name}")
-                        success = True
-                        break  # Thành công, thoát retry loop
-                    else:
+                    if ok and video_url:
+                        # Download và save video
+                        video_path = img_dir / f"{image_id}.mp4"
+                        if self._download_video(video_url, video_path):
+                            self._video_results['success'] += 1
+                            self.log(f"[VIDEO] OK: {image_id} -> {video_path.name}")
+
+                            # Xóa ảnh gốc nếu cần
+                            if self._video_settings.get('replace_image', True):
+                                png_path = img_dir / f"{image_id}.png"
+                                if png_path.exists():
+                                    try:
+                                        png_path.unlink()
+                                    except:
+                                        pass
+
+                            success = True
+                            break
+                        else:
+                            error = "Failed to download video"
+
+                    if not success:
                         if retry < MAX_VIDEO_RETRIES - 1:
-                            self.log(f"[VIDEO] {image_id} failed: {result.error} - Will retry...", "WARN")
+                            self.log(f"[VIDEO] {image_id} failed: {error} - Will retry...", "WARN")
                         else:
                             self._video_results['failed'] += 1
-                            self.log(f"[VIDEO] FAILED after {MAX_VIDEO_RETRIES} retries: {image_id} - {result.error}", "ERROR")
+                            self.log(f"[VIDEO] FAILED after {MAX_VIDEO_RETRIES} retries: {image_id} - {error}", "ERROR")
 
                 except Exception as e:
                     if retry < MAX_VIDEO_RETRIES - 1:
@@ -3876,6 +3894,21 @@ class SmartEngine:
             time.sleep(2)
 
         self.log(f"[VIDEO] Worker stopped. Results: {self._video_results['success']} OK, {self._video_results['failed']} failed")
+
+    def _download_video(self, url: str, save_path: Path) -> bool:
+        """Download video từ URL và lưu vào file."""
+        try:
+            import requests
+            resp = requests.get(url, timeout=120)
+            if resp.status_code == 200:
+                save_path.parent.mkdir(parents=True, exist_ok=True)
+                save_path.write_bytes(resp.content)
+                return True
+            self.log(f"[VIDEO] Download failed: {resp.status_code}", "ERROR")
+            return False
+        except Exception as e:
+            self.log(f"[VIDEO] Download error: {e}", "ERROR")
+            return False
 
     def get_video_results(self) -> Dict:
         """Get video generation results."""
