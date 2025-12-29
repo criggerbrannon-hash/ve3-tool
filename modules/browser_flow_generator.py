@@ -3078,8 +3078,11 @@ class BrowserFlowGenerator:
                 self.stats["skipped"] += 1
                 continue
 
+            # Xác định là ảnh tham chiếu (nv*/loc*) hay ảnh scene
+            is_reference_image = pid.lower().startswith('nv') or pid.lower().startswith('loc')
+
             # Xác định thư mục lưu: nv*/loc* -> nv_path (tham chiếu), còn lại -> img_path
-            if pid.lower().startswith('nv') or pid.lower().startswith('loc'):
+            if is_reference_image:
                 save_dir = self.nv_path
             else:
                 save_dir = output_dir
@@ -3087,16 +3090,29 @@ class BrowserFlowGenerator:
             # Check if image already exists
             output_file = save_dir / f"{pid}.png"
             if output_file.exists():
-                self._log(f"[{i+1}/{len(prompts)}] ID: {pid} - Skip (da co anh)")
-                self.stats["skipped"] += 1
-                continue
+                # === CHECK MEDIA_ID FOR REFERENCE IMAGES ===
+                # Nếu là ảnh nv*/loc* nhưng KHÔNG có media_id → xóa và tạo lại
+                if is_reference_image and pid not in excel_media_ids:
+                    self._log(f"[{i+1}/{len(prompts)}] ID: {pid} - Anh ton tai NHUNG khong co media_id")
+                    self._log(f"   → Xoa {output_file.name} va tao lai de co media_id")
+                    try:
+                        output_file.unlink()  # Xóa file
+                    except Exception as e:
+                        self._log(f"   → Khong the xoa file: {e}", "warn")
+                        self.stats["skipped"] += 1
+                        continue
+                    # Tiếp tục generate (không skip)
+                else:
+                    self._log(f"[{i+1}/{len(prompts)}] ID: {pid} - Skip (da co anh)")
+                    self.stats["skipped"] += 1
+                    continue
 
             self._log(f"[{i+1}/{len(prompts)}] ID: {pid}")
             self._log(f"   Prompt: {prompt[:60]}...")
 
             # === BUILD IMAGE_INPUTS từ reference_files và media_ids ===
             image_inputs = []
-            is_reference_image = pid.lower().startswith('nv') or pid.lower().startswith('loc')
+            # is_reference_image đã được định nghĩa ở trên
 
             # Merge Excel và cache media_ids (Excel ưu tiên)
             all_media_ids = {**cached_media_names, **excel_media_ids}

@@ -38,17 +38,16 @@ flow_delay: 3.0
 webshare_proxy:
   enabled: true               # BẬT Webshare proxy
 
-  # === ROTATING RESIDENTIAL (NEW!) ===
-  # Mỗi request tự động đổi IP - không cần restart Chrome khi 403
-  rotating_enabled: true
+  # === ROTATING RESIDENTIAL ===
+  # ⚠️ KHÔNG DÙNG ĐƯỢC cho Google Flow (bị block)
+  rotating_enabled: false     # TẮT - Google Flow bị chặn qua Rotating Residential
   rotating_host: "p.webshare.io"
   rotating_port: 80
   username: "jhvbehdf-residential-1"
   password: "cf1bi3yvq0t1"
 
-  # === BACKUP: Direct Proxy List ===
-  # Dùng khi rotating_enabled: false
-  proxy_file: "config/proxies.txt"  # File chứa danh sách proxy (fallback)
+  # === DIRECT PROXY LIST (100 IPs) - DÙNG CÁI NÀY ===
+  proxy_file: "config/proxies.txt"  # File chứa danh sách proxy
   api_key: "pfi2ljk73uysoze9ozg58nsp4af7au0vchs0b027"  # Webshare API key
 
 # ============================================================================
