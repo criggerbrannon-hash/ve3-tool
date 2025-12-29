@@ -2184,12 +2184,27 @@ class UnixVoiceToVideo:
             if total > 5:
                 self.log(f"   ... và {total - 5} file khác")
 
-            # Thread-safe result tracking
+            # Thread-safe result tracking and worker_id assignment
             results_lock = threading.Lock()
             total_results = {"success": 0, "failed": 0, "completed": 0}
 
-            def process_single_voice(voice_path: Path, worker_id: int) -> dict:
-                """Process a single voice file with given worker_id."""
+            # Map thread ID → worker_id (để mỗi thread có proxy riêng)
+            thread_worker_map = {}
+            next_worker_id = [0]  # Mutable để dùng trong closure
+
+            def get_worker_id_for_thread() -> int:
+                """Gán worker_id dựa trên thread thực tế, không phải voice index."""
+                thread_id = threading.current_thread().ident
+                with results_lock:
+                    if thread_id not in thread_worker_map:
+                        thread_worker_map[thread_id] = next_worker_id[0]
+                        next_worker_id[0] += 1
+                    return thread_worker_map[thread_id]
+
+            def process_single_voice(voice_path: Path) -> dict:
+                """Process a single voice file. Worker_id is auto-assigned per thread."""
+                # Lấy worker_id dựa trên thread đang chạy
+                worker_id = get_worker_id_for_thread()
                 voice_name = voice_path.name
                 result = {"voice": voice_name, "success": 0, "failed": 0, "error": None}
 
@@ -2255,13 +2270,13 @@ class UnixVoiceToVideo:
             self.log("=" * 60)
 
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                # Submit all voices with rotating worker_id
+                # Submit all voices - worker_id tự động gán theo thread
                 futures = {}
                 for i, voice_path in enumerate(voices):
                     if self._stop:
                         break
-                    worker_id = i % max_workers  # Rotate worker_id: 0, 1, 0, 1, ...
-                    future = executor.submit(process_single_voice, voice_path, worker_id)
+                    # Không truyền worker_id - sẽ được gán tự động khi thread thực thi
+                    future = executor.submit(process_single_voice, voice_path)
                     futures[future] = voice_path
 
                 # Wait for completion (with stop check)
