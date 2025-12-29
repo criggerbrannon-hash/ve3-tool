@@ -3583,6 +3583,8 @@ class SmartEngine:
 
                 # 2. Token từ project cache (.media_cache.json)
                 # Đây là full token (không bị truncate)
+                recaptcha_token = ''
+                x_browser_validation = ''
                 if proj_dir:
                     cache_path = proj_dir / "prompts" / ".media_cache.json"
                     if cache_path.exists():
@@ -3591,11 +3593,16 @@ class SmartEngine:
                                 cache_data = json.load(f)
                             cached_token = cache_data.get('_bearer_token', '')
                             cached_project = cache_data.get('_project_id', '')
+                            # Quan trọng cho I2V!
+                            recaptcha_token = cache_data.get('_recaptcha_token', '')
+                            x_browser_validation = cache_data.get('_x_browser_validation', '')
                             if cached_token:
                                 bearer_token = cached_token
                                 self.log(f"[VIDEO] Dùng token từ project cache")
                             if not project_id and cached_project:
                                 project_id = cached_project
+                            if recaptcha_token:
+                                self.log(f"[VIDEO] Có recaptcha_token từ cache")
                         except:
                             pass
 
@@ -3621,7 +3628,10 @@ class SmartEngine:
                     'replace_image': settings.get('video_replace_image', True),
                     'bearer_token': bearer_token,
                     'project_id': project_id,
-                    'proxy_token': settings.get('proxy_api_token', '')
+                    'proxy_token': settings.get('proxy_api_token', ''),
+                    # Quan trọng cho I2V (giống tạo ảnh)
+                    'recaptcha_token': recaptcha_token,
+                    'x_browser_validation': x_browser_validation
                 }
 
                 # Parse count
@@ -3797,8 +3807,11 @@ class SmartEngine:
         # Debug: log token info
         bearer = self._video_settings.get('bearer_token', '')
         project_id = self._video_settings.get('project_id', '')
+        recaptcha = self._video_settings.get('recaptcha_token', '')
+        x_browser_val = self._video_settings.get('x_browser_validation', '')
         self.log(f"[VIDEO] Bearer token: {bearer[:30]}..." if bearer and len(bearer) > 30 else f"[VIDEO] Bearer token: {bearer or 'EMPTY!'}")
         self.log(f"[VIDEO] Project ID: {project_id or 'EMPTY!'}")
+        self.log(f"[VIDEO] Recaptcha: {'có' if recaptcha else 'KHÔNG CÓ'}")
 
         if not bearer or not project_id:
             self.log("[VIDEO] ⚠️ Không có token/project_id - Skip I2V!", "WARN")
@@ -3816,6 +3829,9 @@ class SmartEngine:
             drission_api._ready = True
             drission_api.bearer_token = f"Bearer {bearer}" if not bearer.startswith("Bearer ") else bearer
             drission_api.project_id = project_id
+            # Set recaptcha_token và x_browser_validation (quan trọng cho I2V!)
+            drission_api.recaptcha_token = recaptcha
+            drission_api.x_browser_validation = x_browser_val
 
             self.log("[VIDEO] DrissionFlowAPI ready - Bắt đầu tạo video...")
 

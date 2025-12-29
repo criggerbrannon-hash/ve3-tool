@@ -575,6 +575,15 @@ class BrowserFlowGenerator:
                 cache_data['_token_time'] = time.time()  # Luu thoi diem lay token
                 self._log(f"[CACHE] Saving bearer_token: {bearer_token[:30]}... (de reuse)")
 
+            # Lưu thêm recaptcha_token và x_browser_validation cho I2V
+            recaptcha_token = self.config.get('flow_recaptcha_token', '')
+            x_browser_val = self.config.get('flow_x_browser_validation', '')
+            if recaptcha_token:
+                cache_data['_recaptcha_token'] = recaptcha_token
+                self._log(f"[CACHE] Saving recaptcha_token (cho I2V)")
+            if x_browser_val:
+                cache_data['_x_browser_validation'] = x_browser_val
+
             with open(cache_path, 'w', encoding='utf-8') as f:
                 json.dump(cache_data, f, indent=2)
             self._log(f"[CACHE] Saved {len(media_names)} media_names + token + project")
@@ -3499,10 +3508,15 @@ class BrowserFlowGenerator:
                 if bearer.startswith("Bearer "):
                     bearer = bearer[7:]  # Remove "Bearer " prefix
                 project_id = drission_api.project_id
+                # Lấy recaptcha_token nếu có (quan trọng cho I2V!)
+                recaptcha = getattr(drission_api, 'recaptcha_token', '') or ''
+                x_browser_val = getattr(drission_api, 'x_browser_validation', '') or ''
 
                 # 1. Lưu vào config để _save_media_cache có thể đọc
                 self.config['flow_bearer_token'] = bearer
                 self.config['flow_project_id'] = project_id
+                self.config['flow_recaptcha_token'] = recaptcha
+                self.config['flow_x_browser_validation'] = x_browser_val
 
                 # 2. Lưu vào Excel (sheet config) để tái sử dụng
                 if workbook:

@@ -1236,8 +1236,12 @@ class DrissionFlowAPI:
             "videoModelKey": video_model
         }
 
+        # Lấy recaptchaToken nếu có (từ lúc capture khi tạo ảnh)
+        recaptcha = getattr(self, 'recaptcha_token', '') or ''
+
         payload = {
             "clientContext": {
+                "recaptchaToken": recaptcha,  # Quan trọng! Giống như tạo ảnh
                 "sessionId": session_id,
                 "projectId": self.project_id,
                 "tool": "PINHOLE",
@@ -1245,6 +1249,8 @@ class DrissionFlowAPI:
             },
             "requests": [request_data]
         }
+
+        self.log(f"[I2V] recaptchaToken: {'có' if recaptcha else 'KHÔNG CÓ!'}")
 
         # API URL for Image-to-Video
         url = "https://aisandbox-pa.googleapis.com/v1/video:batchAsyncGenerateVideoReferenceImages"
