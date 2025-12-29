@@ -3046,9 +3046,9 @@ class BrowserFlowGenerator:
             try:
                 excel_media_ids = workbook.get_media_ids()
                 if excel_media_ids:
-                    self._log(f"[EXCEL] Loaded {len(excel_media_ids)} media_ids from Excel")
+                    self._log(f"[EXCEL] Loaded {len(excel_media_ids)} media_ids: {list(excel_media_ids.keys())}")
                 else:
-                    self._log("[EXCEL] No media_ids in Excel - scenes will have no reference images", "warn")
+                    self._log("[EXCEL] ⚠️ KHÔNG CÓ MEDIA_ID TRONG EXCEL - ảnh nv/loc sẽ được tạo lại", "warn")
             except Exception as e:
                 self._log(f"Warning: Cannot load media_ids from Excel: {e}", "warn")
 
@@ -3062,6 +3062,12 @@ class BrowserFlowGenerator:
         # Ensure output dir exists
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Log danh sách prompts sẽ xử lý
+        prompt_ids = [str(p.get('id', idx+1)) for idx, p in enumerate(prompts)]
+        ref_ids = [pid for pid in prompt_ids if pid.lower().startswith('nv') or pid.lower().startswith('loc')]
+        if ref_ids:
+            self._log(f"[INFO] Reference images (nv/loc): {ref_ids}")
 
         for i, prompt_data in enumerate(prompts):
             pid = str(prompt_data.get('id', i + 1))
@@ -3092,11 +3098,16 @@ class BrowserFlowGenerator:
             if output_file.exists():
                 # === CHECK MEDIA_ID FOR REFERENCE IMAGES ===
                 # Nếu là ảnh nv*/loc* nhưng KHÔNG có media_id → xóa và tạo lại
-                if is_reference_image and pid not in excel_media_ids:
-                    self._log(f"[{i+1}/{len(prompts)}] ID: {pid} - Anh ton tai NHUNG khong co media_id")
-                    self._log(f"   → Xoa {output_file.name} va tao lai de co media_id")
+                # Normalize key để so sánh (case-insensitive)
+                pid_lower = pid.lower()
+                has_media_id = any(k.lower() == pid_lower for k in excel_media_ids.keys())
+
+                if is_reference_image and not has_media_id:
+                    self._log(f"[{i+1}/{len(prompts)}] ID: {pid} - ⚠️ ANH TON TAI NHUNG KHONG CO MEDIA_ID")
+                    self._log(f"   → Dang xoa {output_file.name} de tao lai...")
                     try:
                         output_file.unlink()  # Xóa file
+                        self._log(f"   → Da xoa! Se tao lai de co media_id", "success")
                     except Exception as e:
                         self._log(f"   → Khong the xoa file: {e}", "warn")
                         self.stats["skipped"] += 1
