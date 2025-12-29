@@ -595,13 +595,31 @@ class DrissionFlowAPI:
         if wait_for_project:
             # Kiểm tra đã ở trong project chưa
             if "/project/" not in self.driver.url:
-                self.log("Auto setup project...")
-                if not self._auto_setup_project(timeout):
-                    return False
-                # Lưu project URL sau khi tạo mới
-                if "/project/" in self.driver.url:
-                    self._current_project_url = self.driver.url
-                    self.log(f"  → New project URL saved")
+                # Nếu có project_url nhưng bị redirect về trang chủ → retry vào project cũ
+                if project_url and "/project/" in project_url:
+                    self.log(f"⚠️ Bị redirect, retry vào project cũ...")
+                    # Retry vào project URL (max 3 lần)
+                    for retry in range(3):
+                        time.sleep(2)
+                        self.driver.get(project_url)
+                        time.sleep(3)
+                        if "/project/" in self.driver.url:
+                            self._current_project_url = self.driver.url
+                            self.log(f"✓ Vào lại project thành công!")
+                            break
+                        self.log(f"  → Retry {retry+1}/3...")
+                    else:
+                        self.log("✗ Không vào được project cũ, session có thể hết hạn", "ERROR")
+                        return False
+                else:
+                    # Không có project URL → tạo mới
+                    self.log("Auto setup project...")
+                    if not self._auto_setup_project(timeout):
+                        return False
+                    # Lưu project URL sau khi tạo mới
+                    if "/project/" in self.driver.url:
+                        self._current_project_url = self.driver.url
+                        self.log(f"  → New project URL saved")
             else:
                 self.log("✓ Đã ở trong project!")
 

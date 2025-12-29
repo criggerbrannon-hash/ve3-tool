@@ -3021,8 +3021,8 @@ class BrowserFlowGenerator:
                 self.stats["skipped"] += 1
                 continue
 
-            # Xác định thư mục lưu: nv* -> nv_path, còn lại -> img_path
-            if pid.lower().startswith('nv'):
+            # Xác định thư mục lưu: nv*/loc* -> nv_path (tham chiếu), còn lại -> img_path
+            if pid.lower().startswith('nv') or pid.lower().startswith('loc'):
                 save_dir = self.nv_path
             else:
                 save_dir = output_dir
