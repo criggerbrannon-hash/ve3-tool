@@ -38,7 +38,7 @@ flow_delay: 3.0
 webshare_proxy:
   enabled: true               # BẬT Webshare proxy pool
   proxy_file: "config/proxies.txt"  # File chứa danh sách proxy (fallback)
-  api_key: ""                 # Webshare API key - TỰ ĐỘNG lấy 100 proxies từ API
+  api_key: "pfi2ljk73uysoze9ozg58nsp4af7au0vchs0b027"  # Webshare API key - TỰ ĐỘNG lấy proxies từ API
   # Nếu không có api_key, sẽ load từ proxy_file
   # Format proxy_file: IP:PORT:USER:PASS (mỗi dòng 1 proxy)
 
