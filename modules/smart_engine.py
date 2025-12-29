@@ -970,7 +970,34 @@ class SmartEngine:
                 # CHI lay character/location prompts (nv*, loc*)
                 if pid_str.startswith('nv') or pid_str.startswith('loc'):
                     out_path = proj_dir / "nv" / f"{pid_str}.png"
-                    if not out_path.exists():  # Chi lay chua co anh
+
+                    # === CHECK MEDIA_ID ===
+                    # Nếu ảnh tồn tại nhưng KHÔNG có media_id → vẫn cần tạo lại
+                    need_generate = False
+                    if not out_path.exists():
+                        need_generate = True
+                    else:
+                        # Kiểm tra media_id trong Excel
+                        try:
+                            from modules.excel_manager import PromptWorkbook
+                            wb_check = PromptWorkbook(excel_path)
+                            wb_check.load_or_create()
+                            media_ids = wb_check.get_media_ids()
+                            # Case-insensitive check
+                            has_media_id = any(k.lower() == pid_str.lower() for k in media_ids.keys())
+                            if not has_media_id:
+                                self.log(f"[CHAR] {pid_str}: Ảnh tồn tại nhưng KHÔNG có media_id → tạo lại")
+                                # Xóa file cũ
+                                try:
+                                    out_path.unlink()
+                                    self.log(f"[CHAR] Đã xóa {out_path.name}")
+                                except:
+                                    pass
+                                need_generate = True
+                        except Exception as e:
+                            self.log(f"[CHAR] Lỗi kiểm tra media_id: {e}", "WARN")
+
+                    if need_generate:
                         prompts.append({
                             'id': pid_str,
                             'prompt': prompt_str,
