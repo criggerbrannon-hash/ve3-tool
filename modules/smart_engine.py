@@ -2371,6 +2371,17 @@ class SmartEngine:
                     except:
                         pass
 
+                # === LOAD MEDIA_IDs từ Excel (bổ sung cho cache) ===
+                excel_scene_media_ids = {}
+                try:
+                    from modules.excel_manager import PromptWorkbook
+                    workbook = PromptWorkbook(str(excel_path))
+                    excel_scene_media_ids = workbook.get_scene_media_ids()
+                    if excel_scene_media_ids:
+                        self.log(f"[VIDEO] Loaded {len(excel_scene_media_ids)} media_ids từ Excel")
+                except Exception as e:
+                    self.log(f"[VIDEO] Cannot load Excel media_ids: {e}", "WARN")
+
                 img_dir = proj_dir / "img"
                 queued = 0
                 skipped_mp4 = 0
@@ -2388,7 +2399,8 @@ class SmartEngine:
                         skipped_mp4 += 1
                     elif img_path.exists():
                         video_prompt = p.get('video_prompt', '')
-                        cached_media_name = media_cache.get(pid, '')
+                        # Ưu tiên: cache → Excel
+                        cached_media_name = media_cache.get(pid, '') or excel_scene_media_ids.get(pid, '')
                         self._queue_video_generation(img_path, pid, video_prompt, cached_media_name)
                         queued += 1
 

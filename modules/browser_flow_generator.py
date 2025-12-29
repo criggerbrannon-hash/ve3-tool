@@ -3223,6 +3223,14 @@ class BrowserFlowGenerator:
                         try:
                             workbook.update_image_path(int(pid), str(images[0].local_path))
                             workbook.update_status(int(pid), "done")
+                            # === SAVE MEDIA_ID to Excel for SCENE images ===
+                            if images[0].media_name:
+                                try:
+                                    workbook.update_scene(int(pid), media_id=images[0].media_name)
+                                    workbook.save()
+                                    self._log(f"   [EXCEL] Saved media_id for scene {pid}")
+                                except Exception as e:
+                                    self._log(f"   [EXCEL] Cannot save scene media_id: {e}", "warn")
                         except:
                             pass
 
@@ -3330,6 +3338,15 @@ class BrowserFlowGenerator:
                                     self._log(f"   ✓ Retry thành công! Saved {len(images2)} image(s)")
                                     self.stats["success"] += 1
                                     self.stats["failed"] -= 1  # Undo the fail count
+                                    # Save media_id for scene images
+                                    if images2[0].media_name and not is_reference_image:
+                                        try:
+                                            if workbook:
+                                                workbook.update_scene(int(pid), media_id=images2[0].media_name)
+                                                workbook.save()
+                                                self._log(f"   [EXCEL] Saved media_id for scene {pid}")
+                                        except:
+                                            pass
                                     # Save media_id for nv/loc images
                                     if images2[0].media_name and is_reference_image:
                                         media_id_saved = False
