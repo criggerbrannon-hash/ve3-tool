@@ -976,6 +976,23 @@ class UnixVoiceToVideo:
         ttk.Label(parallel_frame, text="10").pack(side=tk.LEFT)
         parallel_label.pack(side=tk.LEFT, padx=(10, 0))
 
+        # Folder processing mode (Round-Robin vs Parallel)
+        ttk.Separator(prof_tab, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(10, 5))
+
+        folder_mode_frame = ttk.Frame(prof_tab)
+        folder_mode_frame.pack(fill=tk.X, pady=(0, 5))
+        ttk.Label(folder_mode_frame, text="Chế độ xử lý folder:", font=('Segoe UI', 9, 'bold')).pack(side=tk.LEFT)
+
+        current_folder_mode = self._get_folder_mode()
+        folder_mode_var = tk.StringVar(value=current_folder_mode)
+        def on_folder_mode_change():
+            self._save_folder_mode(folder_mode_var.get())
+
+        ttk.Radiobutton(folder_mode_frame, text="🔄 Round-Robin (giãn cách API)", variable=folder_mode_var,
+                        value="round_robin", command=on_folder_mode_change).pack(side=tk.LEFT, padx=(10, 5))
+        ttk.Radiobutton(folder_mode_frame, text="⚡ Parallel (nhanh)", variable=folder_mode_var,
+                        value="parallel", command=on_folder_mode_change).pack(side=tk.LEFT)
+
         # Buttons row 1
         prof_btn_row1 = ttk.Frame(prof_tab)
         prof_btn_row1.pack(fill=tk.X, pady=(5, 5))
@@ -1722,6 +1739,36 @@ class UnixVoiceToVideo:
         except Exception as e:
             print(f"Save parallel_voices error: {e}")
 
+    def _get_folder_mode(self) -> str:
+        """Get folder processing mode (round_robin or parallel)."""
+        try:
+            import yaml
+            config_path = CONFIG_DIR / "settings.yaml"
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+                return config.get('folder_mode', 'round_robin')
+        except:
+            pass
+        return 'round_robin'  # Default: Round-Robin để giãn cách API
+
+    def _save_folder_mode(self, mode: str):
+        """Save folder processing mode to config."""
+        try:
+            import yaml
+            config_path = CONFIG_DIR / "settings.yaml"
+            config = {}
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+            config['folder_mode'] = mode
+            with open(config_path, 'w', encoding='utf-8') as f:
+                yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+            mode_display = "Round-Robin" if mode == 'round_robin' else "Parallel"
+            self.log(f"Folder mode: {mode_display}", "OK")
+        except Exception as e:
+            print(f"Save folder_mode error: {e}")
+
     # ======= VIDEO SETTINGS =======
     def _get_video_count_setting(self) -> str:
         """Get video count setting (number or 'full')."""
@@ -1927,7 +1974,14 @@ class UnixVoiceToVideo:
             self.log(f"   Done: {self.batch_done_folder}")
             threading.Thread(target=self._process_batch, daemon=True).start()
         elif mode == "folder":
-            threading.Thread(target=self._process_folder, daemon=True).start()
+            # Chọn chế độ xử lý folder từ settings
+            folder_mode = self._get_folder_mode()
+            if folder_mode == "round_robin":
+                self.log(f"📂 Mode: Folder (Round-Robin - giãn cách API)")
+                threading.Thread(target=self._process_folder_round_robin, daemon=True).start()
+            else:
+                self.log(f"📂 Mode: Folder (Parallel - nhanh)")
+                threading.Thread(target=self._process_folder, daemon=True).start()
         else:
             threading.Thread(target=self._process_single, daemon=True).start()
     
@@ -2336,7 +2390,344 @@ class UnixVoiceToVideo:
         finally:
             self._running = False
             self.root.after(0, self._reset_ui)
-    
+
+    def _process_folder_round_robin(self):
+        """
+        Process folder with multiple voice files - ROUND-ROBIN mode.
+
+        Thay vì chạy song song, mỗi voice lần lượt tạo 1 ảnh:
+        - Voice 1: ảnh 1 → đợi
+        - Voice 2: ảnh 1 → đợi
+        - Voice 1: ảnh 2 → đợi
+        - Voice 2: ảnh 2 → đợi
+        - ...
+
+        Ưu điểm:
+        - Giãn cách API tự nhiên (không cần delay thủ công)
+        - Giảm 403 rate limit
+        - Mỗi voice có proxy riêng, Chrome riêng
+        """
+        import threading
+        from pathlib import Path
+
+        try:
+            from modules.smart_engine import SmartEngine
+            from modules.round_robin_coordinator import RoundRobinCoordinator, VoiceTask
+            from modules.drission_flow_api import DrissionFlowAPI
+            from modules.browser_flow_generator import BrowserFlowGenerator
+
+            folder = Path(self.input_path.get())
+            voices = sorted(list(folder.glob("*.mp3")) + list(folder.glob("*.wav")))
+
+            if not voices:
+                self.root.after(0, lambda: messagebox.showerror("Lỗi", "Không tìm thấy file voice nào!"))
+                return
+
+            # Giới hạn số voice xử lý cùng lúc
+            max_workers = 2
+            voices = voices[:max_workers]
+            total_voices = len(voices)
+
+            self.log(f"📁 Tìm thấy {total_voices} voice - Chế độ ROUND-ROBIN")
+            for i, v in enumerate(voices):
+                self.log(f"   {i+1}. {v.name}")
+
+            # === PHASE 1: CHUẨN BỊ (SRT + Prompts) ===
+            self.log("")
+            self.log("=" * 60)
+            self.log("🔄 PHASE 1: Chuẩn bị SRT + Prompts...")
+            self.log("=" * 60)
+
+            voice_data = {}  # {voice_id: {'engine': ..., 'prompts': [...], 'proj_dir': ...}}
+
+            for i, voice_path in enumerate(voices):
+                if self._stop:
+                    break
+
+                voice_name = voice_path.stem
+                proj_dir = Path("PROJECTS") / voice_name
+                proj_dir.mkdir(parents=True, exist_ok=True)
+                for d in ["srt", "prompts", "nv", "img"]:
+                    (proj_dir / d).mkdir(exist_ok=True)
+
+                excel_path = proj_dir / "prompts" / f"{voice_name}_prompts.xlsx"
+                srt_path = proj_dir / "srt" / f"{voice_name}.srt"
+
+                self.log(f"[Voice {i}] 📄 {voice_name}")
+
+                # Tạo engine cho voice này
+                engine = SmartEngine(worker_id=i)
+
+                def log_cb(msg, wid=i):
+                    level = "INFO"
+                    if "[OK]" in msg or "OK!" in msg or "✓" in msg:
+                        level = "OK"
+                    elif "[ERROR]" in msg or "ERROR" in msg or "✗" in msg:
+                        level = "ERROR"
+                    elif "[WARN]" in msg or "⚠️" in msg:
+                        level = "WARN"
+                    prefixed_msg = f"[V{wid}] {msg}"
+                    self.root.after(0, lambda m=prefixed_msg, l=level: self.log(m, l))
+
+                engine.callback = log_cb
+
+                # Copy voice file
+                dest_voice = proj_dir / voice_path.name
+                if not dest_voice.exists():
+                    import shutil
+                    shutil.copy2(voice_path, dest_voice)
+
+                # Tạo SRT
+                if not srt_path.exists():
+                    self.log(f"[Voice {i}] Tạo SRT...")
+                    if not engine.make_srt(dest_voice, srt_path):
+                        self.log(f"[Voice {i}] ❌ SRT failed!", "ERROR")
+                        continue
+                else:
+                    self.log(f"[Voice {i}] ⏭️ SRT đã có")
+
+                # Tạo Prompts
+                if not excel_path.exists():
+                    self.log(f"[Voice {i}] Tạo Prompts...")
+                    if not engine.make_prompts(proj_dir, voice_name, excel_path):
+                        self.log(f"[Voice {i}] ❌ Prompts failed!", "ERROR")
+                        continue
+                else:
+                    self.log(f"[Voice {i}] ⏭️ Excel đã có")
+
+                # Load prompts
+                prompts = engine._load_prompts(excel_path, proj_dir)
+                if not prompts:
+                    self.log(f"[Voice {i}] ⚠️ Không có prompts!", "WARN")
+                    continue
+
+                # Filter prompts đã có ảnh
+                filtered = []
+                for p in prompts:
+                    pid = p.get('id', '')
+                    if pid.lower().startswith('nv') or pid.lower().startswith('loc'):
+                        out_path = proj_dir / "nv" / f"{pid}.png"
+                    else:
+                        out_path = proj_dir / "img" / f"{pid}.png"
+                    if not out_path.exists():
+                        filtered.append(p)
+
+                self.log(f"[Voice {i}] 📋 {len(filtered)}/{len(prompts)} prompts cần tạo")
+
+                voice_data[i] = {
+                    'engine': engine,
+                    'prompts': filtered,
+                    'proj_dir': proj_dir,
+                    'excel_path': excel_path,
+                    'voice_name': voice_name
+                }
+
+            if not voice_data:
+                self.log("⚠️ Không có voice nào có prompts!", "WARN")
+                return
+
+            # === PHASE 2: ROUND-ROBIN IMAGE GENERATION ===
+            self.log("")
+            self.log("=" * 60)
+            self.log("🔄 PHASE 2: Round-Robin Image Generation...")
+            self.log("=" * 60)
+
+            # Tạo coordinator
+            coordinator = RoundRobinCoordinator(
+                num_voices=len(voice_data),
+                log_callback=lambda msg, lvl="INFO": self.root.after(0, lambda m=msg, l=lvl: self.log(m, l))
+            )
+
+            # Add voices to coordinator
+            for vid, data in voice_data.items():
+                coordinator.add_voice(
+                    voice_id=vid,
+                    folder_path=data['proj_dir'],
+                    prompts=data['prompts'],
+                    excel_path=data['excel_path']
+                )
+
+            # Lưu trữ DrissionFlowAPI cho mỗi voice
+            drission_apis = {}  # {voice_id: DrissionFlowAPI}
+            results_lock = threading.Lock()
+            total_results = {"success": 0, "failed": 0, "total": sum(len(d['prompts']) for d in voice_data.values())}
+
+            def setup_chrome(voice_id: int) -> bool:
+                """Setup Chrome với proxy cho voice."""
+                try:
+                    self.root.after(0, lambda vid=voice_id: self.log(f"[Voice {vid}] 🌐 Khởi tạo Chrome..."))
+
+                    # Lấy proxy manager
+                    from webshare_proxy import get_proxy_manager
+                    proxy_manager = get_proxy_manager()
+
+                    proxy_url = None
+                    if proxy_manager and proxy_manager.proxies:
+                        proxy, ip = proxy_manager.test_and_get_proxy(voice_id)
+                        if proxy:
+                            proxy_url = proxy
+                            self.root.after(0, lambda vid=voice_id, ip=ip: self.log(f"[Voice {vid}] 🌐 IP: {ip}"))
+
+                    # Tạo DrissionFlowAPI
+                    api = DrissionFlowAPI(
+                        worker_id=voice_id,
+                        log_callback=lambda msg, vid=voice_id: self.root.after(0, lambda m=msg: self.log(f"[V{vid}] {m}"))
+                    )
+
+                    # Setup với proxy
+                    if api.setup(proxy=proxy_url):
+                        drission_apis[voice_id] = api
+                        return True
+                    else:
+                        self.root.after(0, lambda vid=voice_id: self.log(f"[Voice {vid}] ❌ Chrome setup failed!", "ERROR"))
+                        return False
+
+                except Exception as e:
+                    self.root.after(0, lambda vid=voice_id, e=e: self.log(f"[Voice {vid}] ❌ Setup error: {e}", "ERROR"))
+                    return False
+
+            def process_image(voice_id: int, task: VoiceTask) -> bool:
+                """Tạo 1 ảnh cho voice."""
+                try:
+                    pid = task.prompt_data.get('id', '?')
+                    prompt = task.prompt_data.get('prompt', '')
+
+                    self.root.after(0, lambda vid=voice_id, p=pid: self.log(f"[Voice {vid}] 🎨 Generating {p}..."))
+
+                    # Lấy DrissionFlowAPI đã setup
+                    api = drission_apis.get(voice_id)
+                    if not api:
+                        return False
+
+                    # Lấy reference images nếu có
+                    ref_images = task.prompt_data.get('reference_images', [])
+                    image_inputs = []
+
+                    if ref_images and task.excel_path:
+                        try:
+                            from modules.excel_manager import PromptWorkbook
+                            wb = PromptWorkbook(task.excel_path)
+                            wb.load_or_create()
+                            media_ids = wb.get_media_ids()
+
+                            for ref_id in ref_images:
+                                media_id = media_ids.get(ref_id)
+                                if media_id:
+                                    image_inputs.append({
+                                        "name": media_id,
+                                        "imageInputType": "IMAGE_INPUT_TYPE_REFERENCE"
+                                    })
+                        except Exception as e:
+                            self.root.after(0, lambda e=e: self.log(f"⚠️ Lỗi load media_ids: {e}", "WARN"))
+
+                    # Generate image
+                    from modules.browser_flow_generator import AspectRatio
+                    success, images, error = api.generate_images(
+                        prompt=prompt,
+                        count=1,
+                        aspect_ratio=AspectRatio.LANDSCAPE,
+                        image_inputs=image_inputs if image_inputs else None
+                    )
+
+                    if success and images:
+                        # Lưu ảnh
+                        import base64
+                        img_data = base64.b64decode(images[0])
+                        task.output_path.parent.mkdir(parents=True, exist_ok=True)
+                        with open(task.output_path, 'wb') as f:
+                            f.write(img_data)
+
+                        # Lưu media_id nếu là nv/loc
+                        if pid.lower().startswith('nv') or pid.lower().startswith('loc'):
+                            if hasattr(api, '_last_media_name') and api._last_media_name:
+                                try:
+                                    from modules.excel_manager import PromptWorkbook
+                                    wb = PromptWorkbook(task.excel_path)
+                                    wb.load_or_create()
+                                    wb.update_media_id(pid, api._last_media_name)
+                                    wb.save()
+                                except:
+                                    pass
+
+                        with results_lock:
+                            total_results["success"] += 1
+                            done = total_results["success"] + total_results["failed"]
+                            total = total_results["total"]
+                            progress = (done / total) * 100
+                            self.root.after(0, lambda p=progress, d=done, t=total:
+                                self.update_progress(p, f"Xong {d}/{t}"))
+
+                        self.root.after(0, lambda vid=voice_id, p=pid: self.log(f"[Voice {vid}] ✅ {p}", "OK"))
+                        return True
+                    else:
+                        with results_lock:
+                            total_results["failed"] += 1
+
+                        self.root.after(0, lambda vid=voice_id, p=pid, e=error:
+                            self.log(f"[Voice {vid}] ❌ {p}: {e}", "ERROR"))
+
+                        # Nếu lỗi 403, rotate proxy
+                        if error and ('403' in str(error) or 'forbidden' in str(error).lower()):
+                            try:
+                                from webshare_proxy import get_proxy_manager
+                                manager = get_proxy_manager()
+                                if manager:
+                                    manager.rotate_worker_proxy(voice_id, "403_forbidden")
+                                    # Restart Chrome với proxy mới
+                                    api.restart_chrome()
+                            except:
+                                pass
+
+                        return False
+
+                except Exception as e:
+                    self.root.after(0, lambda vid=voice_id, e=e: self.log(f"[Voice {vid}] ❌ Error: {e}", "ERROR"))
+                    with results_lock:
+                        total_results["failed"] += 1
+                    return False
+
+            # Start worker threads
+            threads = []
+            for vid in voice_data.keys():
+                t = threading.Thread(
+                    target=coordinator.run_voice_worker,
+                    args=(vid, process_image, setup_chrome),
+                    daemon=True
+                )
+                t.start()
+                threads.append(t)
+
+            # Wait for all workers
+            for t in threads:
+                t.join()
+
+            # Cleanup Chrome instances
+            for api in drission_apis.values():
+                try:
+                    api.cleanup()
+                except:
+                    pass
+
+            # Summary
+            stats = coordinator.get_stats()
+            self.log("")
+            self.log("=" * 60)
+            self.log(f"📊 ROUND-ROBIN HOÀN TẤT!", "OK")
+            self.log(f"   ✅ Success: {stats['success']}")
+            self.log(f"   ❌ Failed: {stats['failed']}")
+            self.log(f"   ⏭️ Skipped: {stats['skipped']}")
+            self.log("=" * 60)
+
+            self.root.after(0, lambda: self.update_progress(100, "Hoàn tất!"))
+
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.root.after(0, lambda err=e: self.log(f"Lỗi Round-Robin: {err}", "ERROR"))
+        finally:
+            self._running = False
+            self.root.after(0, self._reset_ui)
+
     def _on_complete(self, results):
         """Handle completion."""
         # Set current project for preview
