@@ -113,44 +113,42 @@ class KenBurnsGenerator:
         self.PAN_AMOUNT = values["pan"]
         self.SUBTLE_AMOUNT = values["subtle"]
 
+    # Pattern xen kẽ có logic: zoom → pan → zoom → pan
+    # Mỗi loại có 2 biến thể, xen kẽ để đa dạng nhưng không loạn
+    EFFECT_PATTERN = [
+        KenBurnsEffect.ZOOM_IN,      # 1. Zoom vào
+        KenBurnsEffect.PAN_LEFT,     # 2. Pan trái
+        KenBurnsEffect.ZOOM_OUT,     # 3. Zoom ra
+        KenBurnsEffect.PAN_RIGHT,    # 4. Pan phải
+        KenBurnsEffect.ZOOM_IN,      # 5. Zoom vào
+        KenBurnsEffect.PAN_UP,       # 6. Pan lên
+        KenBurnsEffect.ZOOM_OUT,     # 7. Zoom ra
+        KenBurnsEffect.PAN_DOWN,     # 8. Pan xuống
+    ]
+    _effect_index = 0
+
     def get_random_effect(self, exclude_last: Optional[KenBurnsEffect] = None) -> KenBurnsEffect:
         """
-        Chọn ngẫu nhiên một hiệu ứng (tránh lặp liền kề).
+        Chọn hiệu ứng theo pattern có logic (xen kẽ zoom và pan).
+        Pattern: zoom_in → pan_left → zoom_out → pan_right → zoom_in → pan_up → zoom_out → pan_down → lặp lại
 
         Args:
-            exclude_last: Hiệu ứng cuối cùng (để tránh lặp)
+            exclude_last: Không dùng (giữ để tương thích)
 
         Returns:
-            KenBurnsEffect được chọn
+            KenBurnsEffect tiếp theo trong pattern
         """
-        # Danh sách hiệu ứng với trọng số (ưu tiên các hiệu ứng nhẹ nhàng)
-        weighted_effects = [
-            (KenBurnsEffect.ZOOM_IN, 20),          # Phổ biến nhất
-            (KenBurnsEffect.ZOOM_OUT, 15),         # Phổ biến
-            (KenBurnsEffect.PAN_LEFT, 12),
-            (KenBurnsEffect.PAN_RIGHT, 12),
-            (KenBurnsEffect.ZOOM_IN_PAN_LEFT, 10),
-            (KenBurnsEffect.ZOOM_IN_PAN_RIGHT, 10),
-            (KenBurnsEffect.ZOOM_OUT_PAN_LEFT, 8),
-            (KenBurnsEffect.ZOOM_OUT_PAN_RIGHT, 8),
-            (KenBurnsEffect.SUBTLE_DRIFT, 5),      # Rất nhẹ
-        ]
+        # Lấy effect từ pattern
+        effect = self.EFFECT_PATTERN[self._effect_index]
 
-        # Loại bỏ hiệu ứng cuối cùng nếu có
-        if exclude_last:
-            weighted_effects = [(e, w) for e, w in weighted_effects if e != exclude_last]
+        # Tăng index, quay vòng khi hết
+        self._effect_index = (self._effect_index + 1) % len(self.EFFECT_PATTERN)
 
-        # Chọn ngẫu nhiên theo trọng số
-        total_weight = sum(w for _, w in weighted_effects)
-        r = random.uniform(0, total_weight)
+        return effect
 
-        cumulative = 0
-        for effect, weight in weighted_effects:
-            cumulative += weight
-            if r <= cumulative:
-                return effect
-
-        return weighted_effects[0][0]  # Fallback
+    def reset_pattern(self):
+        """Reset pattern về đầu (gọi khi bắt đầu video mới)."""
+        self._effect_index = 0
 
     def get_config(self, effect: KenBurnsEffect) -> KenBurnsConfig:
         """
