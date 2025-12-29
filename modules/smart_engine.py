@@ -2703,6 +2703,27 @@ class SmartEngine:
             media_items.sort(key=lambda x: x['start'])
             self.log(f"  Tim thay {len(media_items)} media: {video_count} video clips, {image_count} images")
 
+            # === FIX: Xử lý khi scene đầu tiên thiếu ảnh/video ===
+            # Nếu media đầu tiên có start > 0.5s, nghĩa là có gap ở đầu video
+            # Giải pháp: Duplicate media đầu tiên để fill gap từ 0:00
+            GAP_THRESHOLD = 0.5  # Nếu gap > 0.5s thì cần xử lý
+            first_start = media_items[0]['start']
+
+            if first_start > GAP_THRESHOLD:
+                # Có gap ở đầu - dùng media đầu tiên để fill
+                self.log(f"  ⚠️ Scene 1 thiếu ảnh/video! Gap từ 0:00 → {first_start:.1f}s")
+                self.log(f"  → Sử dụng {media_items[0]['id']} để fill gap đầu video")
+
+                # Thêm filler item ở đầu (duplicate media đầu tiên)
+                filler_item = {
+                    'id': f"{media_items[0]['id']}_filler",
+                    'path': media_items[0]['path'],
+                    'start': 0.0,  # Bắt đầu từ 0:00
+                    'is_video': media_items[0]['is_video'],
+                    'is_filler': True  # Đánh dấu là filler
+                }
+                media_items.insert(0, filler_item)
+
             # 3. Tính duration cho mỗi media (CHỈ dựa vào start_time)
             # Lấy tổng thời lượng từ voice
             probe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration",
@@ -2744,9 +2765,16 @@ class SmartEngine:
                 video_time = 0.0  # Vị trí trong video output
                 for i in range(min(5, len(media_items))):
                     item = media_items[i]
-                    media_type = "🎬" if item['is_video'] else "🖼️"
+                    is_filler = item.get('is_filler', False)
+                    if is_filler:
+                        media_type = "🔄"  # Filler icon
+                    elif item['is_video']:
+                        media_type = "🎬"
+                    else:
+                        media_type = "🖼️"
                     end_time = video_time + item['duration']
-                    self.log(f"    {media_type} #{item['id']}: {video_time:.1f}s → {end_time:.1f}s (srt_start={item['start']:.1f}s, dur={item['duration']:.1f}s)")
+                    filler_note = " [FILLER]" if is_filler else ""
+                    self.log(f"    {media_type} #{item['id']}: {video_time:.1f}s → {end_time:.1f}s (srt_start={item['start']:.1f}s, dur={item['duration']:.1f}s){filler_note}")
                     video_time = end_time
                 if len(media_items) > 5:
                     self.log(f"    ... và {len(media_items) - 5} clips khác")
