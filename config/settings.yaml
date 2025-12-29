@@ -30,12 +30,17 @@ flow_delay: 3.0
 
 # Webshare Proxy Pool (100 proxies datacenter)
 # Tự động xoay proxy khi bị block 403
+# Mỗi Chrome worker có proxy riêng, thử 3 lần rồi xoay sang proxy khác
+# Proxy bị block sẽ được reset sau 5 phút
+#
+# Lấy API key: https://proxy.webshare.io/dashboard → API Keys
+# Gói khuyên dùng: Shared $2.99 (100 proxies, 250GB bandwidth)
 webshare_proxy:
   enabled: true               # BẬT Webshare proxy pool
-  proxy_file: "config/proxies.txt"  # File chứa danh sách proxy
-  username: ""                # (optional) Default username nếu không có trong file
-  password: ""                # (optional) Default password
-  api_key: ""                 # (optional) Webshare API key
+  proxy_file: "config/proxies.txt"  # File chứa danh sách proxy (fallback)
+  api_key: ""                 # Webshare API key - TỰ ĐỘNG lấy 100 proxies từ API
+  # Nếu không có api_key, sẽ load từ proxy_file
+  # Format proxy_file: IP:PORT:USER:PASS (mỗi dòng 1 proxy)
 
 # ============================================================================
 # VIDEO GENERATION (VEO 3) Settings
