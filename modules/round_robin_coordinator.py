@@ -30,6 +30,8 @@ class VoiceTask:
     prompt_data: Dict[str, Any]
     output_path: Path
     excel_path: Optional[Path] = None
+    retry_count: int = 0  # Số lần đã retry
+    max_retries: int = 3  # Tối đa retry
 
 
 @dataclass
@@ -46,6 +48,7 @@ class VoiceState:
     is_done: bool = False
     chrome_ready: bool = False
     last_error: Optional[str] = None
+    failed_tasks: List[Any] = field(default_factory=list)  # Tasks cần retry
 
 
 class RoundRobinCoordinator:
@@ -185,7 +188,9 @@ class RoundRobinCoordinator:
         self,
         voice_id: int,
         success: bool,
-        error: Optional[str] = None
+        error: Optional[str] = None,
+        task: Optional[VoiceTask] = None,
+        is_403: bool = False
     ):
         """
         Báo hoàn thành task và chuyển lượt.
@@ -194,6 +199,8 @@ class RoundRobinCoordinator:
             voice_id: ID của voice
             success: Task thành công hay không
             error: Thông báo lỗi (nếu có)
+            task: Task object (để retry nếu cần)
+            is_403: Có phải lỗi 403 không (sẽ retry sau)
         """
         if voice_id not in self.voices:
             return
@@ -203,18 +210,48 @@ class RoundRobinCoordinator:
         if success:
             voice.success_count += 1
         else:
-            voice.failed_count += 1
-            voice.last_error = error
+            # Nếu là lỗi 403 và chưa hết retry → thêm vào failed_tasks để retry sau
+            if is_403 and task and task.retry_count < task.max_retries:
+                task.retry_count += 1
+                voice.failed_tasks.append(task)
+                self._log(f"Voice {voice_id}: {task.prompt_data.get('id', '?')} → Retry queue (attempt {task.retry_count}/{task.max_retries})")
+            else:
+                voice.failed_count += 1
+                voice.last_error = error
 
         # Di chuyển đến prompt tiếp theo
         voice.current_index += 1
 
         if voice.current_index >= len(voice.prompts):
             voice.is_done = True
-            self._log(f"Voice {voice_id}: DONE! Success={voice.success_count}, Failed={voice.failed_count}")
+            pending_retries = len(voice.failed_tasks)
+            self._log(f"Voice {voice_id}: DONE! Success={voice.success_count}, Failed={voice.failed_count}, Pending retries={pending_retries}")
 
         # Chuyển lượt cho voice tiếp theo
         self._advance_turn()
+
+    def add_to_retry_queue(self, voice_id: int, task: VoiceTask):
+        """Thêm task vào retry queue."""
+        if voice_id in self.voices:
+            task.retry_count += 1
+            self.voices[voice_id].failed_tasks.append(task)
+            self._log(f"Voice {voice_id}: {task.prompt_data.get('id', '?')} → Retry queue")
+
+    def get_retry_task(self, voice_id: int) -> Optional[VoiceTask]:
+        """Lấy task từ retry queue."""
+        if voice_id not in self.voices:
+            return None
+
+        voice = self.voices[voice_id]
+        if voice.failed_tasks:
+            return voice.failed_tasks.pop(0)
+        return None
+
+    def has_retry_tasks(self, voice_id: int) -> bool:
+        """Kiểm tra còn task cần retry không."""
+        if voice_id not in self.voices:
+            return False
+        return len(self.voices[voice_id].failed_tasks) > 0
 
     def skip_task(self, voice_id: int):
         """Bỏ qua task (đã có ảnh)."""
@@ -302,7 +339,7 @@ class RoundRobinCoordinator:
     def run_voice_worker(
         self,
         voice_id: int,
-        process_callback: Callable[[int, VoiceTask], bool],
+        process_callback: Callable[[int, VoiceTask], tuple],
         setup_callback: Optional[Callable[[int], bool]] = None
     ):
         """
@@ -310,7 +347,7 @@ class RoundRobinCoordinator:
 
         Args:
             voice_id: ID của voice
-            process_callback: Callback để xử lý task (voice_id, task) -> success
+            process_callback: Callback để xử lý task (voice_id, task) -> (success, is_403)
             setup_callback: Callback để setup Chrome/proxy (voice_id) -> success
         """
         self._log(f"Voice {voice_id}: Worker started")
@@ -323,7 +360,7 @@ class RoundRobinCoordinator:
             self.voices[voice_id].chrome_ready = True
             self._log(f"Voice {voice_id}: Chrome ready")
 
-        # Xử lý từng task
+        # === PHASE 1: Xử lý tất cả tasks chính ===
         while not self._stop_flag and not self.is_all_done():
             task = self.get_next_task(voice_id)
 
@@ -336,13 +373,75 @@ class RoundRobinCoordinator:
             self._log(f"Voice {voice_id}: Processing {pid}")
 
             try:
-                success = process_callback(voice_id, task)
-                self.complete_task(voice_id, success)
+                result = process_callback(voice_id, task)
+                # Callback có thể trả về tuple (success, is_403) hoặc chỉ bool
+                if isinstance(result, tuple):
+                    success, is_403 = result
+                else:
+                    success, is_403 = result, False
+
+                self.complete_task(voice_id, success, task=task, is_403=is_403)
             except Exception as e:
                 self._log(f"Voice {voice_id}: Error - {e}", "ERROR")
-                self.complete_task(voice_id, False, str(e))
+                self.complete_task(voice_id, False, str(e), task=task, is_403=False)
 
-        self._log(f"Voice {voice_id}: Worker finished")
+        # === PHASE 2: Retry failed tasks ===
+        if self.has_retry_tasks(voice_id):
+            self._log(f"Voice {voice_id}: === RETRY PHASE ===")
+            retry_round = 0
+            max_retry_rounds = 3  # Tối đa 3 vòng retry
+
+            while self.has_retry_tasks(voice_id) and retry_round < max_retry_rounds and not self._stop_flag:
+                retry_round += 1
+                pending = len(self.voices[voice_id].failed_tasks)
+                self._log(f"Voice {voice_id}: Retry round {retry_round} - {pending} tasks")
+
+                # Đợi trước khi retry (exponential backoff)
+                wait_time = 5 * retry_round  # 5s, 10s, 15s
+                self._log(f"Voice {voice_id}: Waiting {wait_time}s before retry...")
+                time.sleep(wait_time)
+
+                # Lấy tất cả tasks cần retry trong round này
+                tasks_to_retry = list(self.voices[voice_id].failed_tasks)
+                self.voices[voice_id].failed_tasks = []
+
+                for task in tasks_to_retry:
+                    if self._stop_flag:
+                        break
+
+                    pid = task.prompt_data.get('id', '?')
+                    self._log(f"Voice {voice_id}: Retrying {pid} (attempt {task.retry_count + 1})")
+
+                    try:
+                        result = process_callback(voice_id, task)
+                        if isinstance(result, tuple):
+                            success, is_403 = result
+                        else:
+                            success, is_403 = result, False
+
+                        if success:
+                            self.voices[voice_id].success_count += 1
+                            self._log(f"Voice {voice_id}: ✅ Retry success: {pid}")
+                        else:
+                            if is_403 and task.retry_count < task.max_retries:
+                                task.retry_count += 1
+                                self.voices[voice_id].failed_tasks.append(task)
+                                self._log(f"Voice {voice_id}: {pid} → Retry again later")
+                            else:
+                                self.voices[voice_id].failed_count += 1
+                                self._log(f"Voice {voice_id}: ❌ Retry failed: {pid}", "ERROR")
+
+                    except Exception as e:
+                        self._log(f"Voice {voice_id}: Retry error {pid}: {e}", "ERROR")
+                        self.voices[voice_id].failed_count += 1
+
+            # Log kết quả retry
+            remaining = len(self.voices[voice_id].failed_tasks)
+            if remaining > 0:
+                self._log(f"Voice {voice_id}: {remaining} tasks còn lại sau retry", "WARN")
+
+        voice = self.voices[voice_id]
+        self._log(f"Voice {voice_id}: Worker finished - Success={voice.success_count}, Failed={voice.failed_count}")
 
 
 def run_round_robin(

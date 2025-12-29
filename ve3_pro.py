@@ -2586,88 +2586,102 @@ class UnixVoiceToVideo:
                     self.root.after(0, lambda vid=voice_id, e=e: self.log(f"[Voice {vid}] ❌ Setup error: {e}", "ERROR"))
                     return False
 
-            def process_image(voice_id: int, task: VoiceTask) -> bool:
-                """Tạo 1 ảnh cho voice."""
-                try:
-                    pid = task.prompt_data.get('id', '?')
-                    prompt = task.prompt_data.get('prompt', '')
+            def process_image(voice_id: int, task: VoiceTask) -> tuple:
+                """
+                Tạo 1 ảnh cho voice.
 
-                    self.root.after(0, lambda vid=voice_id, p=pid: self.log(f"[Voice {vid}] 🎨 Generating {p}..."))
+                Returns:
+                    tuple: (success: bool, is_403: bool)
+                    - success: True nếu tạo ảnh thành công
+                    - is_403: True nếu gặp lỗi 403 (cần retry sau)
+                """
+                pid = task.prompt_data.get('id', '?')
+                prompt = task.prompt_data.get('prompt', '')
 
-                    # Lấy DrissionFlowAPI đã setup
-                    api = drission_apis.get(voice_id)
-                    if not api:
-                        return False
+                # Lấy DrissionFlowAPI đã setup
+                api = drission_apis.get(voice_id)
+                if not api:
+                    return (False, False)
 
-                    # Lấy reference images nếu có
-                    ref_images = task.prompt_data.get('reference_images', [])
-                    image_inputs = []
+                # Lấy reference images nếu có
+                ref_images = task.prompt_data.get('reference_images', [])
+                image_inputs = []
 
-                    if ref_images and task.excel_path:
-                        try:
-                            from modules.excel_manager import PromptWorkbook
-                            wb = PromptWorkbook(task.excel_path)
-                            wb.load_or_create()
-                            media_ids = wb.get_media_ids()
+                if ref_images and task.excel_path:
+                    try:
+                        from modules.excel_manager import PromptWorkbook
+                        wb = PromptWorkbook(task.excel_path)
+                        wb.load_or_create()
+                        media_ids = wb.get_media_ids()
 
-                            for ref_id in ref_images:
-                                media_id = media_ids.get(ref_id)
-                                if media_id:
-                                    image_inputs.append({
-                                        "name": media_id,
-                                        "imageInputType": "IMAGE_INPUT_TYPE_REFERENCE"
-                                    })
-                        except Exception as e:
-                            self.root.after(0, lambda e=e: self.log(f"⚠️ Lỗi load media_ids: {e}", "WARN"))
+                        for ref_id in ref_images:
+                            media_id = media_ids.get(ref_id)
+                            if media_id:
+                                image_inputs.append({
+                                    "name": media_id,
+                                    "imageInputType": "IMAGE_INPUT_TYPE_REFERENCE"
+                                })
+                    except Exception as e:
+                        self.root.after(0, lambda e=e: self.log(f"⚠️ Lỗi load media_ids: {e}", "WARN"))
 
-                    # Generate image
-                    from modules.browser_flow_generator import AspectRatio
-                    success, images, error = api.generate_images(
-                        prompt=prompt,
-                        count=1,
-                        aspect_ratio=AspectRatio.LANDSCAPE,
-                        image_inputs=image_inputs if image_inputs else None
-                    )
+                # === IMMEDIATE RETRY với exponential backoff khi gặp 403 ===
+                MAX_IMMEDIATE_RETRIES = 2  # Retry ngay 2 lần trước khi đưa vào queue
+                from modules.browser_flow_generator import AspectRatio
 
-                    if success and images:
-                        # Lưu ảnh
-                        import base64
-                        img_data = base64.b64decode(images[0])
-                        task.output_path.parent.mkdir(parents=True, exist_ok=True)
-                        with open(task.output_path, 'wb') as f:
-                            f.write(img_data)
+                for attempt in range(MAX_IMMEDIATE_RETRIES + 1):
+                    try:
+                        if attempt == 0:
+                            self.root.after(0, lambda vid=voice_id, p=pid: self.log(f"[Voice {vid}] 🎨 Generating {p}..."))
+                        else:
+                            self.root.after(0, lambda vid=voice_id, p=pid, a=attempt:
+                                self.log(f"[Voice {vid}] 🔄 Retry {a}/{MAX_IMMEDIATE_RETRIES}: {p}..."))
 
-                        # Lưu media_id nếu là nv/loc
-                        if pid.lower().startswith('nv') or pid.lower().startswith('loc'):
-                            if hasattr(api, '_last_media_name') and api._last_media_name:
-                                try:
-                                    from modules.excel_manager import PromptWorkbook
-                                    wb = PromptWorkbook(task.excel_path)
-                                    wb.load_or_create()
-                                    wb.update_media_id(pid, api._last_media_name)
-                                    wb.save()
-                                except:
-                                    pass
+                        success, images, error = api.generate_images(
+                            prompt=prompt,
+                            count=1,
+                            aspect_ratio=AspectRatio.LANDSCAPE,
+                            image_inputs=image_inputs if image_inputs else None
+                        )
 
-                        with results_lock:
-                            total_results["success"] += 1
-                            done = total_results["success"] + total_results["failed"]
-                            total = total_results["total"]
-                            progress = (done / total) * 100
-                            self.root.after(0, lambda p=progress, d=done, t=total:
-                                self.update_progress(p, f"Xong {d}/{t}"))
+                        if success and images:
+                            # Lưu ảnh thành công
+                            import base64
+                            img_data = base64.b64decode(images[0])
+                            task.output_path.parent.mkdir(parents=True, exist_ok=True)
+                            with open(task.output_path, 'wb') as f:
+                                f.write(img_data)
 
-                        self.root.after(0, lambda vid=voice_id, p=pid: self.log(f"[Voice {vid}] ✅ {p}", "OK"))
-                        return True
-                    else:
-                        with results_lock:
-                            total_results["failed"] += 1
+                            # Lưu media_id nếu là nv/loc
+                            if pid.lower().startswith('nv') or pid.lower().startswith('loc'):
+                                if hasattr(api, '_last_media_name') and api._last_media_name:
+                                    try:
+                                        from modules.excel_manager import PromptWorkbook
+                                        wb = PromptWorkbook(task.excel_path)
+                                        wb.load_or_create()
+                                        wb.update_media_id(pid, api._last_media_name)
+                                        wb.save()
+                                    except:
+                                        pass
 
-                        self.root.after(0, lambda vid=voice_id, p=pid, e=error:
-                            self.log(f"[Voice {vid}] ❌ {p}: {e}", "ERROR"))
+                            with results_lock:
+                                total_results["success"] += 1
+                                done = total_results["success"] + total_results["failed"]
+                                total = total_results["total"]
+                                progress = (done / total) * 100
+                                self.root.after(0, lambda p=progress, d=done, t=total:
+                                    self.update_progress(p, f"Xong {d}/{t}"))
 
-                        # Nếu lỗi 403, rotate proxy
-                        if error and ('403' in str(error) or 'forbidden' in str(error).lower()):
+                            self.root.after(0, lambda vid=voice_id, p=pid: self.log(f"[Voice {vid}] ✅ {p}", "OK"))
+                            return (True, False)  # success, not 403
+
+                        # Check if 403 error
+                        is_403 = error and ('403' in str(error) or 'forbidden' in str(error).lower() or 'recaptcha' in str(error).lower())
+
+                        if is_403 and attempt < MAX_IMMEDIATE_RETRIES:
+                            # Rotate proxy và retry ngay
+                            self.root.after(0, lambda vid=voice_id, p=pid, a=attempt:
+                                self.log(f"[Voice {vid}] ⚠️ 403 at {p} - Rotating proxy...", "WARN"))
+
                             try:
                                 from webshare_proxy import get_proxy_manager
                                 manager = get_proxy_manager()
@@ -2675,16 +2689,41 @@ class UnixVoiceToVideo:
                                     manager.rotate_worker_proxy(voice_id, "403_forbidden")
                                     # Restart Chrome với proxy mới
                                     api.restart_chrome()
-                            except:
-                                pass
+                            except Exception as e:
+                                self.root.after(0, lambda e=e: self.log(f"⚠️ Rotate error: {e}", "WARN"))
 
-                        return False
+                            # Exponential backoff: 2s, 4s
+                            wait_time = 2 * (attempt + 1)
+                            self.root.after(0, lambda vid=voice_id, w=wait_time:
+                                self.log(f"[Voice {vid}] ⏳ Waiting {w}s before retry..."))
+                            time.sleep(wait_time)
+                            continue  # Retry
 
-                except Exception as e:
-                    self.root.after(0, lambda vid=voice_id, e=e: self.log(f"[Voice {vid}] ❌ Error: {e}", "ERROR"))
-                    with results_lock:
-                        total_results["failed"] += 1
-                    return False
+                        # Lỗi khác hoặc hết retry
+                        self.root.after(0, lambda vid=voice_id, p=pid, e=error:
+                            self.log(f"[Voice {vid}] ❌ {p}: {e}", "ERROR"))
+
+                        if is_403:
+                            # Đưa vào retry queue để làm sau
+                            self.root.after(0, lambda vid=voice_id, p=pid:
+                                self.log(f"[Voice {vid}] 📋 {p} → Retry queue (403)", "WARN"))
+                            return (False, True)  # failed, is 403
+                        else:
+                            with results_lock:
+                                total_results["failed"] += 1
+                            return (False, False)  # failed, not 403
+
+                    except Exception as e:
+                        self.root.after(0, lambda vid=voice_id, p=pid, e=e:
+                            self.log(f"[Voice {vid}] ❌ {p}: {e}", "ERROR"))
+
+                        if attempt >= MAX_IMMEDIATE_RETRIES:
+                            with results_lock:
+                                total_results["failed"] += 1
+                            return (False, False)
+
+                # Shouldn't reach here
+                return (False, False)
 
             # Start worker threads
             threads = []
