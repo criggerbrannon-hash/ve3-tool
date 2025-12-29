@@ -105,11 +105,11 @@ def main():
     print(f"\n[5/5] Kiem tra import modules...")
     try:
         sys.path.insert(0, str(base_dir))
-        from modules import (
-            BrowserImageGenerator,
-            ParallelBrowserGenerator,
-            generate_parallel,
-        )
+        from modules.smart_engine import SmartEngine
+        from modules.google_flow_api import GoogleFlowAPI
+        from modules.excel_manager import PromptWorkbook
+        from modules.prompts_generator import PromptGenerator
+        from modules.utils import get_logger
         print("  OK: All modules imported successfully")
     except ImportError as e:
         print(f"  WARNING: Import error: {e}")
@@ -123,17 +123,18 @@ def main():
 ║                                                            ║
 ║  BUOC TIEP THEO:                                           ║
 ║                                                            ║
-║  1. Setup profile (dang nhap Google 1 lan):                ║
-║     python scripts/setup_browser_profile.py main           ║
+║  1. Cau hinh config/settings.yaml:                         ║
+║     - chrome_path: duong dan Chrome                        ║
+║     - chrome_profile: duong dan Profile (chrome://version) ║
+║     - Them API keys: groq, deepseek, gemini (tuy chon)     ║
 ║                                                            ║
-║  2. Sau do co the chay headless:                           ║
-║     - Sua config/settings.yaml: browser_headless: true     ║
+║  2. Chay tool:                                             ║
+║     python ve3_pro.py                                      ║
 ║                                                            ║
-║  3. Su dung trong Python:                                  ║
-║     from modules import generate_parallel                  ║
-║     results = generate_parallel({{                          ║
-║         "voice1": ["prompt1", "prompt2"],                  ║
-║     }}, headless=True)                                     ║
+║  3. Trong GUI:                                             ║
+║     - Chon file voice (.mp3, .wav)                         ║
+║     - Click BAT DAU                                        ║
+║     - Tool tu dong: Voice -> SRT -> Prompts -> Images      ║
 ║                                                            ║
 ╚════════════════════════════════════════════════════════════╝
 """)
