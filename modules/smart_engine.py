@@ -2259,6 +2259,27 @@ class SmartEngine:
         if not prompts:
             self.log("  ✅ Tất cả ảnh đã tồn tại, skip tạo ảnh!", "OK")
 
+            # === RESTART VIDEO WORKER NẾU CHƯA CHẠY (resume mode) ===
+            if not self._video_worker_running:
+                self.log("[VIDEO] Video worker chưa chạy - thử restart từ cache...")
+                try:
+                    if cache_path.exists():
+                        with open(cache_path, 'r', encoding='utf-8') as f:
+                            cache_data = json.load(f)
+                        cached_token = cache_data.get('_bearer_token', '')
+                        cached_project_id = cache_data.get('_project_id', '')
+                        if cached_token and cached_project_id:
+                            self.log(f"[VIDEO] Resume: Tìm thấy token từ cache: {cached_project_id[:8]}...")
+                            if not hasattr(self, '_video_settings') or not self._video_settings:
+                                self._video_settings = {}
+                            self._video_settings['bearer_token'] = cached_token
+                            self._video_settings['project_id'] = cached_project_id
+                            self._start_video_worker(proj_dir)
+                            if self._video_worker_running:
+                                self.log("[VIDEO] Resume: Đã restart video worker!")
+                except Exception as e:
+                    self.log(f"[VIDEO] Resume: Không thể restart video worker: {e}", "WARN")
+
             # Queue video cho các ảnh đã có (resume mode)
             if self._video_worker_running:
                 img_dir = proj_dir / "img"
@@ -2303,6 +2324,34 @@ class SmartEngine:
             else:
                 self.log("[STEP 5] Tao images bang BROWSER MODE...")
                 scene_results = self.generate_images_browser(prompts, proj_dir)
+
+            # === RESTART VIDEO WORKER NẾU CHƯA CHẠY (sau DRISSION MODE đã lưu token) ===
+            if not self._video_worker_running:
+                # DRISSION MODE đã hoàn thành và lưu token vào cache
+                # Thử restart video worker với token mới
+                self.log("[VIDEO] Video worker chưa chạy - thử restart với token từ DRISSION MODE...")
+                try:
+                    # Reload token từ cache (DRISSION MODE vừa lưu)
+                    if cache_path.exists():
+                        with open(cache_path, 'r', encoding='utf-8') as f:
+                            cache_data = json.load(f)
+                        cached_token = cache_data.get('_bearer_token', '')
+                        cached_project_id = cache_data.get('_project_id', '')
+                        if cached_token and cached_project_id:
+                            self.log(f"[VIDEO] Tìm thấy token từ cache: {cached_project_id[:8]}...")
+                            # Force set token trước khi start worker
+                            if not hasattr(self, '_video_settings') or not self._video_settings:
+                                self._video_settings = {}
+                            self._video_settings['bearer_token'] = cached_token
+                            self._video_settings['project_id'] = cached_project_id
+                            # Thử start lại video worker
+                            self._start_video_worker(proj_dir)
+                            if self._video_worker_running:
+                                self.log("[VIDEO] Đã restart video worker thành công!")
+                        else:
+                            self.log("[VIDEO] Không có token trong cache", "WARN")
+                except Exception as e:
+                    self.log(f"[VIDEO] Không thể restart video worker: {e}", "WARN")
 
             # === QUEUE VIDEO GENERATION FOR ALL SCENE IMAGES ===
             if self._video_worker_running:
@@ -3584,10 +3633,23 @@ class SmartEngine:
         if self._video_worker_running:
             return
 
+        # Lưu pre-set token (nếu có) trước khi load settings
+        pre_set_token = None
+        pre_set_project_id = None
+        if hasattr(self, '_video_settings') and self._video_settings:
+            pre_set_token = self._video_settings.get('bearer_token', '')
+            pre_set_project_id = self._video_settings.get('project_id', '')
+
         # Load settings với proj_dir để đọc được project cache
         if not self._load_video_settings(proj_dir):
             self.log("[VIDEO] Video generation disabled (count = 0)", "INFO")
             return
+
+        # Restore pre-set token (ưu tiên hơn token từ settings)
+        if pre_set_token:
+            self._video_settings['bearer_token'] = pre_set_token
+            self._video_settings['project_id'] = pre_set_project_id
+            self.log("[VIDEO] Dùng token đã set sẵn (từ DRISSION MODE)")
 
         # Đếm số video .mp4 đã có trong img/ để không làm thừa
         img_dir = proj_dir / "img"

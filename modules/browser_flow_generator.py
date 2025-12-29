@@ -3263,24 +3263,52 @@ class BrowserFlowGenerator:
                         self._log("❌ Bearer token hết hạn!", "error")
                         break
 
+                    # Check for 429 - Quota exceeded, cần đổi proxy/tài khoản
+                    if error and "429" in str(error):
+                        self._log(f"⚠️ Lỗi 429 (Quota) - Restart Chrome + đổi proxy...", "warn")
+                        try:
+                            if drission_api.restart_chrome():
+                                self._log(f"→ Retry prompt: {pid}...", "info")
+                                success2, images2, error2 = drission_api.generate_image(
+                                    prompt=prompt,
+                                    save_dir=save_dir,
+                                    filename=pid,
+                                    image_inputs=image_inputs if image_inputs else None
+                                )
+                                if success2 and images2:
+                                    self._log(f"   ✓ Retry thành công!")
+                                    self.stats["success"] += 1
+                                    self.stats["failed"] -= 1
+                                    consecutive_errors = 0
+                                    continue
+                                else:
+                                    self._log(f"   ✗ Retry vẫn thất bại: {error2}", "warn")
+                            else:
+                                self._log("✗ Không restart được Chrome", "error")
+                        except Exception as e:
+                            self._log(f"✗ Restart error: {e}", "error")
+
                     # Check for 400 - Invalid argument (reference image expired or invalid prompt)
                     if error and "400" in str(error):
-                        self._log(f"⚠️ Lỗi 400 - Retry không có reference images...", "warn")
+                        self._log(f"⚠️ Lỗi 400 - Restart Chrome + retry không có reference...", "warn")
                         try:
-                            # Retry without reference images
-                            success2, images2, error2 = drission_api.generate_image(
-                                prompt=prompt,
-                                save_dir=save_dir,
-                                filename=pid,
-                                image_inputs=None  # No reference images
-                            )
-                            if success2 and images2:
-                                self._log(f"   ✓ Retry (no ref) thành công!")
-                                self.stats["success"] += 1
-                                self.stats["failed"] -= 1  # Undo fail count
-                                continue  # Move to next prompt
-                            else:
-                                self._log(f"   ✗ Retry (no ref) thất bại: {error2}", "warn")
+                            # Restart Chrome trước khi retry
+                            if drission_api.restart_chrome():
+                                # Retry without reference images
+                                success2, images2, error2 = drission_api.generate_image(
+                                    prompt=prompt,
+                                    save_dir=save_dir,
+                                    filename=pid,
+                                    image_inputs=None  # No reference images
+                                )
+                                if success2 and images2:
+                                    self._log(f"   ✓ Retry (no ref) thành công!")
+                                    self.stats["success"] += 1
+                                    self.stats["failed"] -= 1  # Undo fail count
+                                    consecutive_errors = 0
+                                    continue  # Move to next prompt
+                                else:
+                                    self._log(f"   ✗ Retry (no ref) thất bại: {error2}", "warn")
                         except Exception as e:
                             self._log(f"   ✗ Retry exception: {e}", "error")
 
