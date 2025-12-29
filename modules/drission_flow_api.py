@@ -993,6 +993,19 @@ class DrissionFlowAPI:
             if error:
                 last_error = error
 
+                # === ERROR 253: Quota exceeded ===
+                # Đợi lâu hơn rồi retry
+                if "253" in error or "quota" in error.lower() or "exceeds" in error.lower():
+                    wait_time = 60 * (attempt + 1)  # 60s, 120s, 180s...
+                    self.log(f"⚠️ QUOTA EXCEEDED (Error 253) - Đợi {wait_time}s rồi retry...", "WARN")
+                    self.log(f"   → Bạn đã gửi quá nhiều request. Chờ một lúc hoặc đổi tài khoản Google.", "WARN")
+
+                    if attempt < max_retries - 1:
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        return False, [], f"Quota exceeded sau {max_retries} lần thử. Hãy chờ 15-30 phút hoặc dùng tài khoản khác."
+
                 # Nếu lỗi 403, xoay IP và retry
                 if "403" in error:
                     self.log(f"⚠️ 403 error (attempt {attempt+1}/{max_retries})", "WARN")
