@@ -56,16 +56,17 @@ class KenBurnsConfig:
 
 class KenBurnsIntensity:
     """Cường độ hiệu ứng Ken Burns."""
-    SUBTLE = "subtle"    # Rất nhẹ - zoom 6%, pan 4%
-    NORMAL = "normal"    # Cân bằng - zoom 12%, pan 8%
-    STRONG = "strong"    # Mạnh - zoom 18%, pan 12%
+    SUBTLE = "subtle"    # Rất nhẹ - zoom 6%, pan 4% (clip dài 15-20s)
+    NORMAL = "normal"    # Cân bằng - zoom 10%, pan 6% (clip 10-15s)
+    STRONG = "strong"    # Mạnh - zoom 15%, pan 10% (clip ngắn 5-8s)
 
 
 # Mapping intensity to values
+# Điều chỉnh cho clip ngắn 5-8 giây để chuyển động rõ ràng nhưng không quá nhanh
 INTENSITY_VALUES = {
     KenBurnsIntensity.SUBTLE: {"zoom": 0.06, "pan": 0.04, "subtle": 0.02},
-    KenBurnsIntensity.NORMAL: {"zoom": 0.12, "pan": 0.08, "subtle": 0.04},
-    KenBurnsIntensity.STRONG: {"zoom": 0.18, "pan": 0.12, "subtle": 0.06},
+    KenBurnsIntensity.NORMAL: {"zoom": 0.10, "pan": 0.06, "subtle": 0.03},  # 10% zoom, 6% pan
+    KenBurnsIntensity.STRONG: {"zoom": 0.15, "pan": 0.10, "subtle": 0.05},  # 15% zoom, 10% pan (cho clip 5-8s)
 }
 
 
