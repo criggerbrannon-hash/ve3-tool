@@ -239,6 +239,8 @@ class DrissionFlowAPI:
         # Webshare Proxy - dùng global manager
         self._webshare_proxy = None
         self._use_webshare = webshare_enabled
+        self._proxy_bridge = None  # Local proxy bridge
+        self._bridge_port = None   # Bridge port for API calls
         if webshare_enabled and WEBSHARE_AVAILABLE:
             try:
                 from webshare_proxy import get_proxy_manager, WebshareProxy
@@ -496,6 +498,7 @@ class DrissionFlowAPI:
                             username=proxy.username,
                             password=proxy.password
                         )
+                        self._bridge_port = bridge_port  # LƯU ĐỂ DÙNG TRONG call_api()
                         import time
                         time.sleep(0.5)  # Đợi bridge start
 
@@ -786,11 +789,13 @@ class DrissionFlowAPI:
         self.log(f"→ Calling API with captured payload ({len(original_payload)} chars)...")
 
         try:
-            # API call qua Webshare proxy để IP match với Chrome
+            # API call qua proxy bridge (127.0.0.1:port) để IP match với Chrome
+            # QUAN TRỌNG: Dùng bridge URL, KHÔNG dùng proxy trực tiếp (sẽ bị 407)
             proxies = None
-            if self._use_webshare and self._webshare_proxy:
-                proxies = self._webshare_proxy.get_proxies()
-                self.log(f"→ Using Webshare proxy for API call")
+            if self._use_webshare and hasattr(self, '_bridge_port') and self._bridge_port:
+                bridge_url = f"http://127.0.0.1:{self._bridge_port}"
+                proxies = {"http": bridge_url, "https": bridge_url}
+                self.log(f"→ Using proxy bridge: {bridge_url}")
 
             resp = requests.post(
                 url,
@@ -1030,13 +1035,24 @@ class DrissionFlowAPI:
         return results
 
     def close(self):
-        """Đóng Chrome."""
+        """Đóng Chrome và proxy bridge."""
         if self.driver:
             try:
                 self.driver.quit()
             except:
                 pass
             self.driver = None
+
+        # Dừng proxy bridge nếu có
+        if self._proxy_bridge:
+            try:
+                self._proxy_bridge.stop()
+                self.log("Proxy bridge stopped")
+            except:
+                pass
+            self._proxy_bridge = None
+            self._bridge_port = None
+
         self._ready = False
 
     def _setup_proxy_auth(self):
