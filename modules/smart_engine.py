@@ -909,6 +909,93 @@ class SmartEngine:
 
         return False
 
+    # ========== EXCEL PROJECT_ID HELPERS ==========
+
+    def _get_project_id_from_excel(self, excel_path: Path) -> str:
+        """
+        Đọc flow_project_id từ Excel (sheet 'config' hoặc cell đặc biệt).
+
+        Mỗi voice/project cần giữ project_id riêng để:
+        - Sử dụng lại reference images khi chạy lại
+        - Đảm bảo ảnh mới khớp style với ảnh cũ
+        """
+        import openpyxl
+        try:
+            wb = openpyxl.load_workbook(excel_path)
+
+            # Tìm trong sheet 'config' trước
+            if 'config' in wb.sheetnames:
+                ws = wb['config']
+                # Tìm row có key = 'flow_project_id'
+                for row in ws.iter_rows(min_row=1, max_row=10, values_only=True):
+                    if row and len(row) >= 2:
+                        key = str(row[0] or '').strip().lower()
+                        if key == 'flow_project_id' and row[1]:
+                            return str(row[1]).strip()
+
+            # Fallback: Tìm trong sheet đầu tiên, cell cuối cùng của header row
+            # Format: Cột cuối có header 'flow_project_id', giá trị ở row 2
+            ws = wb.active
+            if ws:
+                headers = [cell.value for cell in ws[1]]
+                for i, h in enumerate(headers):
+                    if h and str(h).lower().strip() == 'flow_project_id':
+                        val = ws.cell(row=2, column=i+1).value
+                        if val:
+                            return str(val).strip()
+
+            wb.close()
+        except Exception as e:
+            self.log(f"Lỗi đọc project_id từ Excel: {e}", "WARN")
+
+        return ""
+
+    def _save_project_id_to_excel(self, excel_path: Path, project_id: str) -> bool:
+        """
+        Lưu flow_project_id vào Excel (tạo sheet 'config' nếu chưa có).
+
+        Gọi sau khi tạo ảnh để lưu project_id cho lần chạy sau.
+        """
+        import openpyxl
+        if not project_id:
+            return False
+
+        try:
+            wb = openpyxl.load_workbook(excel_path)
+
+            # Tạo hoặc lấy sheet 'config'
+            if 'config' not in wb.sheetnames:
+                ws = wb.create_sheet('config')
+                ws['A1'] = 'key'
+                ws['B1'] = 'value'
+            else:
+                ws = wb['config']
+
+            # Tìm row có key = 'flow_project_id' để update
+            found = False
+            for row_num, row in enumerate(ws.iter_rows(min_row=2, max_row=20, values_only=True), start=2):
+                if row and len(row) >= 1:
+                    key = str(row[0] or '').strip().lower()
+                    if key == 'flow_project_id':
+                        ws.cell(row=row_num, column=2, value=project_id)
+                        found = True
+                        break
+
+            # Nếu chưa có, thêm row mới
+            if not found:
+                next_row = ws.max_row + 1
+                ws.cell(row=next_row, column=1, value='flow_project_id')
+                ws.cell(row=next_row, column=2, value=project_id)
+
+            wb.save(excel_path)
+            wb.close()
+            self.log(f"  -> Lưu project_id vào Excel: {project_id[:8]}...")
+            return True
+
+        except Exception as e:
+            self.log(f"Lỗi lưu project_id vào Excel: {e}", "WARN")
+            return False
+
     # ========== PARALLEL CHARACTER GENERATION ==========
 
     def _load_character_prompts(self, excel_path: Path, proj_dir: Path) -> List[Dict]:
@@ -1477,11 +1564,44 @@ class SmartEngine:
                 worker_id=self.worker_id  # For parallel processing
             )
 
-            # === INJECT PRE-FETCHED PROJECT_ID nếu có ===
-            # Quan trọng: mỗi worker cần project riêng để tránh conflict media_ids
+            # === QUAN TRỌNG: Load project_id từ Excel khi chạy lại (RESUME MODE) ===
+            # ƯU TIÊN: Excel (chính thức) > Cache > settings.yaml
+            # Mỗi voice/project có project_id riêng để giữ reference images
+            excel_project_id = self._get_project_id_from_excel(excel_files[0])
+            if excel_project_id:
+                self.log(f"  -> Resume: Tìm thấy project_id trong Excel: {excel_project_id[:8]}...")
+
+            # Fallback: đọc từ cache nếu Excel không có
+            cached_project_id = None
+            cache_path = proj_dir / "prompts" / ".media_cache.json"
+            if not excel_project_id and cache_path.exists():
+                try:
+                    with open(cache_path, 'r', encoding='utf-8') as f:
+                        cache_data = json.load(f)
+                    cached_project_id = cache_data.get('_project_id', '')
+                    cached_bearer_token = cache_data.get('_bearer_token', '')
+                    if cached_project_id:
+                        self.log(f"  -> Resume: Tìm thấy project_id trong cache: {cached_project_id[:8]}...")
+                    if cached_bearer_token and not bearer_token:
+                        bearer_token = cached_bearer_token
+                        self.log(f"  -> Resume: Dùng bearer_token từ cache")
+                except Exception as e:
+                    self.log(f"  -> Lỗi đọc cache: {e}", "WARN")
+
+            # === INJECT PROJECT_ID theo thứ tự ưu tiên ===
+            # 1. Pre-fetched (parallel batch mode - mỗi worker có project riêng)
+            # 2. Excel (resume mode - nguồn chính thức)
+            # 3. Cache (fallback)
+            # 4. Tạo mới (lần đầu chạy)
             if prefetched_project_id:
                 generator.config['flow_project_id'] = prefetched_project_id
-                self.log(f"  -> Inject project_id: {prefetched_project_id[:8]}...")
+                self.log(f"  -> Dùng project_id: {prefetched_project_id[:8]}... (parallel batch)")
+            elif excel_project_id:
+                generator.config['flow_project_id'] = excel_project_id
+                self.log(f"  -> Dùng project_id: {excel_project_id[:8]}... (từ Excel)")
+            elif cached_project_id:
+                generator.config['flow_project_id'] = cached_project_id
+                self.log(f"  -> Dùng project_id: {cached_project_id[:8]}... (từ cache)")
 
             # Goi generate_from_prompts_auto - tu dong chon API hoac Chrome
             result = generator.generate_from_prompts_auto(
@@ -1504,6 +1624,12 @@ class SmartEngine:
             # Parse results
             success_count = result.get("success", 0)
             failed_count = result.get("failed", 0)
+
+            # === LƯU PROJECT_ID VÀO EXCEL ===
+            # Quan trọng: Lưu để khi chạy lại vẫn dùng đúng project (giữ reference images)
+            final_project_id = generator.config.get('flow_project_id', '')
+            if final_project_id and success_count > 0:
+                self._save_project_id_to_excel(excel_files[0], final_project_id)
 
             # Video queueing sẽ được thực hiện sau khi tất cả ảnh hoàn thành (trong run())
 
