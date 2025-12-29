@@ -3057,6 +3057,9 @@ class BrowserFlowGenerator:
         # Reset stats
         self.stats = {"total": len(prompts), "success": 0, "failed": 0, "skipped": 0}
 
+        # Track failed prompts để retry sau
+        failed_prompts = []  # List[Tuple[prompt_data, index, error]]
+
         # Load Excel workbook
         workbook = None
         if excel_path and Path(excel_path).exists():
@@ -3337,13 +3340,119 @@ class BrowserFlowGenerator:
             # Rate limit
             time.sleep(1)
 
-        # Cleanup
+        # Save workbook (trước retry phase)
+        if workbook:
+            try:
+                workbook.save()
+            except:
+                pass
+
+        # === RETRY PHASE: Tìm và retry những ảnh còn thiếu ===
+        if self.stats["failed"] > 0:
+            self._log("\n" + "=" * 60)
+            self._log("RETRY PHASE - Tìm ảnh còn thiếu")
+            self._log("=" * 60)
+
+            # Tìm những prompts chưa có ảnh
+            missing_prompts = []
+            for prompt_data in prompts:
+                pid = str(prompt_data.get('id', ''))
+                if not pid:
+                    continue
+
+                is_reference = pid.lower().startswith('nv') or pid.lower().startswith('loc')
+                save_dir = self.nv_path if is_reference else output_dir
+                output_file = save_dir / f"{pid}.png"
+
+                if not output_file.exists():
+                    missing_prompts.append(prompt_data)
+
+            if missing_prompts:
+                self._log(f"Tìm thấy {len(missing_prompts)} ảnh thiếu, đang retry...")
+
+                # Retry up to 3 rounds
+                MAX_RETRY_ROUNDS = 3
+                for retry_round in range(MAX_RETRY_ROUNDS):
+                    if not missing_prompts:
+                        break
+
+                    self._log(f"\n--- Retry Round {retry_round + 1}/{MAX_RETRY_ROUNDS} ---")
+                    still_missing = []
+
+                    for prompt_data in missing_prompts:
+                        pid = str(prompt_data.get('id', ''))
+                        prompt = prompt_data.get('prompt', '')
+                        is_reference = pid.lower().startswith('nv') or pid.lower().startswith('loc')
+                        save_dir = self.nv_path if is_reference else output_dir
+
+                        self._log(f"[RETRY] {pid}...")
+
+                        try:
+                            # Build reference images if needed
+                            image_inputs = None
+                            refs = prompt_data.get('references', [])
+                            if refs and not is_reference:
+                                image_inputs = []
+                                for ref_id in refs:
+                                    ref_key = ref_id.lower()
+                                    media_id = None
+                                    for k, v in excel_media_ids.items():
+                                        if k.lower() == ref_key:
+                                            media_id = v
+                                            break
+                                    if not media_id:
+                                        for k, v in cached_media_names.items():
+                                            if k.lower() == ref_key:
+                                                media_id = v.get('mediaName', v) if isinstance(v, dict) else v
+                                                break
+                                    if media_id:
+                                        image_inputs.append({
+                                            "inputType": "IMAGE_INPUT_TYPE_REFERENCE",
+                                            "referenceId": media_id,
+                                            "referenceType": "REFERENCE_TYPE_STYLE"
+                                        })
+
+                            success, images, error = drission_api.generate_image(
+                                prompt=prompt,
+                                save_dir=save_dir,
+                                filename=pid,
+                                image_inputs=image_inputs
+                            )
+
+                            if success and images:
+                                self._log(f"   ✓ Retry OK: {pid}")
+                                self.stats["success"] += 1
+                                self.stats["failed"] -= 1
+                            else:
+                                self._log(f"   ✗ Retry fail: {error}", "warn")
+                                still_missing.append(prompt_data)
+
+                        except Exception as e:
+                            self._log(f"   ✗ Retry error: {e}", "error")
+                            still_missing.append(prompt_data)
+
+                        time.sleep(2)
+
+                    missing_prompts = still_missing
+
+                    # Wait before next round
+                    if missing_prompts and retry_round < MAX_RETRY_ROUNDS - 1:
+                        wait_time = 5 * (retry_round + 1)
+                        self._log(f"Còn {len(missing_prompts)} ảnh thiếu, đợi {wait_time}s...")
+                        time.sleep(wait_time)
+
+                if missing_prompts:
+                    self._log(f"⚠️ Vẫn còn {len(missing_prompts)} ảnh không tạo được sau {MAX_RETRY_ROUNDS} rounds", "warn")
+            else:
+                self._log("Tất cả ảnh đã có, không cần retry")
+
+        # Cleanup (sau retry phase)
         try:
             drission_api.close()
         except:
             pass
 
-        # Save workbook
+        # Save workbook final
         if workbook:
             try:
                 workbook.save()
