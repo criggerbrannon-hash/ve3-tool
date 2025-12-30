@@ -3028,12 +3028,17 @@ class BrowserFlowGenerator:
             profile_to_use = self._get_profile_path() or "./chrome_profile"
             self._log(f"📁 Dùng Chrome profile mặc định: {profile_to_use}")
 
+        # Đọc setting headless từ config (default: True = chạy ẩn)
+        # Dùng chung setting 'browser_headless' với Selenium mode
+        drission_headless = self.config.get('browser_headless', True)
+
         drission_api = DrissionFlowAPI(
             profile_dir=profile_to_use,
             verbose=self.verbose,
             log_callback=self._log,
             webshare_enabled=use_webshare,
-            worker_id=self.worker_id  # Parallel mode - mỗi worker có proxy riêng
+            worker_id=self.worker_id,  # Parallel mode - mỗi worker có proxy riêng
+            headless=drission_headless  # Chạy Chrome ẩn (default: True)
         )
 
         self._log("🚀 DrissionPage + Interceptor")

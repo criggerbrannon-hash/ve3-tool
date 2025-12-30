@@ -211,6 +211,7 @@ class DrissionFlowAPI:
         # Webshare proxy - dùng global proxy manager
         webshare_enabled: bool = True,  # BẬT Webshare proxy by default
         worker_id: int = 0,  # Worker ID cho proxy rotation (mỗi Chrome có proxy riêng)
+        headless: bool = True,  # Chạy Chrome ẩn (default: ON)
         # Legacy params (ignored)
         proxy_port: int = 1080,
         use_proxy: bool = False,
@@ -225,9 +226,11 @@ class DrissionFlowAPI:
             log_callback: Callback để log (msg, level)
             webshare_enabled: Dùng Webshare proxy pool (default True)
             worker_id: Worker ID cho proxy rotation (mỗi Chrome có proxy riêng)
+            headless: Chạy Chrome ẩn không hiện cửa sổ (default True)
         """
         self.profile_dir = Path(profile_dir)
         self.worker_id = worker_id  # Lưu worker_id để dùng cho proxy rotation
+        self._headless = headless  # Lưu setting headless
         # Auto-generate unique port for parallel execution
         if chrome_port == 0:
             self.chrome_port = random.randint(9222, 9999)
@@ -525,6 +528,13 @@ class DrissionFlowAPI:
             # Disable GPU để tránh lỗi
             options.set_argument('--disable-gpu')
             options.set_argument('--disable-software-rasterizer')
+
+            # Headless mode - chạy Chrome ẩn
+            if self._headless:
+                options.set_argument('--headless=new')  # Chrome 109+ headless mode
+                self.log("🔇 Headless mode: ON (Chrome chạy ẩn)")
+            else:
+                self.log("👁️ Headless mode: OFF (Chrome hiển thị)")
 
             if self._use_webshare and self._webshare_proxy:
                 from webshare_proxy import get_proxy_manager
