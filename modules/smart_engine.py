@@ -3936,38 +3936,64 @@ class SmartEngine:
             drission_api = existing_drission
             self.log("[VIDEO] ✓ Reuse Chrome session từ image generator")
         else:
-            # Fallback: Mở Chrome mới để capture tokens (giống image gen)
+            # Fallback: Mở Chrome mới (GIỐNG HỆT image gen)
             try:
-                # Đọc config từ settings.yaml
-                headless_mode = True
-                use_webshare = True  # Default: bật proxy giống image gen
-                try:
-                    import yaml
-                    config_path = Path(__file__).parent.parent / "config" / "settings.yaml"
-                    if config_path.exists():
-                        with open(config_path, 'r', encoding='utf-8') as f:
-                            cfg = yaml.safe_load(f) or {}
-                        headless_mode = cfg.get('browser_headless', True)
-                        # Webshare config
-                        ws_cfg = cfg.get('webshare_proxy', {})
-                        use_webshare = ws_cfg.get('enabled', True)
-                except:
-                    pass
+                import yaml
+                config_path = Path(__file__).parent.parent / "config" / "settings.yaml"
+                cfg = {}
+                if config_path.exists():
+                    with open(config_path, 'r', encoding='utf-8') as f:
+                        cfg = yaml.safe_load(f) or {}
 
-                # Dùng profile của TOOL (giống image gen), KHÔNG dùng Chrome hệ thống
-                # Ưu tiên: cache (từ project trước) → default "./chrome_profile"
+                headless_mode = cfg.get('browser_headless', True)
+                ws_cfg = cfg.get('webshare_proxy', {})
+                use_webshare = ws_cfg.get('enabled', True)
+
+                # === KHỞI TẠO PROXY MANAGER (giống browser_flow_generator) ===
+                if use_webshare:
+                    try:
+                        from webshare_proxy import init_proxy_manager, get_proxy_manager
+
+                        rotating_enabled = ws_cfg.get('rotating_enabled', False)
+                        if rotating_enabled:
+                            manager = init_proxy_manager(
+                                username=ws_cfg.get('username', ''),
+                                password=ws_cfg.get('password', ''),
+                                rotating_endpoint=True,
+                                rotating_host=ws_cfg.get('rotating_host', 'p.webshare.io'),
+                                rotating_port=ws_cfg.get('rotating_port', 80)
+                            )
+                            self.log("[VIDEO] ✓ Rotating Endpoint mode")
+                        else:
+                            proxy_file = ws_cfg.get('proxy_file', 'config/proxies.txt')
+                            manager = init_proxy_manager(
+                                api_key=ws_cfg.get('api_key', ''),
+                                username=ws_cfg.get('username', ''),
+                                password=ws_cfg.get('password', ''),
+                                proxy_file=proxy_file
+                            )
+                            if manager.proxies:
+                                self.log(f"[VIDEO] ✓ Loaded {len(manager.proxies)} proxies")
+                            else:
+                                self.log("[VIDEO] ⚠️ No proxies - chạy không proxy", "WARN")
+                                use_webshare = False
+                    except Exception as e:
+                        self.log(f"[VIDEO] Proxy init error: {e}", "WARN")
+                        use_webshare = False
+
+                # Dùng profile của TOOL (giống image gen)
                 profile_dir = chrome_profile if chrome_profile else "./chrome_profile"
 
                 drission_api = DrissionFlowAPI(
                     profile_dir=profile_dir,
                     verbose=True,
                     log_callback=lambda msg, lvl="INFO": self.log(f"[VIDEO] {msg}", lvl),
-                    webshare_enabled=use_webshare,  # BẬT proxy giống image gen
+                    webshare_enabled=use_webshare,
                     headless=headless_mode
                 )
                 own_drission = True
 
-                self.log(f"[VIDEO] Mở Chrome MỚI với profile: {profile_dir}")
+                self.log(f"[VIDEO] Mở Chrome với profile: {profile_dir}")
                 if not drission_api.setup(project_url=project_url):
                     self.log("[VIDEO] ⚠️ Không setup được Chrome - Skip I2V!", "WARN")
                     self._video_worker_running = False
