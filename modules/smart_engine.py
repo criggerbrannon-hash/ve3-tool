@@ -3926,11 +3926,24 @@ class SmartEngine:
             try:
                 profile_dir = chrome_profile if chrome_profile and Path(chrome_profile).exists() else "./chrome_profile"
 
+                # Đọc headless setting từ config
+                headless_mode = True  # Default
+                try:
+                    import yaml
+                    config_path = Path(__file__).parent.parent / "config" / "settings.yaml"
+                    if config_path.exists():
+                        with open(config_path, 'r', encoding='utf-8') as f:
+                            cfg = yaml.safe_load(f) or {}
+                        headless_mode = cfg.get('browser_headless', True)
+                except:
+                    pass
+
                 drission_api = DrissionFlowAPI(
                     profile_dir=profile_dir,
                     verbose=True,
                     log_callback=lambda msg, lvl="INFO": self.log(f"[VIDEO] {msg}", lvl),
-                    webshare_enabled=False  # Không cần proxy
+                    webshare_enabled=False,  # Không cần proxy
+                    headless=headless_mode
                 )
                 own_drission = True  # We created it, we close it
 

@@ -993,6 +993,25 @@ class UnixVoiceToVideo:
         ttk.Radiobutton(folder_mode_frame, text="⚡ Parallel (nhanh)", variable=folder_mode_var,
                         value="parallel", command=on_folder_mode_change).pack(side=tk.LEFT)
 
+        # Headless mode checkbox
+        ttk.Separator(prof_tab, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=(10, 5))
+
+        headless_frame = ttk.Frame(prof_tab)
+        headless_frame.pack(fill=tk.X, pady=(0, 5))
+
+        headless_var = tk.BooleanVar(value=self._get_headless_setting())
+
+        def on_headless_change():
+            self._save_headless_setting(headless_var.get())
+
+        headless_cb = ttk.Checkbutton(
+            headless_frame,
+            text="🔇 Chạy Chrome ẩn (Headless) - Không hiện cửa sổ trình duyệt",
+            variable=headless_var,
+            command=on_headless_change
+        )
+        headless_cb.pack(side=tk.LEFT)
+
         # Buttons row 1
         prof_btn_row1 = ttk.Frame(prof_tab)
         prof_btn_row1.pack(fill=tk.X, pady=(5, 5))
@@ -1710,6 +1729,36 @@ class UnixVoiceToVideo:
             self.log(f"Generation mode: {mode_name}", "OK")
         except Exception as e:
             print(f"Save generation_mode error: {e}")
+
+    def _get_headless_setting(self) -> bool:
+        """Get headless setting from config (True = Chrome chạy ẩn)."""
+        try:
+            import yaml
+            config_path = CONFIG_DIR / "settings.yaml"
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+                return config.get('browser_headless', True)
+        except:
+            pass
+        return True  # Default: headless ON
+
+    def _save_headless_setting(self, headless: bool):
+        """Save headless setting to config."""
+        try:
+            import yaml
+            config_path = CONFIG_DIR / "settings.yaml"
+            config = {}
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+            config['browser_headless'] = headless
+            with open(config_path, 'w', encoding='utf-8') as f:
+                yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+            status = "ON (ẩn)" if headless else "OFF (hiển thị)"
+            self.log(f"Chrome Headless: {status}", "OK")
+        except Exception as e:
+            print(f"Save browser_headless error: {e}")
 
     def _get_parallel_workers(self) -> int:
         """Get number of parallel workers from config."""
