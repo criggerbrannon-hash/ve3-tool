@@ -125,6 +125,27 @@ class ImageToVideoConverter:
             timestamp = datetime.now().strftime("%H:%M:%S")
             print(f"[{timestamp}] [{level.upper()}] {message}")
 
+    def check_proxy_available(self) -> bool:
+        """Kiểm tra proxy API có hoạt động không."""
+        if not self.use_proxy:
+            return True  # Không dùng proxy thì ok
+
+        try:
+            response = requests.get(
+                f"{self.PROXY_BASE}/task-status?taskId=health-check",
+                headers=self._proxy_headers(),
+                timeout=10
+            )
+            # 401/403 = proxy hoạt động nhưng taskId không valid (ok)
+            # 500/503 = proxy down
+            if response.status_code in [200, 400, 401, 403, 404]:
+                return True
+            self._log(f"Proxy không hoạt động: {response.status_code}", "error")
+            return False
+        except Exception as e:
+            self._log(f"Không thể kết nối proxy: {e}", "error")
+            return False
+
     def _google_headers(self) -> Dict[str, str]:
         """Headers cho Google API."""
         return {
@@ -224,7 +245,12 @@ class ImageToVideoConverter:
 
         try:
             if self.use_proxy:
-                return self._upload_via_proxy(body_json)
+                result = self._upload_via_proxy(body_json)
+                if result:
+                    return result
+                # Fallback to direct upload when proxy fails
+                self._log("Proxy failed, trying direct upload...", "warn")
+                return self._upload_direct(body_json)
             else:
                 return self._upload_direct(body_json)
         except Exception as e:
@@ -255,6 +281,13 @@ class ImageToVideoConverter:
 
     def _upload_via_proxy(self, body_json: Dict) -> Optional[str]:
         """Upload qua proxy API."""
+        # Debug: check token
+        if not self.bearer_token:
+            self._log("Bearer token is empty!", "error")
+            return None
+
+        self._log(f"Using bearer token: {self.bearer_token[:20]}..." if len(self.bearer_token) > 20 else f"Bearer token: {self.bearer_token}")
+
         payload = {
             "body_json": body_json,
             "flow_auth_token": self.bearer_token,
@@ -269,7 +302,7 @@ class ImageToVideoConverter:
         )
 
         if response.status_code != 200:
-            self._log(f"Proxy upload failed: {response.status_code}", "error")
+            self._log(f"Proxy upload failed: {response.status_code} - {response.text[:200] if response.text else 'no body'}", "error")
             return None
 
         task_id = response.json().get("taskId")
@@ -345,7 +378,12 @@ class ImageToVideoConverter:
 
         try:
             if self.use_proxy:
-                return self._create_video_via_proxy(body_json)
+                result = self._create_video_via_proxy(body_json)
+                if result and result[1]:  # Has operations
+                    return result
+                # Fallback to direct when proxy fails
+                self._log("Proxy failed, trying direct video creation...", "warn")
+                return self._create_video_direct(body_json)
             else:
                 return self._create_video_direct(body_json)
         except Exception as e:

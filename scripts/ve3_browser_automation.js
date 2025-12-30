@@ -142,7 +142,7 @@
         },
 
         // Build request payload - GIONG HET google_flow_api.py
-        buildPayload: (prompt, referenceNames = [], count = 2) => {
+        buildPayload: (prompt, referenceNames = [], count = 1) => {
             const projectId = API.getProjectId();
             const sessionId = API.generateSessionId();
 
@@ -175,7 +175,7 @@
         },
 
         // Goi API tao anh
-        generateImages: async (prompt, referenceNames = [], count = 2) => {
+        generateImages: async (prompt, referenceNames = [], count = 1) => {
             const projectId = API.getProjectId();
             if (!projectId) {
                 throw new Error('Khong tim thay projectId trong URL. Hay mo project truoc!');

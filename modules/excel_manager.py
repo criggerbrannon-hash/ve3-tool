@@ -28,6 +28,7 @@ CHARACTERS_COLUMNS = [
     "vietnamese_prompt", # Prompt tiếng Việt (nếu cần)
     "image_file",       # Tên file ảnh tham chiếu (nvc.png, nvp1.png, ...)
     "status",           # Trạng thái (pending/done/error)
+    "media_id",         # Media ID từ Google Flow API (dùng cho reference)
 ]
 
 # Cột cho sheet Scenes
@@ -50,6 +51,7 @@ SCENES_COLUMNS = [
     "characters_used",  # JSON list nhân vật trong scene
     "location_used",    # Location ID
     "reference_files",  # JSON list reference files cho image generation
+    "media_id",         # Media ID từ Google Flow API (dùng cho I2V - Image to Video)
 ]
 
 
@@ -59,7 +61,7 @@ SCENES_COLUMNS = [
 
 class Character:
     """Đại diện cho một nhân vật trong truyện."""
-    
+
     def __init__(
         self,
         id: str,
@@ -70,7 +72,8 @@ class Character:
         character_lock: str = "",
         image_file: str = "",
         status: str = "pending",
-        is_child: bool = False
+        is_child: bool = False,
+        media_id: str = ""
     ):
         self.id = id
         self.role = role
@@ -81,7 +84,8 @@ class Character:
         self.image_file = image_file
         self.status = status
         self.is_child = is_child
-    
+        self.media_id = media_id
+
     def to_dict(self) -> Dict[str, Any]:
         """Chuyển đổi thành dictionary."""
         return {
@@ -94,8 +98,9 @@ class Character:
             "image_file": self.image_file,
             "status": self.status,
             "is_child": self.is_child,
+            "media_id": self.media_id,
         }
-    
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Character":
         """Tạo Character từ dictionary."""
@@ -109,6 +114,7 @@ class Character:
             image_file=str(data.get("image_file", "")),
             status=str(data.get("status", "pending")),
             is_child=bool(data.get("is_child", False)),
+            media_id=str(data.get("media_id", "")),
         )
 
 
@@ -127,7 +133,8 @@ class Location:
         location_lock: str = "",
         lighting_default: str = "",
         image_file: str = "",
-        status: str = "pending"
+        status: str = "pending",
+        media_id: str = ""
     ):
         self.id = id
         self.name = name
@@ -136,6 +143,7 @@ class Location:
         self.lighting_default = lighting_default
         self.image_file = image_file
         self.status = status
+        self.media_id = media_id
 
     def to_dict(self) -> Dict[str, Any]:
         """Chuyen doi thanh dictionary."""
@@ -147,6 +155,7 @@ class Location:
             "lighting_default": self.lighting_default,
             "image_file": self.image_file,
             "status": self.status,
+            "media_id": self.media_id,
         }
 
     @classmethod
@@ -160,6 +169,7 @@ class Location:
             lighting_default=str(data.get("lighting_default", "")),
             image_file=str(data.get("image_file", "")),
             status=str(data.get("status", "pending")),
+            media_id=str(data.get("media_id", "")),
         )
 
 
@@ -189,6 +199,7 @@ class Scene:
         characters_used: str = "",      # JSON list of character IDs used
         location_used: str = "",        # Location ID used
         reference_files: str = "",      # JSON list of reference files
+        media_id: str = "",             # Media ID từ Google Flow API (dùng cho I2V)
         # DEPRECATED - giữ để backward compatible, sẽ map sang srt_start/srt_end
         start_time: str = "",
         end_time: str = ""
@@ -211,6 +222,7 @@ class Scene:
         self.characters_used = characters_used
         self.location_used = location_used
         self.reference_files = reference_files
+        self.media_id = media_id  # Media ID cho I2V
 
         # DEPRECATED aliases (để code cũ không bị lỗi)
         self.start_time = self.srt_start
@@ -235,6 +247,7 @@ class Scene:
             "characters_used": self.characters_used,
             "location_used": self.location_used,
             "reference_files": self.reference_files,
+            "media_id": self.media_id,  # Media ID cho I2V
         }
     
     @classmethod
@@ -287,6 +300,7 @@ class Scene:
             characters_used=str(data.get("characters_used", "") or ""),
             location_used=str(data.get("location_used", "") or ""),
             reference_files=str(data.get("reference_files", "") or ""),
+            media_id=str(data.get("media_id", "") or ""),  # Media ID cho I2V
         )
 
 
@@ -513,13 +527,83 @@ class PromptWorkbook:
         """Xóa tất cả nhân vật (giữ lại header)."""
         if self.workbook is None:
             self.load_or_create()
-        
+
         ws = self.workbook[self.CHARACTERS_SHEET]
-        
+
         # Xóa tất cả dòng trừ header
         ws.delete_rows(2, ws.max_row)
         self.logger.debug("Cleared all characters")
-    
+
+    def get_media_ids(self) -> Dict[str, str]:
+        """
+        Lấy tất cả media_id từ characters sheet.
+
+        Returns:
+            Dict mapping character_id -> media_id
+            VD: {"nvc": "CAMSJDZiYzQ2...", "nv1": "CAMSJDZiYzQ1..."}
+        """
+        if self.workbook is None:
+            self.load_or_create()
+
+        result = {}
+        ws = self.workbook[self.CHARACTERS_SHEET]
+
+        # Tìm cột media_id
+        media_id_col = None
+        for col_idx, col_name in enumerate(CHARACTERS_COLUMNS, start=1):
+            if col_name == "media_id":
+                media_id_col = col_idx
+                break
+
+        if media_id_col is None:
+            return result
+
+        # Đọc từ dòng 2 (skip header)
+        for row_idx in range(2, ws.max_row + 1):
+            char_id = ws.cell(row=row_idx, column=1).value
+            media_id = ws.cell(row=row_idx, column=media_id_col).value
+
+            if char_id and media_id:
+                result[str(char_id)] = str(media_id)
+
+        self.logger.debug(f"Loaded {len(result)} media_ids from Excel")
+        return result
+
+    def get_scene_media_ids(self) -> Dict[str, str]:
+        """
+        Lấy tất cả media_id từ scenes sheet (cho I2V).
+
+        Returns:
+            Dict mapping scene_id (string) -> media_id
+            VD: {"1": "CAMSJDZiYzQ2...", "2": "CAMSJDZiYzQ1..."}
+        """
+        if self.workbook is None:
+            self.load_or_create()
+
+        result = {}
+        ws = self.workbook[self.SCENES_SHEET]
+
+        # Tìm cột media_id
+        media_id_col = None
+        for col_idx, col_name in enumerate(SCENES_COLUMNS, start=1):
+            if col_name == "media_id":
+                media_id_col = col_idx
+                break
+
+        if media_id_col is None:
+            return result
+
+        # Đọc từ dòng 2 (skip header)
+        for row_idx in range(2, ws.max_row + 1):
+            scene_id = ws.cell(row=row_idx, column=1).value
+            media_id = ws.cell(row=row_idx, column=media_id_col).value
+
+            if scene_id and media_id:
+                result[str(scene_id)] = str(media_id)
+
+        self.logger.debug(f"Loaded {len(result)} scene media_ids from Excel")
+        return result
+
     # ========================================================================
     # SCENES METHODS
     # ========================================================================

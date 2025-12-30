@@ -56,16 +56,18 @@ class KenBurnsConfig:
 
 class KenBurnsIntensity:
     """Cường độ hiệu ứng Ken Burns."""
-    SUBTLE = "subtle"    # Rất nhẹ - zoom 6%, pan 4%
-    NORMAL = "normal"    # Cân bằng - zoom 12%, pan 8%
-    STRONG = "strong"    # Mạnh - zoom 18%, pan 12%
+    SUBTLE = "subtle"    # Rất nhẹ - zoom 6%, pan 4% (clip dài 15-20s)
+    NORMAL = "normal"    # Cân bằng - zoom 10%, pan 6% (clip 10-15s)
+    STRONG = "strong"    # Mạnh - zoom 15%, pan 10% (clip ngắn 5-8s)
 
 
 # Mapping intensity to values
+# Điều chỉnh cho mượt như CapCut - chuyển động nhẹ nhàng, không chóng mặt
+# Clip 5-8s cần zoom/pan ít hơn để không bị giật
 INTENSITY_VALUES = {
-    KenBurnsIntensity.SUBTLE: {"zoom": 0.06, "pan": 0.04, "subtle": 0.02},
-    KenBurnsIntensity.NORMAL: {"zoom": 0.12, "pan": 0.08, "subtle": 0.04},
-    KenBurnsIntensity.STRONG: {"zoom": 0.18, "pan": 0.12, "subtle": 0.06},
+    KenBurnsIntensity.SUBTLE: {"zoom": 0.04, "pan": 0.03, "subtle": 0.015},  # Rất nhẹ
+    KenBurnsIntensity.NORMAL: {"zoom": 0.06, "pan": 0.04, "subtle": 0.02},   # 6% zoom, 4% pan (mượt)
+    KenBurnsIntensity.STRONG: {"zoom": 0.08, "pan": 0.05, "subtle": 0.025},  # 8% zoom, 5% pan (rõ ràng nhưng không giật)
 }
 
 
@@ -79,8 +81,8 @@ class KenBurnsGenerator:
     - Không bị cắt viền đen (scale đủ lớn trước khi pan)
     """
 
-    # FPS cho zoompan (25 đủ mượt, tiết kiệm 17% thời gian so với 30)
-    ZOOMPAN_FPS = 25
+    # FPS cho zoompan (30 fps cho mượt như CapCut)
+    ZOOMPAN_FPS = 30
 
     def __init__(
         self,
@@ -111,44 +113,42 @@ class KenBurnsGenerator:
         self.PAN_AMOUNT = values["pan"]
         self.SUBTLE_AMOUNT = values["subtle"]
 
+    # Pattern xen kẽ có logic: zoom → pan → zoom → pan
+    # Mỗi loại có 2 biến thể, xen kẽ để đa dạng nhưng không loạn
+    EFFECT_PATTERN = [
+        KenBurnsEffect.ZOOM_IN,      # 1. Zoom vào
+        KenBurnsEffect.PAN_LEFT,     # 2. Pan trái
+        KenBurnsEffect.ZOOM_OUT,     # 3. Zoom ra
+        KenBurnsEffect.PAN_RIGHT,    # 4. Pan phải
+        KenBurnsEffect.ZOOM_IN,      # 5. Zoom vào
+        KenBurnsEffect.PAN_UP,       # 6. Pan lên
+        KenBurnsEffect.ZOOM_OUT,     # 7. Zoom ra
+        KenBurnsEffect.PAN_DOWN,     # 8. Pan xuống
+    ]
+    _effect_index = 0
+
     def get_random_effect(self, exclude_last: Optional[KenBurnsEffect] = None) -> KenBurnsEffect:
         """
-        Chọn ngẫu nhiên một hiệu ứng (tránh lặp liền kề).
+        Chọn hiệu ứng theo pattern có logic (xen kẽ zoom và pan).
+        Pattern: zoom_in → pan_left → zoom_out → pan_right → zoom_in → pan_up → zoom_out → pan_down → lặp lại
 
         Args:
-            exclude_last: Hiệu ứng cuối cùng (để tránh lặp)
+            exclude_last: Không dùng (giữ để tương thích)
 
         Returns:
-            KenBurnsEffect được chọn
+            KenBurnsEffect tiếp theo trong pattern
         """
-        # Danh sách hiệu ứng với trọng số (ưu tiên các hiệu ứng nhẹ nhàng)
-        weighted_effects = [
-            (KenBurnsEffect.ZOOM_IN, 20),          # Phổ biến nhất
-            (KenBurnsEffect.ZOOM_OUT, 15),         # Phổ biến
-            (KenBurnsEffect.PAN_LEFT, 12),
-            (KenBurnsEffect.PAN_RIGHT, 12),
-            (KenBurnsEffect.ZOOM_IN_PAN_LEFT, 10),
-            (KenBurnsEffect.ZOOM_IN_PAN_RIGHT, 10),
-            (KenBurnsEffect.ZOOM_OUT_PAN_LEFT, 8),
-            (KenBurnsEffect.ZOOM_OUT_PAN_RIGHT, 8),
-            (KenBurnsEffect.SUBTLE_DRIFT, 5),      # Rất nhẹ
-        ]
+        # Lấy effect từ pattern
+        effect = self.EFFECT_PATTERN[self._effect_index]
 
-        # Loại bỏ hiệu ứng cuối cùng nếu có
-        if exclude_last:
-            weighted_effects = [(e, w) for e, w in weighted_effects if e != exclude_last]
+        # Tăng index, quay vòng khi hết
+        self._effect_index = (self._effect_index + 1) % len(self.EFFECT_PATTERN)
 
-        # Chọn ngẫu nhiên theo trọng số
-        total_weight = sum(w for _, w in weighted_effects)
-        r = random.uniform(0, total_weight)
+        return effect
 
-        cumulative = 0
-        for effect, weight in weighted_effects:
-            cumulative += weight
-            if r <= cumulative:
-                return effect
-
-        return weighted_effects[0][0]  # Fallback
+    def reset_pattern(self):
+        """Reset pattern về đầu (gọi khi bắt đầu video mới)."""
+        self._effect_index = 0
 
     def get_config(self, effect: KenBurnsEffect) -> KenBurnsConfig:
         """
@@ -266,50 +266,75 @@ class KenBurnsGenerator:
         fade = f"fade=t=in:st=0:d={fade_duration},fade=t=out:st={fade_out_start}:d={fade_duration}"
 
         if simple_mode:
-            # === BALANCED MODE: Dùng crop với 't' expression (NHANH HƠN zoompan) ===
-            # Scale ảnh lên lớn, dùng crop animated thay vì zoompan
-            # Crop chỉ cắt vùng, không scale từng frame → nhanh hơn nhiều
+            # === BALANCED MODE: Dùng zoompan nhưng với ít frame hơn để nhanh hơn ===
+            # Thay vì crop animation (gây giật), dùng zoompan với FPS thấp hơn
+            # zoompan tạo chuyển động mượt thật sự vì nó thay đổi scale
 
-            # Scale lớn hơn output để có không gian pan
-            margin = 200  # pixels margin for panning
-            scaled_w = self.output_width + margin
-            scaled_h = self.output_height + int(margin * 9 / 16)
+            fps = 24  # Giảm FPS để nhanh hơn (24 thay vì 30)
+            total_frames = int(duration * fps)
 
-            # Tính crop animation dựa trên effect
-            # t = thời gian hiện tại, duration = tổng thời gian
-            if effect in [KenBurnsEffect.ZOOM_IN, KenBurnsEffect.ZOOM_IN_CENTER]:
-                # Zoom in: crop từ lớn về nhỏ (shrink crop area)
-                # Bắt đầu từ full, kết thúc ở center
-                x_expr = f"({margin}/2)*(t/{duration})"
-                y_expr = f"({int(margin * 9 / 32)})*(t/{duration})"
-            elif effect in [KenBurnsEffect.ZOOM_OUT, KenBurnsEffect.ZOOM_OUT_CENTER]:
-                # Zoom out: crop từ nhỏ ra lớn
-                x_expr = f"({margin}/2)*(1-t/{duration})"
-                y_expr = f"({int(margin * 9 / 32)})*(1-t/{duration})"
+            # Margin nhỏ hơn cho chuyển động nhẹ nhàng
+            zoom_pct = 0.05  # 5% zoom
+            pan_pct = 0.03   # 3% pan
+
+            # Cosine ease: mượt mà từ đầu đến cuối
+            ease = f"(0.5-0.5*cos(PI*on/{total_frames}))"
+
+            if effect == KenBurnsEffect.ZOOM_IN:
+                # Zoom in: từ 1.0 đến 1.05 (zoom vào trung tâm)
+                zoom_expr = f"1+{zoom_pct}*{ease}"
+                x_expr = "(iw-iw/zoom)/2"
+                y_expr = "(ih-ih/zoom)/2"
+            elif effect == KenBurnsEffect.ZOOM_OUT:
+                # Zoom out: từ 1.05 về 1.0
+                zoom_expr = f"1+{zoom_pct}*(1-{ease})"
+                x_expr = "(iw-iw/zoom)/2"
+                y_expr = "(ih-ih/zoom)/2"
             elif effect == KenBurnsEffect.PAN_LEFT:
-                # Pan left: x đi từ phải sang trái
-                x_expr = f"{margin}*(1-t/{duration})"
-                y_expr = f"{int(margin * 9 / 32) // 2}"
+                # Pan left: giữ zoom 1.06 để không bị viền đen, x đi từ phải sang trái
+                zoom_expr = "1.06"
+                x_expr = f"(iw-iw/zoom)*(0.5+{pan_pct}-{pan_pct}*2*{ease})"
+                y_expr = "(ih-ih/zoom)/2"
             elif effect == KenBurnsEffect.PAN_RIGHT:
                 # Pan right: x đi từ trái sang phải
-                x_expr = f"{margin}*(t/{duration})"
-                y_expr = f"{int(margin * 9 / 32) // 2}"
+                zoom_expr = "1.06"
+                x_expr = f"(iw-iw/zoom)*(0.5-{pan_pct}+{pan_pct}*2*{ease})"
+                y_expr = "(ih-ih/zoom)/2"
             elif effect == KenBurnsEffect.PAN_UP:
-                # Pan up: y đi từ dưới lên
-                x_expr = f"{margin // 2}"
-                y_expr = f"{int(margin * 9 / 16)}*(1-t/{duration})"
+                # Pan up: y đi từ dưới lên trên
+                zoom_expr = "1.06"
+                x_expr = "(iw-iw/zoom)/2"
+                y_expr = f"(ih-ih/zoom)*(0.5+{pan_pct}-{pan_pct}*2*{ease})"
             elif effect == KenBurnsEffect.PAN_DOWN:
-                # Pan down: y đi từ trên xuống
-                x_expr = f"{margin // 2}"
-                y_expr = f"{int(margin * 9 / 16)}*(t/{duration})"
+                # Pan down: y đi từ trên xuống dưới
+                zoom_expr = "1.06"
+                x_expr = "(iw-iw/zoom)/2"
+                y_expr = f"(ih-ih/zoom)*(0.5-{pan_pct}+{pan_pct}*2*{ease})"
             else:
                 # Default: subtle drift
-                x_expr = f"({margin}/2)*(0.5+0.5*sin(t/{duration}*PI))"
-                y_expr = f"({int(margin * 9 / 32)})*(0.5+0.5*cos(t/{duration}*PI))"
+                zoom_expr = f"1+0.02*{ease}"
+                x_expr = "(iw-iw/zoom)/2"
+                y_expr = "(ih-ih/zoom)/2"
+
+            # Scale ảnh lên trước để zoompan có không gian làm việc
+            scale_factor = 1.15
+            scaled_w = int(self.output_width * scale_factor)
+            scaled_h = int(self.output_height * scale_factor)
+
+            zoompan = (
+                f"zoompan="
+                f"z='{zoom_expr}':"
+                f"x='{x_expr}':"
+                f"y='{y_expr}':"
+                f"d={total_frames}:"
+                f"s={self.output_width}x{self.output_height}:"
+                f"fps={fps}"
+            )
 
             full_filter = (
                 f"scale={scaled_w}:{scaled_h}:force_original_aspect_ratio=increase,"
-                f"crop={self.output_width}:{self.output_height}:{x_expr}:{y_expr},"
+                f"crop={scaled_w}:{scaled_h},"
+                f"{zoompan},"
                 f"{fade}"
             )
         else:

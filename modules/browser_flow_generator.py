@@ -71,7 +71,8 @@ class BrowserFlowGenerator:
         profile_name: str = "main",
         headless: bool = False,
         verbose: bool = True,
-        config_path: str = "config/settings.yaml"
+        config_path: str = "config/settings.yaml",
+        worker_id: int = 0
     ):
         """
         Khoi tao BrowserFlowGenerator.
@@ -82,6 +83,7 @@ class BrowserFlowGenerator:
             headless: Chay an (khong hien UI) - nen False lan dau de dang nhap
             verbose: In log chi tiet
             config_path: Duong dan file config
+            worker_id: Worker ID for parallel processing (affects proxy, Chrome port)
         """
         if not SELENIUM_AVAILABLE:
             raise ImportError(
@@ -93,6 +95,7 @@ class BrowserFlowGenerator:
         self.profile_name = profile_name
         self.headless = headless
         self.verbose = verbose
+        self.worker_id = worker_id  # For parallel processing
 
         # Load config
         self.config = {}
@@ -571,6 +574,21 @@ class BrowserFlowGenerator:
                 cache_data['_bearer_token'] = bearer_token
                 cache_data['_token_time'] = time.time()  # Luu thoi diem lay token
                 self._log(f"[CACHE] Saving bearer_token: {bearer_token[:30]}... (de reuse)")
+
+            # Lưu thêm recaptcha_token và x_browser_validation cho I2V
+            recaptcha_token = self.config.get('flow_recaptcha_token', '')
+            x_browser_val = self.config.get('flow_x_browser_validation', '')
+            if recaptcha_token:
+                cache_data['_recaptcha_token'] = recaptcha_token
+                self._log(f"[CACHE] Saving recaptcha_token (cho I2V)")
+            if x_browser_val:
+                cache_data['_x_browser_validation'] = x_browser_val
+
+            # Lưu Chrome profile path để VIDEO worker có thể mở đúng Chrome
+            chrome_profile = self.config.get('chrome_profile_path', '') or str(getattr(self, 'chrome_profile', ''))
+            if chrome_profile:
+                cache_data['_chrome_profile_path'] = chrome_profile
+                self._log(f"[CACHE] Saving chrome_profile_path: {chrome_profile}")
 
             with open(cache_path, 'w', encoding='utf-8') as f:
                 json.dump(cache_data, f, indent=2)
@@ -2546,7 +2564,7 @@ class BrowserFlowGenerator:
                 # Generate image - co retry khi token het han
                 success, images, error = api.generate_images(
                     prompt=prompt,
-                    count=self.config.get('flow_image_count', 2),
+                    count=self.config.get('flow_image_count', 1),  # Default 1 ảnh
                     aspect_ratio=aspect_ratio,
                     image_inputs=[inp.to_dict() for inp in image_inputs] if image_inputs else None
                 )
@@ -2567,7 +2585,7 @@ class BrowserFlowGenerator:
                             # Retry generation
                             success, images, error = api.generate_images(
                                 prompt=prompt,
-                                count=self.config.get('flow_image_count', 2),
+                                count=self.config.get('flow_image_count', 1),  # Default 1 ảnh
                                 aspect_ratio=aspect_ratio,
                                 image_inputs=[inp.to_dict() for inp in image_inputs] if image_inputs else None
                             )
@@ -2575,18 +2593,26 @@ class BrowserFlowGenerator:
                             self._log(f"Khong the refresh token!", "error")
 
                 if success and images:
-                    # Download best image
-                    output_file = self.img_path / f"{scene_id}.png"
+                    # Xác định thư mục lưu: nv*/loc* -> nv/, còn lại -> img/
+                    scene_id_str = str(scene_id)
+                    if scene_id_str.lower().startswith('nv') or scene_id_str.lower().startswith('loc'):
+                        save_dir = self.nv_path
+                        relative_folder = "nv"
+                    else:
+                        save_dir = self.img_path
+                        relative_folder = "img"
+
+                    output_file = save_dir / f"{scene_id}.png"
 
                     downloaded = api.download_image(
                         images[0],  # Take first image
-                        self.img_path,
+                        save_dir,
                         scene_id
                     )
 
                     if downloaded:
                         # Update Excel
-                        relative_path = f"img/{scene_id}.png"
+                        relative_path = f"{relative_folder}/{scene_id}.png"
                         workbook.update_scene(
                             scene.scene_id,
                             img_path=relative_path,
@@ -2864,134 +2890,266 @@ class BrowserFlowGenerator:
         self._log("API MODE - TAO ANH TU PROMPTS")
         self._log("=" * 60)
 
-        try:
-            from modules.google_flow_api import GoogleFlowAPI, AspectRatio
-        except ImportError as e:
-            return {"success": False, "error": f"Khong import duoc GoogleFlowAPI: {e}"}
-
-        # === CHECK API PROVIDER MODE ===
-        # Default: nanoai (paid proxy) - stable and reliable
-        # Direct mode is experimental - set api_provider='direct' to test
-        api_provider = self.config.get('api_provider', 'nanoai')
-        proxy_api_token = self.config.get('proxy_api_token', '')
-
-        # Determine mode: direct (free) vs nanoai (paid)
-        use_direct = (api_provider == 'direct')
-        use_proxy = (api_provider == 'nanoai' and bool(proxy_api_token))
-
-        # Initialize DirectFlowAPI for direct mode
-        direct_api = None
-        if use_direct:
-            try:
-                from modules.direct_flow_api import DirectFlowAPI
-                direct_api = DirectFlowAPI(
-                    chrome_path=self.config.get('chrome_path'),
-                    profile_path=self._get_profile_path(),
-                    verbose=self.verbose
-                )
-                self._log("🆓 Direct mode: Sử dụng Chrome để lấy recaptcha (miễn phí)")
-            except ImportError:
-                self._log("Khong import duoc DirectFlowAPI, fallback to nanoai", "warn")
-                use_direct = False
-                use_proxy = bool(proxy_api_token)
-
-        if use_proxy:
-            self._log("💰 Nanoai mode: Sử dụng proxy nanoai.pics (trả phí)")
-
-        # Check bearer token
-        if not bearer_token:
-            bearer_token = self.config.get('flow_bearer_token', '')
-
-        # Neu van chua co token, capture tu Chrome (PyAutoGUI)
-        direct_project_id = None  # Project ID từ Direct mode
-        if not bearer_token:
-            self._log("Khong co bearer token, thu tu dong lay...")
-            if use_direct and direct_api:
-                # Direct mode: lấy bearer + recaptcha cùng lúc
-                tokens = direct_api.extract_tokens()
-                bearer_token = tokens.get('bearer', '')
-                direct_project_id = tokens.get('project_id', '')  # LƯU project_id!
-
-                # DEBUG: Log all captured values
-                self._log(f"[DEBUG] tokens keys: {list(tokens.keys())}")
-                self._log(f"[DEBUG] direct_project_id: {direct_project_id}")
-                self._log(f"[DEBUG] direct_api._project_id: {direct_api._project_id}")
-
-                if direct_project_id:
-                    self._log(f"✓ Captured project_id: {direct_project_id[:20]}...")
-            else:
-                bearer_token = self._auto_extract_token()
-
-        if not bearer_token:
-            return {"success": False, "error": "Can bearer token cho API mode. Chua co token va khong the tu dong lay."}
-
+        # === DRISSION MODE ONLY ===
+        # Sử dụng DrissionPage + Interceptor để tạo ảnh
         if not prompts:
             return {"success": False, "error": "Khong co prompts"}
 
-        # Use extracted flow_project_id if available
-        # QUAN TRỌNG: Direct mode PHẢI dùng project_id đã capture (recaptcha bound to project)
-        flow_project_id = None
+        try:
+            from modules.drission_flow_api import DrissionFlowAPI
+        except ImportError as e:
+            return {"success": False, "error": f"Khong import duoc DrissionFlowAPI: {e}. Cài đặt: pip install DrissionPage"}
 
-        # Priority 1: DirectFlowAPI instance cached project_id
-        if use_direct and direct_api:
-            if direct_api._project_id:
-                flow_project_id = direct_api._project_id
-                self._log(f"✓ Using DirectAPI project_id: {flow_project_id[:20]}...")
-            elif direct_project_id:
-                flow_project_id = direct_project_id
-                self._log(f"✓ Using extracted project_id: {flow_project_id[:20]}...")
+        # Webshare proxy config (nested dict from GUI settings)
+        # IPv6 proxy đã bị bỏ - chỉ dùng Webshare
+        webshare_cfg = self.config.get('webshare_proxy', {})
+        webshare_api_key = webshare_cfg.get('api_key', '')
+        webshare_username = webshare_cfg.get('username', '')
+        webshare_password = webshare_cfg.get('password', '')
+        webshare_endpoint = webshare_cfg.get('endpoint', '')
+        webshare_proxy_file = webshare_cfg.get('proxy_file', 'config/proxies.txt')  # Default file
+        use_webshare = webshare_cfg.get('enabled', True)  # Default ON - Webshare enabled by default
 
-        # Priority 2: Config fallback (for nanoai mode)
-        if not flow_project_id:
-            flow_project_id = self.config.get('flow_project_id', '') or self.project_code or None
+        # === ROTATING ENDPOINT CONFIG ===
+        # Nếu enabled, mỗi request tự động đổi IP (không cần quản lý proxy pool)
+        rotating_enabled = webshare_cfg.get('rotating_enabled', False)
+        rotating_host = webshare_cfg.get('rotating_host', 'p.webshare.io')
+        rotating_port = webshare_cfg.get('rotating_port', 80)
 
-        # Validate: Direct mode MUST have project_id
-        if use_direct and not flow_project_id:
-            self._log("❌ Direct mode cần project_id từ Chrome!", "error")
-            return {"success": False, "error": "Direct mode requires captured project_id"}
+        # Khởi tạo Webshare Proxy Manager nếu enabled
+        if use_webshare:
 
-        self._log(f"Tong: {len(prompts)} prompts")
-        self._log(f"Project ID: {flow_project_id}")
-        self._log(f"Token: {bearer_token[:20]}...{bearer_token[-10:]}")
-        if use_direct:
-            self._log(f"Mode: 🆓 DIRECT (free - recaptcha from Chrome)")
-        elif use_proxy:
-            self._log(f"Mode: 💰 NANOAI (paid - proxy at nanoai.pics)")
+            try:
+                from webshare_proxy import init_proxy_manager, get_proxy_manager
+
+                # === ROTATING ENDPOINT MODE ===
+                if rotating_enabled:
+                    self._log(f"🔄 ROTATING ENDPOINT mode enabled")
+                    self._log(f"   → {rotating_host}:{rotating_port}")
+                    self._log(f"   → Mỗi request sẽ tự động đổi IP!")
+
+                    manager = init_proxy_manager(
+                        username=webshare_username,
+                        password=webshare_password,
+                        rotating_endpoint=True,
+                        rotating_host=rotating_host,
+                        rotating_port=rotating_port
+                    )
+                else:
+                    # === DIRECT PROXY LIST MODE ===
+                    # Load proxy list từ file hoặc API
+                    proxy_list = None
+                    if webshare_proxy_file:
+                        self._log(f"Loading proxies from: {webshare_proxy_file}")
+                    else:
+                        # Kiểm tra file mặc định
+                        default_proxy_file = Path("config/proxies.txt")
+                        if default_proxy_file.exists():
+                            webshare_proxy_file = str(default_proxy_file)
+                            self._log(f"Found default proxy file: {webshare_proxy_file}")
+
+                    manager = init_proxy_manager(
+                        api_key=webshare_api_key,
+                        username=webshare_username,
+                        password=webshare_password,
+                        proxy_file=webshare_proxy_file if webshare_proxy_file else None
+                    )
+
+                    # Nếu không có proxy từ file, thử single endpoint
+                    if not manager.proxies and webshare_endpoint:
+                        from webshare_proxy import ProxyInfo
+                        proxy = ProxyInfo(
+                            host=webshare_endpoint.split(':')[0],
+                            port=int(webshare_endpoint.split(':')[1]) if ':' in webshare_endpoint else 80,
+                            username=webshare_username,
+                            password=webshare_password
+                        )
+                        manager.proxies.append(proxy)
+
+                # Verify initialization
+                if manager.is_rotating_mode():
+                    self._log(f"✓ Rotating Endpoint ready")
+                elif manager.proxies:
+                    self._log(f"✓ Loaded {len(manager.proxies)} proxies")
+                    self._log(f"  Current: {manager.current_proxy.endpoint}")
+                else:
+                    self._log("⚠️ No proxies loaded - chạy không có proxy", "WARN")
+                    use_webshare = False
+
+            except Exception as e:
+                self._log(f"⚠️ Webshare init error: {e} - chạy không có proxy", "WARN")
+                use_webshare = False
+
+        # === ĐỌC CONFIG TỪ EXCEL/CACHE TRƯỚC (để biết profile nào đã dùng) ===
+        saved_project_url = None
+        saved_chrome_profile = None  # Chrome profile đã dùng cho dự án này
+        self._log(f"[DEBUG] excel_path = {excel_path}")
+
+        # 1. Thử đọc từ Excel sheet 'config'
+        if excel_path and Path(excel_path).exists():
+            self._log(f"[DEBUG] Excel tồn tại, kiểm tra sheet 'config'...")
+            try:
+                import openpyxl
+                wb = openpyxl.load_workbook(excel_path)
+                self._log(f"[DEBUG] Sheets có: {wb.sheetnames}")
+                if 'config' in wb.sheetnames:
+                    ws = wb['config']
+                    config_keys_found = []
+                    for row in ws.iter_rows(min_row=2, max_row=20, values_only=True):
+                        if row and len(row) >= 2:
+                            key = str(row[0] or '').strip().lower()
+                            val = str(row[1] or '').strip() if row[1] else ''
+                            config_keys_found.append(key)
+                            if key == 'flow_project_url' and val and '/project/' in val:
+                                saved_project_url = val
+                                self._log(f"📂 Tìm thấy project URL từ Excel: {saved_project_url[:50]}...")
+                            elif key == 'flow_project_id' and val and not saved_project_url:
+                                # Nếu chỉ có project_id, tạo URL
+                                saved_project_url = f"https://labs.google/fx/vi/tools/flow/project/{val}"
+                                self._log(f"📂 Tìm thấy project_id từ Excel: {val[:20]}...")
+                            elif key == 'chrome_profile_path' and val:
+                                # Đọc Chrome profile đã dùng cho dự án này
+                                if Path(val).exists():
+                                    saved_chrome_profile = val
+                                    self._log(f"📂 Tìm thấy Chrome profile từ Excel: {val}")
+                    if not saved_project_url:
+                        self._log(f"[DEBUG] Config keys: {config_keys_found}")
+                else:
+                    self._log(f"[DEBUG] Không có sheet 'config' trong Excel")
+                wb.close()
+            except Exception as e:
+                self._log(f"⚠️ Không đọc được config từ Excel: {e}", "warn")
+
+        # Chọn profile: ưu tiên saved profile từ Excel, fallback về default
+        if saved_chrome_profile:
+            profile_to_use = saved_chrome_profile
+            self._log(f"🔄 Dùng Chrome profile đã lưu: {profile_to_use}")
         else:
-            self._log(f"Mode: ⚠️ DIRECT (no recaptcha - may fail)")
+            profile_to_use = self._get_profile_path() or "./chrome_profile"
+            self._log(f"📁 Dùng Chrome profile mặc định: {profile_to_use}")
 
-        # Build extra headers for Direct mode
-        extra_headers = {}
-        if use_direct and direct_api and direct_api._x_browser_validation:
-            extra_headers['x-browser-validation'] = direct_api._x_browser_validation
-            self._log(f"✓ x-browser-validation header ready")
-
-        # Create API client
-        api = GoogleFlowAPI(
-            bearer_token=bearer_token,
-            project_id=flow_project_id,
-            timeout=self.config.get('flow_timeout', 120),
+        drission_api = DrissionFlowAPI(
+            profile_dir=profile_to_use,
             verbose=self.verbose,
-            proxy_api_token=proxy_api_token,
-            use_proxy=use_proxy,
-            extra_headers=extra_headers  # Pass x-browser-validation for Direct mode
+            log_callback=self._log,
+            webshare_enabled=use_webshare,
+            worker_id=self.worker_id  # Parallel mode - mỗi worker có proxy riêng
         )
 
-        # Store direct_api reference for use in generation loop
-        self._direct_api = direct_api
-        self._use_direct = use_direct
+        self._log("🚀 DrissionPage + Interceptor")
+        if use_webshare:
+            manager = get_proxy_manager()
+            if manager.is_rotating_mode():
+                self._log(f"   Proxy: 🔄 ROTATING ENDPOINT (auto IP change)")
+            else:
+                self._log(f"   Proxy: Webshare Pool ({len(manager.proxies)} proxies)")
+        else:
+            self._log("   Proxy: OFF (không có proxy)")
 
-        # Map aspect ratio
-        ar_setting = self.config.get('flow_aspect_ratio', 'landscape')
-        ar_map = {
-            'landscape': AspectRatio.LANDSCAPE,
-            'portrait': AspectRatio.PORTRAIT,
-            'square': AspectRatio.SQUARE,
-        }
-        aspect_ratio = ar_map.get(ar_setting, AspectRatio.LANDSCAPE)
+        # 2. Fallback: Thử đọc từ cache file
+        if not saved_project_url and excel_path:
+            cache_path = Path(excel_path).parent / ".media_cache.json"
+            self._log(f"[DEBUG] Cache path: {cache_path}")
+            if cache_path.exists():
+                try:
+                    import json
+                    with open(cache_path, 'r', encoding='utf-8') as f:
+                        cache_data = json.load(f)
+                    self._log(f"[DEBUG] Cache keys: {list(cache_data.keys())[:10]}")
+                    cached_url = cache_data.get('_project_url', '')
+                    cached_id = cache_data.get('_project_id', '')
+                    if cached_url and '/project/' in cached_url:
+                        saved_project_url = cached_url
+                        self._log(f"📂 Tìm thấy project URL từ cache: {saved_project_url[:50]}...")
+                    elif cached_id:
+                        saved_project_url = f"https://labs.google/fx/vi/tools/flow/project/{cached_id}"
+                        self._log(f"📂 Tìm thấy project_id từ cache: {cached_id[:20]}...")
+                except Exception as e:
+                    self._log(f"⚠️ Không đọc được cache: {e}", "warn")
+            else:
+                self._log(f"[DEBUG] Cache file không tồn tại")
+
+        if saved_project_url:
+            self._log(f"🔄 Sẽ vào lại project cũ để giữ media_id...")
+        else:
+            self._log(f"📝 Sẽ tạo project mới...")
+
+        # Setup Chrome và đợi user chọn project (với retry + IP rotation)
+        MAX_SETUP_RETRIES = 3
+        setup_success = False
+
+        for setup_attempt in range(MAX_SETUP_RETRIES):
+            if drission_api.setup(project_url=saved_project_url):
+                setup_success = True
+                break
+            else:
+                self._log(f"❌ Setup failed (attempt {setup_attempt + 1}/{MAX_SETUP_RETRIES})", "error")
+
+                if setup_attempt < MAX_SETUP_RETRIES - 1:
+                    # Rotate IP và restart Chrome
+                    self._log("🔄 Đang rotate IP và restart Chrome...", "warn")
+                    if use_webshare:
+                        try:
+                            manager = get_proxy_manager()
+                            success, msg = manager.rotate_worker_proxy(self.worker_id, "setup_timeout")
+                            self._log(f"   → {msg}")
+                            if success and drission_api.restart_chrome():
+                                self._log("✓ Chrome restarted với IP mới")
+                                import time
+                                time.sleep(3)
+                                continue
+                        except Exception as e:
+                            self._log(f"   → Rotate error: {e}", "warn")
+
+        if not setup_success:
+            self._log("❌ DrissionFlowAPI setup failed sau tất cả retries!", "error")
+            return {"success": False, "error": "DrissionFlowAPI setup failed"}
+
+        self._log(f"Tong: {len(prompts)} prompts")
+
+        # Store reference
+        self._drission_api = drission_api
+
+        # Generate images - use self.img_path as output directory
+        return self._generate_images_drission_mode(prompts, self.img_path, excel_path)
+
+    def _generate_images_drission_mode(
+        self,
+        prompts: List[Dict[str, Any]],
+        output_dir: Path,
+        excel_path: Optional[Path] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate images sử dụng DrissionFlowAPI (DrissionPage + Interceptor).
+
+        Flow:
+        1. DrissionFlowAPI đã setup sẵn Chrome + interceptor
+        2. Mỗi prompt: gửi qua Chrome để capture tokens → gọi API → save ảnh
+        3. Lưu vào output_dir và cập nhật Excel nếu có
+
+        Args:
+            prompts: Danh sách prompts
+            output_dir: Thư mục lưu ảnh
+            excel_path: Path đến Excel file (optional)
+
+        Returns:
+            Dict với stats
+        """
+        from modules.excel_manager import PromptWorkbook
+
+        self._log("=" * 60)
+        self._log("DRISSION MODE - Generate Images")
+        self._log("=" * 60)
+
+        drission_api = getattr(self, '_drission_api', None)
+        if not drission_api:
+            return {"success": False, "error": "DrissionFlowAPI chưa được khởi tạo"}
 
         # Reset stats
         self.stats = {"total": len(prompts), "success": 0, "failed": 0, "skipped": 0}
+
+        # Track failed prompts để retry sau
+        failed_prompts = []  # List[Tuple[prompt_data, index, error]]
 
         # Load Excel workbook
         workbook = None
@@ -3002,8 +3160,34 @@ class BrowserFlowGenerator:
             except Exception as e:
                 self._log(f"Warning: Khong load duoc Excel: {e}", "warn")
 
-        # Load media cache
-        cached_media_names = self._load_media_cache()
+        # === LOAD MEDIA_IDs từ Excel (thay vì cache file) ===
+        excel_media_ids = {}
+        if workbook:
+            try:
+                excel_media_ids = workbook.get_media_ids()
+                if excel_media_ids:
+                    self._log(f"[EXCEL] Loaded {len(excel_media_ids)} media_ids: {list(excel_media_ids.keys())}")
+                else:
+                    self._log("[EXCEL] ⚠️ KHÔNG CÓ MEDIA_ID TRONG EXCEL - ảnh nv/loc sẽ được tạo lại", "warn")
+            except Exception as e:
+                self._log(f"Warning: Cannot load media_ids from Excel: {e}", "warn")
+
+        # Fallback to cache file nếu Excel không có data
+        cached_media_names = {}
+        if not excel_media_ids:
+            cached_media_names = self._load_media_cache()
+            if cached_media_names:
+                self._log(f"[CACHE] Fallback: Loaded {len(cached_media_names)} media references from cache")
+
+        # Ensure output dir exists
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Log danh sách prompts sẽ xử lý
+        prompt_ids = [str(p.get('id', idx+1)) for idx, p in enumerate(prompts)]
+        ref_ids = [pid for pid in prompt_ids if pid.lower().startswith('nv') or pid.lower().startswith('loc')]
+        if ref_ids:
+            self._log(f"[INFO] Reference images (nv/loc): {ref_ids}")
 
         for i, prompt_data in enumerate(prompts):
             pid = str(prompt_data.get('id', i + 1))
@@ -3020,194 +3204,607 @@ class BrowserFlowGenerator:
                 self.stats["skipped"] += 1
                 continue
 
-            # === SANITIZE PROMPT: Remove debug tags và problematic patterns ===
-            import re as re_sanitize
-            prompt = re_sanitize.sub(r'\[FALLBACK\]\s*', '', prompt, flags=re_sanitize.IGNORECASE)
-            prompt = re_sanitize.sub(r'\[DEBUG\]\s*', '', prompt, flags=re_sanitize.IGNORECASE)
-            prompt = re_sanitize.sub(r'\[TEST\]\s*', '', prompt, flags=re_sanitize.IGNORECASE)
-            prompt = re_sanitize.sub(r'\[TIER\s*\d+\]\s*', '', prompt, flags=re_sanitize.IGNORECASE)
-            # === QUAN TRỌNG: Loại bỏ "scene depicting:" và text sau nó ===
-            # Pattern này khiến AI vẽ text lên ảnh hoặc gây INVALID_ARGUMENT
-            prompt = re_sanitize.sub(r'\s*scene depicting:.*$', '', prompt, flags=re_sanitize.IGNORECASE)
-            prompt = re_sanitize.sub(r'\s*depicting:.*$', '', prompt, flags=re_sanitize.IGNORECASE)
-            prompt = prompt.strip()
+            # Xác định là ảnh tham chiếu (nv*/loc*) hay ảnh scene
+            is_reference_image = pid.lower().startswith('nv') or pid.lower().startswith('loc')
 
-            self._log(f"\n[{i+1}/{len(prompts)}] ID: {pid}")
-            self._log(f"Prompt ({len(prompt)} chars): {prompt[:100]}...")
+            # Xác định thư mục lưu: nv*/loc* -> nv_path (tham chiếu), còn lại -> img_path
+            if is_reference_image:
+                save_dir = self.nv_path
+            else:
+                save_dir = output_dir
+
+            # Check if image already exists
+            output_file = save_dir / f"{pid}.png"
+            if output_file.exists():
+                # === CHECK MEDIA_ID FOR REFERENCE IMAGES ===
+                # Nếu là ảnh nv*/loc* nhưng KHÔNG có media_id → xóa và tạo lại
+                # Normalize key để so sánh (case-insensitive)
+                pid_lower = pid.lower()
+                has_media_id = any(k.lower() == pid_lower for k in excel_media_ids.keys())
+
+                if is_reference_image and not has_media_id:
+                    self._log(f"[{i+1}/{len(prompts)}] ID: {pid} - ⚠️ ANH TON TAI NHUNG KHONG CO MEDIA_ID")
+                    self._log(f"   → Dang xoa {output_file.name} de tao lai...")
+                    try:
+                        output_file.unlink()  # Xóa file
+                        self._log(f"   → Da xoa! Se tao lai de co media_id", "success")
+                    except Exception as e:
+                        self._log(f"   → Khong the xoa file: {e}", "warn")
+                        self.stats["skipped"] += 1
+                        continue
+                    # Tiếp tục generate (không skip)
+                else:
+                    self._log(f"[{i+1}/{len(prompts)}] ID: {pid} - Skip (da co anh)")
+                    self.stats["skipped"] += 1
+                    continue
+
+            self._log(f"[{i+1}/{len(prompts)}] ID: {pid}")
+            self._log(f"   Prompt: {prompt[:60]}...")
+
+            # === BUILD IMAGE_INPUTS từ reference_files và media_ids ===
+            image_inputs = []
+            # is_reference_image đã được định nghĩa ở trên
+
+            # Merge Excel và cache media_ids (Excel ưu tiên)
+            all_media_ids = {**cached_media_names, **excel_media_ids}
+
+            if not is_reference_image and all_media_ids:
+                # Parse reference_files từ prompt_data
+                ref_str = prompt_data.get('reference_files', '')
+                ref_files = []
+                if ref_str:
+                    try:
+                        parsed = json.loads(ref_str) if ref_str.startswith('[') else None
+                        if isinstance(parsed, list):
+                            ref_files = parsed
+                        else:
+                            ref_files = [f.strip() for f in str(ref_str).split(',') if f.strip()]
+                    except:
+                        ref_files = [f.strip() for f in str(ref_str).split(',') if f.strip()]
+
+                # Fallback: nếu không có reference, dùng nvc.png mặc định
+                if not ref_files:
+                    ref_files = ["nvc.png"]
+                    self._log(f"   [REF] No reference, using default nvc.png")
+
+                # Build image_inputs từ media_ids (Excel hoặc cache)
+                # QUAN TRỌNG: Dùng "imageInputType" (không phải "inputType") với giá trị đầy đủ
+                for ref_file in ref_files:
+                    ref_id = ref_file.replace('.png', '').replace('.jpg', '')
+                    # Thử Excel media_id trước
+                    if ref_id in excel_media_ids:
+                        media_id = excel_media_ids[ref_id]
+                        image_inputs.append({
+                            "name": media_id,
+                            "imageInputType": "IMAGE_INPUT_TYPE_REFERENCE"
+                        })
+                        self._log(f"   [REF] Using (Excel): {ref_id} → {media_id[:30]}...")
+                    elif ref_id in cached_media_names:
+                        # Fallback to cache
+                        media_info = cached_media_names[ref_id]
+                        media_name = media_info.get('mediaName') if isinstance(media_info, dict) else media_info
+                        if media_name:
+                            image_inputs.append({
+                                "name": media_name,
+                                "imageInputType": "IMAGE_INPUT_TYPE_REFERENCE"
+                            })
+                            self._log(f"   [REF] Using (cache): {ref_id} → {media_name[:30]}...")
+
+                if image_inputs:
+                    self._log(f"   [REF] Total: {len(image_inputs)} reference images")
+                else:
+                    self._log(f"   [REF] No media_id found for references", "warn")
 
             try:
-                # === BUILD IMAGE INPUTS TU reference_files VA prompt annotations ===
-                import re
-                import json as json_mod
-                from modules.google_flow_api import ImageInput, ImageInputType
-
-                image_inputs = []
-                ref_ids_added = set()  # Track de tranh duplicate
-
-                # === 1. Uu tien: Lay reference_files tu prompt_data (tu Excel) ===
-                ref_files_str = prompt_data.get('reference_files', '')
-                if ref_files_str and cached_media_names:
-                    try:
-                        ref_files = json_mod.loads(ref_files_str) if ref_files_str.startswith('[') else [f.strip() for f in str(ref_files_str).split(',') if f.strip()]
-                    except:
-                        ref_files = [f.strip() for f in str(ref_files_str).split(',') if f.strip()]
-
-                    for ref_file in ref_files:
-                        ref_id = ref_file.replace('.png', '').replace('.jpg', '')
-                        if ref_id in cached_media_names and ref_id not in ref_ids_added:
-                            media_info = cached_media_names[ref_id]
-                            media_name = media_info.get('mediaName') if isinstance(media_info, dict) else media_info
-                            if media_name:
-                                image_inputs.append(ImageInput(
-                                    name=media_name,
-                                    input_type=ImageInputType.REFERENCE
-                                ))
-                                ref_ids_added.add(ref_id)
-                                self._log(f"  [REF:Excel] {ref_id} -> mediaName OK")
-
-                # === 2. Fallback: Parse (xxx.png) tu prompt text ===
-                filename_pattern = r'\(([a-zA-Z0-9_]+)\.png\)'
-                matches = re.findall(filename_pattern, prompt)
-
-                if matches and cached_media_names:
-                    for ref_id in matches:
-                        if ref_id in cached_media_names and ref_id not in ref_ids_added:
-                            media_info = cached_media_names[ref_id]
-                            media_name = media_info.get('mediaName') if isinstance(media_info, dict) else media_info
-                            if media_name:
-                                image_inputs.append(ImageInput(
-                                    name=media_name,
-                                    input_type=ImageInputType.REFERENCE
-                                ))
-                                ref_ids_added.add(ref_id)
-                                self._log(f"  [REF:Prompt] {ref_id} -> mediaName OK")
-
-                if not image_inputs:
-                    self._log(f"  [REF] Khong co reference (ref_files='{ref_files_str[:30]}...' neu co)")
-
-                # === DIRECT MODE: Lấy fresh recaptcha trước khi generate ===
-                recaptcha_token = None
-                if self._use_direct and self._direct_api:
-                    self._log("🔄 Lấy fresh recaptcha từ Chrome...")
-                    recaptcha_token = self._direct_api.get_fresh_recaptcha()
-                    if recaptcha_token:
-                        self._log(f"✓ reCAPTCHA OK: {recaptcha_token[:30]}...")
-
-                        # QUAN TRỌNG: Update sessionId (bound với recaptcha!)
-                        if self._direct_api._session_id:
-                            api.session_id = self._direct_api._session_id
-                            self._log(f"✓ Updated sessionId: {api.session_id}")
-
-                        # Update x-browser-validation header nếu có mới
-                        if self._direct_api._x_browser_validation:
-                            api.session.headers['x-browser-validation'] = self._direct_api._x_browser_validation
-                            self._log(f"✓ Updated x-browser-validation header")
-                    else:
-                        self._log("⚠️ Không lấy được recaptcha, thử gọi API direct...", "warn")
-
-                # Generate - co retry khi token het han
-                success, images, error = api.generate_images(
+                # Generate image using DrissionFlowAPI with reference images
+                success, images, error = drission_api.generate_image(
                     prompt=prompt,
-                    count=self.config.get('flow_image_count', 2),
-                    aspect_ratio=aspect_ratio,
-                    image_inputs=[inp.to_dict() for inp in image_inputs] if image_inputs else None,
-                    recaptcha_token=recaptcha_token  # Direct mode: pass recaptcha
+                    save_dir=save_dir,
+                    filename=pid,
+                    image_inputs=image_inputs if image_inputs else None
                 )
 
-                # Check token expired (401) - auto refresh and retry
-                if not success and error:
-                    error_lower = str(error).lower()
-                    is_token_expired = '401' in error_lower or 'expired' in error_lower or 'authentication' in error_lower or 'unauthenticated' in error_lower
-                    is_recaptcha_error = '403' in error_lower or 'recaptcha' in error_lower
-
-                    if is_token_expired:
-                        self._log(f"Token het han (401)! Dang mo Chrome lay token moi...", "warn")
-                        new_token = self._auto_extract_token(force_refresh=True)
-                        if new_token:
-                            api.bearer_token = new_token
-                            bearer_token = new_token
-                            self._log(f"Token moi OK - dang retry ID {pid}...")
-
-                            # Lấy recaptcha mới nếu dùng direct mode
-                            if self._use_direct and self._direct_api:
-                                recaptcha_token = self._direct_api.get_fresh_recaptcha()
-                                # Update sessionId (bound với recaptcha)
-                                if self._direct_api._session_id:
-                                    api.session_id = self._direct_api._session_id
-
-                            success, images, error = api.generate_images(
-                                prompt=prompt,
-                                count=self.config.get('flow_image_count', 2),
-                                aspect_ratio=aspect_ratio,
-                                image_inputs=[inp.to_dict() for inp in image_inputs] if image_inputs else None,
-                                recaptcha_token=recaptcha_token
-                            )
-                        else:
-                            self._log(f"Khong the refresh token!", "error")
-
-                    elif is_recaptcha_error and self._use_direct and self._direct_api:
-                        # Recaptcha expired - lấy mới và retry
-                        self._log("reCAPTCHA expired, lấy mới...", "warn")
-                        recaptcha_token = self._direct_api.get_fresh_recaptcha()
-                        if recaptcha_token:
-                            # Update sessionId (bound với recaptcha)
-                            if self._direct_api._session_id:
-                                api.session_id = self._direct_api._session_id
-                            success, images, error = api.generate_images(
-                                prompt=prompt,
-                                count=self.config.get('flow_image_count', 2),
-                                aspect_ratio=aspect_ratio,
-                                image_inputs=[inp.to_dict() for inp in image_inputs] if image_inputs else None,
-                                recaptcha_token=recaptcha_token
-                            )
-
                 if success and images:
-                    # Determine output dir
-                    is_character = pid.startswith('nv') or pid.startswith('loc')
-                    out_dir = self.nv_path if is_character else self.img_path
+                    self._log(f"   ✓ Thành công! Saved {len(images)} image(s)")
+                    self.stats["success"] += 1
+                    consecutive_403 = 0  # Reset counter on success
 
-                    downloaded = api.download_image(images[0], out_dir, pid)
+                    # Update Excel if available
+                    if workbook and images[0].local_path:
+                        try:
+                            workbook.update_image_path(int(pid), str(images[0].local_path))
+                            workbook.update_status(int(pid), "done")
+                            # === SAVE MEDIA_ID to Excel for SCENE images ===
+                            if images[0].media_name:
+                                try:
+                                    workbook.update_scene(int(pid), media_id=images[0].media_name)
+                                    workbook.save()
+                                    self._log(f"   [EXCEL] Saved media_id for scene {pid}: {images[0].media_name[:30]}...")
+                                except Exception as e:
+                                    self._log(f"   [EXCEL] Cannot save scene media_id: {e}", "warn")
+                            elif pid.isdigit():
+                                # Scene image but no media_name - this will cause I2V to skip
+                                self._log(f"   ⚠️ Scene {pid}: API không trả về media_name (I2V sẽ không hoạt động)", "warn")
+                        except Exception as ex:
+                            self._log(f"   [EXCEL] Update error: {ex}", "warn")
 
-                    if downloaded:
-                        # Update Excel
-                        if workbook and pid.isdigit():
-                            scene_id = int(pid)
-                            relative_path = f"img/{pid}.png"
-                            workbook.update_scene(scene_id, img_path=relative_path, status_img="done")
-                            workbook.save()
+                    # === SAVE MEDIA_ID to Excel for nv/loc images ===
+                    # Cả nv* và loc* đều nằm trong sheet "characters"
+                    if images[0].media_name and is_reference_image:
+                        media_id_saved = False
+                        if workbook:
+                            try:
+                                # update_character works for both nv* and loc* (same sheet)
+                                if workbook.update_character(pid, media_id=images[0].media_name):
+                                    workbook.save()
+                                    self._log(f"   [EXCEL] Saved media_id for {pid}: {images[0].media_name[:40]}...")
+                                    excel_media_ids[pid] = images[0].media_name
+                                    media_id_saved = True
+                                else:
+                                    self._log(f"   [EXCEL] {pid} not found in characters sheet", "warn")
+                            except Exception as e:
+                                self._log(f"   [EXCEL] Cannot save media_id: {e}", "warn")
 
-                        # Save media cache
-                        if images[0].media_name:
-                            cached_media_names[pid] = {
-                                'mediaName': images[0].media_name,
-                                'seed': images[0].seed
-                            }
-
-                        self._log(f"OK - Da tao: {downloaded}", "success")
-                        self.stats["success"] += 1
-                    else:
-                        self._log("Loi download", "error")
-                        self.stats["failed"] += 1
+                        # Fallback: save to cache file if Excel update fails
+                        if not media_id_saved:
+                            try:
+                                cached_media_names[pid] = {'mediaName': images[0].media_name}
+                                self._save_media_cache(cached_media_names)
+                                self._log(f"   [CACHE] Fallback - saved media_id for {pid}")
+                                excel_media_ids[pid] = images[0].media_name
+                            except Exception as e:
+                                self._log(f"   [CACHE] Cannot save media_id: {e}", "warn")
+                    elif images[0].media_name:
+                        self._log(f"   Media name: {images[0].media_name[:40]}...")
                 else:
-                    self._log(f"Loi: {error}", "error")
+                    self._log(f"   ✗ Thất bại: {error}", "error")
                     self.stats["failed"] += 1
 
-                # Delay
-                delay = self.config.get('flow_delay', 3.0)
-                if i < len(prompts) - 1:
-                    time.sleep(delay)
+                    # Check for token expiry
+                    if error and "401" in str(error):
+                        self._log("❌ Bearer token hết hạn!", "error")
+                        break
+
+                    # Check for 429 - Quota exceeded, cần đổi proxy/tài khoản
+                    if error and "429" in str(error):
+                        self._log(f"⚠️ Lỗi 429 (Quota) - Restart Chrome + đổi proxy...", "warn")
+                        try:
+                            if drission_api.restart_chrome():
+                                self._log(f"→ Retry prompt: {pid}...", "info")
+                                success2, images2, error2 = drission_api.generate_image(
+                                    prompt=prompt,
+                                    save_dir=save_dir,
+                                    filename=pid,
+                                    image_inputs=image_inputs if image_inputs else None
+                                )
+                                if success2 and images2:
+                                    self._log(f"   ✓ Retry thành công!")
+                                    self.stats["success"] += 1
+                                    self.stats["failed"] -= 1
+                                    consecutive_errors = 0
+                                    continue
+                                else:
+                                    self._log(f"   ✗ Retry vẫn thất bại: {error2}", "warn")
+                            else:
+                                self._log("✗ Không restart được Chrome", "error")
+                        except Exception as e:
+                            self._log(f"✗ Restart error: {e}", "error")
+
+                    # Check for 400 - Invalid argument (reference image expired or invalid prompt)
+                    if error and "400" in str(error):
+                        self._log(f"⚠️ Lỗi 400 - Restart Chrome + retry không có reference...", "warn")
+                        try:
+                            # Restart Chrome trước khi retry
+                            if drission_api.restart_chrome():
+                                # Retry without reference images
+                                success2, images2, error2 = drission_api.generate_image(
+                                    prompt=prompt,
+                                    save_dir=save_dir,
+                                    filename=pid,
+                                    image_inputs=None  # No reference images
+                                )
+                                if success2 and images2:
+                                    self._log(f"   ✓ Retry (no ref) thành công!")
+                                    self.stats["success"] += 1
+                                    self.stats["failed"] -= 1  # Undo fail count
+                                    consecutive_errors = 0
+                                    continue  # Move to next prompt
+                                else:
+                                    self._log(f"   ✗ Retry (no ref) thất bại: {error2}", "warn")
+                        except Exception as e:
+                            self._log(f"   ✗ Retry exception: {e}", "error")
+
+                    # Check for 403 - restart Chrome với proxy mới
+                    if error and "403" in str(error):
+                        self._log(f"⚠️ Lỗi 403 - Restart Chrome với proxy mới...", "warn")
+                        try:
+                            # Restart Chrome (clear blocked IPs + restart với proxy)
+                            if drission_api.restart_chrome():
+                                # Retry current prompt with new Chrome session
+                                self._log(f"→ Retry prompt: {pid}...", "info")
+                                success2, images2, error2 = drission_api.generate_image(
+                                    prompt=prompt,
+                                    save_dir=save_dir,
+                                    filename=pid,
+                                    image_inputs=image_inputs if image_inputs else None
+                                )
+                                if success2 and images2:
+                                    self._log(f"   ✓ Retry thành công! Saved {len(images2)} image(s)")
+                                    self.stats["success"] += 1
+                                    self.stats["failed"] -= 1  # Undo the fail count
+                                    # Save media_id for scene images
+                                    if images2[0].media_name and not is_reference_image:
+                                        try:
+                                            if workbook:
+                                                workbook.update_scene(int(pid), media_id=images2[0].media_name)
+                                                workbook.save()
+                                                self._log(f"   [EXCEL] Saved media_id for scene {pid}")
+                                        except:
+                                            pass
+                                    # Save media_id for nv/loc images
+                                    if images2[0].media_name and is_reference_image:
+                                        media_id_saved = False
+                                        if workbook:
+                                            try:
+                                                if workbook.update_character(pid, media_id=images2[0].media_name):
+                                                    workbook.save()
+                                                    self._log(f"   [EXCEL] Saved media_id for {pid}")
+                                                    excel_media_ids[pid] = images2[0].media_name
+                                                    media_id_saved = True
+                                            except:
+                                                pass
+                                        # Fallback to cache
+                                        if not media_id_saved:
+                                            try:
+                                                cached_media_names[pid] = {'mediaName': images2[0].media_name}
+                                                self._save_media_cache(cached_media_names)
+                                                excel_media_ids[pid] = images2[0].media_name
+                                            except:
+                                                pass
+                                    elif images2[0].media_name:
+                                        self._log(f"   Media name: {images2[0].media_name[:40]}...")
+                                else:
+                                    self._log(f"   ✗ Retry vẫn thất bại: {error2}", "error")
+                            else:
+                                self._log("✗ Không restart được Chrome", "error")
+                                break
+                        except Exception as e:
+                            self._log(f"✗ Restart error: {e}", "error")
+                            break
 
             except Exception as e:
-                self._log(f"Exception: {e}", "error")
+                self._log(f"   ✗ Exception: {e}", "error")
                 self.stats["failed"] += 1
 
-        # Save media cache
-        if cached_media_names:
-            self._save_media_cache(cached_media_names)
+            # Rate limit
+            time.sleep(1)
+
+        # Save workbook (trước retry phase)
+        if workbook:
+            try:
+                workbook.save()
+            except:
+                pass
+
+        # === RETRY PHASE: Tìm và retry những ảnh còn thiếu ===
+        if self.stats["failed"] > 0:
+            self._log("\n" + "=" * 60)
+            self._log("RETRY PHASE - Tìm ảnh còn thiếu")
+            self._log("=" * 60)
+
+            # Tìm những prompts chưa có ảnh
+            missing_prompts = []
+            for prompt_data in prompts:
+                pid = str(prompt_data.get('id', ''))
+                if not pid:
+                    continue
+
+                is_reference = pid.lower().startswith('nv') or pid.lower().startswith('loc')
+                save_dir = self.nv_path if is_reference else output_dir
+                output_file = save_dir / f"{pid}.png"
+
+                if not output_file.exists():
+                    missing_prompts.append(prompt_data)
+
+            if missing_prompts:
+                self._log(f"Tìm thấy {len(missing_prompts)} ảnh thiếu, đang retry...")
+
+                # Retry up to 3 rounds
+                MAX_RETRY_ROUNDS = 3
+                for retry_round in range(MAX_RETRY_ROUNDS):
+                    if not missing_prompts:
+                        break
+
+                    self._log(f"\n--- Retry Round {retry_round + 1}/{MAX_RETRY_ROUNDS} ---")
+                    still_missing = []
+
+                    for prompt_data in missing_prompts:
+                        pid = str(prompt_data.get('id', ''))
+                        prompt = prompt_data.get('prompt', '')
+                        is_reference = pid.lower().startswith('nv') or pid.lower().startswith('loc')
+                        save_dir = self.nv_path if is_reference else output_dir
+
+                        self._log(f"[RETRY] {pid}...")
+
+                        try:
+                            # Build reference images if needed
+                            image_inputs = None
+                            refs = prompt_data.get('references', [])
+                            if refs and not is_reference:
+                                image_inputs = []
+                                for ref_id in refs:
+                                    ref_key = ref_id.lower()
+                                    media_id = None
+                                    for k, v in excel_media_ids.items():
+                                        if k.lower() == ref_key:
+                                            media_id = v
+                                            break
+                                    if not media_id:
+                                        for k, v in cached_media_names.items():
+                                            if k.lower() == ref_key:
+                                                media_id = v.get('mediaName', v) if isinstance(v, dict) else v
+                                                break
+                                    if media_id:
+                                        image_inputs.append({
+                                            "inputType": "IMAGE_INPUT_TYPE_REFERENCE",
+                                            "referenceId": media_id,
+                                            "referenceType": "REFERENCE_TYPE_STYLE"
+                                        })
+
+                            success, images, error = drission_api.generate_image(
+                                prompt=prompt,
+                                save_dir=save_dir,
+                                filename=pid,
+                                image_inputs=image_inputs
+                            )
+
+                            if success and images:
+                                self._log(f"   ✓ Retry OK: {pid}")
+                                self.stats["success"] += 1
+                                self.stats["failed"] -= 1
+                            else:
+                                self._log(f"   ✗ Retry fail: {error}", "warn")
+                                still_missing.append(prompt_data)
+
+                        except Exception as e:
+                            self._log(f"   ✗ Retry error: {e}", "error")
+                            still_missing.append(prompt_data)
+
+                        time.sleep(2)
+
+                    missing_prompts = still_missing
+
+                    # Wait before next round
+                    if missing_prompts and retry_round < MAX_RETRY_ROUNDS - 1:
+                        wait_time = 5 * (retry_round + 1)
+                        self._log(f"Còn {len(missing_prompts)} ảnh thiếu, đợi {wait_time}s...")
+                        time.sleep(wait_time)
+
+                if missing_prompts:
+                    self._log(f"⚠️ Vẫn còn {len(missing_prompts)} ảnh không tạo được sau {MAX_RETRY_ROUNDS} rounds", "warn")
+            else:
+                self._log("Tất cả ảnh đã có, không cần retry")
+
+        # === LƯU TOKEN VÀO EXCEL + CACHE CHO VIDEO WORKER ===
+        # Quan trọng: Video worker cần token để tạo I2V
+        try:
+            if drission_api.bearer_token and drission_api.project_id:
+                bearer = drission_api.bearer_token
+                if bearer.startswith("Bearer "):
+                    bearer = bearer[7:]  # Remove "Bearer " prefix
+                project_id = drission_api.project_id
+                # Lấy recaptcha_token nếu có (quan trọng cho I2V!)
+                recaptcha = getattr(drission_api, 'recaptcha_token', '') or ''
+                x_browser_val = getattr(drission_api, 'x_browser_validation', '') or ''
+
+                # 1. Lưu vào config để _save_media_cache có thể đọc
+                self.config['flow_bearer_token'] = bearer
+                self.config['flow_project_id'] = project_id
+                self.config['flow_recaptcha_token'] = recaptcha
+                self.config['flow_x_browser_validation'] = x_browser_val
+
+                # 2. Lưu vào Excel (sheet config) để tái sử dụng
+                if workbook:
+                    try:
+                        import openpyxl
+                        wb = openpyxl.load_workbook(excel_path)
+
+                        # Tạo hoặc lấy sheet 'config'
+                        if 'config' not in wb.sheetnames:
+                            ws = wb.create_sheet('config')
+                            ws['A1'] = 'key'
+                            ws['B1'] = 'value'
+                            next_row = 2
+                        else:
+                            ws = wb['config']
+                            next_row = ws.max_row + 1
+
+                        # Lấy project URL để lưu (cho lần chạy tiếp theo vào đúng project)
+                        project_url = getattr(drission_api, '_current_project_url', '')
+                        if not project_url and project_id:
+                            project_url = f"https://labs.google/fx/vi/tools/flow/project/{project_id}"
+
+                        # Lưu Chrome profile path để resume đúng profile
+                        chrome_profile_path = str(drission_api.profile_dir) if hasattr(drission_api, 'profile_dir') else ''
+
+                        # Lưu các config - đầy đủ để tái sử dụng cho I2V
+                        config_items = {
+                            'flow_project_id': project_id,
+                            'flow_project_url': project_url,  # URL để vào lại project cũ
+                            'flow_bearer_token': bearer,  # Full token để video worker dùng
+                            'flow_recaptcha_token': recaptcha,  # Quan trọng cho I2V!
+                            'flow_x_browser_validation': x_browser_val,  # Auth header
+                            'token_time': str(int(time.time())),
+                            'chrome_profile_path': chrome_profile_path  # Profile để resume đúng Chrome
+                        }
+
+                        for key, value in config_items.items():
+                            # Tìm row có key này để update
+                            found = False
+                            for row_num in range(2, ws.max_row + 1):
+                                if ws.cell(row=row_num, column=1).value == key:
+                                    ws.cell(row=row_num, column=2, value=value)
+                                    found = True
+                                    break
+                            if not found:
+                                ws.cell(row=next_row, column=1, value=key)
+                                ws.cell(row=next_row, column=2, value=value)
+                                next_row += 1
+
+                        wb.save(excel_path)
+                        wb.close()
+                        self._log(f"[EXCEL] Saved project_id + token to Excel")
+                    except Exception as e:
+                        self._log(f"[EXCEL] Warning: Cannot save to Excel: {e}", "warn")
+
+                # 3. Lưu full token vào media cache (để video worker dùng)
+                self._save_media_cache(cached_media_names)
+                self._log(f"[CACHE] Saved full token for video worker")
+        except Exception as e:
+            self._log(f"[CACHE] Warning: Cannot save token: {e}", "warn")
+
+        # === I2V: TẠO VIDEO TỪ ẢNH (CÙNG SESSION CHROME) ===
+        video_count_setting = self.config.get('video_count', 0)
+        try:
+            if video_count_setting == 'full':
+                video_count = 999999  # Tất cả
+            else:
+                video_count = int(video_count_setting)
+        except:
+            video_count = 0
+
+        if video_count > 0 and drission_api._ready:
+            self._log("")
+            self._log("=" * 60)
+            self._log(f"[I2V] TẠO VIDEO TỪ ẢNH (cùng session)")
+            self._log("=" * 60)
+
+            # Lấy danh sách scenes cần tạo video (có media_id, chưa có video)
+            scenes_for_video = []
+            scenes_without_media_id = []
+            if workbook:
+                try:
+                    all_scenes = workbook.get_scenes()
+                    self._log(f"[I2V] Loaded {len(all_scenes)} scenes from Excel")
+
+                    for scene in all_scenes:
+                        # Chỉ lấy scene (không phải character/location)
+                        scene_id = str(scene.scene_id) if hasattr(scene, 'scene_id') else ''
+                        if not scene_id or not scene_id.isdigit():
+                            continue
+
+                        # Kiểm tra có media_id và chưa có video
+                        media_id = getattr(scene, 'media_id', '') or ''
+                        video_path = getattr(scene, 'video_path', '') or ''
+                        status_vid = getattr(scene, 'status_vid', '') or ''
+
+                        if not media_id:
+                            scenes_without_media_id.append(scene_id)
+                        elif not video_path and status_vid != 'done':
+                            video_prompt = getattr(scene, 'video_prompt', '') or 'Subtle cinematic motion'
+                            scenes_for_video.append({
+                                'scene_id': scene_id,
+                                'media_id': media_id,
+                                'video_prompt': video_prompt
+                            })
+
+                    if scenes_without_media_id:
+                        self._log(f"[I2V] ⚠️ {len(scenes_without_media_id)} scenes KHÔNG CÓ media_id: {scenes_without_media_id[:5]}{'...' if len(scenes_without_media_id) > 5 else ''}", "warn")
+                except Exception as e:
+                    self._log(f"[I2V] Error loading scenes: {e}", "warn")
+
+            # Fallback: Lấy từ cached_media_names
+            if not scenes_for_video and cached_media_names:
+                for pid, media_info in cached_media_names.items():
+                    if pid.isdigit():  # Chỉ scenes (số)
+                        media_id = media_info.get('mediaName', media_info) if isinstance(media_info, dict) else media_info
+                        if media_id:
+                            scenes_for_video.append({
+                                'scene_id': pid,
+                                'media_id': media_id,
+                                'video_prompt': 'Subtle cinematic motion, slow camera movement'
+                            })
+
+            # Giới hạn số lượng
+            scenes_for_video = scenes_for_video[:video_count]
+
+            if scenes_for_video:
+                self._log(f"[I2V] Tạo video cho {len(scenes_for_video)} ảnh...")
+                video_success = 0
+                video_failed = 0
+
+                for i, scene_info in enumerate(scenes_for_video):
+                    scene_id = scene_info['scene_id']
+                    media_id = scene_info['media_id']
+                    video_prompt = scene_info['video_prompt']
+
+                    self._log(f"[I2V] [{i+1}/{len(scenes_for_video)}] Scene {scene_id}...")
+
+                    try:
+                        # generate_video sẽ tự refresh recaptcha token (one-time token)
+                        success, video_url, error = drission_api.generate_video(
+                            media_id=media_id,
+                            prompt=video_prompt,
+                            video_model="veo_3_0_r2v_fast_ultra"
+                        )
+
+                        if success and video_url:
+                            # Download video
+                            video_dir = excel_path.parent / "video" if excel_path else output_dir / "video"
+                            video_dir.mkdir(parents=True, exist_ok=True)
+                            video_file = video_dir / f"{scene_id}.mp4"
+
+                            try:
+                                import requests as req
+                                resp = req.get(video_url, timeout=60)
+                                if resp.status_code == 200:
+                                    video_file.write_bytes(resp.content)
+                                    self._log(f"   ✓ OK: {video_file.name}")
+                                    video_success += 1
+
+                                    # Update Excel
+                                    if workbook:
+                                        workbook.update_scene(int(scene_id), video_path=video_file.name, status_vid='done')
+                                        workbook.save()
+                                else:
+                                    self._log(f"   ✗ Download failed: {resp.status_code}", "warn")
+                                    video_failed += 1
+                            except Exception as dl_err:
+                                self._log(f"   ✗ Download error: {dl_err}", "warn")
+                                video_failed += 1
+                        else:
+                            self._log(f"   ✗ Failed: {error}", "warn")
+                            video_failed += 1
+
+                    except Exception as e:
+                        self._log(f"   ✗ Error: {e}", "error")
+                        video_failed += 1
+
+                    # Delay giữa các video
+                    time.sleep(3)
+
+                self._log(f"[I2V] Hoàn tất: {video_success} OK, {video_failed} failed")
+            else:
+                self._log(f"[I2V] Không có ảnh nào cần tạo video")
+        elif video_count > 0:
+            self._log(f"[I2V] Bỏ qua - DrissionAPI chưa sẵn sàng")
+
+        # Cleanup (sau I2V)
+        try:
+            drission_api.close()
+        except:
+            pass
+
+        # Save workbook final
+        if workbook:
+            try:
+                workbook.save()
+            except:
+                pass
 
         # Summary
-        self._log("\n" + "=" * 60)
-        self._log("HOAN THANH (API MODE)")
+        self._log("=" * 60)
+        self._log("HOAN THANH (DRISSION MODE)")
         self._log("=" * 60)
         self._log(f"Tong: {self.stats['total']}")
         self._log(f"Thanh cong: {self.stats['success']}")

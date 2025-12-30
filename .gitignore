@@ -44,3 +44,4 @@ Thumbs.db
 
 # Logs
 *.log
+config/blocked_proxies.json

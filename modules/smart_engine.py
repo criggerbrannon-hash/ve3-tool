@@ -107,13 +107,14 @@ class SmartEngine:
     # Chi refresh khi API tra loi 401 (authentication error)
     # Dieu nay toi uu hon vi token thuong valid lau hon 50 phut
 
-    def __init__(self, config_path: str = None, assigned_profile: str = None):
+    def __init__(self, config_path: str = None, assigned_profile: str = None, worker_id: int = 0):
         """
         Initialize SmartEngine.
 
         Args:
             config_path: Path to accounts.json config file
             assigned_profile: Specific Chrome profile name to use (for parallel processing)
+            worker_id: Worker ID for parallel processing (affects proxy selection, Chrome port)
         """
         # Support VE3_CONFIG_DIR environment variable
         if config_path:
@@ -132,6 +133,9 @@ class SmartEngine:
 
         # Assigned profile for parallel processing
         self.assigned_profile = assigned_profile
+
+        # Worker ID for parallel processing (proxy, Chrome port)
+        self.worker_id = worker_id
 
         # Resources
         self.profiles: List[Resource] = []
@@ -281,10 +285,16 @@ class SmartEngine:
                     self.gemini_keys.append(Resource(type='gemini', value=k))
 
             # Ollama local (fallback)
+            # Đọc từ nested api.ollama hoặc top-level ollama_model
             ollama_cfg = api.get('ollama', {})
             if ollama_cfg:
                 self.ollama_model = ollama_cfg.get('model', 'qwen2.5:7b')
                 self.ollama_endpoint = ollama_cfg.get('endpoint', 'http://localhost:11434')
+            # Fallback: đọc từ top-level (settings.yaml mới)
+            if data.get('ollama_model'):
+                self.ollama_model = data.get('ollama_model')
+            if data.get('ollama_endpoint'):
+                self.ollama_endpoint = data.get('ollama_endpoint')
 
             # Settings
             settings = data.get('settings', {})
@@ -869,8 +879,11 @@ class SmartEngine:
         cfg['preferred_provider'] = 'gemini' if self.gemini_keys else ('groq' if self.groq_keys else 'deepseek')
 
         # Ollama local model (fallback khi tat ca API fail)
-        cfg['ollama_model'] = self.ollama_model
-        cfg['ollama_endpoint'] = self.ollama_endpoint
+        # Ưu tiên từ settings.yaml, fallback từ self (accounts.json)
+        if not cfg.get('ollama_model'):
+            cfg['ollama_model'] = self.ollama_model
+        if not cfg.get('ollama_endpoint'):
+            cfg['ollama_endpoint'] = self.ollama_endpoint
 
         # Retry with different keys
         for attempt in range(self.max_retries):
@@ -904,6 +917,93 @@ class SmartEngine:
                 self.mark_resource_used(ai_key, False)
 
         return False
+
+    # ========== EXCEL PROJECT_ID HELPERS ==========
+
+    def _get_project_id_from_excel(self, excel_path: Path) -> str:
+        """
+        Đọc flow_project_id từ Excel (sheet 'config' hoặc cell đặc biệt).
+
+        Mỗi voice/project cần giữ project_id riêng để:
+        - Sử dụng lại reference images khi chạy lại
+        - Đảm bảo ảnh mới khớp style với ảnh cũ
+        """
+        import openpyxl
+        try:
+            wb = openpyxl.load_workbook(excel_path)
+
+            # Tìm trong sheet 'config' trước
+            if 'config' in wb.sheetnames:
+                ws = wb['config']
+                # Tìm row có key = 'flow_project_id'
+                for row in ws.iter_rows(min_row=1, max_row=10, values_only=True):
+                    if row and len(row) >= 2:
+                        key = str(row[0] or '').strip().lower()
+                        if key == 'flow_project_id' and row[1]:
+                            return str(row[1]).strip()
+
+            # Fallback: Tìm trong sheet đầu tiên, cell cuối cùng của header row
+            # Format: Cột cuối có header 'flow_project_id', giá trị ở row 2
+            ws = wb.active
+            if ws:
+                headers = [cell.value for cell in ws[1]]
+                for i, h in enumerate(headers):
+                    if h and str(h).lower().strip() == 'flow_project_id':
+                        val = ws.cell(row=2, column=i+1).value
+                        if val:
+                            return str(val).strip()
+
+            wb.close()
+        except Exception as e:
+            self.log(f"Lỗi đọc project_id từ Excel: {e}", "WARN")
+
+        return ""
+
+    def _save_project_id_to_excel(self, excel_path: Path, project_id: str) -> bool:
+        """
+        Lưu flow_project_id vào Excel (tạo sheet 'config' nếu chưa có).
+
+        Gọi sau khi tạo ảnh để lưu project_id cho lần chạy sau.
+        """
+        import openpyxl
+        if not project_id:
+            return False
+
+        try:
+            wb = openpyxl.load_workbook(excel_path)
+
+            # Tạo hoặc lấy sheet 'config'
+            if 'config' not in wb.sheetnames:
+                ws = wb.create_sheet('config')
+                ws['A1'] = 'key'
+                ws['B1'] = 'value'
+            else:
+                ws = wb['config']
+
+            # Tìm row có key = 'flow_project_id' để update
+            found = False
+            for row_num, row in enumerate(ws.iter_rows(min_row=2, max_row=20, values_only=True), start=2):
+                if row and len(row) >= 1:
+                    key = str(row[0] or '').strip().lower()
+                    if key == 'flow_project_id':
+                        ws.cell(row=row_num, column=2, value=project_id)
+                        found = True
+                        break
+
+            # Nếu chưa có, thêm row mới
+            if not found:
+                next_row = ws.max_row + 1
+                ws.cell(row=next_row, column=1, value='flow_project_id')
+                ws.cell(row=next_row, column=2, value=project_id)
+
+            wb.save(excel_path)
+            wb.close()
+            self.log(f"  -> Lưu project_id vào Excel: {project_id[:8]}...")
+            return True
+
+        except Exception as e:
+            self.log(f"Lỗi lưu project_id vào Excel: {e}", "WARN")
+            return False
 
     # ========== PARALLEL CHARACTER GENERATION ==========
 
@@ -966,7 +1066,34 @@ class SmartEngine:
                 # CHI lay character/location prompts (nv*, loc*)
                 if pid_str.startswith('nv') or pid_str.startswith('loc'):
                     out_path = proj_dir / "nv" / f"{pid_str}.png"
-                    if not out_path.exists():  # Chi lay chua co anh
+
+                    # === CHECK MEDIA_ID ===
+                    # Nếu ảnh tồn tại nhưng KHÔNG có media_id → vẫn cần tạo lại
+                    need_generate = False
+                    if not out_path.exists():
+                        need_generate = True
+                    else:
+                        # Kiểm tra media_id trong Excel
+                        try:
+                            from modules.excel_manager import PromptWorkbook
+                            wb_check = PromptWorkbook(excel_path)
+                            wb_check.load_or_create()
+                            media_ids = wb_check.get_media_ids()
+                            # Case-insensitive check
+                            has_media_id = any(k.lower() == pid_str.lower() for k in media_ids.keys())
+                            if not has_media_id:
+                                self.log(f"[CHAR] {pid_str}: Ảnh tồn tại nhưng KHÔNG có media_id → tạo lại")
+                                # Xóa file cũ
+                                try:
+                                    out_path.unlink()
+                                    self.log(f"[CHAR] Đã xóa {out_path.name}")
+                                except:
+                                    pass
+                                need_generate = True
+                        except Exception as e:
+                            self.log(f"[CHAR] Lỗi kiểm tra media_id: {e}", "WARN")
+
+                    if need_generate:
                         prompts.append({
                             'id': pid_str,
                             'prompt': prompt_str,
@@ -1442,14 +1569,48 @@ class SmartEngine:
                 profile_name=profile_name,
                 headless=headless,
                 verbose=True,
-                config_path=str(settings_path)
+                config_path=str(settings_path),
+                worker_id=self.worker_id  # For parallel processing
             )
 
-            # === INJECT PRE-FETCHED PROJECT_ID nếu có ===
-            # Quan trọng: mỗi worker cần project riêng để tránh conflict media_ids
+            # === QUAN TRỌNG: Load project_id từ Excel khi chạy lại (RESUME MODE) ===
+            # ƯU TIÊN: Excel (chính thức) > Cache > settings.yaml
+            # Mỗi voice/project có project_id riêng để giữ reference images
+            excel_project_id = self._get_project_id_from_excel(excel_files[0])
+            if excel_project_id:
+                self.log(f"  -> Resume: Tìm thấy project_id trong Excel: {excel_project_id[:8]}...")
+
+            # Fallback: đọc từ cache nếu Excel không có
+            cached_project_id = None
+            cache_path = proj_dir / "prompts" / ".media_cache.json"
+            if not excel_project_id and cache_path.exists():
+                try:
+                    with open(cache_path, 'r', encoding='utf-8') as f:
+                        cache_data = json.load(f)
+                    cached_project_id = cache_data.get('_project_id', '')
+                    cached_bearer_token = cache_data.get('_bearer_token', '')
+                    if cached_project_id:
+                        self.log(f"  -> Resume: Tìm thấy project_id trong cache: {cached_project_id[:8]}...")
+                    if cached_bearer_token and not bearer_token:
+                        bearer_token = cached_bearer_token
+                        self.log(f"  -> Resume: Dùng bearer_token từ cache")
+                except Exception as e:
+                    self.log(f"  -> Lỗi đọc cache: {e}", "WARN")
+
+            # === INJECT PROJECT_ID theo thứ tự ưu tiên ===
+            # 1. Pre-fetched (parallel batch mode - mỗi worker có project riêng)
+            # 2. Excel (resume mode - nguồn chính thức)
+            # 3. Cache (fallback)
+            # 4. Tạo mới (lần đầu chạy)
             if prefetched_project_id:
                 generator.config['flow_project_id'] = prefetched_project_id
-                self.log(f"  -> Inject project_id: {prefetched_project_id[:8]}...")
+                self.log(f"  -> Dùng project_id: {prefetched_project_id[:8]}... (parallel batch)")
+            elif excel_project_id:
+                generator.config['flow_project_id'] = excel_project_id
+                self.log(f"  -> Dùng project_id: {excel_project_id[:8]}... (từ Excel)")
+            elif cached_project_id:
+                generator.config['flow_project_id'] = cached_project_id
+                self.log(f"  -> Dùng project_id: {cached_project_id[:8]}... (từ cache)")
 
             # Goi generate_from_prompts_auto - tu dong chon API hoac Chrome
             result = generator.generate_from_prompts_auto(
@@ -1472,6 +1633,12 @@ class SmartEngine:
             # Parse results
             success_count = result.get("success", 0)
             failed_count = result.get("failed", 0)
+
+            # === LƯU PROJECT_ID VÀO EXCEL ===
+            # Quan trọng: Lưu để khi chạy lại vẫn dùng đúng project (giữ reference images)
+            final_project_id = generator.config.get('flow_project_id', '')
+            if final_project_id and success_count > 0:
+                self._save_project_id_to_excel(excel_files[0], final_project_id)
 
             # Video queueing sẽ được thực hiện sau khi tất cả ảnh hoàn thành (trong run())
 
@@ -1649,7 +1816,8 @@ class SmartEngine:
                     project_path=str(proj_dir),
                     profile_name=profile_name,
                     headless=headless,
-                    verbose=True
+                    verbose=True,
+                    worker_id=self.worker_id  # For parallel processing
                 )
                 self._browser_generator = generator
                 # Restore project_id tu generator cu
@@ -1988,12 +2156,99 @@ class SmartEngine:
         all_prompts = self._load_prompts(excel_path, proj_dir)
 
         if not all_prompts:
-            return {"error": "no_prompts"}
+            # Excel có 0 prompts = file bị lỗi, xóa để tạo lại và tiếp tục
+            self.log(f"⚠️ Excel có 0 prompts - xóa file lỗi và tạo lại...", "WARN")
+            try:
+                excel_path.unlink()
+                self.log(f"   Đã xóa: {excel_path.name}")
+
+                # Tạo lại prompts từ SRT
+                if srt_path.exists():
+                    self.log("   Đang tạo lại prompts từ SRT...")
+                    if self.make_prompts(proj_dir, name, excel_path):
+                        # Load lại prompts sau khi tạo mới
+                        all_prompts = self._load_prompts(excel_path, proj_dir)
+                        if all_prompts:
+                            self.log(f"   ✅ Đã tạo lại {len(all_prompts)} prompts!")
+                        else:
+                            self.log("   ❌ Tạo lại prompts thất bại!", "ERROR")
+                            return {"error": "prompts_regeneration_failed"}
+                    else:
+                        self.log("   ❌ make_prompts thất bại!", "ERROR")
+                        return {"error": "prompts_failed"}
+                else:
+                    self.log("   ❌ Không có SRT để tạo lại prompts!", "ERROR")
+                    return {"error": "no_srt_for_regeneration"}
+            except Exception as e:
+                self.log(f"   Không xóa được: {e}", "ERROR")
+                return {"error": "excel_delete_failed"}
+
+        # === LOAD MEDIA_IDs từ Excel để kiểm tra ===
+        excel_media_ids = {}
+        try:
+            from modules.excel_manager import PromptWorkbook
+            wb_check = PromptWorkbook(excel_path)
+            wb_check.load_or_create()
+            excel_media_ids = wb_check.get_media_ids()
+            if excel_media_ids:
+                self.log(f"  [EXCEL] Loaded {len(excel_media_ids)} media_ids: {list(excel_media_ids.keys())}")
+            else:
+                self.log(f"  [EXCEL] ⚠️ Không có media_id trong Excel", "WARN")
+
+                # === KIỂM TRA VÀ XÓA TẤT CẢ ẢNH NẾU KHÔNG CÓ MEDIA_ID ===
+                nv_dir = proj_dir / "nv"
+                img_dir = proj_dir / "img"
+
+                # Kiểm tra có ảnh nv/loc tồn tại không
+                nv_images = list(nv_dir.glob("*.png")) if nv_dir.exists() else []
+                if nv_images:
+                    self.log(f"  ⚠️ Có {len(nv_images)} ảnh nv/loc nhưng KHÔNG có media_id!", "WARN")
+                    self.log(f"  → Xóa TẤT CẢ ảnh (nv + img) và tạo lại từ đầu!", "WARN")
+
+                    # Xóa tất cả ảnh nv/loc
+                    for img_file in nv_images:
+                        try:
+                            img_file.unlink()
+                        except:
+                            pass
+                    self.log(f"  ✓ Đã xóa {len(nv_images)} ảnh nv/loc")
+
+                    # Xóa tất cả ảnh scene (vì không có tham chiếu đúng)
+                    if img_dir.exists():
+                        scene_images = list(img_dir.glob("*.png"))
+                        if scene_images:
+                            for img_file in scene_images:
+                                try:
+                                    img_file.unlink()
+                                except:
+                                    pass
+                            self.log(f"  ✓ Đã xóa {len(scene_images)} ảnh scene (không có tham chiếu đúng)")
+
+        except Exception as e:
+            self.log(f"  [EXCEL] Lỗi load media_ids: {e}", "WARN")
 
         # Helper: check cả .png và .mp4 (sau I2V, ảnh .png chuyển thành .mp4)
-        def _media_exists(output_path: str) -> bool:
+        def _media_exists(output_path: str, pid: str) -> bool:
             p = Path(output_path)
-            # Check original path (.png)
+
+            # Nếu là nv*/loc* - kiểm tra thêm media_id
+            if pid.lower().startswith('nv') or pid.lower().startswith('loc'):
+                if p.exists():
+                    # Ảnh tồn tại nhưng KHÔNG có media_id → cần tạo lại
+                    has_media_id = any(k.lower() == pid.lower() for k in excel_media_ids.keys())
+                    if not has_media_id:
+                        self.log(f"  [CHECK] {pid}: Ảnh tồn tại nhưng KHÔNG có media_id → cần tạo lại")
+                        # Xóa file cũ
+                        try:
+                            p.unlink()
+                            self.log(f"  [CHECK] Đã xóa {p.name}")
+                        except:
+                            pass
+                        return False  # Cần tạo lại
+                    return True  # Có cả ảnh và media_id
+                return False  # Chưa có ảnh
+
+            # Scene images - chỉ check file tồn tại
             if p.exists():
                 return True
             # Check .mp4 variant (sau I2V)
@@ -2001,8 +2256,8 @@ class SmartEngine:
                 return True
             return False
 
-        # Filter: chi lay prompts CHUA co anh (check cả .png và .mp4)
-        prompts = [p for p in all_prompts if not _media_exists(p['output_path'])]
+        # Filter: chi lay prompts CHUA co anh (hoặc ảnh nv/loc không có media_id)
+        prompts = [p for p in all_prompts if not _media_exists(p['output_path'], p.get('id', ''))]
         existing_count = len(all_prompts) - len(prompts)
 
         if existing_count > 0:
@@ -2011,8 +2266,12 @@ class SmartEngine:
         else:
             self.log(f"  Tổng: {len(all_prompts)} prompts")
 
-        # === START VIDEO WORKER TRƯỚC (để có thể queue cả ảnh mới và cũ) ===
-        self._start_video_worker(proj_dir)
+        # === CHỈ START VIDEO WORKER KHI TẤT CẢ ẢNH ĐÃ XONG ===
+        # Nếu còn ảnh → browser_flow_generator sẽ mở Chrome và dùng I2V cùng session
+        # Nếu hết ảnh → VIDEO worker mở Chrome riêng để tạo video
+        if not prompts:
+            self.log("[VIDEO] Tất cả ảnh đã xong - start VIDEO worker")
+            self._start_video_worker(proj_dir)
 
         # === LOAD CACHED MEDIA_NAMES ===
         # Dùng để tạo video từ ảnh mà không cần upload lại
@@ -2037,6 +2296,31 @@ class SmartEngine:
 
         if not prompts:
             self.log("  ✅ Tất cả ảnh đã tồn tại, skip tạo ảnh!", "OK")
+
+            # === RESTART VIDEO WORKER NẾU CHƯA CHẠY (resume mode) ===
+            if not self._video_worker_running:
+                self.log("[VIDEO] Video worker chưa chạy - thử restart từ cache...")
+                try:
+                    if cache_path.exists():
+                        with open(cache_path, 'r', encoding='utf-8') as f:
+                            cache_data = json.load(f)
+                        cached_token = cache_data.get('_bearer_token', '')
+                        cached_project_id = cache_data.get('_project_id', '')
+                        cached_project_url = cache_data.get('_project_url', '')
+                        cached_chrome_profile = cache_data.get('_chrome_profile_path', '')
+                        if cached_token and cached_project_id:
+                            self.log(f"[VIDEO] Resume: Tìm thấy token từ cache: {cached_project_id[:8]}...")
+                            if not hasattr(self, '_video_settings') or not self._video_settings:
+                                self._video_settings = {}
+                            self._video_settings['bearer_token'] = cached_token
+                            self._video_settings['project_id'] = cached_project_id
+                            self._video_settings['project_url'] = cached_project_url
+                            self._video_settings['chrome_profile_path'] = cached_chrome_profile
+                            self._start_video_worker(proj_dir)
+                            if self._video_worker_running:
+                                self.log("[VIDEO] Resume: Đã restart video worker!")
+                except Exception as e:
+                    self.log(f"[VIDEO] Resume: Không thể restart video worker: {e}", "WARN")
 
             # Queue video cho các ảnh đã có (resume mode)
             if self._video_worker_running:
@@ -2083,6 +2367,38 @@ class SmartEngine:
                 self.log("[STEP 5] Tao images bang BROWSER MODE...")
                 scene_results = self.generate_images_browser(prompts, proj_dir)
 
+            # === RESTART VIDEO WORKER NẾU CHƯA CHẠY (sau DRISSION MODE đã lưu token) ===
+            if not self._video_worker_running:
+                # DRISSION MODE đã hoàn thành và lưu token vào cache
+                # Thử restart video worker với token mới
+                self.log("[VIDEO] Video worker chưa chạy - thử restart với token từ DRISSION MODE...")
+                try:
+                    # Reload token từ cache (DRISSION MODE vừa lưu)
+                    if cache_path.exists():
+                        with open(cache_path, 'r', encoding='utf-8') as f:
+                            cache_data = json.load(f)
+                        cached_token = cache_data.get('_bearer_token', '')
+                        cached_project_id = cache_data.get('_project_id', '')
+                        cached_project_url = cache_data.get('_project_url', '')
+                        cached_chrome_profile = cache_data.get('_chrome_profile_path', '')
+                        if cached_token and cached_project_id:
+                            self.log(f"[VIDEO] Tìm thấy token từ cache: {cached_project_id[:8]}...")
+                            # Force set token trước khi start worker
+                            if not hasattr(self, '_video_settings') or not self._video_settings:
+                                self._video_settings = {}
+                            self._video_settings['bearer_token'] = cached_token
+                            self._video_settings['project_id'] = cached_project_id
+                            self._video_settings['project_url'] = cached_project_url
+                            self._video_settings['chrome_profile_path'] = cached_chrome_profile
+                            # Thử start lại video worker
+                            self._start_video_worker(proj_dir)
+                            if self._video_worker_running:
+                                self.log("[VIDEO] Đã restart video worker thành công!")
+                        else:
+                            self.log("[VIDEO] Không có token trong cache", "WARN")
+                except Exception as e:
+                    self.log(f"[VIDEO] Không thể restart video worker: {e}", "WARN")
+
             # === QUEUE VIDEO GENERATION FOR ALL SCENE IMAGES ===
             if self._video_worker_running:
                 # Reload cache (có thể đã được cập nhật sau khi tạo ảnh)
@@ -2101,6 +2417,20 @@ class SmartEngine:
                     except:
                         pass
 
+                # === LOAD MEDIA_IDs từ Excel (bổ sung cho cache) ===
+                excel_scene_media_ids = {}
+                try:
+                    from modules.excel_manager import PromptWorkbook
+                    # Đảm bảo excel_path là Path object
+                    excel_path_obj = Path(excel_path) if isinstance(excel_path, str) else excel_path
+                    if excel_path_obj.exists():
+                        workbook = PromptWorkbook(str(excel_path_obj))
+                        excel_scene_media_ids = workbook.get_scene_media_ids()
+                        if excel_scene_media_ids:
+                            self.log(f"[VIDEO] Loaded {len(excel_scene_media_ids)} media_ids từ Excel")
+                except Exception as e:
+                    self.log(f"[VIDEO] Cannot load Excel media_ids: {e}", "WARN")
+
                 img_dir = proj_dir / "img"
                 queued = 0
                 skipped_mp4 = 0
@@ -2118,7 +2448,8 @@ class SmartEngine:
                         skipped_mp4 += 1
                     elif img_path.exists():
                         video_prompt = p.get('video_prompt', '')
-                        cached_media_name = media_cache.get(pid, '')
+                        # Ưu tiên: cache → Excel
+                        cached_media_name = media_cache.get(pid, '') or excel_scene_media_ids.get(pid, '')
                         self._queue_video_generation(img_path, pid, video_prompt, cached_media_name)
                         queued += 1
 
@@ -2283,11 +2614,14 @@ class SmartEngine:
                 if bearer_token and proxy_token:
                     generator = BrowserFlowGenerator(
                         project_path=str(proj_dir),
-                        flow_bearer_token=bearer_token,
-                        flow_project_id=project_id,
-                        proxy_api_token=proxy_token,
-                        use_api_mode=True
+                        verbose=True,
+                        config_path=str(settings_path),
+                        worker_id=self.worker_id  # For parallel processing
                     )
+                    # Set config values
+                    generator.config['flow_bearer_token'] = bearer_token
+                    generator.config['flow_project_id'] = project_id
+                    generator.config['proxy_api_token'] = proxy_token
 
                     # Generate missing images
                     for p in retry_prompts:
@@ -2605,6 +2939,27 @@ class SmartEngine:
             media_items.sort(key=lambda x: x['start'])
             self.log(f"  Tim thay {len(media_items)} media: {video_count} video clips, {image_count} images")
 
+            # === FIX: Xử lý khi scene đầu tiên thiếu ảnh/video ===
+            # Nếu media đầu tiên có start > 0.5s, nghĩa là có gap ở đầu video
+            # Giải pháp: Duplicate media đầu tiên để fill gap từ 0:00
+            GAP_THRESHOLD = 0.5  # Nếu gap > 0.5s thì cần xử lý
+            first_start = media_items[0]['start']
+
+            if first_start > GAP_THRESHOLD:
+                # Có gap ở đầu - dùng media đầu tiên để fill
+                self.log(f"  ⚠️ Scene 1 thiếu ảnh/video! Gap từ 0:00 → {first_start:.1f}s")
+                self.log(f"  → Sử dụng {media_items[0]['id']} để fill gap đầu video")
+
+                # Thêm filler item ở đầu (duplicate media đầu tiên)
+                filler_item = {
+                    'id': f"{media_items[0]['id']}_filler",
+                    'path': media_items[0]['path'],
+                    'start': 0.0,  # Bắt đầu từ 0:00
+                    'is_video': media_items[0]['is_video'],
+                    'is_filler': True  # Đánh dấu là filler
+                }
+                media_items.insert(0, filler_item)
+
             # 3. Tính duration cho mỗi media (CHỈ dựa vào start_time)
             # Lấy tổng thời lượng từ voice
             probe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration",
@@ -2646,9 +3001,16 @@ class SmartEngine:
                 video_time = 0.0  # Vị trí trong video output
                 for i in range(min(5, len(media_items))):
                     item = media_items[i]
-                    media_type = "🎬" if item['is_video'] else "🖼️"
+                    is_filler = item.get('is_filler', False)
+                    if is_filler:
+                        media_type = "🔄"  # Filler icon
+                    elif item['is_video']:
+                        media_type = "🎬"
+                    else:
+                        media_type = "🖼️"
                     end_time = video_time + item['duration']
-                    self.log(f"    {media_type} #{item['id']}: {video_time:.1f}s → {end_time:.1f}s (srt_start={item['start']:.1f}s, dur={item['duration']:.1f}s)")
+                    filler_note = " [FILLER]" if is_filler else ""
+                    self.log(f"    {media_type} #{item['id']}: {video_time:.1f}s → {end_time:.1f}s (srt_start={item['start']:.1f}s, dur={item['duration']:.1f}s){filler_note}")
                     video_time = end_time
                 if len(media_items) > 5:
                     self.log(f"    ... và {len(media_items) - 5} clips khác")
@@ -2659,12 +3021,16 @@ class SmartEngine:
                 # Fade in/out cho mỗi clip
                 import random
                 FADE_DURATION = 0.4  # 0.4 giây fade
+
+                # Transition ratio: 20% none, 40% fade_black, 40% mix
+                # Mỗi clip sẽ random theo tỉ lệ này để video đa dạng hơn
+                self.log(f"  Transition: Random (20% none, 40% fade_black, 40% mix)")
                 self.log(f"  Dang tao {len(media_items)} clips ({video_count} video, {image_count} image)...")
 
                 # Ken Burns settings từ config
                 # Video composition mode: quality, balanced, fast
-                compose_mode = "balanced"
-                kb_intensity = "normal"
+                compose_mode = "quality"  # Default: quality (mượt nhất, như CapCut)
+                kb_intensity = "strong"   # Default: strong (zoom 18%, pan 12%)
                 try:
                     import yaml
                     config_path = Path(__file__).parent.parent / "config" / "settings.yaml"
@@ -2722,8 +3088,14 @@ class SmartEngine:
                     target_duration = item['duration']
 
                     # === TRANSITION EFFECTS ===
-                    # 3 loại chuyển cảnh random: none, fade_black, mix
-                    transition_type = random.choice(['none', 'fade_black', 'fade_black', 'mix'])  # 50% fade, 25% none, 25% mix
+                    # Random theo tỉ lệ: 20% none, 40% fade_black, 40% mix
+                    rand_val = random.random()
+                    if rand_val < 0.2:
+                        transition_type = 'none'       # 20%
+                    elif rand_val < 0.6:
+                        transition_type = 'fade_black' # 40%
+                    else:
+                        transition_type = 'mix'        # 40%
                     fade_out_start = max(0, target_duration - FADE_DURATION)
 
                     if transition_type == 'none':
@@ -2783,7 +3155,14 @@ class SmartEngine:
                             ]
                     else:
                         # === IMAGE: Tạo clip (với hoặc không có Ken Burns) ===
-                        if kb_enabled:
+                        # SAFEGUARD: Clip > 20s thì skip zoompan để tránh timeout
+                        MAX_KB_DURATION = 20
+                        use_kb_for_this_clip = kb_enabled and target_duration <= MAX_KB_DURATION
+
+                        if target_duration > MAX_KB_DURATION and kb_enabled:
+                            self.log(f"  ⚠️ Clip {i}: {target_duration:.1f}s > {MAX_KB_DURATION}s, skip Ken Burns", "WARN")
+
+                        if use_kb_for_this_clip:
                             # Ken Burns effect (zoom/pan mượt mà)
                             kb_effect = ken_burns.get_random_effect(exclude_last=last_kb_effect)
                             last_kb_effect = kb_effect
@@ -2840,7 +3219,7 @@ class SmartEngine:
                                 "-r", "25", str(clip_path)
                             ]
 
-                    result = subprocess.run(cmd_clip, capture_output=True, text=True, timeout=120)
+                    result = subprocess.run(cmd_clip, capture_output=True, text=True, timeout=300)  # 5 phút cho zoompan
                     if result.returncode != 0:
                         self.log(f"  Clip {i} failed: {result.stderr[-200:]}", "ERROR")
                         continue
@@ -3236,22 +3615,77 @@ class SmartEngine:
                 bearer_token = ''
                 project_id = ''
 
-                # 1. ƯU TIÊN: Token từ project cache (.media_cache.json)
-                # Đây là token đã được cache khi tạo ảnh, dùng chung cho video
+                # 1. ƯU TIÊN: Token từ Excel (sheet 'config')
+                # Đây là nguồn chính thức, được lưu khi tạo ảnh
+                excel_bearer = ''
+                excel_recaptcha = ''
+                excel_x_browser = ''
+                if proj_dir:
+                    excel_files = list(proj_dir.glob("prompts/*.xlsx"))
+                    if excel_files:
+                        try:
+                            import openpyxl
+                            wb = openpyxl.load_workbook(excel_files[0])
+                            if 'config' in wb.sheetnames:
+                                ws = wb['config']
+                                for row in ws.iter_rows(min_row=2, max_row=20, values_only=True):
+                                    if row and len(row) >= 2:
+                                        key = str(row[0] or '').strip().lower()
+                                        val = str(row[1] or '').strip() if row[1] else ''
+                                        if key == 'flow_project_id' and val:
+                                            project_id = val
+                                        elif key == 'flow_bearer_token' and val:
+                                            excel_bearer = val
+                                        elif key == 'flow_recaptcha_token' and val:
+                                            excel_recaptcha = val
+                                        elif key == 'flow_x_browser_validation' and val:
+                                            excel_x_browser = val
+                            wb.close()
+                            if project_id:
+                                self.log(f"[VIDEO] Dùng project_id từ Excel: {project_id[:8]}...")
+                            if excel_bearer:
+                                bearer_token = excel_bearer
+                                self.log(f"[VIDEO] Dùng bearer_token từ Excel")
+                        except Exception as e:
+                            self.log(f"[VIDEO] Không đọc được Excel: {e}", "WARN")
+
+                # 2. Dùng tokens từ Excel nếu có
+                recaptcha_token = excel_recaptcha
+                x_browser_validation = excel_x_browser
+                if recaptcha_token:
+                    self.log(f"[VIDEO] Có recaptcha_token từ Excel")
+                if x_browser_validation:
+                    self.log(f"[VIDEO] Có x_browser_validation từ Excel")
+
+                # 3. FALLBACK: Token từ project cache (.media_cache.json)
                 if proj_dir:
                     cache_path = proj_dir / "prompts" / ".media_cache.json"
                     if cache_path.exists():
                         try:
                             with open(cache_path, 'r', encoding='utf-8') as f:
                                 cache_data = json.load(f)
-                            bearer_token = cache_data.get('_bearer_token', '')
-                            project_id = cache_data.get('_project_id', '')
-                            if bearer_token:
-                                self.log(f"[VIDEO] Dùng token từ project cache")
+                            cached_token = cache_data.get('_bearer_token', '')
+                            cached_project = cache_data.get('_project_id', '')
+                            cached_recaptcha = cache_data.get('_recaptcha_token', '')
+                            cached_x_browser = cache_data.get('_x_browser_validation', '')
+
+                            # Fallback cho bearer_token
+                            if not bearer_token and cached_token:
+                                bearer_token = cached_token
+                                self.log(f"[VIDEO] Dùng bearer từ project cache")
+                            if not project_id and cached_project:
+                                project_id = cached_project
+                            # Fallback cho recaptcha/x_browser
+                            if not recaptcha_token and cached_recaptcha:
+                                recaptcha_token = cached_recaptcha
+                                self.log(f"[VIDEO] Dùng recaptcha từ cache")
+                            if not x_browser_validation and cached_x_browser:
+                                x_browser_validation = cached_x_browser
+                                self.log(f"[VIDEO] Dùng x_browser từ cache")
                         except:
                             pass
 
-                # 2. FALLBACK: Token từ profiles
+                # 4. FALLBACK: Token từ profiles
                 if not bearer_token:
                     for profile in self.profiles:
                         if profile.token and self.is_token_valid(profile):
@@ -3260,7 +3694,7 @@ class SmartEngine:
                             self.log(f"[VIDEO] Dùng token từ profile: {Path(profile.value).name}")
                             break
 
-                # 3. FALLBACK: Token từ settings.yaml
+                # 5. FALLBACK: Token từ settings.yaml
                 if not bearer_token:
                     bearer_token = settings.get('flow_bearer_token', '')
                     project_id = settings.get('flow_project_id', '')
@@ -3268,12 +3702,15 @@ class SmartEngine:
                         self.log(f"[VIDEO] Dùng token từ settings.yaml")
 
                 self._video_settings = {
-                    'count': settings.get('video_count', '10'),  # Default 10 images → video
+                    'count': settings.get('video_count', '20'),  # Default 20 images → video
                     'model': settings.get('video_model', 'fast'),
                     'replace_image': settings.get('video_replace_image', True),
                     'bearer_token': bearer_token,
                     'project_id': project_id,
-                    'proxy_token': settings.get('proxy_api_token', '')
+                    'proxy_token': settings.get('proxy_api_token', ''),
+                    # Quan trọng cho I2V (giống tạo ảnh)
+                    'recaptcha_token': recaptcha_token,
+                    'x_browser_validation': x_browser_validation
                 }
 
                 # Parse count
@@ -3297,10 +3734,23 @@ class SmartEngine:
         if self._video_worker_running:
             return
 
+        # Lưu pre-set token (nếu có) trước khi load settings
+        pre_set_token = None
+        pre_set_project_id = None
+        if hasattr(self, '_video_settings') and self._video_settings:
+            pre_set_token = self._video_settings.get('bearer_token', '')
+            pre_set_project_id = self._video_settings.get('project_id', '')
+
         # Load settings với proj_dir để đọc được project cache
         if not self._load_video_settings(proj_dir):
             self.log("[VIDEO] Video generation disabled (count = 0)", "INFO")
             return
+
+        # Restore pre-set token (ưu tiên hơn token từ settings)
+        if pre_set_token:
+            self._video_settings['bearer_token'] = pre_set_token
+            self._video_settings['project_id'] = pre_set_project_id
+            self.log("[VIDEO] Dùng token đã set sẵn (từ DRISSION MODE)")
 
         # Đếm số video .mp4 đã có trong img/ để không làm thừa
         img_dir = proj_dir / "img"
@@ -3331,7 +3781,43 @@ class SmartEngine:
                 self.log("[VIDEO] Dùng pre-fetched token cho video generation")
 
         if not self._video_settings.get('bearer_token'):
-            self.log("[VIDEO] Chưa có token - sẽ tạo video sau khi có ảnh", "INFO")
+            self.log("[VIDEO] Chưa có token - thử lấy token mới bằng DrissionPage...")
+            try:
+                from modules.drission_flow_api import DrissionFlowAPI
+                drission_api = DrissionFlowAPI(
+                    proxy_mode=self.config.get('proxy_mode', 'local'),
+                    headless=True,
+                    verbose=False
+                )
+                if drission_api.setup():
+                    # Lấy token bằng cách trigger một request đơn giản
+                    if drission_api.bearer_token and drission_api.project_id:
+                        bearer = drission_api.bearer_token
+                        if bearer.startswith("Bearer "):
+                            bearer = bearer[7:]
+                        self._video_settings['bearer_token'] = bearer
+                        self._video_settings['project_id'] = drission_api.project_id
+                        self.log(f"[VIDEO] Lấy được token mới: {drission_api.project_id[:8]}...")
+
+                        # Lưu vào cache để dùng lại
+                        cache_path = proj_dir / "prompts" / ".media_cache.json"
+                        try:
+                            cache_data = {}
+                            if cache_path.exists():
+                                with open(cache_path, 'r', encoding='utf-8') as f:
+                                    cache_data = json.load(f)
+                            cache_data['_bearer_token'] = bearer
+                            cache_data['_project_id'] = drission_api.project_id
+                            with open(cache_path, 'w', encoding='utf-8') as f:
+                                json.dump(cache_data, f, indent=2)
+                        except:
+                            pass
+                    drission_api.close()
+            except Exception as e:
+                self.log(f"[VIDEO] Không thể lấy token mới: {e}", "WARN")
+
+        if not self._video_settings.get('bearer_token'):
+            self.log("[VIDEO] Không có token - skip video generation", "WARN")
             return
 
         self._video_worker_running = True
@@ -3392,26 +3878,57 @@ class SmartEngine:
                 self.log(f"[VIDEO] Queued: {image_id}{has_media} (pending: {queue_len})")
 
     def _video_worker_loop(self, proj_dir: Path):
-        """Video generation worker loop."""
-        from modules.image_to_video import ImageToVideoConverter
+        """Video generation worker loop - mở Chrome cũ để lấy recaptcha (thay nanoaipic)."""
+        from modules.drission_flow_api import DrissionFlowAPI
 
         self.log("[VIDEO] Worker loop started")
 
-        # Create converter
-        try:
-            converter = ImageToVideoConverter(
-                project_path=str(proj_dir),
-                bearer_token=self._video_settings['bearer_token'],
-                project_id=self._video_settings['project_id'] or 'default',
-                proxy_token=self._video_settings.get('proxy_token'),
-                use_proxy=bool(self._video_settings.get('proxy_token')),
-                video_model=self._video_settings.get('model', 'fast'),
-                log_callback=lambda msg, lvl: self.log(f"[VIDEO] {msg}", lvl.upper())
-            )
-        except Exception as e:
-            self.log(f"[VIDEO] Failed to create converter: {e}", "ERROR")
+        # Lấy token info từ cache
+        bearer = self._video_settings.get('bearer_token', '')
+        project_id = self._video_settings.get('project_id', '')
+        chrome_profile = self._video_settings.get('chrome_profile_path', '')
+        project_url = self._video_settings.get('project_url', '')
+
+        self.log(f"[VIDEO] Bearer: {'có' if bearer else 'KHÔNG'}")
+        self.log(f"[VIDEO] Project ID: {project_id[:20] if project_id else 'KHÔNG'}...")
+        self.log(f"[VIDEO] Chrome profile: {chrome_profile or 'default'}")
+
+        if not bearer or not project_id:
+            self.log("[VIDEO] ⚠️ Không có token/project_id - Skip I2V!", "WARN")
             self._video_worker_running = False
             return
+
+        # Tạo project URL nếu chưa có
+        if not project_url and project_id:
+            project_url = f"https://labs.google/fx/vi/tools/flow/project/{project_id}"
+
+        # === MỞ CHROME CŨ để lấy recaptcha (thay thế nanoaipic) ===
+        try:
+            # Dùng profile đã lưu hoặc default
+            profile_dir = chrome_profile if chrome_profile and Path(chrome_profile).exists() else "./chrome_profile"
+
+            drission_api = DrissionFlowAPI(
+                profile_dir=profile_dir,
+                verbose=True,
+                log_callback=lambda msg, lvl="INFO": self.log(f"[VIDEO] {msg}", lvl),
+                webshare_enabled=False  # Không cần proxy
+            )
+
+            # Setup Chrome và vào project cũ
+            self.log(f"[VIDEO] Mở Chrome với profile: {profile_dir}")
+            if not drission_api.setup(project_url=project_url):
+                self.log("[VIDEO] ⚠️ Không setup được Chrome - Skip I2V!", "WARN")
+                self._video_worker_running = False
+                return
+
+            self.log("[VIDEO] ✓ Chrome ready - Bắt đầu tạo video...")
+
+        except Exception as e:
+            self.log(f"[VIDEO] Failed to setup Chrome: {e}", "ERROR")
+            self._video_worker_running = False
+            return
+
+        img_dir = proj_dir / "img"
 
         while self._video_worker_running and not self.stop_flag:
             # Get next item from queue
@@ -3427,37 +3944,87 @@ class SmartEngine:
 
             image_path = item['image_path']
             image_id = item['image_id']
-            video_prompt = item.get('video_prompt', '')
+            video_prompt = item.get('video_prompt', '') or "Subtle motion, cinematic, slow movement"
             media_name = item.get('media_name', '')  # Cached media_name from image generation
 
-            if media_name:
-                self.log(f"[VIDEO] Processing: {image_id} (sử dụng cached media_name)")
-            else:
-                self.log(f"[VIDEO] Processing: {image_id} (cần upload lại ảnh)")
-
-            try:
-                result = converter.convert_image_to_video(
-                    image_path=image_path,
-                    prompt=video_prompt,
-                    replace_image=self._video_settings.get('replace_image', True),
-                    cached_media_name=media_name  # Pass cached media_name to skip upload
-                )
-
-                if result.is_completed:
-                    self._video_results['success'] += 1
-                    self.log(f"[VIDEO] OK: {image_id} -> {result.video_path.name}")
-                else:
-                    self._video_results['failed'] += 1
-                    self.log(f"[VIDEO] FAILED: {image_id} - {result.error}", "ERROR")
-
-            except Exception as e:
+            if not media_name:
+                self.log(f"[VIDEO] Skip {image_id}: Không có media_name (cần tạo lại ảnh)", "WARN")
                 self._video_results['failed'] += 1
-                self.log(f"[VIDEO] Error {image_id}: {e}", "ERROR")
+                continue
+
+            self.log(f"[VIDEO] Processing: {image_id}")
+
+            # === RETRY LOGIC: Thử tối đa 3 lần cho mỗi video ===
+            MAX_VIDEO_RETRIES = 3
+            success = False
+
+            for retry in range(MAX_VIDEO_RETRIES):
+                try:
+                    if retry > 0:
+                        self.log(f"[VIDEO] Retry {retry}/{MAX_VIDEO_RETRIES}: {image_id}")
+                        time.sleep(5 * retry)  # Exponential backoff
+
+                    # Gọi DrissionFlowAPI.generate_video()
+                    ok, video_url, error = drission_api.generate_video(
+                        media_id=media_name,
+                        prompt=video_prompt,
+                        video_model=self._video_settings.get('model', 'veo_3_0_r2v_fast_ultra')
+                    )
+
+                    if ok and video_url:
+                        # Download và save video
+                        video_path = img_dir / f"{image_id}.mp4"
+                        if self._download_video(video_url, video_path):
+                            self._video_results['success'] += 1
+                            self.log(f"[VIDEO] OK: {image_id} -> {video_path.name}")
+
+                            # Xóa ảnh gốc nếu cần
+                            if self._video_settings.get('replace_image', True):
+                                png_path = img_dir / f"{image_id}.png"
+                                if png_path.exists():
+                                    try:
+                                        png_path.unlink()
+                                    except:
+                                        pass
+
+                            success = True
+                            break
+                        else:
+                            error = "Failed to download video"
+
+                    if not success:
+                        if retry < MAX_VIDEO_RETRIES - 1:
+                            self.log(f"[VIDEO] {image_id} failed: {error} - Will retry...", "WARN")
+                        else:
+                            self._video_results['failed'] += 1
+                            self.log(f"[VIDEO] FAILED after {MAX_VIDEO_RETRIES} retries: {image_id} - {error}", "ERROR")
+
+                except Exception as e:
+                    if retry < MAX_VIDEO_RETRIES - 1:
+                        self.log(f"[VIDEO] Error {image_id}: {e} - Will retry...", "WARN")
+                    else:
+                        self._video_results['failed'] += 1
+                        self.log(f"[VIDEO] Error after {MAX_VIDEO_RETRIES} retries {image_id}: {e}", "ERROR")
 
             # Delay between videos
             time.sleep(2)
 
         self.log(f"[VIDEO] Worker stopped. Results: {self._video_results['success']} OK, {self._video_results['failed']} failed")
+
+    def _download_video(self, url: str, save_path: Path) -> bool:
+        """Download video từ URL và lưu vào file."""
+        try:
+            import requests
+            resp = requests.get(url, timeout=120)
+            if resp.status_code == 200:
+                save_path.parent.mkdir(parents=True, exist_ok=True)
+                save_path.write_bytes(resp.content)
+                return True
+            self.log(f"[VIDEO] Download failed: {resp.status_code}", "ERROR")
+            return False
+        except Exception as e:
+            self.log(f"[VIDEO] Download error: {e}", "ERROR")
+            return False
 
     def get_video_results(self) -> Dict:
         """Get video generation results."""
@@ -3471,7 +4038,7 @@ class SmartEngine:
         self,
         voice_files: List[str],
         output_base_dir: str = None,
-        parallel_voices: int = 3,
+        parallel_voices: int = 2,  # Default: 2 voices
         callback: Callable = None
     ) -> Dict:
         """
@@ -3615,15 +4182,15 @@ def run_auto(input_path: str, callback: Callable = None) -> Dict:
 
 def run_batch_parallel(
     voice_files: List[str],
-    parallel_voices: int = 3,
+    parallel_voices: int = 2,  # Default: 2 voices
     callback: Callable = None
 ) -> Dict:
     """
     Xử lý NHIỀU voice files SONG SONG.
 
-    Ví dụ: 3 voices x 90 phút mỗi voice
-    - Tuần tự: 270 phút
-    - Song song (3 workers): ~100 phút
+    Ví dụ: 2 voices x 90 phút mỗi voice
+    - Tuần tự: 180 phút
+    - Song song (2 workers): ~95 phút
 
     Args:
         voice_files: List các file voice (.mp3, .wav)
@@ -3636,8 +4203,8 @@ def run_batch_parallel(
     Usage:
         from modules.smart_engine import run_batch_parallel
 
-        voices = ["voice1.mp3", "voice2.mp3", "voice3.mp3"]
-        result = run_batch_parallel(voices, parallel_voices=3)
+        voices = ["voice1.mp3", "voice2.mp3"]
+        result = run_batch_parallel(voices, parallel_voices=2)
         print(f"Done: {result['success']}/{result['total']}")
     """
     engine = SmartEngine()

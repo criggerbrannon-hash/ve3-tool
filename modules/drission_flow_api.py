@@ -1,0 +1,1513 @@
+#!/usr/bin/env python3
+"""
+VE3 Tool - DrissionPage Flow API
+================================
+Gọi Google Flow API trực tiếp bằng DrissionPage.
+
+Flow:
+1. Sử dụng Webshare proxy pool (tự động xoay khi bị block)
+2. Mở Chrome với proxy → Vào Google Flow → Đợi user chọn project
+3. Inject JS Interceptor để capture tokens + CANCEL request
+4. Gọi API trực tiếp với captured URL + payload
+"""
+
+import json
+import time
+import random
+import base64
+import requests
+import threading
+from pathlib import Path
+from typing import Optional, Tuple, List, Dict, Any, Callable
+from dataclasses import dataclass
+from datetime import datetime
+
+# Optional DrissionPage import
+DRISSION_AVAILABLE = False
+try:
+    from DrissionPage import ChromiumPage, ChromiumOptions
+    DRISSION_AVAILABLE = True
+except ImportError:
+    ChromiumPage = None
+    ChromiumOptions = None
+
+# Webshare Proxy imports (IPv6 proxy đã bị bỏ)
+WEBSHARE_AVAILABLE = False
+try:
+    from webshare_proxy import WebshareProxy, get_proxy_manager, init_proxy_manager
+    WEBSHARE_AVAILABLE = True
+except ImportError:
+    WebshareProxy = None
+    get_proxy_manager = None
+    init_proxy_manager = None
+
+
+@dataclass
+class GeneratedImage:
+    """Kết quả ảnh được tạo."""
+    url: str = ""
+    base64_data: Optional[str] = None
+    seed: Optional[int] = None
+    media_name: Optional[str] = None
+    local_path: Optional[Path] = None
+
+
+# JS Interceptor - Capture tokens và CANCEL request
+# Giống batch_generator.py - đã test hoạt động
+JS_INTERCEPTOR = '''
+window._tk=null;window._pj=null;window._xbv=null;window._rct=null;window._payload=null;window._sid=null;window._url=null;
+(function(){
+    if(window.__interceptReady) return 'ALREADY_READY';
+    window.__interceptReady = true;
+
+    var orig = window.fetch;
+    window.fetch = function(url, opts) {
+        var urlStr = typeof url === 'string' ? url : url.url;
+
+        // Match nhiều pattern hơn
+        if (urlStr.includes('aisandbox') && (urlStr.includes('batchGenerate') || urlStr.includes('flowMedia') || urlStr.includes('generateContent'))) {
+            console.log('[INTERCEPT] Capturing request to:', urlStr);
+
+            // Capture URL gốc
+            window._url = urlStr;
+
+            // Extract projectId from URL: /v1/projects/{projectId}/flowMedia:batchGenerateImages
+            var match = urlStr.match(/\\/projects\\/([a-f0-9\\-]+)/i);
+            if (match && match[1]) {
+                window._pj = match[1];
+                console.log('[TOKEN] projectId from URL:', window._pj);
+            } else {
+                console.log('[TOKEN] projectId NOT FOUND in URL:', urlStr);
+            }
+
+            // Capture từ headers
+            if (opts && opts.headers) {
+                var h = opts.headers;
+                if (h['Authorization']) {
+                    window._tk = h['Authorization'].replace('Bearer ', '');
+                    console.log('[TOKEN] Bearer captured!');
+                }
+                if (h['x-browser-validation']) {
+                    window._xbv = h['x-browser-validation'];
+                    console.log('[TOKEN] x-browser-validation captured!');
+                }
+            }
+
+            // Capture payload và recaptchaToken
+            if (opts && opts.body) {
+                window._payload = opts.body;
+                try {
+                    var body = JSON.parse(opts.body);
+                    // sessionId from clientContext
+                    if (body.clientContext) {
+                        window._sid = body.clientContext.sessionId;
+                        // Fallback projectId from body if not in URL
+                        if (!window._pj && body.clientContext.projectId) {
+                            window._pj = body.clientContext.projectId;
+                        }
+                    }
+                    // recaptchaToken có thể ở root hoặc trong requests[0]
+                    if (body.recaptchaToken) {
+                        window._rct = body.recaptchaToken;
+                        console.log('[TOKEN] recaptchaToken captured (root)!');
+                    } else if (body.requests && body.requests[0] && body.requests[0].clientContext && body.requests[0].clientContext.recaptchaToken) {
+                        window._rct = body.requests[0].clientContext.recaptchaToken;
+                        console.log('[TOKEN] recaptchaToken captured (requests[0])!');
+                    }
+                } catch(e) {
+                    console.log('[ERROR] Parse body failed:', e);
+                }
+            }
+
+            // CANCEL request - return fake response
+            console.log('[INTERCEPT] Request cancelled, tokens captured!');
+            return Promise.resolve(new Response(JSON.stringify({cancelled:true})));
+        }
+
+        return orig.apply(this, arguments);
+    };
+    console.log('[INTERCEPTOR] Ready - will capture batchGenerateImages requests');
+    return 'READY';
+})();
+'''
+
+# JS để click "Dự án mới"
+JS_CLICK_NEW_PROJECT = '''
+(function() {
+    var btns = document.querySelectorAll('button');
+    for (var b of btns) {
+        var text = b.textContent || '';
+        if (text.includes('Dự án mới') || text.includes('New project')) {
+            b.click();
+            console.log('[AUTO] Clicked: Du an moi');
+            return 'CLICKED';
+        }
+    }
+    return 'NOT_FOUND';
+})();
+'''
+
+# JS để chọn "Tạo hình ảnh" từ dropdown
+JS_SELECT_IMAGE_MODE = '''
+(async function() {
+    // 1. Click dropdown
+    var dropdown = document.querySelector('button[role="combobox"]');
+    if (!dropdown) {
+        console.log('[AUTO] Dropdown not found');
+        return 'NO_DROPDOWN';
+    }
+    dropdown.click();
+    console.log('[AUTO] Clicked dropdown');
+
+    // 2. Đợi dropdown mở
+    await new Promise(r => setTimeout(r, 500));
+
+    // 3. Tìm và click "Tạo hình ảnh"
+    var allElements = document.querySelectorAll('*');
+    for (var el of allElements) {
+        var text = el.textContent || '';
+        if (text === 'Tạo hình ảnh' || text.includes('Tạo hình ảnh từ văn bản') ||
+            text === 'Generate image' || text.includes('Generate image from text')) {
+            var rect = el.getBoundingClientRect();
+            if (rect.height > 10 && rect.height < 80 && rect.width > 50) {
+                el.click();
+                console.log('[AUTO] Clicked: Tao hinh anh');
+                return 'CLICKED';
+            }
+        }
+    }
+    return 'NOT_FOUND';
+})();
+'''
+
+
+class DrissionFlowAPI:
+    """
+    Google Flow API client sử dụng DrissionPage.
+
+    Sử dụng:
+    ```python
+    api = DrissionFlowAPI(
+        profile_dir="./chrome_profiles/main",
+        proxy_port=1080  # SOCKS5 proxy
+    )
+
+    # Setup Chrome và đợi user chọn project
+    if api.setup():
+        # Generate ảnh
+        success, images, error = api.generate_image("a cat playing piano")
+    ```
+    """
+
+    BASE_URL = "https://aisandbox-pa.googleapis.com"
+    FLOW_URL = "https://labs.google/fx/vi/tools/flow"
+
+    def __init__(
+        self,
+        profile_dir: str = "./chrome_profile",
+        chrome_port: int = 0,  # 0 = auto-generate unique port (parallel-safe)
+        verbose: bool = True,
+        log_callback: Optional[Callable] = None,
+        # Webshare proxy - dùng global proxy manager
+        webshare_enabled: bool = True,  # BẬT Webshare proxy by default
+        worker_id: int = 0,  # Worker ID cho proxy rotation (mỗi Chrome có proxy riêng)
+        # Legacy params (ignored)
+        proxy_port: int = 1080,
+        use_proxy: bool = False,
+    ):
+        """
+        Khởi tạo DrissionFlowAPI.
+
+        Args:
+            profile_dir: Thư mục Chrome profile
+            chrome_port: Port cho Chrome debugging (0 = auto-generate unique port)
+            verbose: In log chi tiết
+            log_callback: Callback để log (msg, level)
+            webshare_enabled: Dùng Webshare proxy pool (default True)
+            worker_id: Worker ID cho proxy rotation (mỗi Chrome có proxy riêng)
+        """
+        self.profile_dir = Path(profile_dir)
+        self.worker_id = worker_id  # Lưu worker_id để dùng cho proxy rotation
+        # Auto-generate unique port for parallel execution
+        if chrome_port == 0:
+            self.chrome_port = random.randint(9222, 9999)
+        else:
+            self.chrome_port = chrome_port
+        self.verbose = verbose
+        self.log_callback = log_callback
+
+        # Chrome/DrissionPage
+        self.driver: Optional[ChromiumPage] = None
+
+        # Webshare Proxy - dùng global manager
+        self._webshare_proxy = None
+        self._use_webshare = webshare_enabled
+        self._proxy_bridge = None  # Local proxy bridge
+        self._bridge_port = None   # Bridge port for API calls
+        self._is_rotating_mode = False  # True = Rotating Endpoint (auto IP change)
+        if webshare_enabled and WEBSHARE_AVAILABLE:
+            try:
+                from webshare_proxy import get_proxy_manager, WebshareProxy
+                manager = get_proxy_manager()
+
+                # Check rotating endpoint mode first
+                if manager.is_rotating_mode():
+                    self._webshare_proxy = WebshareProxy()
+                    self._is_rotating_mode = True
+                    rotating = manager.rotating_endpoint
+                    self.log(f"✓ Webshare: ROTATING ENDPOINT mode")
+                    self.log(f"  → {rotating.host}:{rotating.port}")
+                elif manager.proxies:
+                    self._webshare_proxy = WebshareProxy()  # Wrapper cho manager
+                    # Lấy proxy cho worker này (không dùng current_proxy global)
+                    worker_proxy = manager.get_proxy_for_worker(self.worker_id)
+                    if worker_proxy:
+                        self.log(f"✓ Webshare: {len(manager.proxies)} proxies, worker {self.worker_id}: {worker_proxy.endpoint}")
+                    else:
+                        self.log(f"✓ Webshare: {len(manager.proxies)} proxies loaded")
+                else:
+                    self._use_webshare = False
+                    self.log("⚠️ Webshare: No proxies loaded", "WARN")
+            except Exception as e:
+                self._use_webshare = False
+                self.log(f"⚠️ Webshare init error: {e}", "WARN")
+
+        # Captured tokens
+        self.bearer_token: Optional[str] = None
+        self.project_id: Optional[str] = None
+        self.session_id: Optional[str] = None
+        self.recaptcha_token: Optional[str] = None
+        self.x_browser_validation: Optional[str] = None
+        self.captured_url: Optional[str] = None
+        self.captured_payload: Optional[str] = None
+
+        # State
+        self._ready = False
+
+    def log(self, msg: str, level: str = "INFO"):
+        """Log message - chỉ dùng 1 trong 2: callback hoặc print."""
+        if self.log_callback:
+            # Nếu có callback, để parent xử lý log (tránh duplicate)
+            self.log_callback(msg, level)
+        elif self.verbose:
+            # Fallback: print trực tiếp nếu không có callback
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            print(f"[{timestamp}] [{level}] {msg}")
+
+    def _auto_setup_project(self, timeout: int = 60) -> bool:
+        """
+        Tự động setup project:
+        1. Click "Dự án mới" (New project)
+        2. Chọn "Tạo hình ảnh" (Generate image)
+        3. Đợi vào project
+
+        Args:
+            timeout: Timeout tổng (giây)
+
+        Returns:
+            True nếu thành công
+        """
+        self.log("→ Đang tự động tạo dự án mới...")
+
+        # 1. Đợi trang load và tìm button "Dự án mới"
+        for i in range(15):
+            result = self.driver.run_js(JS_CLICK_NEW_PROJECT)
+            if result == 'CLICKED':
+                self.log("✓ Clicked 'Dự án mới'")
+                time.sleep(2)
+                break
+            time.sleep(1)
+            if i == 5:
+                self.log("  ... đợi button 'Dự án mới' xuất hiện...")
+        else:
+            self.log("✗ Không tìm thấy button 'Dự án mới'", "ERROR")
+            self.log("→ Hãy click thủ công vào dự án", "WARN")
+            # Fallback: đợi user click thủ công
+            return self._wait_for_project_manual(timeout)
+
+        # 2. Chọn "Tạo hình ảnh" từ dropdown
+        time.sleep(1)
+        for i in range(10):
+            result = self.driver.run_js(JS_SELECT_IMAGE_MODE)
+            if result == 'CLICKED':
+                self.log("✓ Chọn 'Tạo hình ảnh'")
+                time.sleep(2)
+                break
+            time.sleep(0.5)
+        else:
+            self.log("⚠️ Không tìm thấy dropdown - có thể đã ở mode đúng", "WARN")
+
+        # 3. Đợi vào project
+        self.log("→ Đợi vào project...")
+        for i in range(timeout):
+            current_url = self.driver.url
+            if "/project/" in current_url:
+                self.log(f"✓ Đã vào dự án!")
+                return True
+            time.sleep(1)
+            if i % 10 == 9:
+                self.log(f"  ... đợi {i+1}s")
+
+        self.log("✗ Timeout - chưa vào được dự án", "ERROR")
+        return False
+
+    def _wait_for_project_manual(self, timeout: int = 60) -> bool:
+        """
+        Fallback: đợi user chọn project thủ công.
+        Nếu quá lâu (30s) → tự động F5 refresh.
+        Nếu vẫn không được (60s) → restart Chrome với IP mới.
+        """
+        self.log("Đợi chọn dự án thủ công...")
+        self.log("→ Click vào dự án có sẵn hoặc tạo dự án mới")
+
+        REFRESH_TIMEOUT = 30  # Sau 30s không click được → F5
+        refreshed = False
+
+        for i in range(timeout):
+            current_url = self.driver.url
+            if "/project/" in current_url:
+                self.log(f"✓ Đã vào dự án!")
+                return True
+            time.sleep(1)
+
+            # Sau 30s → tự động F5 refresh
+            if i == REFRESH_TIMEOUT and not refreshed:
+                self.log(f"⚠️ Đợi quá lâu ({REFRESH_TIMEOUT}s) - Tự động F5 refresh...")
+                try:
+                    self.driver.refresh()
+                    refreshed = True
+                    time.sleep(3)  # Đợi page load
+                except Exception as e:
+                    self.log(f"  → F5 error: {e}", "WARN")
+
+            if i % 15 == 14:
+                self.log(f"... đợi {i+1}s - hãy click chọn dự án")
+
+        self.log("✗ Timeout - chưa chọn dự án", "ERROR")
+
+        # Timeout → gợi ý restart với IP mới
+        self.log("→ Sẽ restart Chrome với IP mới...", "WARN")
+        return False  # Trả về False để trigger restart ở layer trên
+
+    def _warm_up_session(self, dummy_prompt: str = "a simple test image") -> bool:
+        """
+        Warm up session bằng cách tạo 1 ảnh thật trong Chrome.
+        Điều này "activate" session và làm cho tokens hợp lệ.
+
+        Args:
+            dummy_prompt: Prompt đơn giản để warm up
+
+        Returns:
+            True nếu thành công
+        """
+        self.log("=" * 50)
+        self.log("  WARM UP SESSION")
+        self.log("=" * 50)
+        self.log("→ Tạo 1 ảnh trong Chrome để activate session...")
+        self.log(f"  Prompt: {dummy_prompt[:50]}...")
+
+        # Tìm textarea và gửi prompt
+        textarea = self._find_textarea()
+        if not textarea:
+            self.log("✗ Không tìm thấy textarea", "ERROR")
+            return False
+
+        textarea.clear()
+        time.sleep(0.2)
+        textarea.input(dummy_prompt)
+        time.sleep(0.3)
+        textarea.input('\n')
+        self.log("✓ Đã gửi prompt, đợi Chrome tạo ảnh...")
+
+        # Đợi ảnh được tạo - kiểm tra bằng cách tìm img elements mới
+        # hoặc đợi loading indicator biến mất
+        self.log("→ Đợi ảnh được tạo (có thể mất 10-30s)...")
+
+        for i in range(60):  # Đợi tối đa 60s
+            time.sleep(2)
+
+            # Kiểm tra có ảnh được tạo không
+            # Tìm elements chứa ảnh generated
+            check_result = self.driver.run_js("""
+                // Tìm các img elements có src chứa base64 hoặc googleusercontent
+                var imgs = document.querySelectorAll('img');
+                var found = 0;
+                for (var img of imgs) {
+                    var src = img.src || '';
+                    if (src.includes('data:image') || src.includes('googleusercontent') || src.includes('ggpht')) {
+                        // Kiểm tra kích thước - ảnh generated thường lớn
+                        if (img.naturalWidth > 200 || img.width > 200) {
+                            found++;
+                        }
+                    }
+                }
+                return {found: found, loading: !!document.querySelector('[data-loading="true"]')};
+            """)
+
+            if check_result and check_result.get('found', 0) > 0:
+                self.log(f"✓ Phát hiện {check_result['found']} ảnh!")
+                time.sleep(2)  # Đợi thêm để ổn định
+                self.log("✓ Session đã được warm up!")
+                return True
+
+            if i % 5 == 4:
+                self.log(f"  ... đợi {(i+1)*2}s")
+
+        self.log("⚠️ Không phát hiện được ảnh, tiếp tục...", "WARN")
+        return True  # Vẫn return True để tiếp tục
+
+    def _kill_chrome(self):
+        """Kill tất cả Chrome processes để đảm bảo proxy mới được áp dụng."""
+        import subprocess
+        import sys
+
+        try:
+            if sys.platform == 'win32':
+                # Windows
+                subprocess.run(['taskkill', '/f', '/im', 'chrome.exe'],
+                             capture_output=True, timeout=10)
+            else:
+                # Linux/Mac
+                subprocess.run(['pkill', '-f', 'chrome'],
+                             capture_output=True, timeout=10)
+            self.log("✓ Killed existing Chrome processes")
+            time.sleep(1)
+        except Exception as e:
+            # Không sao nếu không kill được (có thể không có Chrome đang chạy)
+            pass
+
+    def setup(
+        self,
+        wait_for_project: bool = True,
+        timeout: int = 120,
+        warm_up: bool = False,
+        project_url: str = None
+    ) -> bool:
+        """
+        Setup Chrome và inject interceptor.
+        Giống batch_generator.py - không cần warm_up.
+
+        Args:
+            wait_for_project: Đợi user chọn project
+            timeout: Timeout đợi project (giây)
+            warm_up: Tạo 1 ảnh trong Chrome trước (default False - không cần)
+            project_url: URL project cố định (nếu có, sẽ vào thẳng project này)
+
+        Returns:
+            True nếu thành công
+        """
+        if not DRISSION_AVAILABLE:
+            self.log("DrissionPage không được cài đặt! pip install DrissionPage", "ERROR")
+            return False
+
+        self.log("=" * 50)
+        self.log("  DRISSION FLOW API - Setup")
+        self.log("=" * 50)
+
+        # 1. Tạo thư mục profile
+        self.profile_dir.mkdir(parents=True, exist_ok=True)
+        self.log(f"Profile: {self.profile_dir}")
+        self.log(f"Chrome port: {self.chrome_port}")
+
+        # 2. Khởi tạo Chrome với proxy
+        self.log("Khởi động Chrome...")
+        try:
+            options = ChromiumOptions()
+            options.set_user_data_path(str(self.profile_dir))
+            options.set_local_port(self.chrome_port)
+
+            # Thêm arguments cần thiết cho Linux/headless
+            import platform
+            if platform.system() == 'Linux':
+                options.set_argument('--no-sandbox')
+                options.set_argument('--disable-dev-shm-usage')
+
+            # Disable GPU để tránh lỗi
+            options.set_argument('--disable-gpu')
+            options.set_argument('--disable-software-rasterizer')
+
+            if self._use_webshare and self._webshare_proxy:
+                from webshare_proxy import get_proxy_manager
+                manager = get_proxy_manager()
+
+                # === CHECK ROTATING ENDPOINT MODE ===
+                if manager.is_rotating_mode():
+                    # ROTATING ENDPOINT: Mỗi request tự động đổi IP
+                    rotating = manager.rotating_endpoint
+                    self._is_rotating_mode = True  # Flag để biết đang dùng rotating
+
+                    try:
+                        from proxy_bridge import start_proxy_bridge
+                        bridge_port = 8800 + self.worker_id
+                        self._proxy_bridge = start_proxy_bridge(
+                            local_port=bridge_port,
+                            remote_host=rotating.host,
+                            remote_port=rotating.port,
+                            username=rotating.username,
+                            password=rotating.password
+                        )
+                        self._bridge_port = bridge_port
+                        time.sleep(0.5)
+
+                        options.set_argument(f'--proxy-server=http://127.0.0.1:{bridge_port}')
+                        options.set_argument('--proxy-bypass-list=<-loopback>')
+                        options.set_argument('--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1')
+
+                        self.log(f"🔄 ROTATING ENDPOINT [Worker {self.worker_id}]")
+                        self.log(f"  → {rotating.host}:{rotating.port}")
+                        self.log(f"  → Mỗi request sẽ tự động đổi IP!")
+                        self.log(f"  Local: http://127.0.0.1:{bridge_port}")
+
+                    except Exception as e:
+                        self.log(f"Bridge error: {e}", "ERROR")
+                        return False
+                else:
+                    # === DIRECT PROXY LIST MODE ===
+                    self._is_rotating_mode = False
+                    username, password = self._webshare_proxy.get_chrome_auth(self.worker_id)
+                    remote_proxy_url = self._webshare_proxy.get_chrome_proxy_arg(self.worker_id)
+
+                    if username and password:
+                        # Có auth → dùng local proxy bridge
+                        # QUAN TRỌNG: Lấy proxy cho worker này, không dùng current_proxy global
+                        proxy = manager.get_proxy_for_worker(self.worker_id)
+                        if not proxy:
+                            # Không có proxy khả dụng - chạy không proxy (fallback)
+                            self.log(f"⚠️ No proxy available - running WITHOUT proxy", "WARN")
+                            self._use_webshare = False
+                            # Không set proxy args - Chrome sẽ chạy direct
+                        else:
+                            try:
+                                from proxy_bridge import start_proxy_bridge
+                                # Unique bridge port based on worker_id (parallel-safe)
+                                bridge_port = 8800 + self.worker_id
+                                self._proxy_bridge = start_proxy_bridge(
+                                    local_port=bridge_port,
+                                    remote_host=proxy.host,
+                                    remote_port=proxy.port,
+                                    username=proxy.username,
+                                    password=proxy.password
+                                )
+                                self._bridge_port = bridge_port  # LƯU ĐỂ DÙNG TRONG call_api()
+                                time.sleep(0.5)  # Đợi bridge start
+
+                                # Chrome kết nối đến local bridge (không cần auth)
+                                options.set_argument(f'--proxy-server=http://127.0.0.1:{bridge_port}')
+                                options.set_argument('--proxy-bypass-list=<-loopback>')
+                                options.set_argument('--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1')
+
+                                self.log(f"Proxy [Worker {self.worker_id}]: Bridge → {proxy.endpoint}")
+                                self.log(f"  Local: http://127.0.0.1:{bridge_port}")
+                                self.log(f"  Auth: {username}:****")
+
+                            except Exception as e:
+                                self.log(f"Bridge error: {e}, using direct proxy", "WARN")
+                                options.set_argument(f'--proxy-server={remote_proxy_url}')
+                                options.set_argument('--proxy-bypass-list=<-loopback>')
+                                self._proxy_auth = (username, password)
+                    else:
+                        # IP Authorization mode
+                        options.set_argument(f'--proxy-server={remote_proxy_url}')
+                        options.set_argument('--proxy-bypass-list=<-loopback>')
+                        options.set_argument('--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1')
+                        self.log(f"Proxy: Webshare ({remote_proxy_url})")
+                        self.log(f"  Mode: IP Authorization")
+            else:
+                self._is_rotating_mode = False
+                self.log("⚠️ Webshare proxy không sẵn sàng - chạy không có proxy", "WARN")
+
+            # Thử khởi tạo Chrome với retry
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    self.driver = ChromiumPage(addr_or_opts=options)
+                    self.log("✓ Chrome started")
+                    break
+                except Exception as chrome_err:
+                    self.log(f"Chrome attempt {attempt+1}/{max_retries} failed: {chrome_err}", "WARN")
+                    if attempt < max_retries - 1:
+                        # Thử port khác
+                        self.chrome_port = random.randint(9222, 9999)
+                        options.set_local_port(self.chrome_port)
+                        self.log(f"  → Retry với port {self.chrome_port}...")
+                        time.sleep(2)
+                    else:
+                        raise chrome_err
+
+            # Setup proxy auth nếu cần (CDP-based)
+            if self._use_webshare and hasattr(self, '_proxy_auth') and self._proxy_auth:
+                self._setup_proxy_auth()
+
+        except Exception as e:
+            self.log(f"✗ Chrome error: {e}", "ERROR")
+            return False
+
+        # 3. Vào Google Flow (hoặc project cố định nếu có)
+        target_url = project_url if project_url else self.FLOW_URL
+        self.log(f"Vào: {target_url[:60]}...")
+        try:
+            self.driver.get(target_url)
+            time.sleep(3)
+            self.log(f"✓ URL: {self.driver.url}")
+
+            # Lưu project_url để dùng khi retry
+            if "/project/" in self.driver.url:
+                self._current_project_url = self.driver.url
+                self.log(f"  → Saved project URL for retry")
+
+        except Exception as e:
+            self.log(f"✗ Navigation error: {e}", "ERROR")
+            return False
+
+        # 4. Auto setup project (click "Dự án mới" + chọn "Tạo hình ảnh")
+        if wait_for_project:
+            # Kiểm tra đã ở trong project chưa
+            if "/project/" not in self.driver.url:
+                # Nếu có project_url nhưng bị redirect về trang chủ → retry vào project cũ
+                if project_url and "/project/" in project_url:
+                    self.log(f"⚠️ Bị redirect, retry vào project cũ...")
+                    # Retry vào project URL (max 3 lần)
+                    for retry in range(3):
+                        time.sleep(2)
+                        self.driver.get(project_url)
+                        time.sleep(3)
+                        if "/project/" in self.driver.url:
+                            self._current_project_url = self.driver.url
+                            self.log(f"✓ Vào lại project thành công!")
+                            break
+                        self.log(f"  → Retry {retry+1}/3...")
+                    else:
+                        self.log("✗ Không vào được project cũ, session có thể hết hạn", "ERROR")
+                        return False
+                else:
+                    # Không có project URL → tạo mới
+                    self.log("Auto setup project...")
+                    if not self._auto_setup_project(timeout):
+                        return False
+                    # Lưu project URL sau khi tạo mới
+                    if "/project/" in self.driver.url:
+                        self._current_project_url = self.driver.url
+                        self.log(f"  → New project URL saved")
+            else:
+                self.log("✓ Đã ở trong project!")
+
+        # 5. Đợi textarea sẵn sàng
+        self.log("Đợi project load...")
+        for i in range(30):
+            if self._find_textarea():
+                self.log("✓ Project đã sẵn sàng!")
+                break
+            time.sleep(1)
+        else:
+            self.log("✗ Timeout - không tìm thấy textarea", "ERROR")
+            return False
+
+        # 6. Warm up session (tạo 1 ảnh trong Chrome để activate)
+        if warm_up:
+            if not self._warm_up_session():
+                self.log("⚠️ Warm up không thành công, tiếp tục...", "WARN")
+
+        # 7. Inject interceptor (SAU khi warm up)
+        self.log("Inject interceptor...")
+        self._reset_tokens()
+        result = self.driver.run_js(JS_INTERCEPTOR)
+        self.log(f"✓ Interceptor: {result}")
+
+        self._ready = True
+        return True
+
+    def _find_textarea(self):
+        """Tìm textarea input."""
+        for sel in ["tag:textarea", "css:textarea"]:
+            try:
+                el = self.driver.ele(sel, timeout=2)
+                if el:
+                    return el
+            except:
+                pass
+        return None
+
+    def _reset_tokens(self):
+        """Reset captured tokens trong browser. Giống batch_generator.py."""
+        self.driver.run_js("""
+            window.__interceptReady = false;
+            window._tk = null;
+            window._pj = null;
+            window._xbv = null;
+            window._rct = null;
+            window._payload = null;
+            window._sid = null;
+            window._url = null;
+        """)
+
+    def _capture_tokens(self, prompt: str, timeout: int = 10) -> bool:
+        """
+        Gửi prompt để capture tất cả tokens cần thiết.
+        Giống batch_generator.py get_tokens().
+
+        Args:
+            prompt: Prompt để gửi
+            timeout: Timeout đợi tokens (giây)
+
+        Returns:
+            True nếu capture thành công
+        """
+        self.log(f"    Prompt: {prompt[:50]}...")
+
+        # QUAN TRỌNG: Reset tokens trước khi capture để đợi giá trị MỚI
+        # Nếu không reset, sẽ lấy tokens cũ từ lần capture trước!
+        self.driver.run_js("""
+            window._rct = null;
+            window._payload = null;
+            window._url = null;
+        """)
+
+        # Tìm và gửi prompt
+        textarea = self._find_textarea()
+        if not textarea:
+            self.log("✗ Không tìm thấy textarea", "ERROR")
+            return False
+
+        textarea.clear()
+        time.sleep(0.2)
+        textarea.input(prompt)
+        time.sleep(0.3)
+        textarea.input('\n')  # Enter để gửi
+        self.log("    ✓ Đã gửi, đợi capture...")
+
+        # Đợi 3 giây theo hướng dẫn (giống batch_generator.py)
+        time.sleep(3)
+
+        # Đọc tokens từ window variables
+        for i in range(timeout):
+            tokens = self.driver.run_js("""
+                return {
+                    tk: window._tk,
+                    pj: window._pj,
+                    xbv: window._xbv,
+                    rct: window._rct,
+                    sid: window._sid,
+                    url: window._url
+                };
+            """)
+
+            # Debug output (giống batch_generator.py)
+            if i == 0 or i == 5:
+                self.log(f"    [DEBUG] Bearer: {'YES' if tokens.get('tk') else 'NO'}")
+                self.log(f"    [DEBUG] recaptcha: {'YES' if tokens.get('rct') else 'NO'}")
+                self.log(f"    [DEBUG] projectId: {'YES' if tokens.get('pj') else 'NO'}")
+                self.log(f"    [DEBUG] URL: {'YES' if tokens.get('url') else 'NO'}")
+
+            if tokens.get("tk") and tokens.get("rct"):
+                self.bearer_token = f"Bearer {tokens['tk']}"
+                self.project_id = tokens.get("pj")
+                self.session_id = tokens.get("sid")
+                self.recaptcha_token = tokens.get("rct")
+                self.x_browser_validation = tokens.get("xbv")
+                self.captured_url = tokens.get("url")
+
+                self.log("    ✓ Got Bearer token!")
+                self.log("    ✓ Got recaptchaToken!")
+                if self.captured_url:
+                    self.log(f"    ✓ Captured URL: {self.captured_url[:60]}...")
+                return True
+
+            time.sleep(1)
+
+        self.log("    ✗ Không lấy được đủ tokens", "ERROR")
+        return False
+
+    def refresh_recaptcha(self, prompt: str) -> bool:
+        """
+        Gửi prompt mới để lấy fresh recaptchaToken.
+        Giống batch_generator.py refresh_recaptcha().
+
+        Args:
+            prompt: Prompt để trigger recaptcha
+
+        Returns:
+            True nếu thành công
+        """
+        # Reset captured data (chỉ rct - giống batch_generator.py)
+        self.driver.run_js("window._rct = null;")
+
+        textarea = self._find_textarea()
+        if not textarea:
+            return False
+
+        textarea.clear()
+        time.sleep(0.2)
+        textarea.input(prompt)
+        time.sleep(0.3)
+        textarea.input('\n')
+
+        # Đợi 3 giây
+        time.sleep(3)
+
+        # Wait for new token
+        for i in range(10):
+            rct = self.driver.run_js("return window._rct;")
+            if rct:
+                self.recaptcha_token = rct
+                self.log("    ✓ Got new recaptchaToken!")
+                return True
+            time.sleep(1)
+
+        self.log("    ✗ Không lấy được recaptchaToken mới", "ERROR")
+        return False
+
+    def call_api(self, prompt: str = None, num_images: int = 1, image_inputs: Optional[List[Dict]] = None) -> Tuple[List[GeneratedImage], Optional[str]]:
+        """
+        Gọi API với captured tokens.
+        Giống batch_generator.py - lấy payload từ browser mỗi lần.
+
+        Args:
+            prompt: Prompt (nếu None, dùng payload đã capture)
+            num_images: Số ảnh cần tạo (mặc định 1)
+            image_inputs: List of reference images [{name, inputType}]
+
+        Returns:
+            Tuple[list of GeneratedImage, error message]
+        """
+        if not self.captured_url:
+            return [], "No URL captured"
+
+        url = self.captured_url
+        self.log(f"→ URL: {url[:80]}...")
+
+        # Lấy payload gốc từ Chrome (giống batch_generator.py)
+        original_payload = self.driver.run_js("return window._payload;")
+        if not original_payload:
+            return [], "No payload captured"
+
+        # Sửa số ảnh trong payload - FORCE đúng số lượng
+        # API dùng số lượng items trong array "requests", mỗi request = 1 ảnh
+        try:
+            payload_data = json.loads(original_payload)
+
+            if "requests" in payload_data and payload_data["requests"]:
+                old_count = len(payload_data["requests"])
+                if old_count > num_images:
+                    # Chỉ giữ lại num_images requests đầu tiên
+                    payload_data["requests"] = payload_data["requests"][:num_images]
+                    self.log(f"   → requests: {old_count} → {num_images}")
+                elif old_count < num_images:
+                    self.log(f"   → requests: {old_count} (giữ nguyên, không đủ để tăng)")
+                else:
+                    self.log(f"   → requests: {old_count} (đã đúng)")
+
+                # === INJECT imageInputs cho reference images ===
+                if image_inputs:
+                    for req in payload_data["requests"]:
+                        req["imageInputs"] = image_inputs
+                    self.log(f"   → Injected {len(image_inputs)} reference image(s) into payload")
+
+            original_payload = json.dumps(payload_data)
+        except Exception as e:
+            self.log(f"⚠️ Không sửa được payload: {e}", "WARN")
+
+        # Headers
+        headers = {
+            "Authorization": self.bearer_token,
+            "Content-Type": "text/plain;charset=UTF-8",
+            "Origin": "https://labs.google",
+            "Referer": "https://labs.google/",
+        }
+        if self.x_browser_validation:
+            headers["x-browser-validation"] = self.x_browser_validation
+
+        self.log(f"→ Calling API with captured payload ({len(original_payload)} chars)...")
+
+        try:
+            # API call qua proxy bridge (127.0.0.1:port) để IP match với Chrome
+            # QUAN TRỌNG: Dùng bridge URL, KHÔNG dùng proxy trực tiếp (sẽ bị 407)
+            proxies = None
+            if self._use_webshare and hasattr(self, '_bridge_port') and self._bridge_port:
+                bridge_url = f"http://127.0.0.1:{self._bridge_port}"
+                proxies = {"http": bridge_url, "https": bridge_url}
+                self.log(f"→ Using proxy bridge: {bridge_url}")
+
+            resp = requests.post(
+                url,
+                headers=headers,
+                data=original_payload,
+                timeout=120,
+                proxies=proxies
+            )
+
+            if resp.status_code == 200:
+                return self._parse_response(resp.json()), None
+            else:
+                error = f"{resp.status_code}: {resp.text[:200]}"
+                self.log(f"✗ API Error: {error}", "ERROR")
+                return [], error
+
+        except Exception as e:
+            self.log(f"✗ Request error: {e}", "ERROR")
+            return [], str(e)
+
+    def _parse_response(self, data: Dict) -> List[GeneratedImage]:
+        """Parse API response để lấy images."""
+        images = []
+
+        for media_item in data.get("media", data.get("images", [])):
+            if isinstance(media_item, dict):
+                gen_image = media_item.get("image", {}).get("generatedImage", media_item)
+                img = GeneratedImage()
+
+                # Base64 encoded image
+                if gen_image.get("encodedImage"):
+                    img.base64_data = gen_image["encodedImage"]
+
+                # URL
+                if gen_image.get("fifeUrl"):
+                    img.url = gen_image["fifeUrl"]
+
+                # Media name (for video generation)
+                if media_item.get("name"):
+                    img.media_name = media_item["name"]
+
+                # Seed
+                if gen_image.get("seed"):
+                    img.seed = gen_image["seed"]
+
+                if img.base64_data or img.url:
+                    images.append(img)
+
+        self.log(f"✓ Parsed {len(images)} images")
+        return images
+
+    def generate_image(
+        self,
+        prompt: str,
+        save_dir: Optional[Path] = None,
+        filename: str = None,
+        max_retries: int = 3,
+        image_inputs: Optional[List[Dict]] = None
+    ) -> Tuple[bool, List[GeneratedImage], Optional[str]]:
+        """
+        Generate image - full flow với retry khi gặp 403.
+
+        Args:
+            prompt: Prompt mô tả ảnh
+            save_dir: Thư mục lưu ảnh (optional)
+            filename: Tên file (không có extension)
+            max_retries: Số lần retry khi gặp 403 (mặc định 3)
+            image_inputs: List of reference images [{name, inputType}]
+
+        Returns:
+            Tuple[success, list of images, error]
+        """
+        if not self._ready:
+            return False, [], "API chưa setup! Gọi setup() trước."
+
+        last_error = None
+
+        # Log reference images if provided
+        if image_inputs:
+            self.log(f"→ Using {len(image_inputs)} reference image(s)")
+
+        for attempt in range(max_retries):
+            # 1. Capture tokens với prompt (mỗi lần retry lấy token mới)
+            if not self._capture_tokens(prompt):
+                return False, [], "Không capture được tokens"
+
+            # 2. Gọi API với image_inputs (reference images)
+            images, error = self.call_api(image_inputs=image_inputs)
+
+            if error:
+                last_error = error
+
+                # === ERROR 253: Quota exceeded ===
+                # Đợi lâu hơn rồi retry
+                if "253" in error or "quota" in error.lower() or "exceeds" in error.lower():
+                    wait_time = 60 * (attempt + 1)  # 60s, 120s, 180s...
+                    self.log(f"⚠️ QUOTA EXCEEDED (Error 253) - Đợi {wait_time}s rồi retry...", "WARN")
+                    self.log(f"   → Bạn đã gửi quá nhiều request. Chờ một lúc hoặc đổi tài khoản Google.", "WARN")
+
+                    if attempt < max_retries - 1:
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        return False, [], f"Quota exceeded sau {max_retries} lần thử. Hãy chờ 15-30 phút hoặc dùng tài khoản khác."
+
+                # Nếu lỗi 403, xoay IP và retry
+                if "403" in error:
+                    self.log(f"⚠️ 403 error (attempt {attempt+1}/{max_retries})", "WARN")
+
+                    # === ROTATING ENDPOINT MODE ===
+                    # Mỗi request tự động đổi IP → chỉ cần retry, không cần restart Chrome
+                    if hasattr(self, '_is_rotating_mode') and self._is_rotating_mode:
+                        self.log(f"  → Rotating mode: IP sẽ tự đổi ở request tiếp theo")
+                        if attempt < max_retries - 1:
+                            self.log(f"  → Retry ngay (không cần restart Chrome)...")
+                            time.sleep(2)  # Đợi ngắn
+                            continue
+                        else:
+                            return False, [], error
+
+                    # === DIRECT PROXY LIST MODE ===
+                    # Cần xoay proxy và restart Chrome
+                    if self._use_webshare and self._webshare_proxy:
+                        # Gọi Webshare API để xoay IP cho worker (lưu proxy cũ vào blocked 48h)
+                        success, msg = self._webshare_proxy.rotate_ip(self.worker_id, "403 reCAPTCHA")
+                        self.log(f"  → Webshare rotate [Worker {self.worker_id}]: {msg}", "WARN")
+
+                        if success and attempt < max_retries - 1:
+                            # Restart Chrome để nhận IP mới
+                            self.log("  → Restart Chrome với IP mới...")
+                            if self.restart_chrome():
+                                time.sleep(3)  # Đợi Chrome ổn định
+                                continue
+                            else:
+                                return False, [], "Không restart được Chrome sau khi xoay IP"
+
+                    if attempt < max_retries - 1:
+                        self.log(f"  → Đợi 5s rồi retry...", "WARN")
+                        time.sleep(5)
+                        continue
+                    else:
+                        return False, [], error
+                else:
+                    # Lỗi khác, không retry
+                    return False, [], error
+
+            if not images:
+                return False, [], "Không có ảnh trong response"
+
+            # Thành công!
+            break
+        else:
+            return False, [], last_error or "Max retries exceeded"
+
+        # 3. Download và save nếu cần
+        if save_dir:
+            save_dir = Path(save_dir)
+            save_dir.mkdir(parents=True, exist_ok=True)
+
+            for i, img in enumerate(images):
+                fname = filename or f"image_{int(time.time())}"
+                if len(images) > 1:
+                    fname = f"{fname}_{i+1}"
+
+                if img.base64_data:
+                    img_path = save_dir / f"{fname}.png"
+                    img_path.write_bytes(base64.b64decode(img.base64_data))
+                    img.local_path = img_path
+                    self.log(f"✓ Saved: {img_path.name}")
+                elif img.url:
+                    # Download from URL
+                    try:
+                        proxies = None
+                        if self._use_webshare and self._webshare_proxy:
+                            proxies = self._webshare_proxy.get_proxies()
+                        resp = requests.get(img.url, timeout=60, proxies=proxies)
+                        if resp.status_code == 200:
+                            img_path = save_dir / f"{fname}.png"
+                            img_path.write_bytes(resp.content)
+                            img.local_path = img_path
+                            img.base64_data = base64.b64encode(resp.content).decode()
+                            self.log(f"✓ Downloaded: {img_path.name}")
+                    except Exception as e:
+                        self.log(f"✗ Download error: {e}", "WARN")
+
+        return True, images, None
+
+    def generate_batch(
+        self,
+        prompts: List[str],
+        save_dir: Path,
+        on_progress: Optional[Callable] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate batch nhiều ảnh.
+
+        Args:
+            prompts: Danh sách prompts
+            save_dir: Thư mục lưu ảnh
+            on_progress: Callback(index, total, success, error)
+
+        Returns:
+            Dict với thống kê
+        """
+        results = {
+            "total": len(prompts),
+            "success": 0,
+            "failed": 0,
+            "images": []
+        }
+
+        save_dir = Path(save_dir)
+        save_dir.mkdir(parents=True, exist_ok=True)
+
+        for i, prompt in enumerate(prompts):
+            self.log(f"\n[{i+1}/{len(prompts)}] {prompt[:50]}...")
+
+            # Lần đầu capture tất cả, sau đó chỉ refresh recaptcha
+            if i == 0:
+                if not self._capture_tokens(prompt):
+                    results["failed"] += 1
+                    if on_progress:
+                        on_progress(i+1, len(prompts), False, "Không capture được tokens")
+                    continue
+            else:
+                if not self.refresh_recaptcha(prompt):
+                    results["failed"] += 1
+                    if on_progress:
+                        on_progress(i+1, len(prompts), False, "Không refresh được recaptcha")
+                    continue
+
+            # Gọi API
+            images, error = self.call_api()
+
+            if error:
+                results["failed"] += 1
+                if on_progress:
+                    on_progress(i+1, len(prompts), False, error)
+
+                # Token hết hạn → dừng
+                if "401" in error:
+                    self.log("Bearer token hết hạn!", "ERROR")
+                    break
+                continue
+
+            if images:
+                # Save images
+                for j, img in enumerate(images):
+                    fname = f"batch_{i+1:03d}_{j+1}"
+                    if img.base64_data:
+                        img_path = save_dir / f"{fname}.png"
+                        img_path.write_bytes(base64.b64decode(img.base64_data))
+                        img.local_path = img_path
+
+                results["success"] += 1
+                results["images"].extend(images)
+                if on_progress:
+                    on_progress(i+1, len(prompts), True, None)
+            else:
+                results["failed"] += 1
+                if on_progress:
+                    on_progress(i+1, len(prompts), False, "No images")
+
+            time.sleep(1)  # Rate limit
+
+        self.log(f"\n{'='*50}")
+        self.log(f"DONE: {results['success']}/{results['total']}")
+        return results
+
+    def generate_video(
+        self,
+        media_id: str,
+        prompt: str = "Subtle motion, cinematic, slow movement",
+        aspect_ratio: str = "VIDEO_ASPECT_RATIO_LANDSCAPE",
+        video_model: str = "veo_3_0_r2v_fast_ultra",
+        max_wait: int = 300
+    ) -> Tuple[bool, Optional[str], Optional[str]]:
+        """
+        Tạo video từ ảnh (I2V) sử dụng DrissionPage - KHÔNG cần proxy nanoai.
+
+        Args:
+            media_id: Media ID của ảnh (từ generate_image)
+            prompt: Prompt mô tả chuyển động
+            aspect_ratio: Tỷ lệ video
+            video_model: Model video (fast hoặc quality)
+            max_wait: Thời gian chờ tối đa (giây)
+
+        Returns:
+            Tuple[success, video_url, error]
+        """
+        if not self._ready:
+            return False, None, "API chưa setup! Gọi setup() trước."
+
+        if not media_id:
+            return False, None, "Media ID không được để trống"
+
+        self.log(f"[I2V] Creating video from media: {media_id[:50]}...")
+
+        # Refresh recaptcha token NẾU có Chrome session
+        # Nếu không có Chrome (token mode), dùng cached token
+        if hasattr(self, 'driver') and self.driver:
+            self.log("[I2V] Refreshing recaptcha token...")
+            if self.refresh_recaptcha(prompt[:30] if len(prompt) > 30 else prompt):
+                self.log("[I2V] ✓ Got fresh recaptcha token")
+            else:
+                self.log("[I2V] ⚠️ Không refresh được recaptcha", "WARN")
+        else:
+            self.log("[I2V] Token mode - dùng cached recaptcha")
+
+        # Build request payload - CẦN recaptchaToken (theo payload thực tế)
+        import uuid
+        session_id = f";{int(time.time() * 1000)}"
+        scene_id = str(uuid.uuid4())
+
+        # Lấy recaptchaToken (từ cache hoặc sau khi refresh)
+        recaptcha = getattr(self, 'recaptcha_token', '') or ''
+
+        request_data = {
+            "aspectRatio": aspect_ratio,
+            "metadata": {"sceneId": scene_id},
+            "referenceImages": [{
+                "imageUsageType": "IMAGE_USAGE_TYPE_ASSET",
+                "mediaId": media_id
+            }],
+            "seed": int(time.time()) % 100000,
+            "textInput": {"prompt": prompt},
+            "videoModelKey": video_model
+        }
+
+        payload = {
+            "clientContext": {
+                "projectId": self.project_id,
+                "recaptchaToken": recaptcha,
+                "sessionId": session_id,
+                "tool": "PINHOLE",
+                "userPaygateTier": "PAYGATE_TIER_TWO"
+            },
+            "requests": [request_data]
+        }
+
+        self.log(f"[I2V] recaptchaToken: {'có' if recaptcha else 'KHÔNG CÓ!'}")
+
+        # API URL for Image-to-Video
+        url = "https://aisandbox-pa.googleapis.com/v1/video:batchAsyncGenerateVideoReferenceImages"
+
+        # Headers
+        headers = {
+            "Authorization": self.bearer_token,
+            "Content-Type": "application/json",
+            "Origin": "https://labs.google",
+            "Referer": "https://labs.google/",
+        }
+        if self.x_browser_validation:
+            headers["x-browser-validation"] = self.x_browser_validation
+
+        self.log(f"[I2V] Calling video API...")
+
+        try:
+            # Use proxy bridge if available
+            proxies = None
+            if self._use_webshare and hasattr(self, '_bridge_port') and self._bridge_port:
+                bridge_url = f"http://127.0.0.1:{self._bridge_port}"
+                proxies = {"http": bridge_url, "https": bridge_url}
+
+            resp = requests.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=60,
+                proxies=proxies
+            )
+
+            if resp.status_code != 200:
+                error = f"{resp.status_code}: {resp.text[:200]}"
+                self.log(f"[I2V] API Error: {error}", "ERROR")
+                return False, None, error
+
+            result = resp.json()
+            operations = result.get("operations", [])
+
+            if not operations:
+                self.log(f"[I2V] Response: {json.dumps(result)[:300]}")
+                return False, None, "No operations in response"
+
+            self.log(f"[I2V] Got {len(operations)} operations, polling for result...")
+
+            # Poll for video result
+            # Cấu trúc có thể là: operations[0]["name"] hoặc operations[0]["operation"]["name"]
+            op = operations[0]
+            operation_id = op.get("name") or op.get("operation", {}).get("name", "")
+            if not operation_id:
+                self.log(f"[I2V] Response structure: {json.dumps(op)[:300]}")
+                return False, None, "No operation ID"
+
+            video_url = self._poll_video_operation(operation_id, headers, proxies, max_wait)
+
+            if video_url:
+                self.log(f"[I2V] Video ready: {video_url[:60]}...")
+                return True, video_url, None
+            else:
+                return False, None, "Timeout waiting for video"
+
+        except Exception as e:
+            self.log(f"[I2V] Error: {e}", "ERROR")
+            return False, None, str(e)
+
+    def _poll_video_operation(
+        self,
+        operation_id: str,
+        headers: Dict,
+        proxies: Optional[Dict],
+        max_wait: int
+    ) -> Optional[str]:
+        """Poll cho video operation hoàn thành."""
+        url = f"https://aisandbox-pa.googleapis.com/v1/{operation_id}"
+
+        start_time = time.time()
+        poll_interval = 5  # Poll mỗi 5 giây
+
+        while time.time() - start_time < max_wait:
+            try:
+                resp = requests.get(
+                    url,
+                    headers=headers,
+                    timeout=30,
+                    proxies=proxies
+                )
+
+                if resp.status_code == 200:
+                    data = resp.json()
+
+                    # Check if done
+                    if data.get("done"):
+                        response = data.get("response", {})
+                        videos = response.get("generatedVideos", [])
+                        if videos:
+                            video_url = videos[0].get("video", {}).get("fifeUrl")
+                            if video_url:
+                                return video_url
+
+                        # Check error
+                        error = data.get("error", {})
+                        if error:
+                            self.log(f"[I2V] Video error: {error.get('message', error)}", "ERROR")
+                            return None
+
+                    # Still processing
+                    elapsed = int(time.time() - start_time)
+                    if elapsed % 30 == 0:  # Log every 30s
+                        self.log(f"[I2V] Still processing... ({elapsed}s)")
+
+                time.sleep(poll_interval)
+
+            except Exception as e:
+                self.log(f"[I2V] Poll error: {e}", "WARN")
+                time.sleep(poll_interval)
+
+        self.log(f"[I2V] Timeout after {max_wait}s", "ERROR")
+        return None
+
+    def close(self):
+        """Đóng Chrome và proxy bridge."""
+        if self.driver:
+            try:
+                self.driver.quit()
+            except:
+                pass
+            self.driver = None
+
+        # Dừng proxy bridge nếu có
+        if self._proxy_bridge:
+            try:
+                self._proxy_bridge.stop()
+                self.log("Proxy bridge stopped")
+            except:
+                pass
+            self._proxy_bridge = None
+            self._bridge_port = None
+
+        self._ready = False
+
+    def _setup_proxy_auth(self):
+        """
+        Setup CDP để tự động xử lý proxy authentication.
+        Dùng Network.setExtraHTTPHeaders với Proxy-Authorization.
+        """
+        if not hasattr(self, '_proxy_auth') or not self._proxy_auth:
+            return
+
+        username, password = self._proxy_auth
+        if not username or not password:
+            return
+
+        try:
+            import base64
+            # Tạo Basic Auth header
+            auth_string = f"{username}:{password}"
+            auth_bytes = base64.b64encode(auth_string.encode()).decode()
+
+            self.log(f"Setting up proxy auth for: {username}")
+
+            # Thử dùng CDP Fetch API để handle auth challenges
+            try:
+                self.driver.run_cdp('Fetch.enable', handleAuthRequests=True)
+                self.log("✓ CDP Fetch.enable OK")
+            except Exception as e:
+                self.log(f"CDP Fetch not supported: {e}", "WARN")
+
+            self.log("✓ Proxy auth ready")
+            self.log("  [!] Nếu vẫn lỗi, whitelist IP trên Webshare Dashboard")
+
+        except Exception as e:
+            self.log(f"[!] Proxy auth error: {e}", "WARN")
+            self.log("    → Whitelist IP: 14.224.157.134 trên Webshare")
+
+    def restart_chrome(self) -> bool:
+        """
+        Restart Chrome với proxy mới sau khi rotate.
+        Proxy đã được rotate trước khi gọi hàm này.
+        setup() sẽ lấy proxy mới từ manager.get_proxy_for_worker(worker_id).
+
+        Returns:
+            True nếu restart thành công
+        """
+        if self._use_webshare:
+            # Lấy proxy mới để log
+            from webshare_proxy import get_proxy_manager
+            manager = get_proxy_manager()
+            new_proxy = manager.get_proxy_for_worker(self.worker_id)
+            if new_proxy:
+                self.log(f"🔄 Restart Chrome [Worker {self.worker_id}] với proxy mới: {new_proxy.endpoint}")
+            else:
+                self.log(f"🔄 Restart Chrome [Worker {self.worker_id}]...")
+        else:
+            self.log("🔄 Restart Chrome với proxy mới...")
+
+        # Close Chrome và proxy bridge hiện tại
+        self.close()
+
+        time.sleep(2)
+
+        # Restart Chrome với proxy mới - setup() sẽ lấy proxy từ manager
+        # Lấy saved project URL để vào lại đúng project
+        saved_project_url = getattr(self, '_current_project_url', None)
+        if saved_project_url:
+            self.log(f"  → Reusing project: {saved_project_url[:50]}...")
+
+        if self.setup(project_url=saved_project_url):
+            self.log("✓ Chrome restarted thành công!")
+            return True
+        else:
+            self.log("✗ Không restart được Chrome", "ERROR")
+            return False
+
+    @property
+    def is_ready(self) -> bool:
+        """Kiểm tra API đã sẵn sàng chưa."""
+        return self._ready and self.driver is not None
+
+
+# Factory function
+def create_drission_api(
+    profile_dir: str = "./chrome_profile",
+    log_callback: Optional[Callable] = None,
+    webshare_enabled: bool = True,  # BẬT Webshare by default
+    worker_id: int = 0,  # Worker ID cho proxy rotation
+) -> DrissionFlowAPI:
+    """
+    Tạo DrissionFlowAPI instance.
+
+    Args:
+        profile_dir: Thư mục Chrome profile
+        log_callback: Callback để log
+        webshare_enabled: Dùng Webshare proxy pool (default True)
+        worker_id: Worker ID cho proxy rotation (mỗi Chrome có proxy riêng)
+
+    Returns:
+        DrissionFlowAPI instance
+    """
+    return DrissionFlowAPI(
+        profile_dir=profile_dir,
+        log_callback=log_callback,
+        webshare_enabled=webshare_enabled,
+        worker_id=worker_id,
+    )
