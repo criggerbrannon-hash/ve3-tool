@@ -879,8 +879,11 @@ class SmartEngine:
         cfg['preferred_provider'] = 'gemini' if self.gemini_keys else ('groq' if self.groq_keys else 'deepseek')
 
         # Ollama local model (fallback khi tat ca API fail)
-        cfg['ollama_model'] = self.ollama_model
-        cfg['ollama_endpoint'] = self.ollama_endpoint
+        # Ưu tiên từ settings.yaml, fallback từ self (accounts.json)
+        if not cfg.get('ollama_model'):
+            cfg['ollama_model'] = self.ollama_model
+        if not cfg.get('ollama_endpoint'):
+            cfg['ollama_endpoint'] = self.ollama_endpoint
 
         # Retry with different keys
         for attempt in range(self.max_retries):
