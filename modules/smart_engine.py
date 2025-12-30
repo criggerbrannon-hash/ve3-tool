@@ -3882,12 +3882,11 @@ class SmartEngine:
             self._video_worker_running = False
             return
 
-        # Create DrissionFlowAPI
+        # Create DrissionFlowAPI - chỉ dùng để gọi API, không mở Chrome mới
         try:
             drission_api = DrissionFlowAPI(
-                proxy_mode=self.config.get('proxy_mode', 'local'),
-                headless=True,
-                verbose=False
+                verbose=False,
+                webshare_enabled=False  # Không cần proxy vì đã có token
             )
             # Set token directly (không cần setup Chrome lại)
             drission_api._ready = True
@@ -3897,7 +3896,7 @@ class SmartEngine:
             drission_api.recaptcha_token = recaptcha
             drission_api.x_browser_validation = x_browser_val
 
-            self.log("[VIDEO] DrissionFlowAPI ready - Bắt đầu tạo video...")
+            self.log("[VIDEO] DrissionFlowAPI ready (token mode) - Bắt đầu tạo video...")
 
         except Exception as e:
             self.log(f"[VIDEO] Failed to create DrissionFlowAPI: {e}", "ERROR")
