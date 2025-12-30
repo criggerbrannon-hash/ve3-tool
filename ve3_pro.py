@@ -2620,6 +2620,7 @@ class UnixVoiceToVideo:
                     api = DrissionFlowAPI(
                         profile_dir=profile_dir,
                         worker_id=voice_id,
+                        headless=False,  # Tạm tắt headless để test
                         log_callback=lambda msg, vid=voice_id: self.root.after(0, lambda m=msg: self.log(f"[V{vid}] {m}"))
                     )
 
