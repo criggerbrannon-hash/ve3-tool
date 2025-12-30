@@ -3940,7 +3940,6 @@ class SmartEngine:
             try:
                 # Đọc config từ settings.yaml
                 headless_mode = True
-                config_chrome_profile = ""
                 use_webshare = True  # Default: bật proxy giống image gen
                 try:
                     import yaml
@@ -3949,16 +3948,15 @@ class SmartEngine:
                         with open(config_path, 'r', encoding='utf-8') as f:
                             cfg = yaml.safe_load(f) or {}
                         headless_mode = cfg.get('browser_headless', True)
-                        config_chrome_profile = cfg.get('chrome_profile', '')
                         # Webshare config
                         ws_cfg = cfg.get('webshare_proxy', {})
                         use_webshare = ws_cfg.get('enabled', True)
                 except:
                     pass
 
-                # Chọn profile: cache → settings.yaml → default
-                # KHÔNG check exists() vì path Windows format có thể khác
-                profile_dir = chrome_profile or config_chrome_profile or "./chrome_profile"
+                # Dùng profile của TOOL (giống image gen), KHÔNG dùng Chrome hệ thống
+                # Ưu tiên: cache (từ project trước) → default "./chrome_profile"
+                profile_dir = chrome_profile if chrome_profile else "./chrome_profile"
 
                 drission_api = DrissionFlowAPI(
                     profile_dir=profile_dir,
