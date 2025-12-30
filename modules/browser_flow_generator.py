@@ -3028,12 +3028,17 @@ class BrowserFlowGenerator:
             profile_to_use = self._get_profile_path() or "./chrome_profile"
             self._log(f"📁 Dùng Chrome profile mặc định: {profile_to_use}")
 
+        # Đọc setting headless từ config (default: True = chạy ẩn)
+        # Dùng chung setting 'browser_headless' với Selenium mode
+        drission_headless = self.config.get('browser_headless', True)
+
         drission_api = DrissionFlowAPI(
             profile_dir=profile_to_use,
             verbose=self.verbose,
             log_callback=self._log,
             webshare_enabled=use_webshare,
-            worker_id=self.worker_id  # Parallel mode - mỗi worker có proxy riêng
+            worker_id=self.worker_id,  # Parallel mode - mỗi worker có proxy riêng
+            headless=drission_headless  # Chạy Chrome ẩn (default: True)
         )
 
         self._log("🚀 DrissionPage + Interceptor")
@@ -3309,24 +3314,24 @@ class BrowserFlowGenerator:
                     self.stats["success"] += 1
                     consecutive_403 = 0  # Reset counter on success
 
-                    # Update Excel if available
-                    if workbook and images[0].local_path:
+                    # Update Excel if available - SAVE MEDIA_ID for SCENE images
+                    if workbook and not is_reference_image:
                         try:
-                            workbook.update_image_path(int(pid), str(images[0].local_path))
-                            workbook.update_status(int(pid), "done")
-                            # === SAVE MEDIA_ID to Excel for SCENE images ===
+                            # Dùng update_scene với tất cả fields cần update
+                            workbook.update_scene(
+                                int(pid),
+                                img_path=str(images[0].local_path) if images[0].local_path else None,
+                                status_img="done",
+                                media_id=images[0].media_name if images[0].media_name else None
+                            )
+                            workbook.save()
                             if images[0].media_name:
-                                try:
-                                    workbook.update_scene(int(pid), media_id=images[0].media_name)
-                                    workbook.save()
-                                    self._log(f"   [EXCEL] Saved media_id for scene {pid}: {images[0].media_name[:30]}...")
-                                except Exception as e:
-                                    self._log(f"   [EXCEL] Cannot save scene media_id: {e}", "warn")
+                                self._log(f"   [EXCEL] Saved scene {pid}: media_id={images[0].media_name[:40]}...")
                             elif pid.isdigit():
                                 # Scene image but no media_name - this will cause I2V to skip
                                 self._log(f"   ⚠️ Scene {pid}: API không trả về media_name (I2V sẽ không hoạt động)", "warn")
-                        except Exception as ex:
-                            self._log(f"   [EXCEL] Update error: {ex}", "warn")
+                        except Exception as e:
+                            self._log(f"   [EXCEL] Cannot update scene {pid}: {e}", "warn")
 
                     # === SAVE MEDIA_ID to Excel for nv/loc images ===
                     # Cả nv* và loc* đều nằm trong sheet "characters"
@@ -3673,7 +3678,31 @@ class BrowserFlowGenerator:
         except:
             video_count = 0
 
-        if video_count > 0 and drission_api._ready:
+        # === KIỂM TRA: Tất cả scene images đã xong chưa? ===
+        all_images_done = True
+        pending_scenes = []
+        if video_count > 0 and workbook:
+            try:
+                for scene in workbook.get_scenes():
+                    scene_id = str(scene.scene_id) if hasattr(scene, 'scene_id') else ''
+                    if not scene_id or not scene_id.isdigit():
+                        continue  # Bỏ qua nv/loc
+
+                    # Kiểm tra status_img
+                    status_img = getattr(scene, 'status_img', '') or ''
+                    prompt = getattr(scene, 'prompt', '') or ''
+
+                    # Nếu có prompt và chưa done → chưa xong
+                    if prompt and prompt.strip().upper() != 'DO_NOT_GENERATE' and status_img != 'done':
+                        all_images_done = False
+                        pending_scenes.append(scene_id)
+            except Exception as e:
+                self._log(f"[I2V] Warning: Cannot check pending scenes: {e}", "warn")
+
+        if not all_images_done:
+            self._log(f"[I2V] ⏳ SKIP - Còn {len(pending_scenes)} scene chưa có ảnh: {pending_scenes[:10]}...")
+            self._log(f"[I2V] Video sẽ được tạo sau khi tất cả ảnh scene hoàn thành")
+        elif video_count > 0 and drission_api._ready:
             self._log("")
             self._log("=" * 60)
             self._log(f"[I2V] TẠO VIDEO TỪ ẢNH (cùng session)")

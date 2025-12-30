@@ -211,6 +211,7 @@ class DrissionFlowAPI:
         # Webshare proxy - dùng global proxy manager
         webshare_enabled: bool = True,  # BẬT Webshare proxy by default
         worker_id: int = 0,  # Worker ID cho proxy rotation (mỗi Chrome có proxy riêng)
+        headless: bool = True,  # Chạy Chrome ẩn (default: ON)
         # Legacy params (ignored)
         proxy_port: int = 1080,
         use_proxy: bool = False,
@@ -225,9 +226,11 @@ class DrissionFlowAPI:
             log_callback: Callback để log (msg, level)
             webshare_enabled: Dùng Webshare proxy pool (default True)
             worker_id: Worker ID cho proxy rotation (mỗi Chrome có proxy riêng)
+            headless: Chạy Chrome ẩn không hiện cửa sổ (default True)
         """
         self.profile_dir = Path(profile_dir)
         self.worker_id = worker_id  # Lưu worker_id để dùng cho proxy rotation
+        self._headless = headless  # Lưu setting headless
         # Auto-generate unique port for parallel execution
         if chrome_port == 0:
             self.chrome_port = random.randint(9222, 9999)
@@ -525,6 +528,13 @@ class DrissionFlowAPI:
             # Disable GPU để tránh lỗi
             options.set_argument('--disable-gpu')
             options.set_argument('--disable-software-rasterizer')
+
+            # Headless mode - chạy Chrome ẩn
+            if self._headless:
+                options.set_argument('--headless=new')  # Chrome 109+ headless mode
+                self.log("🔇 Headless mode: ON (Chrome chạy ẩn)")
+            else:
+                self.log("👁️ Headless mode: OFF (Chrome hiển thị)")
 
             if self._use_webshare and self._webshare_proxy:
                 from webshare_proxy import get_proxy_manager
@@ -963,9 +973,14 @@ class DrissionFlowAPI:
                 if gen_image.get("fifeUrl"):
                     img.url = gen_image["fifeUrl"]
 
-                # Media name (for video generation)
-                if media_item.get("name"):
-                    img.media_name = media_item["name"]
+                # Media name (for video generation) - check multiple locations
+                img.media_name = (
+                    media_item.get("name") or
+                    media_item.get("mediaName") or
+                    gen_image.get("name") or
+                    gen_image.get("mediaName") or
+                    ""
+                )
 
                 # Seed
                 if gen_image.get("seed"):
@@ -1019,17 +1034,36 @@ class DrissionFlowAPI:
                 last_error = error
 
                 # === ERROR 253: Quota exceeded ===
-                # Đợi lâu hơn rồi retry
+                # Kill Chrome hoàn toàn, đổi proxy, mở lại
                 if "253" in error or "quota" in error.lower() or "exceeds" in error.lower():
-                    wait_time = 60 * (attempt + 1)  # 60s, 120s, 180s...
-                    self.log(f"⚠️ QUOTA EXCEEDED (Error 253) - Đợi {wait_time}s rồi retry...", "WARN")
-                    self.log(f"   → Bạn đã gửi quá nhiều request. Chờ một lúc hoặc đổi tài khoản Google.", "WARN")
+                    self.log(f"⚠️ QUOTA EXCEEDED (Error 253) - Kill Chrome và đổi proxy...", "WARN")
 
+                    # QUAN TRỌNG: Kill Chrome processes hoàn toàn (không chỉ close driver)
+                    self._kill_chrome()
+                    self.close()
+
+                    # Rotate proxy nếu có
+                    if self._use_webshare and self._webshare_proxy:
+                        success, msg = self._webshare_proxy.rotate_ip(self.worker_id, "253 Quota")
+                        self.log(f"  → Webshare rotate [Worker {self.worker_id}]: {msg}", "WARN")
+
+                        if success and attempt < max_retries - 1:
+                            # Mở Chrome mới với proxy mới
+                            self.log("  → Mở Chrome mới với proxy mới...")
+                            time.sleep(3)  # Đợi proxy ổn định
+                            if self.setup(project_url=self._saved_project_url if hasattr(self, '_saved_project_url') else None):
+                                continue
+                            else:
+                                return False, [], "Không setup được Chrome mới sau khi đổi proxy"
+
+                    # Không có proxy hoặc rotate thất bại
                     if attempt < max_retries - 1:
-                        time.sleep(wait_time)
-                        continue
-                    else:
-                        return False, [], f"Quota exceeded sau {max_retries} lần thử. Hãy chờ 15-30 phút hoặc dùng tài khoản khác."
+                        self.log(f"  → Đợi 30s rồi thử lại với Chrome mới...", "WARN")
+                        time.sleep(30)
+                        if self.setup(project_url=self._saved_project_url if hasattr(self, '_saved_project_url') else None):
+                            continue
+
+                    return False, [], f"Quota exceeded sau {max_retries} lần thử. Hãy đổi proxy hoặc tài khoản."
 
                 # Nếu lỗi 403, xoay IP và retry
                 if "403" in error:
@@ -1201,10 +1235,11 @@ class DrissionFlowAPI:
         prompt: str = "Subtle motion, cinematic, slow movement",
         aspect_ratio: str = "VIDEO_ASPECT_RATIO_LANDSCAPE",
         video_model: str = "veo_3_0_r2v_fast_ultra",
-        max_wait: int = 300
+        max_wait: int = 300,
+        max_retries: int = 3
     ) -> Tuple[bool, Optional[str], Optional[str]]:
         """
-        Tạo video từ ảnh (I2V) sử dụng DrissionPage - KHÔNG cần proxy nanoai.
+        Tạo video từ ảnh (I2V) - CÓ RETRY VỚI 403/QUOTA HANDLING như generate_image.
 
         Args:
             media_id: Media ID của ảnh (từ generate_image)
@@ -1212,6 +1247,7 @@ class DrissionFlowAPI:
             aspect_ratio: Tỷ lệ video
             video_model: Model video (fast hoặc quality)
             max_wait: Thời gian chờ tối đa (giây)
+            max_retries: Số lần retry khi gặp 403/quota (mặc định 3)
 
         Returns:
             Tuple[success, video_url, error]
@@ -1224,158 +1260,292 @@ class DrissionFlowAPI:
 
         self.log(f"[I2V] Creating video from media: {media_id[:50]}...")
 
-        # Refresh recaptcha token NẾU có Chrome session
-        # Nếu không có Chrome (token mode), dùng cached token
-        if hasattr(self, 'driver') and self.driver:
-            self.log("[I2V] Refreshing recaptcha token...")
-            if self.refresh_recaptcha(prompt[:30] if len(prompt) > 30 else prompt):
-                self.log("[I2V] ✓ Got fresh recaptcha token")
+        last_error = None
+
+        for attempt in range(max_retries):
+            # === QUAN TRỌNG: Capture/Refresh tokens mỗi lần retry ===
+            if hasattr(self, 'driver') and self.driver:
+                if not self.bearer_token or not self.project_id:
+                    self.log("[I2V] Capturing full tokens (bearer, project_id, recaptcha)...")
+                    capture_prompt = prompt[:30] if len(prompt) > 30 else prompt
+                    if self._capture_tokens(capture_prompt):
+                        self.log("[I2V] ✓ Got all tokens!")
+                    else:
+                        self.log("[I2V] ⚠️ Không capture được tokens", "WARN")
+                        return False, None, "Không capture được tokens từ Chrome"
+                else:
+                    self.log("[I2V] Refreshing recaptcha token...")
+                    if self.refresh_recaptcha(prompt[:30] if len(prompt) > 30 else prompt):
+                        self.log("[I2V] ✓ Got fresh recaptcha token")
+                    else:
+                        self.log("[I2V] ⚠️ Không refresh được recaptcha", "WARN")
             else:
-                self.log("[I2V] ⚠️ Không refresh được recaptcha", "WARN")
-        else:
-            self.log("[I2V] Token mode - dùng cached recaptcha")
+                self.log("[I2V] Token mode - dùng cached recaptcha")
 
-        # Build request payload - CẦN recaptchaToken (theo payload thực tế)
-        import uuid
-        session_id = f";{int(time.time() * 1000)}"
-        scene_id = str(uuid.uuid4())
+            # Build request payload
+            import uuid
+            session_id = f";{int(time.time() * 1000)}"
+            scene_id = str(uuid.uuid4())
+            recaptcha = getattr(self, 'recaptcha_token', '') or ''
 
-        # Lấy recaptchaToken (từ cache hoặc sau khi refresh)
-        recaptcha = getattr(self, 'recaptcha_token', '') or ''
+            request_data = {
+                "aspectRatio": aspect_ratio,
+                "metadata": {"sceneId": scene_id},
+                "referenceImages": [{
+                    "imageUsageType": "IMAGE_USAGE_TYPE_ASSET",
+                    "mediaId": media_id
+                }],
+                "seed": int(time.time()) % 100000,
+                "textInput": {"prompt": prompt},
+                "videoModelKey": video_model
+            }
 
-        request_data = {
-            "aspectRatio": aspect_ratio,
-            "metadata": {"sceneId": scene_id},
-            "referenceImages": [{
-                "imageUsageType": "IMAGE_USAGE_TYPE_ASSET",
-                "mediaId": media_id
-            }],
-            "seed": int(time.time()) % 100000,
-            "textInput": {"prompt": prompt},
-            "videoModelKey": video_model
-        }
+            payload = {
+                "clientContext": {
+                    "projectId": self.project_id,
+                    "recaptchaToken": recaptcha,
+                    "sessionId": session_id,
+                    "tool": "PINHOLE",
+                    "userPaygateTier": "PAYGATE_TIER_TWO"
+                },
+                "requests": [request_data]
+            }
 
-        payload = {
-            "clientContext": {
-                "projectId": self.project_id,
-                "recaptchaToken": recaptcha,
-                "sessionId": session_id,
-                "tool": "PINHOLE",
-                "userPaygateTier": "PAYGATE_TIER_TWO"
-            },
-            "requests": [request_data]
-        }
+            self.log(f"[I2V] recaptchaToken: {'có' if recaptcha else 'KHÔNG CÓ!'}")
 
-        self.log(f"[I2V] recaptchaToken: {'có' if recaptcha else 'KHÔNG CÓ!'}")
+            # Video API - project_id trong payload, KHÔNG trong URL
+            url = "https://aisandbox-pa.googleapis.com/v1/video:batchAsyncGenerateVideoReferenceImages"
 
-        # API URL for Image-to-Video
-        url = "https://aisandbox-pa.googleapis.com/v1/video:batchAsyncGenerateVideoReferenceImages"
+            headers = {
+                "Authorization": self.bearer_token,
+                "Content-Type": "application/json",
+                "Origin": "https://labs.google",
+                "Referer": "https://labs.google/",
+            }
+            if self.x_browser_validation:
+                headers["x-browser-validation"] = self.x_browser_validation
 
-        # Headers
-        headers = {
-            "Authorization": self.bearer_token,
-            "Content-Type": "application/json",
-            "Origin": "https://labs.google",
-            "Referer": "https://labs.google/",
-        }
-        if self.x_browser_validation:
-            headers["x-browser-validation"] = self.x_browser_validation
+            self.log(f"[I2V] Calling video API (attempt {attempt+1}/{max_retries})...")
 
-        self.log(f"[I2V] Calling video API...")
+            try:
+                proxies = None
+                if self._use_webshare and hasattr(self, '_bridge_port') and self._bridge_port:
+                    bridge_url = f"http://127.0.0.1:{self._bridge_port}"
+                    proxies = {"http": bridge_url, "https": bridge_url}
 
-        try:
-            # Use proxy bridge if available
-            proxies = None
-            if self._use_webshare and hasattr(self, '_bridge_port') and self._bridge_port:
-                bridge_url = f"http://127.0.0.1:{self._bridge_port}"
-                proxies = {"http": bridge_url, "https": bridge_url}
+                resp = requests.post(
+                    url,
+                    headers=headers,
+                    json=payload,
+                    timeout=60,
+                    proxies=proxies
+                )
 
-            resp = requests.post(
-                url,
-                headers=headers,
-                json=payload,
-                timeout=60,
-                proxies=proxies
-            )
+                if resp.status_code != 200:
+                    error = f"{resp.status_code}: {resp.text[:200]}"
+                    last_error = error
+                    self.log(f"[I2V] API Error: {error}", "ERROR")
 
-            if resp.status_code != 200:
-                error = f"{resp.status_code}: {resp.text[:200]}"
-                self.log(f"[I2V] API Error: {error}", "ERROR")
-                return False, None, error
+                    # Project URL cho retry - dùng project_id hiện tại
+                    retry_project_url = f"https://labs.google/fx/vi/tools/flow/project/{self.project_id}"
 
-            result = resp.json()
-            operations = result.get("operations", [])
+                    # === ERROR 253/403: Quota exceeded ===
+                    if "253" in error or "quota" in error.lower() or "exceeds" in error.lower():
+                        self.log(f"[I2V] ⚠️ QUOTA EXCEEDED - Đổi proxy...", "WARN")
 
-            if not operations:
-                self.log(f"[I2V] Response: {json.dumps(result)[:300]}")
-                return False, None, "No operations in response"
+                        self.close()  # Chỉ close driver, không kill hết Chrome
 
-            self.log(f"[I2V] Got {len(operations)} operations, polling for result...")
+                        if self._use_webshare and self._webshare_proxy:
+                            success, msg = self._webshare_proxy.rotate_ip(self.worker_id, "I2V 253 Quota")
+                            self.log(f"[I2V] → Webshare rotate: {msg}", "WARN")
 
-            # Poll for video result
-            # Cấu trúc có thể là: operations[0]["name"] hoặc operations[0]["operation"]["name"]
-            op = operations[0]
-            operation_id = op.get("name") or op.get("operation", {}).get("name", "")
-            if not operation_id:
-                self.log(f"[I2V] Response structure: {json.dumps(op)[:300]}")
-                return False, None, "No operation ID"
+                            if success and attempt < max_retries - 1:
+                                self.log("[I2V] → Mở Chrome mới với proxy mới...")
+                                time.sleep(3)
+                                if self.setup(project_url=retry_project_url):
+                                    continue
+                                else:
+                                    return False, None, "Không setup được Chrome mới sau khi đổi proxy"
 
-            video_url = self._poll_video_operation(operation_id, headers, proxies, max_wait)
+                        if attempt < max_retries - 1:
+                            self.log("[I2V] → Đợi 30s rồi thử lại...", "WARN")
+                            time.sleep(30)
+                            if self.setup(project_url=retry_project_url):
+                                continue
+                        return False, None, f"Quota exceeded sau {max_retries} lần thử"
 
-            if video_url:
-                self.log(f"[I2V] Video ready: {video_url[:60]}...")
-                return True, video_url, None
-            else:
-                return False, None, "Timeout waiting for video"
+                    # === 403 error ===
+                    if "403" in error:
+                        self.log(f"[I2V] ⚠️ 403 error (attempt {attempt+1}/{max_retries})", "WARN")
 
-        except Exception as e:
-            self.log(f"[I2V] Error: {e}", "ERROR")
-            return False, None, str(e)
+                        # Rotating endpoint mode - chỉ cần retry, IP tự đổi
+                        if hasattr(self, '_is_rotating_mode') and self._is_rotating_mode:
+                            self.log("[I2V] → Rotating mode: IP sẽ tự đổi ở request tiếp theo")
+                            if attempt < max_retries - 1:
+                                time.sleep(2)
+                                continue
+                            else:
+                                return False, None, error
+
+                        # Direct proxy list mode
+                        if self._use_webshare and self._webshare_proxy:
+                            success, msg = self._webshare_proxy.rotate_ip(self.worker_id, "I2V 403")
+                            self.log(f"[I2V] → Webshare rotate: {msg}", "WARN")
+
+                            if success and attempt < max_retries - 1:
+                                self.close()  # Chỉ close driver
+                                time.sleep(3)
+                                self.log("[I2V] → Mở Chrome vào đúng project...")
+                                if self.setup(project_url=retry_project_url):
+                                    continue
+
+                        if attempt < max_retries - 1:
+                            time.sleep(10)
+                            continue
+
+                    # Other errors - simple retry
+                    if attempt < max_retries - 1:
+                        self.log(f"[I2V] → Retry in 5s...", "WARN")
+                        time.sleep(5)
+                        continue
+                    return False, None, error
+
+                result = resp.json()
+
+                # Log full response để debug
+                self.log(f"[I2V] Full response keys: {list(result.keys())}")
+                self.log(f"[I2V] Response: {json.dumps(result)[:500]}")
+
+                # Giống image gen - check nếu có video trực tiếp trong response
+                # (không cần poll như image gen)
+                if "media" in result or "generatedVideos" in result:
+                    videos = result.get("generatedVideos", result.get("media", []))
+                    if videos:
+                        video_url = videos[0].get("video", {}).get("fifeUrl") or videos[0].get("fifeUrl")
+                        if video_url:
+                            self.log(f"[I2V] ✓ Video ready (no poll): {video_url[:60]}...")
+                            return True, video_url, None
+
+                operations = result.get("operations", [])
+
+                if not operations:
+                    if attempt < max_retries - 1:
+                        time.sleep(5)
+                        continue
+                    return False, None, "No operations/videos in response"
+
+                self.log(f"[I2V] Got {len(operations)} operations, polling for result...")
+
+                op = operations[0]
+                self.log(f"[I2V] Operation status: {op.get('status', 'unknown')}")
+
+                # Truyền full operation data cho poll (không chỉ operation_id)
+                video_url = self._poll_video_operation(op, headers, proxies, max_wait)
+
+                if video_url:
+                    self.log(f"[I2V] Video ready: {video_url[:60]}...")
+                    return True, video_url, None
+                else:
+                    last_error = "Timeout waiting for video"
+                    if attempt < max_retries - 1:
+                        self.log("[I2V] → Timeout, will retry...", "WARN")
+                        continue
+                    return False, None, last_error
+
+            except Exception as e:
+                last_error = str(e)
+                self.log(f"[I2V] Error: {e}", "ERROR")
+
+                # Project URL cho retry
+                retry_project_url = f"https://labs.google/fx/vi/tools/flow/project/{self.project_id}"
+
+                # Check if exception contains 403/quota error
+                if "253" in last_error or "quota" in last_error.lower() or "403" in last_error:
+                    self.log("[I2V] ⚠️ Exception with 403/quota - Đổi proxy...", "WARN")
+                    self.close()  # Chỉ close driver
+
+                    if self._use_webshare and self._webshare_proxy:
+                        success, msg = self._webshare_proxy.rotate_ip(self.worker_id, "I2V Exception")
+                        self.log(f"[I2V] → Webshare rotate: {msg}", "WARN")
+
+                        if success and attempt < max_retries - 1:
+                            time.sleep(3)
+                            if self.setup(project_url=retry_project_url):
+                                continue
+
+                if attempt < max_retries - 1:
+                    time.sleep(5)
+                    continue
+                return False, None, last_error
+
+        return False, None, last_error or "Failed after all retries"
 
     def _poll_video_operation(
         self,
-        operation_id: str,
+        operation_data: Dict,
         headers: Dict,
         proxies: Optional[Dict],
         max_wait: int
     ) -> Optional[str]:
-        """Poll cho video operation hoàn thành."""
-        url = f"https://aisandbox-pa.googleapis.com/v1/{operation_id}"
+        """
+        Poll cho video operation hoàn thành.
+        Dùng POST với body chứa operation info (không phải GET).
+        """
+        url = "https://aisandbox-pa.googleapis.com/v1/video:batchCheckAsyncVideoGenerationStatus"
+
+        # Payload gửi đi - chứa operation info từ response đầu
+        poll_payload = {"operations": [operation_data]}
 
         start_time = time.time()
         poll_interval = 5  # Poll mỗi 5 giây
 
+        poll_count = 0
         while time.time() - start_time < max_wait:
             try:
-                resp = requests.get(
+                poll_count += 1
+                elapsed = int(time.time() - start_time)
+
+                resp = requests.post(
                     url,
                     headers=headers,
+                    json=poll_payload,
                     timeout=30,
                     proxies=proxies
                 )
 
                 if resp.status_code == 200:
                     data = resp.json()
+                    operations = data.get("operations", [])
 
-                    # Check if done
-                    if data.get("done"):
-                        response = data.get("response", {})
-                        videos = response.get("generatedVideos", [])
-                        if videos:
-                            video_url = videos[0].get("video", {}).get("fifeUrl")
+                    if operations:
+                        op = operations[0]
+                        status = op.get("status", "")
+
+                        # Log progress
+                        if poll_count == 1 or elapsed % 30 < poll_interval:
+                            self.log(f"[I2V] Poll #{poll_count}: {status}, {elapsed}s")
+
+                        # Check status
+                        if "COMPLETE" in status or "SUCCESS" in status or "DONE" in status:
+                            # Video xong - tìm URL (path: operation.metadata.video.fifeUrl)
+                            video_url = op.get("operation", {}).get("metadata", {}).get("video", {}).get("fifeUrl")
                             if video_url:
                                 return video_url
 
-                        # Check error
-                        error = data.get("error", {})
-                        if error:
-                            self.log(f"[I2V] Video error: {error.get('message', error)}", "ERROR")
+                            # Log full response để debug
+                            self.log(f"[I2V] Complete but no URL: {json.dumps(op)[:500]}")
                             return None
 
-                    # Still processing
-                    elapsed = int(time.time() - start_time)
-                    if elapsed % 30 == 0:  # Log every 30s
-                        self.log(f"[I2V] Still processing... ({elapsed}s)")
+                        elif "FAILED" in status or "ERROR" in status:
+                            error_msg = op.get("error", {}).get("message", status)
+                            self.log(f"[I2V] Video failed: {error_msg}", "ERROR")
+                            return None
+
+                        # Còn đang xử lý - update payload với status mới
+                        poll_payload = {"operations": [op]}
+
+                else:
+                    self.log(f"[I2V] Poll error: HTTP {resp.status_code} - {resp.text[:200]}", "WARN")
 
                 time.sleep(poll_interval)
 
