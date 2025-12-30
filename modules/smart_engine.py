@@ -2266,8 +2266,12 @@ class SmartEngine:
         else:
             self.log(f"  Tổng: {len(all_prompts)} prompts")
 
-        # === START VIDEO WORKER TRƯỚC (để có thể queue cả ảnh mới và cũ) ===
-        self._start_video_worker(proj_dir)
+        # === CHỈ START VIDEO WORKER KHI TẤT CẢ ẢNH ĐÃ XONG ===
+        # Nếu còn ảnh → browser_flow_generator sẽ mở Chrome và dùng I2V cùng session
+        # Nếu hết ảnh → VIDEO worker mở Chrome riêng để tạo video
+        if not prompts:
+            self.log("[VIDEO] Tất cả ảnh đã xong - start VIDEO worker")
+            self._start_video_worker(proj_dir)
 
         # === LOAD CACHED MEDIA_NAMES ===
         # Dùng để tạo video từ ảnh mà không cần upload lại
