@@ -2992,12 +2992,58 @@ class BrowserFlowGenerator:
         else:
             self._log("   Proxy: OFF (không có proxy)")
 
+        # === ĐỌC PROJECT URL TỪ EXCEL/CACHE (để tiếp tục dự án dở) ===
+        saved_project_url = None
+
+        # 1. Thử đọc từ Excel sheet 'config'
+        if excel_path and Path(excel_path).exists():
+            try:
+                import openpyxl
+                wb = openpyxl.load_workbook(excel_path)
+                if 'config' in wb.sheetnames:
+                    ws = wb['config']
+                    for row in ws.iter_rows(min_row=2, max_row=20, values_only=True):
+                        if row and len(row) >= 2:
+                            key = str(row[0] or '').strip().lower()
+                            val = str(row[1] or '').strip() if row[1] else ''
+                            if key == 'flow_project_url' and val and '/project/' in val:
+                                saved_project_url = val
+                                self._log(f"📂 Tìm thấy project URL từ Excel: {saved_project_url[:50]}...")
+                                break
+                            elif key == 'flow_project_id' and val and not saved_project_url:
+                                # Nếu chỉ có project_id, tạo URL
+                                saved_project_url = f"https://labs.google/fx/vi/tools/flow/project/{val}"
+                                self._log(f"📂 Tìm thấy project_id từ Excel: {val[:20]}...")
+                wb.close()
+            except Exception as e:
+                self._log(f"⚠️ Không đọc được project từ Excel: {e}", "warn")
+
+        # 2. Fallback: Thử đọc từ cache file
+        if not saved_project_url and excel_path:
+            cache_path = Path(excel_path).parent / ".media_cache.json"
+            if cache_path.exists():
+                try:
+                    import json
+                    with open(cache_path, 'r', encoding='utf-8') as f:
+                        cache_data = json.load(f)
+                    cached_url = cache_data.get('_project_url', '')
+                    if cached_url and '/project/' in cached_url:
+                        saved_project_url = cached_url
+                        self._log(f"📂 Tìm thấy project URL từ cache: {saved_project_url[:50]}...")
+                except Exception as e:
+                    self._log(f"⚠️ Không đọc được cache: {e}", "warn")
+
+        if saved_project_url:
+            self._log(f"🔄 Sẽ vào lại project cũ để giữ media_id...")
+        else:
+            self._log(f"📝 Sẽ tạo project mới...")
+
         # Setup Chrome và đợi user chọn project (với retry + IP rotation)
         MAX_SETUP_RETRIES = 3
         setup_success = False
 
         for setup_attempt in range(MAX_SETUP_RETRIES):
-            if drission_api.setup():
+            if drission_api.setup(project_url=saved_project_url):
                 setup_success = True
                 break
             else:
@@ -3534,9 +3580,15 @@ class BrowserFlowGenerator:
                             ws = wb['config']
                             next_row = ws.max_row + 1
 
+                        # Lấy project URL để lưu (cho lần chạy tiếp theo vào đúng project)
+                        project_url = getattr(drission_api, '_current_project_url', '')
+                        if not project_url and project_id:
+                            project_url = f"https://labs.google/fx/vi/tools/flow/project/{project_id}"
+
                         # Lưu các config - đầy đủ để tái sử dụng cho I2V
                         config_items = {
                             'flow_project_id': project_id,
+                            'flow_project_url': project_url,  # URL để vào lại project cũ
                             'flow_bearer_token': bearer,  # Full token để video worker dùng
                             'flow_recaptcha_token': recaptcha,  # Quan trọng cho I2V!
                             'flow_x_browser_validation': x_browser_val,  # Auth header
