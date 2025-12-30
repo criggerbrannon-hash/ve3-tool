@@ -2559,29 +2559,18 @@ class UnixVoiceToVideo:
             total_results = {"success": 0, "failed": 0, "total": sum(len(d['prompts']) for d in voice_data.values())}
 
             def setup_chrome(voice_id: int) -> bool:
-                """Setup Chrome với proxy cho voice."""
+                """Setup Chrome với Webshare proxy cho voice."""
                 try:
                     self.root.after(0, lambda vid=voice_id: self.log(f"[Voice {vid}] 🌐 Khởi tạo Chrome..."))
 
-                    # Lấy proxy manager
-                    from webshare_proxy import get_proxy_manager
-                    proxy_manager = get_proxy_manager()
-
-                    proxy_url = None
-                    if proxy_manager and proxy_manager.proxies:
-                        proxy, ip = proxy_manager.test_and_get_proxy(voice_id)
-                        if proxy:
-                            proxy_url = proxy
-                            self.root.after(0, lambda vid=voice_id, ip=ip: self.log(f"[Voice {vid}] 🌐 IP: {ip}"))
-
-                    # Tạo DrissionFlowAPI
+                    # Tạo DrissionFlowAPI (proxy được xử lý tự động qua Webshare với worker_id)
                     api = DrissionFlowAPI(
                         worker_id=voice_id,
                         log_callback=lambda msg, vid=voice_id: self.root.after(0, lambda m=msg: self.log(f"[V{vid}] {m}"))
                     )
 
-                    # Setup với proxy
-                    if api.setup(proxy=proxy_url):
+                    # Setup Chrome
+                    if api.setup():
                         drission_apis[voice_id] = api
                         return True
                     else:
