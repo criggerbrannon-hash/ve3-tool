@@ -200,7 +200,7 @@ parallel_browsers: 3
 browser_profiles_dir: "./chrome_profiles"
 
 # Chay headless (an trinh duyet) - Mac dinh True khi da dang nhap
-browser_headless: true
+browser_headless: false
 
 # Timeout cho dang nhap (giay)
 browser_login_timeout: 120
