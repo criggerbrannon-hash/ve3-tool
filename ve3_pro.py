@@ -648,11 +648,11 @@ class UnixVoiceToVideo:
         for subfolder in self.batch_voice_folder.iterdir():
             if subfolder.is_dir():
                 # Check for any voice file in subfolder
-                voice_files = list(subfolder.glob("*.mp3")) + list(subfolder.glob("*.wav"))
+                voice_files = sorted(list(subfolder.glob("*.mp3")) + list(subfolder.glob("*.wav")))
                 if voice_files:
-                    # Use FOLDER NAME for project, not voice file name
-                    # voice/ep1/audio.mp3 → PROJECTS/ep1/ep1.mp4
-                    project_name = subfolder.name
+                    # Dùng tên file voice cho project (không dùng subfolder name)
+                    # voice/AR58-T1/AR58-0029.mp3 → PROJECTS/AR58-0029/AR58-0029.mp4
+                    project_name = voice_files[0].stem
                     done_video = self.batch_done_folder / project_name / f"{project_name}.mp4"
                     if not done_video.exists():
                         pending += 1
@@ -2063,8 +2063,8 @@ class UnixVoiceToVideo:
 
                 voice_file = voice_files[0]  # Use first voice file found
 
-                # Output folder = PROJECTS/folder_name
-                project_name = subfolder.name
+                # Output folder = PROJECTS/voice_file_name (không dùng subfolder name)
+                project_name = voice_file.stem  # AR58-0029 (không có .mp3)
                 output_folder = self.batch_done_folder / project_name
 
                 # Check if video already exists
