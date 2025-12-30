@@ -1345,12 +1345,14 @@ class DrissionFlowAPI:
                     last_error = error
                     self.log(f"[I2V] API Error: {error}", "ERROR")
 
-                    # === ERROR 253/403: Quota exceeded - GIỐNG generate_image ===
-                    if "253" in error or "quota" in error.lower() or "exceeds" in error.lower():
-                        self.log(f"[I2V] ⚠️ QUOTA EXCEEDED - Kill Chrome và đổi proxy...", "WARN")
+                    # Project URL cho retry - dùng project_id hiện tại
+                    retry_project_url = f"https://labs.google/fx/vi/tools/flow/project/{self.project_id}"
 
-                        self._kill_chrome()
-                        self.close()
+                    # === ERROR 253/403: Quota exceeded ===
+                    if "253" in error or "quota" in error.lower() or "exceeds" in error.lower():
+                        self.log(f"[I2V] ⚠️ QUOTA EXCEEDED - Đổi proxy...", "WARN")
+
+                        self.close()  # Chỉ close driver, không kill hết Chrome
 
                         if self._use_webshare and self._webshare_proxy:
                             success, msg = self._webshare_proxy.rotate_ip(self.worker_id, "I2V 253 Quota")
@@ -1359,7 +1361,7 @@ class DrissionFlowAPI:
                             if success and attempt < max_retries - 1:
                                 self.log("[I2V] → Mở Chrome mới với proxy mới...")
                                 time.sleep(3)
-                                if self.setup(project_url=self._saved_project_url if hasattr(self, '_saved_project_url') else None):
+                                if self.setup(project_url=retry_project_url):
                                     continue
                                 else:
                                     return False, None, "Không setup được Chrome mới sau khi đổi proxy"
@@ -1367,15 +1369,15 @@ class DrissionFlowAPI:
                         if attempt < max_retries - 1:
                             self.log("[I2V] → Đợi 30s rồi thử lại...", "WARN")
                             time.sleep(30)
-                            if self.setup(project_url=self._saved_project_url if hasattr(self, '_saved_project_url') else None):
+                            if self.setup(project_url=retry_project_url):
                                 continue
                         return False, None, f"Quota exceeded sau {max_retries} lần thử"
 
-                    # === 403 error - GIỐNG generate_image ===
+                    # === 403 error ===
                     if "403" in error:
                         self.log(f"[I2V] ⚠️ 403 error (attempt {attempt+1}/{max_retries})", "WARN")
 
-                        # Rotating endpoint mode
+                        # Rotating endpoint mode - chỉ cần retry, IP tự đổi
                         if hasattr(self, '_is_rotating_mode') and self._is_rotating_mode:
                             self.log("[I2V] → Rotating mode: IP sẽ tự đổi ở request tiếp theo")
                             if attempt < max_retries - 1:
@@ -1390,11 +1392,10 @@ class DrissionFlowAPI:
                             self.log(f"[I2V] → Webshare rotate: {msg}", "WARN")
 
                             if success and attempt < max_retries - 1:
-                                self._kill_chrome()
-                                self.close()
+                                self.close()  # Chỉ close driver
                                 time.sleep(3)
-                                self.log("[I2V] → Mở Chrome mới với proxy mới...")
-                                if self.setup(project_url=self._saved_project_url if hasattr(self, '_saved_project_url') else None):
+                                self.log("[I2V] → Mở Chrome vào đúng project...")
+                                if self.setup(project_url=retry_project_url):
                                     continue
 
                         if attempt < max_retries - 1:
@@ -1442,11 +1443,13 @@ class DrissionFlowAPI:
                 last_error = str(e)
                 self.log(f"[I2V] Error: {e}", "ERROR")
 
+                # Project URL cho retry
+                retry_project_url = f"https://labs.google/fx/vi/tools/flow/project/{self.project_id}"
+
                 # Check if exception contains 403/quota error
                 if "253" in last_error or "quota" in last_error.lower() or "403" in last_error:
-                    self.log("[I2V] ⚠️ Exception with 403/quota - Kill Chrome và đổi proxy...", "WARN")
-                    self._kill_chrome()
-                    self.close()
+                    self.log("[I2V] ⚠️ Exception with 403/quota - Đổi proxy...", "WARN")
+                    self.close()  # Chỉ close driver
 
                     if self._use_webshare and self._webshare_proxy:
                         success, msg = self._webshare_proxy.rotate_ip(self.worker_id, "I2V Exception")
@@ -1454,7 +1457,7 @@ class DrissionFlowAPI:
 
                         if success and attempt < max_retries - 1:
                             time.sleep(3)
-                            if self.setup(project_url=self._saved_project_url if hasattr(self, '_saved_project_url') else None):
+                            if self.setup(project_url=retry_project_url):
                                 continue
 
                 if attempt < max_retries - 1:

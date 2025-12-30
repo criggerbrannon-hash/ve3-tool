@@ -4097,71 +4097,14 @@ class SmartEngine:
                         else:
                             error = "Failed to download video"
 
+                    # generate_video() đã xử lý 403/retry bên trong rồi
                     if not success:
-                        # === ERROR 253/403: Quota exceeded - giống image gen ===
-                        error_str = str(error) if error else ""
-                        if "253" in error_str or "quota" in error_str.lower() or "exceeds" in error_str.lower() or "403" in error_str:
-                            self.log(f"[VIDEO] ⚠️ QUOTA/403 ERROR - Kill Chrome và đổi proxy...", "WARN")
-
-                            # Kill Chrome và rotate proxy (như image gen)
-                            if drission_api:
-                                drission_api._kill_chrome()
-                                drission_api.close()
-
-                                # Rotate proxy nếu có webshare
-                                if hasattr(drission_api, '_use_webshare') and drission_api._use_webshare:
-                                    if hasattr(drission_api, '_webshare_proxy') and drission_api._webshare_proxy:
-                                        rotate_ok, rotate_msg = drission_api._webshare_proxy.rotate_ip(
-                                            getattr(drission_api, 'worker_id', 0), "Video 403/Quota"
-                                        )
-                                        self.log(f"[VIDEO] → Proxy rotate: {rotate_msg}", "WARN")
-
-                                        if rotate_ok and retry < MAX_VIDEO_RETRIES - 1:
-                                            self.log("[VIDEO] → Mở Chrome mới với proxy mới...")
-                                            time.sleep(3)
-                                            if drission_api.setup(project_url=project_url):
-                                                self.log("[VIDEO] ✓ Chrome ready với proxy mới")
-                                                continue  # Retry với proxy mới
-                                            else:
-                                                self.log("[VIDEO] ✗ Không setup được Chrome mới", "ERROR")
-
-                        if retry < MAX_VIDEO_RETRIES - 1:
-                            self.log(f"[VIDEO] {image_id} failed: {error} - Will retry...", "WARN")
-                        else:
-                            self._video_results['failed'] += 1
-                            self.log(f"[VIDEO] FAILED after {MAX_VIDEO_RETRIES} retries: {image_id} - {error}", "ERROR")
+                        self._video_results['failed'] += 1
+                        self.log(f"[VIDEO] FAILED: {image_id} - {error}", "ERROR")
 
                 except Exception as e:
-                    error_str = str(e)
-                    # === ERROR 253/403: Quota exceeded ===
-                    if "253" in error_str or "quota" in error_str.lower() or "exceeds" in error_str.lower() or "403" in error_str:
-                        self.log(f"[VIDEO] ⚠️ QUOTA/403 EXCEPTION - Kill Chrome và đổi proxy...", "WARN")
-
-                        if drission_api:
-                            drission_api._kill_chrome()
-                            drission_api.close()
-
-                            if hasattr(drission_api, '_use_webshare') and drission_api._use_webshare:
-                                if hasattr(drission_api, '_webshare_proxy') and drission_api._webshare_proxy:
-                                    rotate_ok, rotate_msg = drission_api._webshare_proxy.rotate_ip(
-                                        getattr(drission_api, 'worker_id', 0), "Video 403/Quota"
-                                    )
-                                    self.log(f"[VIDEO] → Proxy rotate: {rotate_msg}", "WARN")
-
-                                    if rotate_ok and retry < MAX_VIDEO_RETRIES - 1:
-                                        self.log("[VIDEO] → Mở Chrome mới với proxy mới...")
-                                        time.sleep(3)
-                                        if drission_api.setup(project_url=project_url):
-                                            self.log("[VIDEO] ✓ Chrome ready với proxy mới")
-                                            continue
-                                        else:
-                                            self.log("[VIDEO] ✗ Không setup được Chrome mới", "ERROR")
-
-                    if retry < MAX_VIDEO_RETRIES - 1:
-                        self.log(f"[VIDEO] Error {image_id}: {e} - Will retry...", "WARN")
-                    else:
-                        self._video_results['failed'] += 1
-                        self.log(f"[VIDEO] Error after {MAX_VIDEO_RETRIES} retries {image_id}: {e}", "ERROR")
+                    self._video_results['failed'] += 1
+                    self.log(f"[VIDEO] Error {image_id}: {e}", "ERROR")
 
             # Delay between videos
             time.sleep(2)
