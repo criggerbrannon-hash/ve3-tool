@@ -2994,18 +2994,23 @@ class BrowserFlowGenerator:
 
         # === ĐỌC PROJECT URL TỪ EXCEL/CACHE (để tiếp tục dự án dở) ===
         saved_project_url = None
+        self._log(f"[DEBUG] excel_path = {excel_path}")
 
         # 1. Thử đọc từ Excel sheet 'config'
         if excel_path and Path(excel_path).exists():
+            self._log(f"[DEBUG] Excel tồn tại, kiểm tra sheet 'config'...")
             try:
                 import openpyxl
                 wb = openpyxl.load_workbook(excel_path)
+                self._log(f"[DEBUG] Sheets có: {wb.sheetnames}")
                 if 'config' in wb.sheetnames:
                     ws = wb['config']
+                    config_keys_found = []
                     for row in ws.iter_rows(min_row=2, max_row=20, values_only=True):
                         if row and len(row) >= 2:
                             key = str(row[0] or '').strip().lower()
                             val = str(row[1] or '').strip() if row[1] else ''
+                            config_keys_found.append(key)
                             if key == 'flow_project_url' and val and '/project/' in val:
                                 saved_project_url = val
                                 self._log(f"📂 Tìm thấy project URL từ Excel: {saved_project_url[:50]}...")
@@ -3014,6 +3019,10 @@ class BrowserFlowGenerator:
                                 # Nếu chỉ có project_id, tạo URL
                                 saved_project_url = f"https://labs.google/fx/vi/tools/flow/project/{val}"
                                 self._log(f"📂 Tìm thấy project_id từ Excel: {val[:20]}...")
+                    if not saved_project_url:
+                        self._log(f"[DEBUG] Config keys: {config_keys_found}")
+                else:
+                    self._log(f"[DEBUG] Không có sheet 'config' trong Excel")
                 wb.close()
             except Exception as e:
                 self._log(f"⚠️ Không đọc được project từ Excel: {e}", "warn")
@@ -3021,17 +3030,25 @@ class BrowserFlowGenerator:
         # 2. Fallback: Thử đọc từ cache file
         if not saved_project_url and excel_path:
             cache_path = Path(excel_path).parent / ".media_cache.json"
+            self._log(f"[DEBUG] Cache path: {cache_path}")
             if cache_path.exists():
                 try:
                     import json
                     with open(cache_path, 'r', encoding='utf-8') as f:
                         cache_data = json.load(f)
+                    self._log(f"[DEBUG] Cache keys: {list(cache_data.keys())[:10]}")
                     cached_url = cache_data.get('_project_url', '')
+                    cached_id = cache_data.get('_project_id', '')
                     if cached_url and '/project/' in cached_url:
                         saved_project_url = cached_url
                         self._log(f"📂 Tìm thấy project URL từ cache: {saved_project_url[:50]}...")
+                    elif cached_id:
+                        saved_project_url = f"https://labs.google/fx/vi/tools/flow/project/{cached_id}"
+                        self._log(f"📂 Tìm thấy project_id từ cache: {cached_id[:20]}...")
                 except Exception as e:
                     self._log(f"⚠️ Không đọc được cache: {e}", "warn")
+            else:
+                self._log(f"[DEBUG] Cache file không tồn tại")
 
         if saved_project_url:
             self._log(f"🔄 Sẽ vào lại project cũ để giữ media_id...")
