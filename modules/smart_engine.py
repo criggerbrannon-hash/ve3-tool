@@ -3926,7 +3926,8 @@ class SmartEngine:
         if not project_url and project_id:
             project_url = f"https://labs.google/fx/vi/tools/flow/project/{project_id}"
 
-        # === STRATEGY: Dùng cached tokens nếu có, không cần Chrome ===
+        # === STRATEGY: Luôn cần Chrome để refresh recaptcha ===
+        # Recaptcha token expire rất nhanh, KHÔNG thể dùng cached!
         drission_api = None
         own_drission = False
 
@@ -3934,31 +3935,7 @@ class SmartEngine:
             # Reuse Chrome session từ image generator
             drission_api = existing_drission
             self.log("[VIDEO] ✓ Reuse Chrome session từ image generator")
-
-        elif bearer and recaptcha:
-            # ĐÃ CÓ ĐỦ TOKENS → Tạo DrissionFlowAPI và inject tokens (KHÔNG CẦN Chrome)
-            self.log("[VIDEO] ✓ Có cached tokens - KHÔNG cần mở Chrome!")
-            try:
-                drission_api = DrissionFlowAPI(
-                    profile_dir="./chrome_profile",  # Không dùng nhưng cần cho init
-                    verbose=True,
-                    log_callback=lambda msg, lvl="INFO": self.log(f"[VIDEO] {msg}", lvl),
-                    webshare_enabled=False
-                )
-                # Inject cached tokens trực tiếp (không gọi setup/Chrome)
-                drission_api.bearer_token = bearer if bearer.startswith("Bearer ") else f"Bearer {bearer}"
-                drission_api.recaptcha_token = recaptcha  # Không có underscore!
-                drission_api.x_browser_validation = x_browser  # Không có underscore!
-                drission_api.project_id = project_id
-                drission_api._project_url = project_url
-                drission_api._ready = True  # QUAN TRỌNG: Mark as ready
-                own_drission = True
-                self.log("[VIDEO] ✓ Injected cached tokens - Ready to generate!")
-            except Exception as e:
-                self.log(f"[VIDEO] Failed to inject tokens: {e}", "ERROR")
-                drission_api = None
-
-        if not drission_api:
+        else:
             # Fallback: Mở Chrome mới để capture tokens
             try:
                 profile_dir = chrome_profile if chrome_profile and Path(chrome_profile).exists() else "./chrome_profile"
