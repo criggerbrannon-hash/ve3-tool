@@ -570,37 +570,39 @@ class DrissionFlowAPI:
                         # QUAN TRỌNG: Lấy proxy cho worker này, không dùng current_proxy global
                         proxy = manager.get_proxy_for_worker(self.worker_id)
                         if not proxy:
-                            self.log(f"✗ No proxy available for worker {self.worker_id}", "ERROR")
-                            return False
+                            # Không có proxy khả dụng - chạy không proxy (fallback)
+                            self.log(f"⚠️ No proxy available - running WITHOUT proxy", "WARN")
+                            self._use_webshare = False
+                            # Không set proxy args - Chrome sẽ chạy direct
+                        else:
+                            try:
+                                from proxy_bridge import start_proxy_bridge
+                                # Unique bridge port based on worker_id (parallel-safe)
+                                bridge_port = 8800 + self.worker_id
+                                self._proxy_bridge = start_proxy_bridge(
+                                    local_port=bridge_port,
+                                    remote_host=proxy.host,
+                                    remote_port=proxy.port,
+                                    username=proxy.username,
+                                    password=proxy.password
+                                )
+                                self._bridge_port = bridge_port  # LƯU ĐỂ DÙNG TRONG call_api()
+                                time.sleep(0.5)  # Đợi bridge start
 
-                        try:
-                            from proxy_bridge import start_proxy_bridge
-                            # Unique bridge port based on worker_id (parallel-safe)
-                            bridge_port = 8800 + self.worker_id
-                            self._proxy_bridge = start_proxy_bridge(
-                                local_port=bridge_port,
-                                remote_host=proxy.host,
-                                remote_port=proxy.port,
-                                username=proxy.username,
-                                password=proxy.password
-                            )
-                            self._bridge_port = bridge_port  # LƯU ĐỂ DÙNG TRONG call_api()
-                            time.sleep(0.5)  # Đợi bridge start
+                                # Chrome kết nối đến local bridge (không cần auth)
+                                options.set_argument(f'--proxy-server=http://127.0.0.1:{bridge_port}')
+                                options.set_argument('--proxy-bypass-list=<-loopback>')
+                                options.set_argument('--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1')
 
-                            # Chrome kết nối đến local bridge (không cần auth)
-                            options.set_argument(f'--proxy-server=http://127.0.0.1:{bridge_port}')
-                            options.set_argument('--proxy-bypass-list=<-loopback>')
-                            options.set_argument('--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1')
+                                self.log(f"Proxy [Worker {self.worker_id}]: Bridge → {proxy.endpoint}")
+                                self.log(f"  Local: http://127.0.0.1:{bridge_port}")
+                                self.log(f"  Auth: {username}:****")
 
-                            self.log(f"Proxy [Worker {self.worker_id}]: Bridge → {proxy.endpoint}")
-                            self.log(f"  Local: http://127.0.0.1:{bridge_port}")
-                            self.log(f"  Auth: {username}:****")
-
-                        except Exception as e:
-                            self.log(f"Bridge error: {e}, using direct proxy", "WARN")
-                            options.set_argument(f'--proxy-server={remote_proxy_url}')
-                            options.set_argument('--proxy-bypass-list=<-loopback>')
-                            self._proxy_auth = (username, password)
+                            except Exception as e:
+                                self.log(f"Bridge error: {e}, using direct proxy", "WARN")
+                                options.set_argument(f'--proxy-server={remote_proxy_url}')
+                                options.set_argument('--proxy-bypass-list=<-loopback>')
+                                self._proxy_auth = (username, password)
                     else:
                         # IP Authorization mode
                         options.set_argument(f'--proxy-server={remote_proxy_url}')
