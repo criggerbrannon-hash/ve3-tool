@@ -1475,7 +1475,16 @@ class DrissionFlowAPI:
         max_wait: int
     ) -> Optional[str]:
         """Poll cho video operation hoàn thành."""
-        url = f"https://aisandbox-pa.googleapis.com/v1/{operation_id}"
+        # Log operation_id để debug
+        self.log(f"[I2V] operation_id: {operation_id}")
+
+        # Nếu operation_id đã có prefix operations/ thì dùng trực tiếp
+        if operation_id.startswith("operations/"):
+            url = f"https://aisandbox-pa.googleapis.com/v1/{operation_id}"
+        else:
+            url = f"https://aisandbox-pa.googleapis.com/v1/operations/{operation_id}"
+
+        self.log(f"[I2V] Poll URL: {url[:80]}...")
 
         start_time = time.time()
         poll_interval = 5  # Poll mỗi 5 giây
