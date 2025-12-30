@@ -2302,12 +2302,16 @@ class SmartEngine:
                             cache_data = json.load(f)
                         cached_token = cache_data.get('_bearer_token', '')
                         cached_project_id = cache_data.get('_project_id', '')
+                        cached_project_url = cache_data.get('_project_url', '')
+                        cached_chrome_profile = cache_data.get('_chrome_profile_path', '')
                         if cached_token and cached_project_id:
                             self.log(f"[VIDEO] Resume: Tìm thấy token từ cache: {cached_project_id[:8]}...")
                             if not hasattr(self, '_video_settings') or not self._video_settings:
                                 self._video_settings = {}
                             self._video_settings['bearer_token'] = cached_token
                             self._video_settings['project_id'] = cached_project_id
+                            self._video_settings['project_url'] = cached_project_url
+                            self._video_settings['chrome_profile_path'] = cached_chrome_profile
                             self._start_video_worker(proj_dir)
                             if self._video_worker_running:
                                 self.log("[VIDEO] Resume: Đã restart video worker!")
@@ -2371,6 +2375,8 @@ class SmartEngine:
                             cache_data = json.load(f)
                         cached_token = cache_data.get('_bearer_token', '')
                         cached_project_id = cache_data.get('_project_id', '')
+                        cached_project_url = cache_data.get('_project_url', '')
+                        cached_chrome_profile = cache_data.get('_chrome_profile_path', '')
                         if cached_token and cached_project_id:
                             self.log(f"[VIDEO] Tìm thấy token từ cache: {cached_project_id[:8]}...")
                             # Force set token trước khi start worker
@@ -2378,6 +2384,8 @@ class SmartEngine:
                                 self._video_settings = {}
                             self._video_settings['bearer_token'] = cached_token
                             self._video_settings['project_id'] = cached_project_id
+                            self._video_settings['project_url'] = cached_project_url
+                            self._video_settings['chrome_profile_path'] = cached_chrome_profile
                             # Thử start lại video worker
                             self._start_video_worker(proj_dir)
                             if self._video_worker_running:
@@ -3863,43 +3871,53 @@ class SmartEngine:
                 self.log(f"[VIDEO] Queued: {image_id}{has_media} (pending: {queue_len})")
 
     def _video_worker_loop(self, proj_dir: Path):
-        """Video generation worker loop - dùng DrissionFlowAPI (không cần proxy nanoai)."""
+        """Video generation worker loop - mở Chrome cũ để lấy recaptcha (thay nanoaipic)."""
         from modules.drission_flow_api import DrissionFlowAPI
 
-        self.log("[VIDEO] Worker loop started (DrissionPage mode)")
+        self.log("[VIDEO] Worker loop started")
 
-        # Debug: log token info
+        # Lấy token info từ cache
         bearer = self._video_settings.get('bearer_token', '')
         project_id = self._video_settings.get('project_id', '')
-        recaptcha = self._video_settings.get('recaptcha_token', '')
-        x_browser_val = self._video_settings.get('x_browser_validation', '')
-        self.log(f"[VIDEO] Bearer token: {bearer[:30]}..." if bearer and len(bearer) > 30 else f"[VIDEO] Bearer token: {bearer or 'EMPTY!'}")
-        self.log(f"[VIDEO] Project ID: {project_id or 'EMPTY!'}")
-        self.log(f"[VIDEO] Recaptcha: {'có' if recaptcha else 'KHÔNG CÓ'}")
+        chrome_profile = self._video_settings.get('chrome_profile_path', '')
+        project_url = self._video_settings.get('project_url', '')
+
+        self.log(f"[VIDEO] Bearer: {'có' if bearer else 'KHÔNG'}")
+        self.log(f"[VIDEO] Project ID: {project_id[:20] if project_id else 'KHÔNG'}...")
+        self.log(f"[VIDEO] Chrome profile: {chrome_profile or 'default'}")
 
         if not bearer or not project_id:
             self.log("[VIDEO] ⚠️ Không có token/project_id - Skip I2V!", "WARN")
             self._video_worker_running = False
             return
 
-        # Create DrissionFlowAPI - chỉ dùng để gọi API, không mở Chrome mới
-        try:
-            drission_api = DrissionFlowAPI(
-                verbose=False,
-                webshare_enabled=False  # Không cần proxy vì đã có token
-            )
-            # Set token directly (không cần setup Chrome lại)
-            drission_api._ready = True
-            drission_api.bearer_token = f"Bearer {bearer}" if not bearer.startswith("Bearer ") else bearer
-            drission_api.project_id = project_id
-            # Set recaptcha_token và x_browser_validation (quan trọng cho I2V!)
-            drission_api.recaptcha_token = recaptcha
-            drission_api.x_browser_validation = x_browser_val
+        # Tạo project URL nếu chưa có
+        if not project_url and project_id:
+            project_url = f"https://labs.google/fx/vi/tools/flow/project/{project_id}"
 
-            self.log("[VIDEO] DrissionFlowAPI ready (token mode) - Bắt đầu tạo video...")
+        # === MỞ CHROME CŨ để lấy recaptcha (thay thế nanoaipic) ===
+        try:
+            # Dùng profile đã lưu hoặc default
+            profile_dir = chrome_profile if chrome_profile and Path(chrome_profile).exists() else "./chrome_profile"
+
+            drission_api = DrissionFlowAPI(
+                profile_dir=profile_dir,
+                verbose=True,
+                log_callback=lambda msg, lvl="INFO": self.log(f"[VIDEO] {msg}", lvl),
+                webshare_enabled=False  # Không cần proxy
+            )
+
+            # Setup Chrome và vào project cũ
+            self.log(f"[VIDEO] Mở Chrome với profile: {profile_dir}")
+            if not drission_api.setup(project_url=project_url):
+                self.log("[VIDEO] ⚠️ Không setup được Chrome - Skip I2V!", "WARN")
+                self._video_worker_running = False
+                return
+
+            self.log("[VIDEO] ✓ Chrome ready - Bắt đầu tạo video...")
 
         except Exception as e:
-            self.log(f"[VIDEO] Failed to create DrissionFlowAPI: {e}", "ERROR")
+            self.log(f"[VIDEO] Failed to setup Chrome: {e}", "ERROR")
             self._video_worker_running = False
             return
 

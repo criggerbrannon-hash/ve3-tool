@@ -584,6 +584,12 @@ class BrowserFlowGenerator:
             if x_browser_val:
                 cache_data['_x_browser_validation'] = x_browser_val
 
+            # Lưu Chrome profile path để VIDEO worker có thể mở đúng Chrome
+            chrome_profile = self.config.get('chrome_profile_path', '') or str(getattr(self, 'chrome_profile', ''))
+            if chrome_profile:
+                cache_data['_chrome_profile_path'] = chrome_profile
+                self._log(f"[CACHE] Saving chrome_profile_path: {chrome_profile}")
+
             with open(cache_path, 'w', encoding='utf-8') as f:
                 json.dump(cache_data, f, indent=2)
             self._log(f"[CACHE] Saved {len(media_names)} media_names + token + project")
