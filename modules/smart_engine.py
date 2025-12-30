@@ -3030,15 +3030,15 @@ class SmartEngine:
 
                 # Ken Burns settings từ config
                 # Video composition mode: quality, balanced, fast
-                compose_mode = "quality"  # Default: quality (mượt nhất, như CapCut)
-                kb_intensity = "strong"   # Default: strong (zoom 18%, pan 12%)
+                compose_mode = "fast"  # Default: fast (nhanh nhất, chỉ fade)
+                kb_intensity = "normal"   # Default: normal (zoom 12%, pan 8%)
                 try:
                     import yaml
                     config_path = Path(__file__).parent.parent / "config" / "settings.yaml"
                     if config_path.exists():
                         with open(config_path, 'r', encoding='utf-8') as f:
                             config = yaml.safe_load(f) or {}
-                        compose_mode = config.get('video_compose_mode', 'balanced').lower()
+                        compose_mode = config.get('video_compose_mode', 'fast').lower()
                         kb_intensity = config.get('ken_burns_intensity', 'normal')
                 except Exception:
                     pass
@@ -3742,6 +3742,14 @@ class SmartEngine:
             pre_set_token = self._video_settings.get('bearer_token', '')
             pre_set_project_id = self._video_settings.get('project_id', '')
 
+        # === REUSE DRISSION API từ image generator (nếu có) ===
+        # Không tạo Chrome mới - dùng lại Chrome đang chạy
+        existing_drission = None
+        if hasattr(self, '_browser_generator') and self._browser_generator:
+            existing_drission = getattr(self._browser_generator, '_drission_api', None)
+            if existing_drission:
+                self.log("[VIDEO] Reuse Chrome session từ image generator")
+
         # Load settings với proj_dir để đọc được project cache
         if not self._load_video_settings(proj_dir):
             self.log("[VIDEO] Video generation disabled (count = 0)", "INFO")
@@ -3826,7 +3834,7 @@ class SmartEngine:
 
         self._video_worker_thread = threading.Thread(
             target=self._video_worker_loop,
-            args=(proj_dir,),
+            args=(proj_dir, existing_drission),  # Pass DrissionAPI nếu có
             daemon=True
         )
         self._video_worker_thread.start()
@@ -3878,8 +3886,8 @@ class SmartEngine:
                 has_media = " (có media_name)" if media_name else ""
                 self.log(f"[VIDEO] Queued: {image_id}{has_media} (pending: {queue_len})")
 
-    def _video_worker_loop(self, proj_dir: Path):
-        """Video generation worker loop - mở Chrome cũ để lấy recaptcha (thay nanoaipic)."""
+    def _video_worker_loop(self, proj_dir: Path, existing_drission=None):
+        """Video generation worker loop - reuse Chrome từ image gen hoặc mở mới."""
         from modules.drission_flow_api import DrissionFlowAPI
 
         self.log("[VIDEO] Worker loop started")
@@ -3905,31 +3913,40 @@ class SmartEngine:
         if not project_url and project_id:
             project_url = f"https://labs.google/fx/vi/tools/flow/project/{project_id}"
 
-        # === MỞ CHROME CŨ để lấy recaptcha (thay thế nanoaipic) ===
-        try:
-            # Dùng profile đã lưu hoặc default
-            profile_dir = chrome_profile if chrome_profile and Path(chrome_profile).exists() else "./chrome_profile"
+        # === REUSE CHROME từ image generator hoặc mở mới ===
+        drission_api = None
+        own_drission = False  # Track if we created drission_api (need to close later)
 
-            drission_api = DrissionFlowAPI(
-                profile_dir=profile_dir,
-                verbose=True,
-                log_callback=lambda msg, lvl="INFO": self.log(f"[VIDEO] {msg}", lvl),
-                webshare_enabled=False  # Không cần proxy
-            )
+        if existing_drission:
+            # Reuse Chrome session từ image generator
+            drission_api = existing_drission
+            self.log("[VIDEO] ✓ Reuse Chrome session từ image generator")
+        else:
+            # Mở Chrome mới (fallback khi không có existing session)
+            try:
+                profile_dir = chrome_profile if chrome_profile and Path(chrome_profile).exists() else "./chrome_profile"
 
-            # Setup Chrome và vào project cũ
-            self.log(f"[VIDEO] Mở Chrome với profile: {profile_dir}")
-            if not drission_api.setup(project_url=project_url):
-                self.log("[VIDEO] ⚠️ Không setup được Chrome - Skip I2V!", "WARN")
+                drission_api = DrissionFlowAPI(
+                    profile_dir=profile_dir,
+                    verbose=True,
+                    log_callback=lambda msg, lvl="INFO": self.log(f"[VIDEO] {msg}", lvl),
+                    webshare_enabled=False  # Không cần proxy
+                )
+                own_drission = True  # We created it, we close it
+
+                # Setup Chrome và vào project cũ
+                self.log(f"[VIDEO] Mở Chrome MỚI với profile: {profile_dir}")
+                if not drission_api.setup(project_url=project_url):
+                    self.log("[VIDEO] ⚠️ Không setup được Chrome - Skip I2V!", "WARN")
+                    self._video_worker_running = False
+                    return
+
+                self.log("[VIDEO] ✓ Chrome ready - Bắt đầu tạo video...")
+
+            except Exception as e:
+                self.log(f"[VIDEO] Failed to setup Chrome: {e}", "ERROR")
                 self._video_worker_running = False
                 return
-
-            self.log("[VIDEO] ✓ Chrome ready - Bắt đầu tạo video...")
-
-        except Exception as e:
-            self.log(f"[VIDEO] Failed to setup Chrome: {e}", "ERROR")
-            self._video_worker_running = False
-            return
 
         img_dir = proj_dir / "img"
 
@@ -4022,6 +4039,14 @@ class SmartEngine:
 
             # Delay between videos
             time.sleep(2)
+
+        # Cleanup: Chỉ close nếu chúng ta tạo DrissionAPI mới
+        if own_drission and drission_api:
+            try:
+                drission_api.close()
+                self.log("[VIDEO] Đã close Chrome (tạo mới)")
+            except:
+                pass
 
         self.log(f"[VIDEO] Worker stopped. Results: {self._video_results['success']} OK, {self._video_results['failed']} failed")
 
