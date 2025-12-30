@@ -3936,11 +3936,12 @@ class SmartEngine:
             drission_api = existing_drission
             self.log("[VIDEO] ✓ Reuse Chrome session từ image generator")
         else:
-            # Fallback: Mở Chrome mới để capture tokens
+            # Fallback: Mở Chrome mới để capture tokens (giống image gen)
             try:
                 # Đọc config từ settings.yaml
                 headless_mode = True
                 config_chrome_profile = ""
+                use_webshare = True  # Default: bật proxy giống image gen
                 try:
                     import yaml
                     config_path = Path(__file__).parent.parent / "config" / "settings.yaml"
@@ -3949,23 +3950,21 @@ class SmartEngine:
                             cfg = yaml.safe_load(f) or {}
                         headless_mode = cfg.get('browser_headless', True)
                         config_chrome_profile = cfg.get('chrome_profile', '')
+                        # Webshare config
+                        ws_cfg = cfg.get('webshare_proxy', {})
+                        use_webshare = ws_cfg.get('enabled', True)
                 except:
                     pass
 
                 # Chọn profile: cache → settings.yaml → default
-                profile_dir = None
-                if chrome_profile and Path(chrome_profile).exists():
-                    profile_dir = chrome_profile
-                elif config_chrome_profile and Path(config_chrome_profile).exists():
-                    profile_dir = config_chrome_profile
-                else:
-                    profile_dir = "./chrome_profile"
+                # KHÔNG check exists() vì path Windows format có thể khác
+                profile_dir = chrome_profile or config_chrome_profile or "./chrome_profile"
 
                 drission_api = DrissionFlowAPI(
                     profile_dir=profile_dir,
                     verbose=True,
                     log_callback=lambda msg, lvl="INFO": self.log(f"[VIDEO] {msg}", lvl),
-                    webshare_enabled=False,
+                    webshare_enabled=use_webshare,  # BẬT proxy giống image gen
                     headless=headless_mode
                 )
                 own_drission = True
