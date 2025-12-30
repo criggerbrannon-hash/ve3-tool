@@ -285,10 +285,16 @@ class SmartEngine:
                     self.gemini_keys.append(Resource(type='gemini', value=k))
 
             # Ollama local (fallback)
+            # Đọc từ nested api.ollama hoặc top-level ollama_model
             ollama_cfg = api.get('ollama', {})
             if ollama_cfg:
                 self.ollama_model = ollama_cfg.get('model', 'qwen2.5:7b')
                 self.ollama_endpoint = ollama_cfg.get('endpoint', 'http://localhost:11434')
+            # Fallback: đọc từ top-level (settings.yaml mới)
+            if data.get('ollama_model'):
+                self.ollama_model = data.get('ollama_model')
+            if data.get('ollama_endpoint'):
+                self.ollama_endpoint = data.get('ollama_endpoint')
 
             # Settings
             settings = data.get('settings', {})
