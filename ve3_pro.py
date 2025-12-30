@@ -2607,6 +2607,9 @@ class UnixVoiceToVideo:
             results_lock = threading.Lock()
             total_results = {"success": 0, "failed": 0, "total": sum(len(d['prompts']) for d in voice_data.values())}
 
+            # Đọc setting headless từ cài đặt
+            use_headless = self._get_headless_setting()
+
             def setup_chrome(voice_id: int) -> bool:
                 """Setup Chrome với Webshare proxy cho voice."""
                 try:
@@ -2620,7 +2623,7 @@ class UnixVoiceToVideo:
                     api = DrissionFlowAPI(
                         profile_dir=profile_dir,
                         worker_id=voice_id,
-                        headless=False,  # Tạm tắt headless để test
+                        headless=use_headless,  # Đọc từ cài đặt
                         log_callback=lambda msg, vid=voice_id: self.root.after(0, lambda m=msg: self.log(f"[V{vid}] {m}"))
                     )
 
