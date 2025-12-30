@@ -2974,26 +2974,9 @@ class BrowserFlowGenerator:
                 self._log(f"⚠️ Webshare init error: {e} - chạy không có proxy", "WARN")
                 use_webshare = False
 
-        drission_api = DrissionFlowAPI(
-            profile_dir=self._get_profile_path() or "./chrome_profile",
-            verbose=self.verbose,
-            log_callback=self._log,
-            webshare_enabled=use_webshare,
-            worker_id=self.worker_id  # Parallel mode - mỗi worker có proxy riêng
-        )
-
-        self._log("🚀 DrissionPage + Interceptor")
-        if use_webshare:
-            manager = get_proxy_manager()
-            if manager.is_rotating_mode():
-                self._log(f"   Proxy: 🔄 ROTATING ENDPOINT (auto IP change)")
-            else:
-                self._log(f"   Proxy: Webshare Pool ({len(manager.proxies)} proxies)")
-        else:
-            self._log("   Proxy: OFF (không có proxy)")
-
-        # === ĐỌC PROJECT URL TỪ EXCEL/CACHE (để tiếp tục dự án dở) ===
+        # === ĐỌC CONFIG TỪ EXCEL/CACHE TRƯỚC (để biết profile nào đã dùng) ===
         saved_project_url = None
+        saved_chrome_profile = None  # Chrome profile đã dùng cho dự án này
         self._log(f"[DEBUG] excel_path = {excel_path}")
 
         # 1. Thử đọc từ Excel sheet 'config'
@@ -3014,18 +2997,48 @@ class BrowserFlowGenerator:
                             if key == 'flow_project_url' and val and '/project/' in val:
                                 saved_project_url = val
                                 self._log(f"📂 Tìm thấy project URL từ Excel: {saved_project_url[:50]}...")
-                                break
                             elif key == 'flow_project_id' and val and not saved_project_url:
                                 # Nếu chỉ có project_id, tạo URL
                                 saved_project_url = f"https://labs.google/fx/vi/tools/flow/project/{val}"
                                 self._log(f"📂 Tìm thấy project_id từ Excel: {val[:20]}...")
+                            elif key == 'chrome_profile_path' and val:
+                                # Đọc Chrome profile đã dùng cho dự án này
+                                if Path(val).exists():
+                                    saved_chrome_profile = val
+                                    self._log(f"📂 Tìm thấy Chrome profile từ Excel: {val}")
                     if not saved_project_url:
                         self._log(f"[DEBUG] Config keys: {config_keys_found}")
                 else:
                     self._log(f"[DEBUG] Không có sheet 'config' trong Excel")
                 wb.close()
             except Exception as e:
-                self._log(f"⚠️ Không đọc được project từ Excel: {e}", "warn")
+                self._log(f"⚠️ Không đọc được config từ Excel: {e}", "warn")
+
+        # Chọn profile: ưu tiên saved profile từ Excel, fallback về default
+        if saved_chrome_profile:
+            profile_to_use = saved_chrome_profile
+            self._log(f"🔄 Dùng Chrome profile đã lưu: {profile_to_use}")
+        else:
+            profile_to_use = self._get_profile_path() or "./chrome_profile"
+            self._log(f"📁 Dùng Chrome profile mặc định: {profile_to_use}")
+
+        drission_api = DrissionFlowAPI(
+            profile_dir=profile_to_use,
+            verbose=self.verbose,
+            log_callback=self._log,
+            webshare_enabled=use_webshare,
+            worker_id=self.worker_id  # Parallel mode - mỗi worker có proxy riêng
+        )
+
+        self._log("🚀 DrissionPage + Interceptor")
+        if use_webshare:
+            manager = get_proxy_manager()
+            if manager.is_rotating_mode():
+                self._log(f"   Proxy: 🔄 ROTATING ENDPOINT (auto IP change)")
+            else:
+                self._log(f"   Proxy: Webshare Pool ({len(manager.proxies)} proxies)")
+        else:
+            self._log("   Proxy: OFF (không có proxy)")
 
         # 2. Fallback: Thử đọc từ cache file
         if not saved_project_url and excel_path:
@@ -3602,6 +3615,9 @@ class BrowserFlowGenerator:
                         if not project_url and project_id:
                             project_url = f"https://labs.google/fx/vi/tools/flow/project/{project_id}"
 
+                        # Lưu Chrome profile path để resume đúng profile
+                        chrome_profile_path = str(drission_api.profile_dir) if hasattr(drission_api, 'profile_dir') else ''
+
                         # Lưu các config - đầy đủ để tái sử dụng cho I2V
                         config_items = {
                             'flow_project_id': project_id,
@@ -3609,7 +3625,8 @@ class BrowserFlowGenerator:
                             'flow_bearer_token': bearer,  # Full token để video worker dùng
                             'flow_recaptcha_token': recaptcha,  # Quan trọng cho I2V!
                             'flow_x_browser_validation': x_browser_val,  # Auth header
-                            'token_time': str(int(time.time()))
+                            'token_time': str(int(time.time())),
+                            'chrome_profile_path': chrome_profile_path  # Profile để resume đúng Chrome
                         }
 
                         for key, value in config_items.items():
@@ -3706,6 +3723,7 @@ class BrowserFlowGenerator:
                     self._log(f"[I2V] [{i+1}/{len(scenes_for_video)}] Scene {scene_id}...")
 
                     try:
+                        # generate_video sẽ tự refresh recaptcha token (one-time token)
                         success, video_url, error = drission_api.generate_video(
                             media_id=media_id,
                             prompt=video_prompt,

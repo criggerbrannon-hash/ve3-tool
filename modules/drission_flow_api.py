@@ -1222,6 +1222,15 @@ class DrissionFlowAPI:
 
         self.log(f"[I2V] Creating video from media: {media_id[:50]}...")
 
+        # QUAN TRỌNG: LUÔN refresh recaptcha token trước MỖI video API call
+        # Token là ONE-TIME - mỗi API call cần token mới
+        self.log("[I2V] Refreshing recaptcha token cho video...")
+        short_prompt = prompt[:50] if len(prompt) > 50 else prompt
+        if self.refresh_recaptcha(short_prompt):
+            self.log("[I2V] ✓ Got fresh recaptcha token")
+        else:
+            self.log("[I2V] ⚠️ Không refresh được recaptcha, thử tiếp...", "WARN")
+
         # Build request payload
         session_id = f";{int(time.time() * 1000)}"
         scene_id = f"scene-{int(time.time())}"
@@ -1238,7 +1247,7 @@ class DrissionFlowAPI:
             "videoModelKey": video_model
         }
 
-        # Lấy recaptchaToken nếu có (từ lúc capture khi tạo ảnh)
+        # Lấy recaptchaToken SAU KHI refresh
         recaptcha = getattr(self, 'recaptcha_token', '') or ''
 
         payload = {
