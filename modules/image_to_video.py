@@ -192,140 +192,155 @@ class ImageToVideoConverter:
         """
         Upload ảnh lên Google Flow để lấy mediaId.
 
+        QUAN TRỌNG: Dùng GoogleFlowAPI.upload_image() để upload đúng cách.
+        Endpoint đúng là flowMedia:uploadImage với tool=ASSET_MANAGER.
+
         Args:
             image_path: Đường dẫn ảnh
 
         Returns:
-            mediaId hoặc None nếu lỗi
+            mediaId (name) hoặc None nếu lỗi
         """
-        self._log(f"Uploading image: {image_path.name}")
-
-        # Đọc ảnh và encode base64
-        with open(image_path, "rb") as f:
-            image_data = base64.b64encode(f.read()).decode()
-
-        # Xác định mime type
-        ext = image_path.suffix.lower()
-        mime_types = {
-            ".png": "image/png",
-            ".jpg": "image/jpeg",
-            ".jpeg": "image/jpeg",
-            ".webp": "image/webp"
-        }
-        mime_type = mime_types.get(ext, "image/png")
-
-        session_id = f";{int(time.time() * 1000)}"
-
-        # Tạo request để upload ảnh
-        body_json = {
-            "clientContext": {
-                "sessionId": session_id,
-                "projectId": self.project_id,
-                "tool": "PINHOLE"
-            },
-            "requests": [{
-                "clientContext": {
-                    "sessionId": session_id,
-                    "projectId": self.project_id,
-                    "tool": "PINHOLE"
-                },
-                "seed": int(time.time()) % 100000,
-                "imageModelName": "GEM_PIX_2",
-                "imageAspectRatio": "IMAGE_ASPECT_RATIO_LANDSCAPE",
-                "prompt": f"Reference image from {image_path.name}",
-                "imageInputs": [{
-                    "inputType": "IMAGE_INPUT_TYPE_REFERENCE",
-                    "image": {
-                        "bytesBase64Encoded": image_data,
-                        "mimeType": mime_type
-                    }
-                }]
-            }]
-        }
+        self._log(f"Uploading image via GoogleFlowAPI: {image_path.name}")
 
         try:
-            if self.use_proxy:
-                result = self._upload_via_proxy(body_json)
-                if result:
-                    return result
-                # Fallback to direct upload when proxy fails
-                self._log("Proxy failed, trying direct upload...", "warn")
-                return self._upload_direct(body_json)
-            else:
-                return self._upload_direct(body_json)
-        except Exception as e:
-            self._log(f"Upload error: {e}", "error")
-            return None
-
-    def _upload_direct(self, body_json: Dict) -> Optional[str]:
-        """Upload trực tiếp qua Google API."""
-        url = f"{self.GOOGLE_BASE}/v1/projects/{self.project_id}/flowMedia:batchGenerateImages"
-
-        response = requests.post(
-            url,
-            headers=self._google_headers(),
-            json=body_json,
-            timeout=60
-        )
-
-        if response.status_code != 200:
-            self._log(f"Upload failed: {response.status_code} - {response.text[:200]}", "error")
-            return None
-
-        result = response.json()
-        media = result.get("media", [])
-        if media:
-            return media[0].get("name")
-
-        return None
-
-    def _upload_via_proxy(self, body_json: Dict) -> Optional[str]:
-        """Upload qua proxy API."""
-        # Debug: check token
-        if not self.bearer_token:
-            self._log("Bearer token is empty!", "error")
-            return None
-
-        self._log(f"Using bearer token: {self.bearer_token[:20]}..." if len(self.bearer_token) > 20 else f"Bearer token: {self.bearer_token}")
-
-        payload = {
-            "body_json": body_json,
-            "flow_auth_token": self.bearer_token,
-            "flow_url": f"{self.GOOGLE_BASE}/v1/projects/{self.project_id}/flowMedia:batchGenerateImages"
-        }
-
-        response = requests.post(
-            f"{self.PROXY_BASE}/create-image-veo3",
-            headers=self._proxy_headers(),
-            json=payload,
-            timeout=60
-        )
-
-        if response.status_code != 200:
-            self._log(f"Proxy upload failed: {response.status_code} - {response.text[:200] if response.text else 'no body'}", "error")
-            return None
-
-        task_id = response.json().get("taskId")
-        if not task_id:
-            return None
-
-        # Poll for result
-        for _ in range(60):
-            status_resp = requests.get(
-                f"{self.PROXY_BASE}/task-status?taskId={task_id}",
-                headers=self._proxy_headers(),
-                timeout=30
+            # Dùng GoogleFlowAPI.upload_image() - endpoint đúng!
+            from .google_flow_api import ImageInputType
+            success, img_input, error = self._flow_api.upload_image(
+                image_path=image_path,
+                image_type=ImageInputType.REFERENCE
             )
 
-            if status_resp.status_code == 200:
-                result = status_resp.json().get("result", {})
-                media = result.get("media", [])
-                if media:
-                    return media[0].get("name")
+            if success and img_input and img_input.name:
+                self._log(f"Upload successful: {img_input.name[:60]}...")
+                return img_input.name
+            else:
+                self._log(f"Upload failed: {error}", "error")
+                # Fallback: try proxy upload
+                return self._upload_via_proxy_fallback(image_path)
 
-            time.sleep(2)
+        except Exception as e:
+            self._log(f"Upload error: {e}", "error")
+            # Fallback: try proxy upload
+            return self._upload_via_proxy_fallback(image_path)
 
-        return None
+    def _upload_via_proxy_fallback(self, image_path: Path) -> Optional[str]:
+        """
+        Fallback: Upload qua proxy API khi direct upload thất bại.
+        Dùng endpoint flowMedia:uploadImage đúng cách.
+        """
+        self._log(f"Trying proxy upload fallback...")
+
+        try:
+            # Đọc ảnh và encode base64
+            with open(image_path, "rb") as f:
+                image_data = base64.b64encode(f.read()).decode()
+
+            # Xác định mime type
+            ext = image_path.suffix.lower()
+            mime_types = {
+                ".png": "image/png",
+                ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg",
+                ".webp": "image/webp"
+            }
+            mime_type = mime_types.get(ext, "image/png")
+
+            # Detect aspect ratio from image
+            from PIL import Image
+            with Image.open(image_path) as img:
+                w, h = img.size
+                if w > h:
+                    aspect = "IMAGE_ASPECT_RATIO_LANDSCAPE"
+                elif h > w:
+                    aspect = "IMAGE_ASPECT_RATIO_PORTRAIT"
+                else:
+                    aspect = "IMAGE_ASPECT_RATIO_SQUARE"
+
+            # Build correct upload request - dùng ASSET_MANAGER tool
+            body_json = {
+                "clientContext": {
+                    "sessionId": f";{int(time.time() * 1000)}",
+                    "tool": "ASSET_MANAGER"
+                },
+                "imageInput": {
+                    "aspectRatio": aspect,
+                    "isUserUploaded": True,
+                    "mimeType": mime_type,
+                    "rawImageBytes": image_data
+                }
+            }
+
+            payload = {
+                "body_json": body_json,
+                "flow_auth_token": self.bearer_token,
+                "flow_url": f"{self.GOOGLE_BASE}/v1/projects/{self.project_id}/flowMedia:uploadImage"
+            }
+
+            response = requests.post(
+                f"{self.PROXY_BASE}/create-image-veo3",
+                headers=self._proxy_headers(),
+                json=payload,
+                timeout=60
+            )
+
+            if response.status_code != 200:
+                self._log(f"Proxy upload failed: {response.status_code}", "error")
+                return None
+
+            task_id = response.json().get("taskId")
+            if not task_id:
+                self._log("No taskId in proxy response", "error")
+                return None
+
+            # Poll for result
+            for i in range(60):
+                status_resp = requests.get(
+                    f"{self.PROXY_BASE}/task-status?taskId={task_id}",
+                    headers=self._proxy_headers(),
+                    timeout=30
+                )
+
+                if status_resp.status_code == 200:
+                    status_json = status_resp.json()
+                    result = status_json.get("result", {})
+
+                    # Check for error
+                    if "error" in result:
+                        self._log(f"Proxy upload error: {result['error']}", "error")
+                        return None
+
+                    # Try to extract name from various formats
+                    media_name = None
+
+                    if "name" in result:
+                        media_name = result["name"]
+                    elif "media" in result:
+                        media = result["media"]
+                        if isinstance(media, list) and len(media) > 0:
+                            media_name = media[0].get("name")
+                        elif isinstance(media, dict):
+                            media_name = media.get("name")
+                    elif "imageInput" in result:
+                        media_name = result["imageInput"].get("name")
+                    elif "mediaName" in result:
+                        media_name = result["mediaName"]
+
+                    if media_name:
+                        self._log(f"Proxy upload successful: {media_name[:60]}...")
+                        return media_name
+
+                if i % 10 == 0:
+                    self._log(f"Waiting for upload result... ({i*2}s)")
+
+                time.sleep(2)
+
+            self._log("Upload timeout", "error")
+            return None
+
+        except Exception as e:
+            self._log(f"Proxy upload fallback error: {e}", "error")
+            return None
 
     def create_video_from_image(
         self,
