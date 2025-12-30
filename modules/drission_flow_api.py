@@ -285,12 +285,14 @@ class DrissionFlowAPI:
         self._ready = False
 
     def log(self, msg: str, level: str = "INFO"):
-        """Log message."""
-        if self.verbose:
+        """Log message - chỉ dùng 1 trong 2: callback hoặc print."""
+        if self.log_callback:
+            # Nếu có callback, để parent xử lý log (tránh duplicate)
+            self.log_callback(msg, level)
+        elif self.verbose:
+            # Fallback: print trực tiếp nếu không có callback
             timestamp = datetime.now().strftime("%H:%M:%S")
             print(f"[{timestamp}] [{level}] {msg}")
-        if self.log_callback:
-            self.log_callback(msg, level)
 
     def _auto_setup_project(self, timeout: int = 60) -> bool:
         """
