@@ -1437,13 +1437,10 @@ class DrissionFlowAPI:
                 self.log(f"[I2V] Got {len(operations)} operations, polling for result...")
 
                 op = operations[0]
-                self.log(f"[I2V] Operation: {json.dumps(op)[:300]}")
+                self.log(f"[I2V] Operation status: {op.get('status', 'unknown')}")
 
-                operation_id = op.get("name") or op.get("operation", {}).get("name", "")
-                if not operation_id:
-                    return False, None, "No operation ID"
-
-                video_url = self._poll_video_operation(operation_id, headers, proxies, max_wait)
+                # Truyền full operation data cho poll (không chỉ operation_id)
+                video_url = self._poll_video_operation(op, headers, proxies, max_wait)
 
                 if video_url:
                     self.log(f"[I2V] Video ready: {video_url[:60]}...")
@@ -1485,15 +1482,19 @@ class DrissionFlowAPI:
 
     def _poll_video_operation(
         self,
-        operation_id: str,
+        operation_data: Dict,
         headers: Dict,
         proxies: Optional[Dict],
         max_wait: int
     ) -> Optional[str]:
-        """Poll cho video operation hoàn thành."""
-        # Poll URL phải có project_id (giống captured URL từ Chrome)
-        url = f"https://aisandbox-pa.googleapis.com/v1/projects/{self.project_id}/operations/{operation_id}"
-        self.log(f"[I2V] Poll: {url[:80]}...")
+        """
+        Poll cho video operation hoàn thành.
+        Dùng POST với body chứa operation info (không phải GET).
+        """
+        url = "https://aisandbox-pa.googleapis.com/v1/video:batchCheckAsyncVideoGenerationStatus"
+
+        # Payload gửi đi - chứa operation info từ response đầu
+        poll_payload = {"operations": [operation_data]}
 
         start_time = time.time()
         poll_interval = 5  # Poll mỗi 5 giây
@@ -1502,43 +1503,48 @@ class DrissionFlowAPI:
         while time.time() - start_time < max_wait:
             try:
                 poll_count += 1
-                resp = requests.get(
+                elapsed = int(time.time() - start_time)
+
+                resp = requests.post(
                     url,
                     headers=headers,
+                    json=poll_payload,
                     timeout=30,
                     proxies=proxies
                 )
 
-                elapsed = int(time.time() - start_time)
-
                 if resp.status_code == 200:
                     data = resp.json()
+                    operations = data.get("operations", [])
 
-                    # Log progress every 30s
-                    if poll_count == 1 or elapsed % 30 < poll_interval:
-                        done_status = data.get("done", False)
-                        self.log(f"[I2V] Poll #{poll_count}: done={done_status}, elapsed={elapsed}s")
+                    if operations:
+                        op = operations[0]
+                        status = op.get("status", "")
 
-                    # Check if done
-                    if data.get("done"):
-                        response = data.get("response", {})
-                        videos = response.get("generatedVideos", [])
-                        if videos:
-                            video_url = videos[0].get("video", {}).get("fifeUrl")
+                        # Log progress
+                        if poll_count == 1 or elapsed % 30 < poll_interval:
+                            self.log(f"[I2V] Poll #{poll_count}: {status}, {elapsed}s")
+
+                        # Check status
+                        if "COMPLETE" in status or "SUCCESS" in status or "DONE" in status:
+                            # Video xong - tìm URL (path: operation.metadata.video.fifeUrl)
+                            video_url = op.get("operation", {}).get("metadata", {}).get("video", {}).get("fifeUrl")
                             if video_url:
                                 return video_url
 
-                        # Check error in response
-                        error = data.get("error", {})
-                        if error:
-                            self.log(f"[I2V] Video error: {error.get('message', error)}", "ERROR")
+                            # Log full response để debug
+                            self.log(f"[I2V] Complete but no URL: {json.dumps(op)[:500]}")
                             return None
 
-                        # Done but no video - log full response
-                        self.log(f"[I2V] Done but no video URL! Response: {json.dumps(response)[:500]}", "ERROR")
-                        return None
+                        elif "FAILED" in status or "ERROR" in status:
+                            error_msg = op.get("error", {}).get("message", status)
+                            self.log(f"[I2V] Video failed: {error_msg}", "ERROR")
+                            return None
+
+                        # Còn đang xử lý - update payload với status mới
+                        poll_payload = {"operations": [op]}
+
                 else:
-                    # Non-200 status
                     self.log(f"[I2V] Poll error: HTTP {resp.status_code} - {resp.text[:200]}", "WARN")
 
                 time.sleep(poll_interval)
