@@ -1224,19 +1224,23 @@ class DrissionFlowAPI:
 
         self.log(f"[I2V] Creating video from media: {media_id[:50]}...")
 
-        # Refresh recaptcha token trước khi gọi video API
-        self.log("[I2V] Refreshing recaptcha token...")
-        if self.refresh_recaptcha(prompt[:30] if len(prompt) > 30 else prompt):
-            self.log("[I2V] ✓ Got fresh recaptcha token")
+        # Refresh recaptcha token NẾU có Chrome session
+        # Nếu không có Chrome (token mode), dùng cached token
+        if hasattr(self, 'driver') and self.driver:
+            self.log("[I2V] Refreshing recaptcha token...")
+            if self.refresh_recaptcha(prompt[:30] if len(prompt) > 30 else prompt):
+                self.log("[I2V] ✓ Got fresh recaptcha token")
+            else:
+                self.log("[I2V] ⚠️ Không refresh được recaptcha", "WARN")
         else:
-            self.log("[I2V] ⚠️ Không refresh được recaptcha", "WARN")
+            self.log("[I2V] Token mode - dùng cached recaptcha")
 
         # Build request payload - CẦN recaptchaToken (theo payload thực tế)
         import uuid
         session_id = f";{int(time.time() * 1000)}"
         scene_id = str(uuid.uuid4())
 
-        # Lấy recaptchaToken sau khi refresh
+        # Lấy recaptchaToken (từ cache hoặc sau khi refresh)
         recaptcha = getattr(self, 'recaptcha_token', '') or ''
 
         request_data = {
