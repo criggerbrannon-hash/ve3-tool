@@ -3887,7 +3887,7 @@ class SmartEngine:
                 self.log(f"[VIDEO] Queued: {image_id}{has_media} (pending: {queue_len})")
 
     def _video_worker_loop(self, proj_dir: Path, existing_drission=None):
-        """Video generation worker loop - reuse Chrome từ image gen hoặc mở mới."""
+        """Video generation worker loop - dùng cached tokens hoặc Chrome."""
         from modules.drission_flow_api import DrissionFlowAPI
 
         self.log("[VIDEO] Worker loop started")
@@ -3895,17 +3895,18 @@ class SmartEngine:
         # Lấy token info từ cache
         bearer = self._video_settings.get('bearer_token', '')
         project_id = self._video_settings.get('project_id', '')
+        recaptcha = self._video_settings.get('recaptcha_token', '')
+        x_browser = self._video_settings.get('x_browser_validation', '')
         chrome_profile = self._video_settings.get('chrome_profile_path', '')
         project_url = self._video_settings.get('project_url', '')
 
-        self.log(f"[VIDEO] Bearer: {'có' if bearer else 'KHÔNG (sẽ capture từ Chrome)'}")
+        self.log(f"[VIDEO] Bearer: {'có' if bearer else 'KHÔNG'}")
+        self.log(f"[VIDEO] Recaptcha: {'có' if recaptcha else 'KHÔNG'}")
         self.log(f"[VIDEO] Project ID: {project_id[:20] if project_id else 'KHÔNG'}...")
-        self.log(f"[VIDEO] Chrome profile: {chrome_profile or 'default'}")
 
-        # Chỉ cần project_id để vào đúng project (bearer sẽ được DrissionFlowAPI capture)
+        # Chỉ cần project_id để xác định project
         if not project_id:
             self.log("[VIDEO] ⚠️ Không có project_id - Skip I2V!", "WARN")
-            self.log("[VIDEO] (Cần project_id để vào đúng project chứa ảnh gốc)", "WARN")
             self._video_worker_running = False
             return
 
@@ -3913,21 +3914,45 @@ class SmartEngine:
         if not project_url and project_id:
             project_url = f"https://labs.google/fx/vi/tools/flow/project/{project_id}"
 
-        # === REUSE CHROME từ image generator hoặc mở mới ===
+        # === STRATEGY: Dùng cached tokens nếu có, không cần Chrome ===
         drission_api = None
-        own_drission = False  # Track if we created drission_api (need to close later)
+        own_drission = False
 
         if existing_drission:
             # Reuse Chrome session từ image generator
             drission_api = existing_drission
             self.log("[VIDEO] ✓ Reuse Chrome session từ image generator")
-        else:
-            # Mở Chrome mới (fallback khi không có existing session)
+
+        elif bearer and recaptcha:
+            # ĐÃ CÓ ĐỦ TOKENS → Tạo DrissionFlowAPI và inject tokens (KHÔNG CẦN Chrome)
+            self.log("[VIDEO] ✓ Có cached tokens - KHÔNG cần mở Chrome!")
+            try:
+                drission_api = DrissionFlowAPI(
+                    profile_dir="./chrome_profile",  # Không dùng nhưng cần cho init
+                    verbose=True,
+                    log_callback=lambda msg, lvl="INFO": self.log(f"[VIDEO] {msg}", lvl),
+                    webshare_enabled=False
+                )
+                # Inject cached tokens trực tiếp (không gọi setup/Chrome)
+                drission_api.bearer_token = bearer if bearer.startswith("Bearer ") else f"Bearer {bearer}"
+                drission_api.recaptcha_token = recaptcha  # Không có underscore!
+                drission_api.x_browser_validation = x_browser  # Không có underscore!
+                drission_api.project_id = project_id
+                drission_api._project_url = project_url
+                drission_api._ready = True  # QUAN TRỌNG: Mark as ready
+                own_drission = True
+                self.log("[VIDEO] ✓ Injected cached tokens - Ready to generate!")
+            except Exception as e:
+                self.log(f"[VIDEO] Failed to inject tokens: {e}", "ERROR")
+                drission_api = None
+
+        if not drission_api:
+            # Fallback: Mở Chrome mới để capture tokens
             try:
                 profile_dir = chrome_profile if chrome_profile and Path(chrome_profile).exists() else "./chrome_profile"
 
                 # Đọc headless setting từ config
-                headless_mode = True  # Default
+                headless_mode = True
                 try:
                     import yaml
                     config_path = Path(__file__).parent.parent / "config" / "settings.yaml"
@@ -3942,12 +3967,11 @@ class SmartEngine:
                     profile_dir=profile_dir,
                     verbose=True,
                     log_callback=lambda msg, lvl="INFO": self.log(f"[VIDEO] {msg}", lvl),
-                    webshare_enabled=False,  # Không cần proxy
+                    webshare_enabled=False,
                     headless=headless_mode
                 )
-                own_drission = True  # We created it, we close it
+                own_drission = True
 
-                # Setup Chrome và vào project cũ
                 self.log(f"[VIDEO] Mở Chrome MỚI với profile: {profile_dir}")
                 if not drission_api.setup(project_url=project_url):
                     self.log("[VIDEO] ⚠️ Không setup được Chrome - Skip I2V!", "WARN")
