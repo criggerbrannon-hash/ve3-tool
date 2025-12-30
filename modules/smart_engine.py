@@ -179,7 +179,7 @@ class SmartEngine:
         self._video_queue_lock = threading.Lock()
         self._video_worker_thread = None
         self._video_worker_running = False
-        self._video_results = {"success": 0, "failed": 0, "pending": 0}
+        self._video_results = {"success": 0, "failed": 0, "pending": 0, "failed_items": []}
         self._video_settings = {}
 
         # Log verbosity: set from settings.yaml (verbose_log: true/false)
@@ -2511,6 +2511,48 @@ class SmartEngine:
             self._stop_video_worker()
             video_results = self.get_video_results()
             self.log(f"[VIDEO] Ket qua I2V: {video_results['success']} OK, {video_results['failed']} failed")
+
+            # === RETRY FAILED VIDEOS ONCE ===
+            failed_items = video_results.get('failed_items', [])
+            if failed_items:
+                self.log(f"[VIDEO] Đang retry {len(failed_items)} video bị lỗi...")
+                retry_success = 0
+                retry_failed = 0
+
+                # Re-start video worker for retry
+                if self._video_settings:
+                    self._start_video_worker(proj_dir)
+                    if self._video_worker_running:
+                        # Re-queue failed items
+                        for item in failed_items:
+                            self._queue_video_generation(
+                                item['image_path'],
+                                item['image_id'],
+                                item.get('video_prompt', ''),
+                                item.get('media_name', '')
+                            )
+
+                        # Wait for retry to complete
+                        retry_wait_start = time.time()
+                        retry_max_wait = 600  # 10 minutes for retry
+                        while self._video_worker_running and time.time() - retry_wait_start < retry_max_wait:
+                            with self._video_queue_lock:
+                                if not self._video_queue:
+                                    break
+                            time.sleep(2)
+
+                        # Get retry results
+                        self._stop_video_worker()
+                        retry_video_results = self.get_video_results()
+                        retry_success = retry_video_results.get('success', 0)
+                        retry_failed = retry_video_results.get('failed', 0)
+
+                        self.log(f"[VIDEO] Retry xong: +{retry_success} OK, {retry_failed} vẫn fail")
+
+                        # Update total video results
+                        video_results['success'] += retry_success
+                        video_results['failed'] = retry_failed
+
             results["video_gen"] = video_results
         else:
             self.log("[STEP 8] Khong co I2V, skip...")
@@ -3842,7 +3884,7 @@ class SmartEngine:
             return
 
         self._video_worker_running = True
-        self._video_results = {"success": 0, "failed": 0, "pending": 0}
+        self._video_results = {"success": 0, "failed": 0, "pending": 0, "failed_items": []}
 
         self._video_worker_thread = threading.Thread(
             target=self._video_worker_loop,
@@ -4100,10 +4142,12 @@ class SmartEngine:
                     # generate_video() đã xử lý 403/retry bên trong rồi
                     if not success:
                         self._video_results['failed'] += 1
+                        self._video_results['failed_items'].append(item)  # Track for retry
                         self.log(f"[VIDEO] FAILED: {image_id} - {error}", "ERROR")
 
                 except Exception as e:
                     self._video_results['failed'] += 1
+                    self._video_results['failed_items'].append(item)  # Track for retry
                     self.log(f"[VIDEO] Error {image_id}: {e}", "ERROR")
 
             # Delay between videos

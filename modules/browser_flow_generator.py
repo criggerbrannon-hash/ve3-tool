@@ -3675,7 +3675,31 @@ class BrowserFlowGenerator:
         except:
             video_count = 0
 
-        if video_count > 0 and drission_api._ready:
+        # === KIỂM TRA: Tất cả scene images đã xong chưa? ===
+        all_images_done = True
+        pending_scenes = []
+        if video_count > 0 and workbook:
+            try:
+                for scene in workbook.get_scenes():
+                    scene_id = str(scene.scene_id) if hasattr(scene, 'scene_id') else ''
+                    if not scene_id or not scene_id.isdigit():
+                        continue  # Bỏ qua nv/loc
+
+                    # Kiểm tra status_img
+                    status_img = getattr(scene, 'status_img', '') or ''
+                    prompt = getattr(scene, 'prompt', '') or ''
+
+                    # Nếu có prompt và chưa done → chưa xong
+                    if prompt and prompt.strip().upper() != 'DO_NOT_GENERATE' and status_img != 'done':
+                        all_images_done = False
+                        pending_scenes.append(scene_id)
+            except Exception as e:
+                self._log(f"[I2V] Warning: Cannot check pending scenes: {e}", "warn")
+
+        if not all_images_done:
+            self._log(f"[I2V] ⏳ SKIP - Còn {len(pending_scenes)} scene chưa có ảnh: {pending_scenes[:10]}...")
+            self._log(f"[I2V] Video sẽ được tạo sau khi tất cả ảnh scene hoàn thành")
+        elif video_count > 0 and drission_api._ready:
             self._log("")
             self._log("=" * 60)
             self._log(f"[I2V] TẠO VIDEO TỪ ẢNH (cùng session)")
