@@ -141,7 +141,7 @@ class WebshareProxyManager:
     API_BASE = "https://proxy.webshare.io/api/v2"
     MAX_FAIL_COUNT = 3  # Số lần fail trước khi xoay proxy
     BLOCK_TIMEOUT = 300  # 5 phút timeout trong memory
-    BLOCK_DURATION = 48 * 3600  # 48 giờ - thời gian không dùng lại proxy bị block
+    BLOCK_DURATION = 120 * 60  # 120 phút - thời gian không dùng lại proxy bị block
     BLOCKED_FILE = "config/blocked_proxies.json"  # File lưu danh sách blocked
 
     def __init__(
