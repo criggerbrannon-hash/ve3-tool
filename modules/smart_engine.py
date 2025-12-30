@@ -2534,7 +2534,7 @@ class SmartEngine:
 
                         # Wait for retry to complete
                         retry_wait_start = time.time()
-                        retry_max_wait = 600  # 10 minutes for retry
+                        retry_max_wait = len(failed_items) * 300  # 5 phút mỗi video
                         while self._video_worker_running and time.time() - retry_wait_start < retry_max_wait:
                             with self._video_queue_lock:
                                 if not self._video_queue:
