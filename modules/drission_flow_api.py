@@ -516,27 +516,7 @@ class DrissionFlowAPI:
         self.log("Khởi động Chrome...")
         try:
             options = ChromiumOptions()
-
-            # === FIX: Xử lý Chrome profile path đúng cách ===
-            # Nếu path chứa "User Data", tách thành user-data-dir và profile-directory
-            profile_path = str(self.profile_dir)
-            if "User Data" in profile_path:
-                # Ví dụ: C:\Users\admin\AppData\Local\Google\Chrome\User Data\Profile 2
-                # → user_data_dir = C:\Users\admin\AppData\Local\Google\Chrome\User Data
-                # → profile_name = Profile 2
-                parts = profile_path.split("User Data")
-                user_data_dir = parts[0] + "User Data"
-                profile_name = parts[1].strip("/\\") if len(parts) > 1 else "Default"
-                options.set_user_data_path(user_data_dir)
-                if profile_name:
-                    options.set_argument(f'--profile-directory={profile_name}')
-                self.log(f"Chrome User Data: {user_data_dir}")
-                self.log(f"Profile: {profile_name}")
-            else:
-                # Dùng như thư mục profile riêng (không phải Chrome profile gốc)
-                self.profile_dir.mkdir(parents=True, exist_ok=True)
-                options.set_user_data_path(str(self.profile_dir))
-
+            options.set_user_data_path(str(self.profile_dir))
             options.set_local_port(self.chrome_port)
 
             # Thêm arguments cần thiết cho Linux/headless
