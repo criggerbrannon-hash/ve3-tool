@@ -179,7 +179,7 @@ class SmartEngine:
         self._video_queue_lock = threading.Lock()
         self._video_worker_thread = None
         self._video_worker_running = False
-        self._video_results = {"success": 0, "failed": 0, "pending": 0}
+        self._video_results = {"success": 0, "failed": 0, "pending": 0, "failed_items": []}
         self._video_settings = {}
 
         # Log verbosity: set from settings.yaml (verbose_log: true/false)
@@ -1373,16 +1373,18 @@ class SmartEngine:
                 img = images[0]
                 self.log(f"  -> media_name={img.media_name}, media_id={img.media_id}, workflow_id={img.workflow_id}", "DEBUG")
 
-                # === LUU MEDIA_NAME neu la nv/loc ===
-                if is_reference_image:
-                    # Thu lay media_name, fallback to workflow_id or media_id
-                    ref_id = img.media_name or img.workflow_id or img.media_id
-                    if ref_id:
-                        self.set_cached_media_name(profile, pid, ref_id)
-                        self.log(f"  -> Saved ref_id for {pid}: {ref_id[:40]}...")
+                # === LUU MEDIA_NAME cho TAT CA IMAGES (for I2V) ===
+                # QUAN TRONG: media_name can cho I2V, luu cho ca nv/loc va scene
+                cached_media_name = img.media_name or img.workflow_id or img.media_id or ""
+                if cached_media_name:
+                    self.set_cached_media_name(profile, pid, cached_media_name)
+                    if is_reference_image:
+                        self.log(f"  -> Saved ref_id for {pid}: {cached_media_name[:40]}...")
                     else:
-                        self.log(f"  -> WARNING: No identifier returned for {pid}!", "WARN")
-                        self.log(f"  -> Available: media_name={img.media_name}, workflow_id={img.workflow_id}, media_id={img.media_id}", "DEBUG")
+                        self.log(f"  -> Saved media_name for {pid} (for I2V): {cached_media_name[:40]}...")
+                else:
+                    self.log(f"  -> WARNING: No media_name returned for {pid}!", "WARN")
+                    self.log(f"  -> Available: media_name={img.media_name}, workflow_id={img.workflow_id}, media_id={img.media_id}", "DEBUG")
 
                 # Download image
                 downloaded = api.download_image(images[0], Path(output).parent, pid)
@@ -1395,8 +1397,9 @@ class SmartEngine:
                         downloaded.rename(output)
 
                     # Queue video generation if enabled (parallel)
+                    # QUAN TRONG: Pass cached_media_name to avoid re-upload
                     video_prompt = prompt_data.get('video_prompt', '')
-                    self._queue_video_generation(final_path, pid, video_prompt)
+                    self._queue_video_generation(final_path, pid, video_prompt, cached_media_name)
 
                     return True, False
                 else:
@@ -2324,6 +2327,17 @@ class SmartEngine:
 
             # Queue video cho các ảnh đã có (resume mode)
             if self._video_worker_running:
+                # === LOAD MEDIA_IDs từ Excel (bổ sung cho cache) ===
+                excel_scene_media_ids = {}
+                try:
+                    from modules.excel_manager import PromptWorkbook
+                    workbook = PromptWorkbook(Path(excel_path) if isinstance(excel_path, str) else excel_path)
+                    excel_scene_media_ids = workbook.get_scene_media_ids()
+                    if excel_scene_media_ids:
+                        self.log(f"[VIDEO] Resume: Loaded {len(excel_scene_media_ids)} media_ids từ Excel")
+                except Exception as e:
+                    self.log(f"[VIDEO] Resume: Cannot load Excel media_ids: {e}", "WARN")
+
                 img_dir = proj_dir / "img"
                 queued = 0
                 skipped_mp4 = 0
@@ -2342,7 +2356,8 @@ class SmartEngine:
                     elif img_path.exists():
                         # Có ảnh PNG, cần tạo video
                         video_prompt = p.get('video_prompt', '')
-                        cached_media_name = media_cache.get(pid, '')
+                        # Ưu tiên: cache → Excel
+                        cached_media_name = media_cache.get(pid, '') or excel_scene_media_ids.get(str(pid), '')
                         self._queue_video_generation(img_path, pid, video_prompt, cached_media_name)
                         queued += 1
 
@@ -2424,7 +2439,7 @@ class SmartEngine:
                     # Đảm bảo excel_path là Path object
                     excel_path_obj = Path(excel_path) if isinstance(excel_path, str) else excel_path
                     if excel_path_obj.exists():
-                        workbook = PromptWorkbook(str(excel_path_obj))
+                        workbook = PromptWorkbook(excel_path_obj)
                         excel_scene_media_ids = workbook.get_scene_media_ids()
                         if excel_scene_media_ids:
                             self.log(f"[VIDEO] Loaded {len(excel_scene_media_ids)} media_ids từ Excel")
@@ -2498,6 +2513,48 @@ class SmartEngine:
             self._stop_video_worker()
             video_results = self.get_video_results()
             self.log(f"[VIDEO] Ket qua I2V: {video_results['success']} OK, {video_results['failed']} failed")
+
+            # === RETRY FAILED VIDEOS ONCE ===
+            failed_items = video_results.get('failed_items', [])
+            if failed_items:
+                self.log(f"[VIDEO] Đang retry {len(failed_items)} video bị lỗi...")
+                retry_success = 0
+                retry_failed = 0
+
+                # Re-start video worker for retry
+                if self._video_settings:
+                    self._start_video_worker(proj_dir)
+                    if self._video_worker_running:
+                        # Re-queue failed items
+                        for item in failed_items:
+                            self._queue_video_generation(
+                                item['image_path'],
+                                item['image_id'],
+                                item.get('video_prompt', ''),
+                                item.get('media_name', '')
+                            )
+
+                        # Wait for retry to complete
+                        retry_wait_start = time.time()
+                        retry_max_wait = len(failed_items) * 300  # 5 phút mỗi video
+                        while self._video_worker_running and time.time() - retry_wait_start < retry_max_wait:
+                            with self._video_queue_lock:
+                                if not self._video_queue:
+                                    break
+                            time.sleep(2)
+
+                        # Get retry results
+                        self._stop_video_worker()
+                        retry_video_results = self.get_video_results()
+                        retry_success = retry_video_results.get('success', 0)
+                        retry_failed = retry_video_results.get('failed', 0)
+
+                        self.log(f"[VIDEO] Retry xong: +{retry_success} OK, {retry_failed} vẫn fail")
+
+                        # Update total video results
+                        video_results['success'] += retry_success
+                        video_results['failed'] = retry_failed
+
             results["video_gen"] = video_results
         else:
             self.log("[STEP 8] Khong co I2V, skip...")
@@ -3029,15 +3086,15 @@ class SmartEngine:
 
                 # Ken Burns settings từ config
                 # Video composition mode: quality, balanced, fast
-                compose_mode = "quality"  # Default: quality (mượt nhất, như CapCut)
-                kb_intensity = "strong"   # Default: strong (zoom 18%, pan 12%)
+                compose_mode = "fast"  # Default: fast (nhanh nhất, chỉ fade)
+                kb_intensity = "normal"   # Default: normal (zoom 12%, pan 8%)
                 try:
                     import yaml
                     config_path = Path(__file__).parent.parent / "config" / "settings.yaml"
                     if config_path.exists():
                         with open(config_path, 'r', encoding='utf-8') as f:
                             config = yaml.safe_load(f) or {}
-                        compose_mode = config.get('video_compose_mode', 'balanced').lower()
+                        compose_mode = config.get('video_compose_mode', 'fast').lower()
                         kb_intensity = config.get('ken_burns_intensity', 'normal')
                 except Exception:
                     pass
@@ -3741,6 +3798,14 @@ class SmartEngine:
             pre_set_token = self._video_settings.get('bearer_token', '')
             pre_set_project_id = self._video_settings.get('project_id', '')
 
+        # === REUSE DRISSION API từ image generator (nếu có) ===
+        # Không tạo Chrome mới - dùng lại Chrome đang chạy
+        existing_drission = None
+        if hasattr(self, '_browser_generator') and self._browser_generator:
+            existing_drission = getattr(self._browser_generator, '_drission_api', None)
+            if existing_drission:
+                self.log("[VIDEO] Reuse Chrome session từ image generator")
+
         # Load settings với proj_dir để đọc được project cache
         if not self._load_video_settings(proj_dir):
             self.log("[VIDEO] Video generation disabled (count = 0)", "INFO")
@@ -3821,11 +3886,11 @@ class SmartEngine:
             return
 
         self._video_worker_running = True
-        self._video_results = {"success": 0, "failed": 0, "pending": 0}
+        self._video_results = {"success": 0, "failed": 0, "pending": 0, "failed_items": []}
 
         self._video_worker_thread = threading.Thread(
             target=self._video_worker_loop,
-            args=(proj_dir,),
+            args=(proj_dir, existing_drission),  # Pass DrissionAPI nếu có
             daemon=True
         )
         self._video_worker_thread.start()
@@ -3877,8 +3942,8 @@ class SmartEngine:
                 has_media = " (có media_name)" if media_name else ""
                 self.log(f"[VIDEO] Queued: {image_id}{has_media} (pending: {queue_len})")
 
-    def _video_worker_loop(self, proj_dir: Path):
-        """Video generation worker loop - mở Chrome cũ để lấy recaptcha (thay nanoaipic)."""
+    def _video_worker_loop(self, proj_dir: Path, existing_drission=None):
+        """Video generation worker loop - dùng cached tokens hoặc Chrome."""
         from modules.drission_flow_api import DrissionFlowAPI
 
         self.log("[VIDEO] Worker loop started")
@@ -3886,15 +3951,18 @@ class SmartEngine:
         # Lấy token info từ cache
         bearer = self._video_settings.get('bearer_token', '')
         project_id = self._video_settings.get('project_id', '')
+        recaptcha = self._video_settings.get('recaptcha_token', '')
+        x_browser = self._video_settings.get('x_browser_validation', '')
         chrome_profile = self._video_settings.get('chrome_profile_path', '')
         project_url = self._video_settings.get('project_url', '')
 
         self.log(f"[VIDEO] Bearer: {'có' if bearer else 'KHÔNG'}")
+        self.log(f"[VIDEO] Recaptcha: {'có' if recaptcha else 'KHÔNG'}")
         self.log(f"[VIDEO] Project ID: {project_id[:20] if project_id else 'KHÔNG'}...")
-        self.log(f"[VIDEO] Chrome profile: {chrome_profile or 'default'}")
 
-        if not bearer or not project_id:
-            self.log("[VIDEO] ⚠️ Không có token/project_id - Skip I2V!", "WARN")
+        # Chỉ cần project_id để xác định project
+        if not project_id:
+            self.log("[VIDEO] ⚠️ Không có project_id - Skip I2V!", "WARN")
             self._video_worker_running = False
             return
 
@@ -3902,31 +3970,101 @@ class SmartEngine:
         if not project_url and project_id:
             project_url = f"https://labs.google/fx/vi/tools/flow/project/{project_id}"
 
-        # === MỞ CHROME CŨ để lấy recaptcha (thay thế nanoaipic) ===
-        try:
-            # Dùng profile đã lưu hoặc default
-            profile_dir = chrome_profile if chrome_profile and Path(chrome_profile).exists() else "./chrome_profile"
+        # === STRATEGY: Luôn cần Chrome để refresh recaptcha ===
+        # Recaptcha token expire rất nhanh, KHÔNG thể dùng cached!
+        drission_api = None
+        own_drission = False
 
-            drission_api = DrissionFlowAPI(
-                profile_dir=profile_dir,
-                verbose=True,
-                log_callback=lambda msg, lvl="INFO": self.log(f"[VIDEO] {msg}", lvl),
-                webshare_enabled=False  # Không cần proxy
-            )
+        if existing_drission:
+            # Reuse Chrome session từ image generator
+            drission_api = existing_drission
+            self.log("[VIDEO] ✓ Reuse Chrome session từ image generator")
+        else:
+            # Fallback: Mở Chrome mới (GIỐNG HỆT image gen)
+            try:
+                import yaml
+                config_path = Path(__file__).parent.parent / "config" / "settings.yaml"
+                cfg = {}
+                if config_path.exists():
+                    with open(config_path, 'r', encoding='utf-8') as f:
+                        cfg = yaml.safe_load(f) or {}
 
-            # Setup Chrome và vào project cũ
-            self.log(f"[VIDEO] Mở Chrome với profile: {profile_dir}")
-            if not drission_api.setup(project_url=project_url):
-                self.log("[VIDEO] ⚠️ Không setup được Chrome - Skip I2V!", "WARN")
+                headless_mode = cfg.get('browser_headless', True)
+                ws_cfg = cfg.get('webshare_proxy', {})
+                use_webshare = ws_cfg.get('enabled', True)
+
+                # === KHỞI TẠO PROXY MANAGER (giống browser_flow_generator) ===
+                if use_webshare:
+                    try:
+                        from webshare_proxy import init_proxy_manager, get_proxy_manager
+
+                        rotating_enabled = ws_cfg.get('rotating_enabled', False)
+                        if rotating_enabled:
+                            manager = init_proxy_manager(
+                                username=ws_cfg.get('username', ''),
+                                password=ws_cfg.get('password', ''),
+                                rotating_endpoint=True,
+                                rotating_host=ws_cfg.get('rotating_host', 'p.webshare.io'),
+                                rotating_port=ws_cfg.get('rotating_port', 80)
+                            )
+                            self.log("[VIDEO] ✓ Rotating Endpoint mode")
+                        else:
+                            proxy_file = ws_cfg.get('proxy_file', 'config/proxies.txt')
+                            manager = init_proxy_manager(
+                                api_key=ws_cfg.get('api_key', ''),
+                                username=ws_cfg.get('username', ''),
+                                password=ws_cfg.get('password', ''),
+                                proxy_file=proxy_file
+                            )
+                            if manager.proxies:
+                                self.log(f"[VIDEO] ✓ Loaded {len(manager.proxies)} proxies")
+                            else:
+                                self.log("[VIDEO] ⚠️ No proxies - chạy không proxy", "WARN")
+                                use_webshare = False
+                    except Exception as e:
+                        self.log(f"[VIDEO] Proxy init error: {e}", "WARN")
+                        use_webshare = False
+
+                # === CHROME PROFILE: Dùng chrome_profiles/ từ cài đặt tool ===
+                root_dir = Path(__file__).parent.parent
+                profiles_dir = root_dir / cfg.get('browser_profiles_dir', './chrome_profiles')
+
+                profile_dir = None
+                if profiles_dir.exists():
+                    for p in sorted(profiles_dir.iterdir()):
+                        if p.is_dir() and not p.name.startswith('.'):
+                            profile_dir = str(p)
+                            break
+
+                if not profile_dir:
+                    self.log("[VIDEO] ⚠️ Không có Chrome profile! Cần tạo ở Cài đặt tool.", "ERROR")
+                    self._video_worker_running = False
+                    return
+
+                self.log(f"[VIDEO] Chrome profile: {profile_dir}")
+
+                drission_api = DrissionFlowAPI(
+                    profile_dir=profile_dir,
+                    verbose=True,
+                    log_callback=lambda msg, lvl="INFO": self.log(f"[VIDEO] {msg}", lvl),
+                    webshare_enabled=use_webshare,
+                    worker_id=getattr(self, 'worker_id', 0),  # Giống image gen
+                    headless=headless_mode
+                )
+                own_drission = True
+
+                self.log(f"[VIDEO] Mở Chrome với profile: {profile_dir}")
+                if not drission_api.setup(project_url=project_url):
+                    self.log("[VIDEO] ⚠️ Không setup được Chrome - Skip I2V!", "WARN")
+                    self._video_worker_running = False
+                    return
+
+                self.log("[VIDEO] ✓ Chrome ready - Bắt đầu tạo video...")
+
+            except Exception as e:
+                self.log(f"[VIDEO] Failed to setup Chrome: {e}", "ERROR")
                 self._video_worker_running = False
                 return
-
-            self.log("[VIDEO] ✓ Chrome ready - Bắt đầu tạo video...")
-
-        except Exception as e:
-            self.log(f"[VIDEO] Failed to setup Chrome: {e}", "ERROR")
-            self._video_worker_running = False
-            return
 
         img_dir = proj_dir / "img"
 
@@ -3964,11 +4102,22 @@ class SmartEngine:
                         self.log(f"[VIDEO] Retry {retry}/{MAX_VIDEO_RETRIES}: {image_id}")
                         time.sleep(5 * retry)  # Exponential backoff
 
+                    # Map model name sang API model key
+                    model_setting = self._video_settings.get('model', 'fast')
+                    VIDEO_MODEL_MAP = {
+                        'fast': 'veo_3_0_r2v_fast_ultra',
+                        'quality': 'veo_3_0_r2v',
+                        # Cho phép dùng trực tiếp model key nếu đã đúng format
+                        'veo_3_0_r2v_fast_ultra': 'veo_3_0_r2v_fast_ultra',
+                        'veo_3_0_r2v': 'veo_3_0_r2v',
+                    }
+                    video_model = VIDEO_MODEL_MAP.get(model_setting, 'veo_3_0_r2v_fast_ultra')
+
                     # Gọi DrissionFlowAPI.generate_video()
                     ok, video_url, error = drission_api.generate_video(
                         media_id=media_name,
                         prompt=video_prompt,
-                        video_model=self._video_settings.get('model', 'veo_3_0_r2v_fast_ultra')
+                        video_model=video_model
                     )
 
                     if ok and video_url:
@@ -3992,22 +4141,27 @@ class SmartEngine:
                         else:
                             error = "Failed to download video"
 
+                    # generate_video() đã xử lý 403/retry bên trong rồi
                     if not success:
-                        if retry < MAX_VIDEO_RETRIES - 1:
-                            self.log(f"[VIDEO] {image_id} failed: {error} - Will retry...", "WARN")
-                        else:
-                            self._video_results['failed'] += 1
-                            self.log(f"[VIDEO] FAILED after {MAX_VIDEO_RETRIES} retries: {image_id} - {error}", "ERROR")
+                        self._video_results['failed'] += 1
+                        self._video_results['failed_items'].append(item)  # Track for retry
+                        self.log(f"[VIDEO] FAILED: {image_id} - {error}", "ERROR")
 
                 except Exception as e:
-                    if retry < MAX_VIDEO_RETRIES - 1:
-                        self.log(f"[VIDEO] Error {image_id}: {e} - Will retry...", "WARN")
-                    else:
-                        self._video_results['failed'] += 1
-                        self.log(f"[VIDEO] Error after {MAX_VIDEO_RETRIES} retries {image_id}: {e}", "ERROR")
+                    self._video_results['failed'] += 1
+                    self._video_results['failed_items'].append(item)  # Track for retry
+                    self.log(f"[VIDEO] Error {image_id}: {e}", "ERROR")
 
             # Delay between videos
             time.sleep(2)
+
+        # Cleanup: Chỉ close nếu chúng ta tạo DrissionAPI mới
+        if own_drission and drission_api:
+            try:
+                drission_api.close()
+                self.log("[VIDEO] Đã close Chrome (tạo mới)")
+            except:
+                pass
 
         self.log(f"[VIDEO] Worker stopped. Results: {self._video_results['success']} OK, {self._video_results['failed']} failed")
 
