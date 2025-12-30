@@ -1304,13 +1304,17 @@ class DrissionFlowAPI:
             operations = result.get("operations", [])
 
             if not operations:
+                self.log(f"[I2V] Response: {json.dumps(result)[:300]}")
                 return False, None, "No operations in response"
 
             self.log(f"[I2V] Got {len(operations)} operations, polling for result...")
 
             # Poll for video result
-            operation_id = operations[0].get("name", "")
+            # Cấu trúc có thể là: operations[0]["name"] hoặc operations[0]["operation"]["name"]
+            op = operations[0]
+            operation_id = op.get("name") or op.get("operation", {}).get("name", "")
             if not operation_id:
+                self.log(f"[I2V] Response structure: {json.dumps(op)[:300]}")
                 return False, None, "No operation ID"
 
             video_url = self._poll_video_operation(operation_id, headers, proxies, max_wait)
