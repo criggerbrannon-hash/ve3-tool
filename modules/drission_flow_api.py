@@ -1410,21 +1410,36 @@ class DrissionFlowAPI:
                     return False, None, error
 
                 result = resp.json()
+
+                # Log full response để debug
+                self.log(f"[I2V] Full response keys: {list(result.keys())}")
+                self.log(f"[I2V] Response: {json.dumps(result)[:500]}")
+
+                # Giống image gen - check nếu có video trực tiếp trong response
+                # (không cần poll như image gen)
+                if "media" in result or "generatedVideos" in result:
+                    videos = result.get("generatedVideos", result.get("media", []))
+                    if videos:
+                        video_url = videos[0].get("video", {}).get("fifeUrl") or videos[0].get("fifeUrl")
+                        if video_url:
+                            self.log(f"[I2V] ✓ Video ready (no poll): {video_url[:60]}...")
+                            return True, video_url, None
+
                 operations = result.get("operations", [])
 
                 if not operations:
-                    self.log(f"[I2V] Response: {json.dumps(result)[:300]}")
                     if attempt < max_retries - 1:
                         time.sleep(5)
                         continue
-                    return False, None, "No operations in response"
+                    return False, None, "No operations/videos in response"
 
                 self.log(f"[I2V] Got {len(operations)} operations, polling for result...")
 
                 op = operations[0]
+                self.log(f"[I2V] Operation: {json.dumps(op)[:300]}")
+
                 operation_id = op.get("name") or op.get("operation", {}).get("name", "")
                 if not operation_id:
-                    self.log(f"[I2V] Response structure: {json.dumps(op)[:300]}")
                     return False, None, "No operation ID"
 
                 video_url = self._poll_video_operation(operation_id, headers, proxies, max_wait)
