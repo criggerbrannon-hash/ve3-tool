@@ -3309,21 +3309,21 @@ class BrowserFlowGenerator:
                     self.stats["success"] += 1
                     consecutive_403 = 0  # Reset counter on success
 
-                    # Update Excel if available
-                    if workbook and images[0].local_path:
+                    # Update Excel if available - SAVE MEDIA_ID for SCENE images
+                    if workbook and not is_reference_image:
                         try:
-                            workbook.update_image_path(int(pid), str(images[0].local_path))
-                            workbook.update_status(int(pid), "done")
-                            # === SAVE MEDIA_ID to Excel for SCENE images ===
+                            # Dùng update_scene với tất cả fields cần update
+                            workbook.update_scene(
+                                int(pid),
+                                img_path=str(images[0].local_path) if images[0].local_path else None,
+                                status_img="done",
+                                media_id=images[0].media_name if images[0].media_name else None
+                            )
+                            workbook.save()
                             if images[0].media_name:
-                                try:
-                                    workbook.update_scene(int(pid), media_id=images[0].media_name)
-                                    workbook.save()
-                                    self._log(f"   [EXCEL] Saved media_id for scene {pid}")
-                                except Exception as e:
-                                    self._log(f"   [EXCEL] Cannot save scene media_id: {e}", "warn")
-                        except:
-                            pass
+                                self._log(f"   [EXCEL] Saved scene {pid}: media_id={images[0].media_name[:40]}...")
+                        except Exception as e:
+                            self._log(f"   [EXCEL] Cannot update scene {pid}: {e}", "warn")
 
                     # === SAVE MEDIA_ID to Excel for nv/loc images ===
                     # Cả nv* và loc* đều nằm trong sheet "characters"

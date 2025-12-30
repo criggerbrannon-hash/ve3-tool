@@ -963,9 +963,14 @@ class DrissionFlowAPI:
                 if gen_image.get("fifeUrl"):
                     img.url = gen_image["fifeUrl"]
 
-                # Media name (for video generation)
-                if media_item.get("name"):
-                    img.media_name = media_item["name"]
+                # Media name (for video generation) - check multiple locations
+                img.media_name = (
+                    media_item.get("name") or
+                    media_item.get("mediaName") or
+                    gen_image.get("name") or
+                    gen_image.get("mediaName") or
+                    ""
+                )
 
                 # Seed
                 if gen_image.get("seed"):
