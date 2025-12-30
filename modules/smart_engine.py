@@ -2156,6 +2156,13 @@ class SmartEngine:
         all_prompts = self._load_prompts(excel_path, proj_dir)
 
         if not all_prompts:
+            # Excel có 0 prompts = file bị lỗi, xóa để tạo lại
+            self.log(f"⚠️ Excel có 0 prompts - xóa file lỗi để tạo lại...", "WARN")
+            try:
+                excel_path.unlink()
+                self.log(f"   Đã xóa: {excel_path.name}")
+            except Exception as e:
+                self.log(f"   Không xóa được: {e}", "ERROR")
             return {"error": "no_prompts"}
 
         # === LOAD MEDIA_IDs từ Excel để kiểm tra ===
