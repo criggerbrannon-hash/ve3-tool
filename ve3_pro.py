@@ -2612,8 +2612,13 @@ class UnixVoiceToVideo:
                 try:
                     self.root.after(0, lambda vid=voice_id: self.log(f"[Voice {vid}] 🌐 Khởi tạo Chrome..."))
 
+                    # Mỗi voice dùng profile riêng để tránh conflict
+                    profile_dir = f"./chrome_profiles/voice_{voice_id}"
+                    Path(profile_dir).mkdir(parents=True, exist_ok=True)
+
                     # Tạo DrissionFlowAPI (proxy được xử lý tự động qua Webshare với worker_id)
                     api = DrissionFlowAPI(
+                        profile_dir=profile_dir,
                         worker_id=voice_id,
                         log_callback=lambda msg, vid=voice_id: self.root.after(0, lambda m=msg: self.log(f"[V{vid}] {m}"))
                     )
