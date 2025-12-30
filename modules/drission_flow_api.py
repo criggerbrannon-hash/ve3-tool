@@ -1024,17 +1024,35 @@ class DrissionFlowAPI:
                 last_error = error
 
                 # === ERROR 253: Quota exceeded ===
-                # Đợi lâu hơn rồi retry
+                # Đóng Chrome, đổi proxy, mở lại (giống 403)
                 if "253" in error or "quota" in error.lower() or "exceeds" in error.lower():
-                    wait_time = 60 * (attempt + 1)  # 60s, 120s, 180s...
-                    self.log(f"⚠️ QUOTA EXCEEDED (Error 253) - Đợi {wait_time}s rồi retry...", "WARN")
-                    self.log(f"   → Bạn đã gửi quá nhiều request. Chờ một lúc hoặc đổi tài khoản Google.", "WARN")
+                    self.log(f"⚠️ QUOTA EXCEEDED (Error 253) - Đóng Chrome và đổi proxy...", "WARN")
 
+                    # Đóng Chrome hoàn toàn trước
+                    self.close()
+
+                    # Rotate proxy nếu có
+                    if self._use_webshare and self._webshare_proxy:
+                        success, msg = self._webshare_proxy.rotate_ip(self.worker_id, "253 Quota")
+                        self.log(f"  → Webshare rotate [Worker {self.worker_id}]: {msg}", "WARN")
+
+                        if success and attempt < max_retries - 1:
+                            # Mở Chrome mới với proxy mới
+                            self.log("  → Mở Chrome mới với proxy mới...")
+                            time.sleep(3)  # Đợi proxy ổn định
+                            if self.setup(project_url=self._saved_project_url if hasattr(self, '_saved_project_url') else None):
+                                continue
+                            else:
+                                return False, [], "Không setup được Chrome mới sau khi đổi proxy"
+
+                    # Không có proxy hoặc rotate thất bại
                     if attempt < max_retries - 1:
-                        time.sleep(wait_time)
-                        continue
-                    else:
-                        return False, [], f"Quota exceeded sau {max_retries} lần thử. Hãy chờ 15-30 phút hoặc dùng tài khoản khác."
+                        self.log(f"  → Đợi 30s rồi thử lại với Chrome mới...", "WARN")
+                        time.sleep(30)
+                        if self.setup(project_url=self._saved_project_url if hasattr(self, '_saved_project_url') else None):
+                            continue
+
+                    return False, [], f"Quota exceeded sau {max_retries} lần thử. Hãy đổi proxy hoặc tài khoản."
 
                 # Nếu lỗi 403, xoay IP và retry
                 if "403" in error:
