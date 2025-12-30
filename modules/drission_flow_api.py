@@ -1024,11 +1024,12 @@ class DrissionFlowAPI:
                 last_error = error
 
                 # === ERROR 253: Quota exceeded ===
-                # Đóng Chrome, đổi proxy, mở lại (giống 403)
+                # Kill Chrome hoàn toàn, đổi proxy, mở lại
                 if "253" in error or "quota" in error.lower() or "exceeds" in error.lower():
-                    self.log(f"⚠️ QUOTA EXCEEDED (Error 253) - Đóng Chrome và đổi proxy...", "WARN")
+                    self.log(f"⚠️ QUOTA EXCEEDED (Error 253) - Kill Chrome và đổi proxy...", "WARN")
 
-                    # Đóng Chrome hoàn toàn trước
+                    # QUAN TRỌNG: Kill Chrome processes hoàn toàn (không chỉ close driver)
+                    self._kill_chrome()
                     self.close()
 
                     # Rotate proxy nếu có
