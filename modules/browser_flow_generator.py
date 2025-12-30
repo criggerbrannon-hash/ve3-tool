@@ -3319,11 +3319,14 @@ class BrowserFlowGenerator:
                                 try:
                                     workbook.update_scene(int(pid), media_id=images[0].media_name)
                                     workbook.save()
-                                    self._log(f"   [EXCEL] Saved media_id for scene {pid}")
+                                    self._log(f"   [EXCEL] Saved media_id for scene {pid}: {images[0].media_name[:30]}...")
                                 except Exception as e:
                                     self._log(f"   [EXCEL] Cannot save scene media_id: {e}", "warn")
-                        except:
-                            pass
+                            elif pid.isdigit():
+                                # Scene image but no media_name - this will cause I2V to skip
+                                self._log(f"   ⚠️ Scene {pid}: API không trả về media_name (I2V sẽ không hoạt động)", "warn")
+                        except Exception as ex:
+                            self._log(f"   [EXCEL] Update error: {ex}", "warn")
 
                     # === SAVE MEDIA_ID to Excel for nv/loc images ===
                     # Cả nv* và loc* đều nằm trong sheet "characters"
@@ -3678,9 +3681,13 @@ class BrowserFlowGenerator:
 
             # Lấy danh sách scenes cần tạo video (có media_id, chưa có video)
             scenes_for_video = []
+            scenes_without_media_id = []
             if workbook:
                 try:
-                    for scene in workbook.get_scenes():
+                    all_scenes = workbook.get_scenes()
+                    self._log(f"[I2V] Loaded {len(all_scenes)} scenes from Excel")
+
+                    for scene in all_scenes:
                         # Chỉ lấy scene (không phải character/location)
                         scene_id = str(scene.scene_id) if hasattr(scene, 'scene_id') else ''
                         if not scene_id or not scene_id.isdigit():
@@ -3691,13 +3698,18 @@ class BrowserFlowGenerator:
                         video_path = getattr(scene, 'video_path', '') or ''
                         status_vid = getattr(scene, 'status_vid', '') or ''
 
-                        if media_id and not video_path and status_vid != 'done':
+                        if not media_id:
+                            scenes_without_media_id.append(scene_id)
+                        elif not video_path and status_vid != 'done':
                             video_prompt = getattr(scene, 'video_prompt', '') or 'Subtle cinematic motion'
                             scenes_for_video.append({
                                 'scene_id': scene_id,
                                 'media_id': media_id,
                                 'video_prompt': video_prompt
                             })
+
+                    if scenes_without_media_id:
+                        self._log(f"[I2V] ⚠️ {len(scenes_without_media_id)} scenes KHÔNG CÓ media_id: {scenes_without_media_id[:5]}{'...' if len(scenes_without_media_id) > 5 else ''}", "warn")
                 except Exception as e:
                     self._log(f"[I2V] Error loading scenes: {e}", "warn")
 
@@ -3752,7 +3764,7 @@ class BrowserFlowGenerator:
 
                                     # Update Excel
                                     if workbook:
-                                        workbook.update_scene(scene_id, video_path=video_file.name, status_vid='done')
+                                        workbook.update_scene(int(scene_id), video_path=video_file.name, status_vid='done')
                                         workbook.save()
                                 else:
                                     self._log(f"   ✗ Download failed: {resp.status_code}", "warn")

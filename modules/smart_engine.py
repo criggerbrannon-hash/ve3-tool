@@ -2421,10 +2421,13 @@ class SmartEngine:
                 excel_scene_media_ids = {}
                 try:
                     from modules.excel_manager import PromptWorkbook
-                    workbook = PromptWorkbook(str(excel_path))
-                    excel_scene_media_ids = workbook.get_scene_media_ids()
-                    if excel_scene_media_ids:
-                        self.log(f"[VIDEO] Loaded {len(excel_scene_media_ids)} media_ids từ Excel")
+                    # Đảm bảo excel_path là Path object
+                    excel_path_obj = Path(excel_path) if isinstance(excel_path, str) else excel_path
+                    if excel_path_obj.exists():
+                        workbook = PromptWorkbook(str(excel_path_obj))
+                        excel_scene_media_ids = workbook.get_scene_media_ids()
+                        if excel_scene_media_ids:
+                            self.log(f"[VIDEO] Loaded {len(excel_scene_media_ids)} media_ids từ Excel")
                 except Exception as e:
                     self.log(f"[VIDEO] Cannot load Excel media_ids: {e}", "WARN")
 
