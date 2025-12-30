@@ -4035,6 +4035,7 @@ class SmartEngine:
                     verbose=True,
                     log_callback=lambda msg, lvl="INFO": self.log(f"[VIDEO] {msg}", lvl),
                     webshare_enabled=use_webshare,
+                    worker_id=getattr(self, 'worker_id', 0),  # Giống image gen
                     headless=headless_mode
                 )
                 own_drission = True
