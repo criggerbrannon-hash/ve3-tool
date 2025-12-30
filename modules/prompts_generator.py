@@ -175,8 +175,14 @@ class MultiAIClient:
                 "stream": False
             }
             resp = requests.post(self.OLLAMA_URL, json=data, timeout=30)
+            if resp.status_code != 200:
+                print(f"  [Ollama] Error: HTTP {resp.status_code} - {resp.text[:100]}")
             return resp.status_code == 200
-        except:
+        except requests.exceptions.ConnectionError:
+            print(f"  [Ollama] Không kết nối được - chạy 'ollama serve' trước")
+            return False
+        except Exception as e:
+            print(f"  [Ollama] Error: {e}")
             return False
 
     def generate_content(
