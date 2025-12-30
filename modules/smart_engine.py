@@ -3938,10 +3938,9 @@ class SmartEngine:
         else:
             # Fallback: Mở Chrome mới để capture tokens
             try:
-                profile_dir = chrome_profile if chrome_profile and Path(chrome_profile).exists() else "./chrome_profile"
-
-                # Đọc headless setting từ config
+                # Đọc config từ settings.yaml
                 headless_mode = True
+                config_chrome_profile = ""
                 try:
                     import yaml
                     config_path = Path(__file__).parent.parent / "config" / "settings.yaml"
@@ -3949,8 +3948,18 @@ class SmartEngine:
                         with open(config_path, 'r', encoding='utf-8') as f:
                             cfg = yaml.safe_load(f) or {}
                         headless_mode = cfg.get('browser_headless', True)
+                        config_chrome_profile = cfg.get('chrome_profile', '')
                 except:
                     pass
+
+                # Chọn profile: cache → settings.yaml → default
+                profile_dir = None
+                if chrome_profile and Path(chrome_profile).exists():
+                    profile_dir = chrome_profile
+                elif config_chrome_profile and Path(config_chrome_profile).exists():
+                    profile_dir = config_chrome_profile
+                else:
+                    profile_dir = "./chrome_profile"
 
                 drission_api = DrissionFlowAPI(
                     profile_dir=profile_dir,
