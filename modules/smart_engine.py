@@ -3889,12 +3889,14 @@ class SmartEngine:
         chrome_profile = self._video_settings.get('chrome_profile_path', '')
         project_url = self._video_settings.get('project_url', '')
 
-        self.log(f"[VIDEO] Bearer: {'có' if bearer else 'KHÔNG'}")
+        self.log(f"[VIDEO] Bearer: {'có' if bearer else 'KHÔNG (sẽ capture từ Chrome)'}")
         self.log(f"[VIDEO] Project ID: {project_id[:20] if project_id else 'KHÔNG'}...")
         self.log(f"[VIDEO] Chrome profile: {chrome_profile or 'default'}")
 
-        if not bearer or not project_id:
-            self.log("[VIDEO] ⚠️ Không có token/project_id - Skip I2V!", "WARN")
+        # Chỉ cần project_id để vào đúng project (bearer sẽ được DrissionFlowAPI capture)
+        if not project_id:
+            self.log("[VIDEO] ⚠️ Không có project_id - Skip I2V!", "WARN")
+            self.log("[VIDEO] (Cần project_id để vào đúng project chứa ảnh gốc)", "WARN")
             self._video_worker_running = False
             return
 
@@ -3964,11 +3966,22 @@ class SmartEngine:
                         self.log(f"[VIDEO] Retry {retry}/{MAX_VIDEO_RETRIES}: {image_id}")
                         time.sleep(5 * retry)  # Exponential backoff
 
+                    # Map model name sang API model key
+                    model_setting = self._video_settings.get('model', 'fast')
+                    VIDEO_MODEL_MAP = {
+                        'fast': 'veo_3_0_r2v_fast_ultra',
+                        'quality': 'veo_3_0_r2v',
+                        # Cho phép dùng trực tiếp model key nếu đã đúng format
+                        'veo_3_0_r2v_fast_ultra': 'veo_3_0_r2v_fast_ultra',
+                        'veo_3_0_r2v': 'veo_3_0_r2v',
+                    }
+                    video_model = VIDEO_MODEL_MAP.get(model_setting, 'veo_3_0_r2v_fast_ultra')
+
                     # Gọi DrissionFlowAPI.generate_video()
                     ok, video_url, error = drission_api.generate_video(
                         media_id=media_name,
                         prompt=video_prompt,
-                        video_model=self._video_settings.get('model', 'veo_3_0_r2v_fast_ultra')
+                        video_model=video_model
                     )
 
                     if ok and video_url:

@@ -1224,14 +1224,26 @@ class DrissionFlowAPI:
 
         self.log(f"[I2V] Creating video from media: {media_id[:50]}...")
 
-        # Refresh recaptcha token NẾU có Chrome session
-        # Nếu không có Chrome (token mode), dùng cached token
+        # === QUAN TRỌNG: Capture đầy đủ tokens nếu chưa có ===
+        # generate_video() cần: bearer_token, project_id, recaptcha_token
+        # Nếu chưa có bearer_token → cần gọi _capture_tokens() để lấy tất cả
         if hasattr(self, 'driver') and self.driver:
-            self.log("[I2V] Refreshing recaptcha token...")
-            if self.refresh_recaptcha(prompt[:30] if len(prompt) > 30 else prompt):
-                self.log("[I2V] ✓ Got fresh recaptcha token")
+            if not self.bearer_token or not self.project_id:
+                # Chưa có tokens → capture đầy đủ (giống generate_image)
+                self.log("[I2V] Capturing full tokens (bearer, project_id, recaptcha)...")
+                capture_prompt = prompt[:30] if len(prompt) > 30 else prompt
+                if self._capture_tokens(capture_prompt):
+                    self.log("[I2V] ✓ Got all tokens!")
+                else:
+                    self.log("[I2V] ⚠️ Không capture được tokens", "WARN")
+                    return False, None, "Không capture được tokens từ Chrome"
             else:
-                self.log("[I2V] ⚠️ Không refresh được recaptcha", "WARN")
+                # Đã có bearer_token → chỉ cần refresh recaptcha
+                self.log("[I2V] Refreshing recaptcha token...")
+                if self.refresh_recaptcha(prompt[:30] if len(prompt) > 30 else prompt):
+                    self.log("[I2V] ✓ Got fresh recaptcha token")
+                else:
+                    self.log("[I2V] ⚠️ Không refresh được recaptcha", "WARN")
         else:
             self.log("[I2V] Token mode - dùng cached recaptcha")
 
