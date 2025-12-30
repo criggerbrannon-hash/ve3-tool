@@ -3637,7 +3637,123 @@ class BrowserFlowGenerator:
         except Exception as e:
             self._log(f"[CACHE] Warning: Cannot save token: {e}", "warn")
 
-        # Cleanup (sau retry phase)
+        # === I2V: TẠO VIDEO TỪ ẢNH (CÙNG SESSION CHROME) ===
+        video_count_setting = self.config.get('video_count', 0)
+        try:
+            if video_count_setting == 'full':
+                video_count = 999999  # Tất cả
+            else:
+                video_count = int(video_count_setting)
+        except:
+            video_count = 0
+
+        if video_count > 0 and drission_api._ready:
+            self._log("")
+            self._log("=" * 60)
+            self._log(f"[I2V] TẠO VIDEO TỪ ẢNH (cùng session)")
+            self._log("=" * 60)
+
+            # Lấy danh sách scenes cần tạo video (có media_id, chưa có video)
+            scenes_for_video = []
+            if workbook:
+                try:
+                    for scene in workbook.get_scenes():
+                        # Chỉ lấy scene (không phải character/location)
+                        scene_id = str(scene.scene_id) if hasattr(scene, 'scene_id') else ''
+                        if not scene_id or not scene_id.isdigit():
+                            continue
+
+                        # Kiểm tra có media_id và chưa có video
+                        media_id = getattr(scene, 'media_id', '') or ''
+                        video_path = getattr(scene, 'video_path', '') or ''
+                        status_vid = getattr(scene, 'status_vid', '') or ''
+
+                        if media_id and not video_path and status_vid != 'done':
+                            video_prompt = getattr(scene, 'video_prompt', '') or 'Subtle cinematic motion'
+                            scenes_for_video.append({
+                                'scene_id': scene_id,
+                                'media_id': media_id,
+                                'video_prompt': video_prompt
+                            })
+                except Exception as e:
+                    self._log(f"[I2V] Error loading scenes: {e}", "warn")
+
+            # Fallback: Lấy từ cached_media_names
+            if not scenes_for_video and cached_media_names:
+                for pid, media_info in cached_media_names.items():
+                    if pid.isdigit():  # Chỉ scenes (số)
+                        media_id = media_info.get('mediaName', media_info) if isinstance(media_info, dict) else media_info
+                        if media_id:
+                            scenes_for_video.append({
+                                'scene_id': pid,
+                                'media_id': media_id,
+                                'video_prompt': 'Subtle cinematic motion, slow camera movement'
+                            })
+
+            # Giới hạn số lượng
+            scenes_for_video = scenes_for_video[:video_count]
+
+            if scenes_for_video:
+                self._log(f"[I2V] Tạo video cho {len(scenes_for_video)} ảnh...")
+                video_success = 0
+                video_failed = 0
+
+                for i, scene_info in enumerate(scenes_for_video):
+                    scene_id = scene_info['scene_id']
+                    media_id = scene_info['media_id']
+                    video_prompt = scene_info['video_prompt']
+
+                    self._log(f"[I2V] [{i+1}/{len(scenes_for_video)}] Scene {scene_id}...")
+
+                    try:
+                        success, video_url, error = drission_api.generate_video(
+                            media_id=media_id,
+                            prompt=video_prompt,
+                            video_model="veo_3_0_r2v_fast_ultra"
+                        )
+
+                        if success and video_url:
+                            # Download video
+                            video_dir = excel_path.parent / "video" if excel_path else output_dir / "video"
+                            video_dir.mkdir(parents=True, exist_ok=True)
+                            video_file = video_dir / f"{scene_id}.mp4"
+
+                            try:
+                                import requests as req
+                                resp = req.get(video_url, timeout=60)
+                                if resp.status_code == 200:
+                                    video_file.write_bytes(resp.content)
+                                    self._log(f"   ✓ OK: {video_file.name}")
+                                    video_success += 1
+
+                                    # Update Excel
+                                    if workbook:
+                                        workbook.update_scene(scene_id, video_path=video_file.name, status_vid='done')
+                                        workbook.save()
+                                else:
+                                    self._log(f"   ✗ Download failed: {resp.status_code}", "warn")
+                                    video_failed += 1
+                            except Exception as dl_err:
+                                self._log(f"   ✗ Download error: {dl_err}", "warn")
+                                video_failed += 1
+                        else:
+                            self._log(f"   ✗ Failed: {error}", "warn")
+                            video_failed += 1
+
+                    except Exception as e:
+                        self._log(f"   ✗ Error: {e}", "error")
+                        video_failed += 1
+
+                    # Delay giữa các video
+                    time.sleep(3)
+
+                self._log(f"[I2V] Hoàn tất: {video_success} OK, {video_failed} failed")
+            else:
+                self._log(f"[I2V] Không có ảnh nào cần tạo video")
+        elif video_count > 0:
+            self._log(f"[I2V] Bỏ qua - DrissionAPI chưa sẵn sàng")
+
+        # Cleanup (sau I2V)
         try:
             drission_api.close()
         except:
