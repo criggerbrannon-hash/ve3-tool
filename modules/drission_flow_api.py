@@ -1391,8 +1391,10 @@ class DrissionFlowAPI:
         start_time = time.time()
         poll_interval = 5  # Poll mỗi 5 giây
 
+        poll_count = 0
         while time.time() - start_time < max_wait:
             try:
+                poll_count += 1
                 resp = requests.get(
                     url,
                     headers=headers,
@@ -1400,8 +1402,15 @@ class DrissionFlowAPI:
                     proxies=proxies
                 )
 
+                elapsed = int(time.time() - start_time)
+
                 if resp.status_code == 200:
                     data = resp.json()
+
+                    # Log progress every 30s
+                    if poll_count == 1 or elapsed % 30 < poll_interval:
+                        done_status = data.get("done", False)
+                        self.log(f"[I2V] Poll #{poll_count}: done={done_status}, elapsed={elapsed}s")
 
                     # Check if done
                     if data.get("done"):
@@ -1412,16 +1421,18 @@ class DrissionFlowAPI:
                             if video_url:
                                 return video_url
 
-                        # Check error
+                        # Check error in response
                         error = data.get("error", {})
                         if error:
                             self.log(f"[I2V] Video error: {error.get('message', error)}", "ERROR")
                             return None
 
-                    # Still processing
-                    elapsed = int(time.time() - start_time)
-                    if elapsed % 30 == 0:  # Log every 30s
-                        self.log(f"[I2V] Still processing... ({elapsed}s)")
+                        # Done but no video - log full response
+                        self.log(f"[I2V] Done but no video URL! Response: {json.dumps(response)[:500]}", "ERROR")
+                        return None
+                else:
+                    # Non-200 status
+                    self.log(f"[I2V] Poll error: HTTP {resp.status_code} - {resp.text[:200]}", "WARN")
 
                 time.sleep(poll_interval)
 
