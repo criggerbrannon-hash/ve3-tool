@@ -1224,9 +1224,20 @@ class DrissionFlowAPI:
 
         self.log(f"[I2V] Creating video from media: {media_id[:50]}...")
 
-        # Build request payload (KHÔNG cần recaptchaToken cho video - giống version gốc)
+        # Refresh recaptcha token trước khi gọi video API
+        self.log("[I2V] Refreshing recaptcha token...")
+        if self.refresh_recaptcha(prompt[:30] if len(prompt) > 30 else prompt):
+            self.log("[I2V] ✓ Got fresh recaptcha token")
+        else:
+            self.log("[I2V] ⚠️ Không refresh được recaptcha", "WARN")
+
+        # Build request payload - CẦN recaptchaToken (theo payload thực tế)
+        import uuid
         session_id = f";{int(time.time() * 1000)}"
-        scene_id = f"scene-{int(time.time())}"
+        scene_id = str(uuid.uuid4())
+
+        # Lấy recaptchaToken sau khi refresh
+        recaptcha = getattr(self, 'recaptcha_token', '') or ''
 
         request_data = {
             "aspectRatio": aspect_ratio,
@@ -1242,13 +1253,16 @@ class DrissionFlowAPI:
 
         payload = {
             "clientContext": {
-                "sessionId": session_id,
                 "projectId": self.project_id,
+                "recaptchaToken": recaptcha,
+                "sessionId": session_id,
                 "tool": "PINHOLE",
                 "userPaygateTier": "PAYGATE_TIER_TWO"
             },
             "requests": [request_data]
         }
+
+        self.log(f"[I2V] recaptchaToken: {'có' if recaptcha else 'KHÔNG CÓ!'}")
 
         # API URL for Image-to-Video
         url = "https://aisandbox-pa.googleapis.com/v1/video:batchAsyncGenerateVideoReferenceImages"
