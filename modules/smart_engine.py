@@ -3163,7 +3163,7 @@ class SmartEngine:
                                 "-r", "25", str(clip_path)
                             ]
 
-                    result = subprocess.run(cmd_clip, capture_output=True, text=True, timeout=120)
+                    result = subprocess.run(cmd_clip, capture_output=True, text=True, timeout=300)  # 5 phút cho zoompan
                     if result.returncode != 0:
                         self.log(f"  Clip {i} failed: {result.stderr[-200:]}", "ERROR")
                         continue
