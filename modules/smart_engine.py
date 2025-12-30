@@ -2156,14 +2156,32 @@ class SmartEngine:
         all_prompts = self._load_prompts(excel_path, proj_dir)
 
         if not all_prompts:
-            # Excel có 0 prompts = file bị lỗi, xóa để tạo lại
-            self.log(f"⚠️ Excel có 0 prompts - xóa file lỗi để tạo lại...", "WARN")
+            # Excel có 0 prompts = file bị lỗi, xóa để tạo lại và tiếp tục
+            self.log(f"⚠️ Excel có 0 prompts - xóa file lỗi và tạo lại...", "WARN")
             try:
                 excel_path.unlink()
                 self.log(f"   Đã xóa: {excel_path.name}")
+
+                # Tạo lại prompts từ SRT
+                if srt_path.exists():
+                    self.log("   Đang tạo lại prompts từ SRT...")
+                    if self.make_prompts(proj_dir, name, excel_path):
+                        # Load lại prompts sau khi tạo mới
+                        all_prompts = self._load_prompts(excel_path, proj_dir)
+                        if all_prompts:
+                            self.log(f"   ✅ Đã tạo lại {len(all_prompts)} prompts!")
+                        else:
+                            self.log("   ❌ Tạo lại prompts thất bại!", "ERROR")
+                            return {"error": "prompts_regeneration_failed"}
+                    else:
+                        self.log("   ❌ make_prompts thất bại!", "ERROR")
+                        return {"error": "prompts_failed"}
+                else:
+                    self.log("   ❌ Không có SRT để tạo lại prompts!", "ERROR")
+                    return {"error": "no_srt_for_regeneration"}
             except Exception as e:
                 self.log(f"   Không xóa được: {e}", "ERROR")
-            return {"error": "no_prompts"}
+                return {"error": "excel_delete_failed"}
 
         # === LOAD MEDIA_IDs từ Excel để kiểm tra ===
         excel_media_ids = {}
@@ -3122,7 +3140,14 @@ class SmartEngine:
                             ]
                     else:
                         # === IMAGE: Tạo clip (với hoặc không có Ken Burns) ===
-                        if kb_enabled:
+                        # SAFEGUARD: Clip > 20s thì skip zoompan để tránh timeout
+                        MAX_KB_DURATION = 20
+                        use_kb_for_this_clip = kb_enabled and target_duration <= MAX_KB_DURATION
+
+                        if target_duration > MAX_KB_DURATION and kb_enabled:
+                            self.log(f"  ⚠️ Clip {i}: {target_duration:.1f}s > {MAX_KB_DURATION}s, skip Ken Burns", "WARN")
+
+                        if use_kb_for_this_clip:
                             # Ken Burns effect (zoom/pan mượt mà)
                             kb_effect = ken_burns.get_random_effect(exclude_last=last_kb_effect)
                             last_kb_effect = kb_effect
