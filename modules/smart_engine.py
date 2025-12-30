@@ -3981,8 +3981,54 @@ class SmartEngine:
                         self.log(f"[VIDEO] Proxy init error: {e}", "WARN")
                         use_webshare = False
 
-                # Dùng profile của TOOL (giống image gen)
-                profile_dir = chrome_profile if chrome_profile else "./chrome_profile"
+                # === TÌM CHROME PROFILE GIỐNG HỆT browser_flow_generator ===
+                root_dir = Path(__file__).parent.parent
+                profile_dir = None
+
+                # 1. ƯU TIÊN: chrome_profiles/ directory (tạo từ GUI)
+                profiles_dir = root_dir / "chrome_profiles"
+                if profiles_dir.exists():
+                    for p in sorted(profiles_dir.iterdir()):
+                        if p.is_dir() and not p.name.startswith('.'):
+                            profile_dir = str(p)
+                            self.log(f"[VIDEO] Profile từ chrome_profiles/: {profile_dir}")
+                            break
+
+                # 2. Fallback: accounts.json
+                if not profile_dir:
+                    try:
+                        import json
+                        accounts_file = root_dir / "config" / "accounts.json"
+                        if accounts_file.exists():
+                            with open(accounts_file, 'r', encoding='utf-8') as f:
+                                accounts = json.load(f)
+                            for p in accounts.get('chrome_profiles', []):
+                                path = p if isinstance(p, str) else p.get('path', '')
+                                if path and not path.startswith('THAY_BANG') and Path(path).exists():
+                                    profile_dir = path
+                                    self.log(f"[VIDEO] Profile từ accounts.json: {profile_dir}")
+                                    break
+                    except:
+                        pass
+
+                # 3. Fallback: settings.yaml chrome_profile
+                if not profile_dir:
+                    cfg_profile = cfg.get('chrome_profile', '')
+                    if cfg_profile:
+                        cfg_path = Path(cfg_profile)
+                        if cfg_path.exists():
+                            profile_dir = str(cfg_path)
+                        else:
+                            abs_path = root_dir / cfg_profile
+                            if abs_path.exists():
+                                profile_dir = str(abs_path)
+                        if profile_dir:
+                            self.log(f"[VIDEO] Profile từ settings.yaml: {profile_dir}")
+
+                # 4. Fallback cuối: ./chrome_profile
+                if not profile_dir:
+                    profile_dir = str(root_dir / "chrome_profile")
+                    self.log(f"[VIDEO] Profile mặc định: {profile_dir}")
 
                 drission_api = DrissionFlowAPI(
                     profile_dir=profile_dir,
