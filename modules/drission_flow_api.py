@@ -1235,10 +1235,11 @@ class DrissionFlowAPI:
         prompt: str = "Subtle motion, cinematic, slow movement",
         aspect_ratio: str = "VIDEO_ASPECT_RATIO_LANDSCAPE",
         video_model: str = "veo_3_0_r2v_fast_ultra",
-        max_wait: int = 300
+        max_wait: int = 300,
+        max_retries: int = 3
     ) -> Tuple[bool, Optional[str], Optional[str]]:
         """
-        Tạo video từ ảnh (I2V) sử dụng DrissionPage - KHÔNG cần proxy nanoai.
+        Tạo video từ ảnh (I2V) - CÓ RETRY VỚI 403/QUOTA HANDLING như generate_image.
 
         Args:
             media_id: Media ID của ảnh (từ generate_image)
@@ -1246,6 +1247,7 @@ class DrissionFlowAPI:
             aspect_ratio: Tỷ lệ video
             video_model: Model video (fast hoặc quality)
             max_wait: Thời gian chờ tối đa (giây)
+            max_retries: Số lần retry khi gặp 403/quota (mặc định 3)
 
         Returns:
             Tuple[success, video_url, error]
@@ -1258,125 +1260,209 @@ class DrissionFlowAPI:
 
         self.log(f"[I2V] Creating video from media: {media_id[:50]}...")
 
-        # === QUAN TRỌNG: Capture đầy đủ tokens nếu chưa có ===
-        # generate_video() cần: bearer_token, project_id, recaptcha_token
-        # Nếu chưa có bearer_token → cần gọi _capture_tokens() để lấy tất cả
-        if hasattr(self, 'driver') and self.driver:
-            if not self.bearer_token or not self.project_id:
-                # Chưa có tokens → capture đầy đủ (giống generate_image)
-                self.log("[I2V] Capturing full tokens (bearer, project_id, recaptcha)...")
-                capture_prompt = prompt[:30] if len(prompt) > 30 else prompt
-                if self._capture_tokens(capture_prompt):
-                    self.log("[I2V] ✓ Got all tokens!")
+        last_error = None
+
+        for attempt in range(max_retries):
+            # === QUAN TRỌNG: Capture/Refresh tokens mỗi lần retry ===
+            if hasattr(self, 'driver') and self.driver:
+                if not self.bearer_token or not self.project_id:
+                    self.log("[I2V] Capturing full tokens (bearer, project_id, recaptcha)...")
+                    capture_prompt = prompt[:30] if len(prompt) > 30 else prompt
+                    if self._capture_tokens(capture_prompt):
+                        self.log("[I2V] ✓ Got all tokens!")
+                    else:
+                        self.log("[I2V] ⚠️ Không capture được tokens", "WARN")
+                        return False, None, "Không capture được tokens từ Chrome"
                 else:
-                    self.log("[I2V] ⚠️ Không capture được tokens", "WARN")
-                    return False, None, "Không capture được tokens từ Chrome"
+                    self.log("[I2V] Refreshing recaptcha token...")
+                    if self.refresh_recaptcha(prompt[:30] if len(prompt) > 30 else prompt):
+                        self.log("[I2V] ✓ Got fresh recaptcha token")
+                    else:
+                        self.log("[I2V] ⚠️ Không refresh được recaptcha", "WARN")
             else:
-                # Đã có bearer_token → chỉ cần refresh recaptcha
-                self.log("[I2V] Refreshing recaptcha token...")
-                if self.refresh_recaptcha(prompt[:30] if len(prompt) > 30 else prompt):
-                    self.log("[I2V] ✓ Got fresh recaptcha token")
+                self.log("[I2V] Token mode - dùng cached recaptcha")
+
+            # Build request payload
+            import uuid
+            session_id = f";{int(time.time() * 1000)}"
+            scene_id = str(uuid.uuid4())
+            recaptcha = getattr(self, 'recaptcha_token', '') or ''
+
+            request_data = {
+                "aspectRatio": aspect_ratio,
+                "metadata": {"sceneId": scene_id},
+                "referenceImages": [{
+                    "imageUsageType": "IMAGE_USAGE_TYPE_ASSET",
+                    "mediaId": media_id
+                }],
+                "seed": int(time.time()) % 100000,
+                "textInput": {"prompt": prompt},
+                "videoModelKey": video_model
+            }
+
+            payload = {
+                "clientContext": {
+                    "projectId": self.project_id,
+                    "recaptchaToken": recaptcha,
+                    "sessionId": session_id,
+                    "tool": "PINHOLE",
+                    "userPaygateTier": "PAYGATE_TIER_TWO"
+                },
+                "requests": [request_data]
+            }
+
+            self.log(f"[I2V] recaptchaToken: {'có' if recaptcha else 'KHÔNG CÓ!'}")
+
+            url = "https://aisandbox-pa.googleapis.com/v1/video:batchAsyncGenerateVideoReferenceImages"
+
+            headers = {
+                "Authorization": self.bearer_token,
+                "Content-Type": "application/json",
+                "Origin": "https://labs.google",
+                "Referer": "https://labs.google/",
+            }
+            if self.x_browser_validation:
+                headers["x-browser-validation"] = self.x_browser_validation
+
+            self.log(f"[I2V] Calling video API (attempt {attempt+1}/{max_retries})...")
+
+            try:
+                proxies = None
+                if self._use_webshare and hasattr(self, '_bridge_port') and self._bridge_port:
+                    bridge_url = f"http://127.0.0.1:{self._bridge_port}"
+                    proxies = {"http": bridge_url, "https": bridge_url}
+
+                resp = requests.post(
+                    url,
+                    headers=headers,
+                    json=payload,
+                    timeout=60,
+                    proxies=proxies
+                )
+
+                if resp.status_code != 200:
+                    error = f"{resp.status_code}: {resp.text[:200]}"
+                    last_error = error
+                    self.log(f"[I2V] API Error: {error}", "ERROR")
+
+                    # === ERROR 253/403: Quota exceeded - GIỐNG generate_image ===
+                    if "253" in error or "quota" in error.lower() or "exceeds" in error.lower():
+                        self.log(f"[I2V] ⚠️ QUOTA EXCEEDED - Kill Chrome và đổi proxy...", "WARN")
+
+                        self._kill_chrome()
+                        self.close()
+
+                        if self._use_webshare and self._webshare_proxy:
+                            success, msg = self._webshare_proxy.rotate_ip(self.worker_id, "I2V 253 Quota")
+                            self.log(f"[I2V] → Webshare rotate: {msg}", "WARN")
+
+                            if success and attempt < max_retries - 1:
+                                self.log("[I2V] → Mở Chrome mới với proxy mới...")
+                                time.sleep(3)
+                                if self.setup(project_url=self._saved_project_url if hasattr(self, '_saved_project_url') else None):
+                                    continue
+                                else:
+                                    return False, None, "Không setup được Chrome mới sau khi đổi proxy"
+
+                        if attempt < max_retries - 1:
+                            self.log("[I2V] → Đợi 30s rồi thử lại...", "WARN")
+                            time.sleep(30)
+                            if self.setup(project_url=self._saved_project_url if hasattr(self, '_saved_project_url') else None):
+                                continue
+                        return False, None, f"Quota exceeded sau {max_retries} lần thử"
+
+                    # === 403 error - GIỐNG generate_image ===
+                    if "403" in error:
+                        self.log(f"[I2V] ⚠️ 403 error (attempt {attempt+1}/{max_retries})", "WARN")
+
+                        # Rotating endpoint mode
+                        if hasattr(self, '_is_rotating_mode') and self._is_rotating_mode:
+                            self.log("[I2V] → Rotating mode: IP sẽ tự đổi ở request tiếp theo")
+                            if attempt < max_retries - 1:
+                                time.sleep(2)
+                                continue
+                            else:
+                                return False, None, error
+
+                        # Direct proxy list mode
+                        if self._use_webshare and self._webshare_proxy:
+                            success, msg = self._webshare_proxy.rotate_ip(self.worker_id, "I2V 403")
+                            self.log(f"[I2V] → Webshare rotate: {msg}", "WARN")
+
+                            if success and attempt < max_retries - 1:
+                                self._kill_chrome()
+                                self.close()
+                                time.sleep(3)
+                                self.log("[I2V] → Mở Chrome mới với proxy mới...")
+                                if self.setup(project_url=self._saved_project_url if hasattr(self, '_saved_project_url') else None):
+                                    continue
+
+                        if attempt < max_retries - 1:
+                            time.sleep(10)
+                            continue
+
+                    # Other errors - simple retry
+                    if attempt < max_retries - 1:
+                        self.log(f"[I2V] → Retry in 5s...", "WARN")
+                        time.sleep(5)
+                        continue
+                    return False, None, error
+
+                result = resp.json()
+                operations = result.get("operations", [])
+
+                if not operations:
+                    self.log(f"[I2V] Response: {json.dumps(result)[:300]}")
+                    if attempt < max_retries - 1:
+                        time.sleep(5)
+                        continue
+                    return False, None, "No operations in response"
+
+                self.log(f"[I2V] Got {len(operations)} operations, polling for result...")
+
+                op = operations[0]
+                operation_id = op.get("name") or op.get("operation", {}).get("name", "")
+                if not operation_id:
+                    self.log(f"[I2V] Response structure: {json.dumps(op)[:300]}")
+                    return False, None, "No operation ID"
+
+                video_url = self._poll_video_operation(operation_id, headers, proxies, max_wait)
+
+                if video_url:
+                    self.log(f"[I2V] Video ready: {video_url[:60]}...")
+                    return True, video_url, None
                 else:
-                    self.log("[I2V] ⚠️ Không refresh được recaptcha", "WARN")
-        else:
-            self.log("[I2V] Token mode - dùng cached recaptcha")
+                    last_error = "Timeout waiting for video"
+                    if attempt < max_retries - 1:
+                        self.log("[I2V] → Timeout, will retry...", "WARN")
+                        continue
+                    return False, None, last_error
 
-        # Build request payload - CẦN recaptchaToken (theo payload thực tế)
-        import uuid
-        session_id = f";{int(time.time() * 1000)}"
-        scene_id = str(uuid.uuid4())
+            except Exception as e:
+                last_error = str(e)
+                self.log(f"[I2V] Error: {e}", "ERROR")
 
-        # Lấy recaptchaToken (từ cache hoặc sau khi refresh)
-        recaptcha = getattr(self, 'recaptcha_token', '') or ''
+                # Check if exception contains 403/quota error
+                if "253" in last_error or "quota" in last_error.lower() or "403" in last_error:
+                    self.log("[I2V] ⚠️ Exception with 403/quota - Kill Chrome và đổi proxy...", "WARN")
+                    self._kill_chrome()
+                    self.close()
 
-        request_data = {
-            "aspectRatio": aspect_ratio,
-            "metadata": {"sceneId": scene_id},
-            "referenceImages": [{
-                "imageUsageType": "IMAGE_USAGE_TYPE_ASSET",
-                "mediaId": media_id
-            }],
-            "seed": int(time.time()) % 100000,
-            "textInput": {"prompt": prompt},
-            "videoModelKey": video_model
-        }
+                    if self._use_webshare and self._webshare_proxy:
+                        success, msg = self._webshare_proxy.rotate_ip(self.worker_id, "I2V Exception")
+                        self.log(f"[I2V] → Webshare rotate: {msg}", "WARN")
 
-        payload = {
-            "clientContext": {
-                "projectId": self.project_id,
-                "recaptchaToken": recaptcha,
-                "sessionId": session_id,
-                "tool": "PINHOLE",
-                "userPaygateTier": "PAYGATE_TIER_TWO"
-            },
-            "requests": [request_data]
-        }
+                        if success and attempt < max_retries - 1:
+                            time.sleep(3)
+                            if self.setup(project_url=self._saved_project_url if hasattr(self, '_saved_project_url') else None):
+                                continue
 
-        self.log(f"[I2V] recaptchaToken: {'có' if recaptcha else 'KHÔNG CÓ!'}")
+                if attempt < max_retries - 1:
+                    time.sleep(5)
+                    continue
+                return False, None, last_error
 
-        # API URL for Image-to-Video
-        url = "https://aisandbox-pa.googleapis.com/v1/video:batchAsyncGenerateVideoReferenceImages"
-
-        # Headers
-        headers = {
-            "Authorization": self.bearer_token,
-            "Content-Type": "application/json",
-            "Origin": "https://labs.google",
-            "Referer": "https://labs.google/",
-        }
-        if self.x_browser_validation:
-            headers["x-browser-validation"] = self.x_browser_validation
-
-        self.log(f"[I2V] Calling video API...")
-
-        try:
-            # Use proxy bridge if available
-            proxies = None
-            if self._use_webshare and hasattr(self, '_bridge_port') and self._bridge_port:
-                bridge_url = f"http://127.0.0.1:{self._bridge_port}"
-                proxies = {"http": bridge_url, "https": bridge_url}
-
-            resp = requests.post(
-                url,
-                headers=headers,
-                json=payload,
-                timeout=60,
-                proxies=proxies
-            )
-
-            if resp.status_code != 200:
-                error = f"{resp.status_code}: {resp.text[:200]}"
-                self.log(f"[I2V] API Error: {error}", "ERROR")
-                return False, None, error
-
-            result = resp.json()
-            operations = result.get("operations", [])
-
-            if not operations:
-                self.log(f"[I2V] Response: {json.dumps(result)[:300]}")
-                return False, None, "No operations in response"
-
-            self.log(f"[I2V] Got {len(operations)} operations, polling for result...")
-
-            # Poll for video result
-            # Cấu trúc có thể là: operations[0]["name"] hoặc operations[0]["operation"]["name"]
-            op = operations[0]
-            operation_id = op.get("name") or op.get("operation", {}).get("name", "")
-            if not operation_id:
-                self.log(f"[I2V] Response structure: {json.dumps(op)[:300]}")
-                return False, None, "No operation ID"
-
-            video_url = self._poll_video_operation(operation_id, headers, proxies, max_wait)
-
-            if video_url:
-                self.log(f"[I2V] Video ready: {video_url[:60]}...")
-                return True, video_url, None
-            else:
-                return False, None, "Timeout waiting for video"
-
-        except Exception as e:
-            self.log(f"[I2V] Error: {e}", "ERROR")
-            return False, None, str(e)
+        return False, None, last_error or "Failed after all retries"
 
     def _poll_video_operation(
         self,
