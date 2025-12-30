@@ -1313,8 +1313,8 @@ class DrissionFlowAPI:
 
             self.log(f"[I2V] recaptchaToken: {'có' if recaptcha else 'KHÔNG CÓ!'}")
 
-            # Video API cũng cần project_id như image API
-            url = f"https://aisandbox-pa.googleapis.com/v1/projects/{self.project_id}/video:batchAsyncGenerateVideoReferenceImages"
+            # Video API - project_id trong payload, KHÔNG trong URL
+            url = "https://aisandbox-pa.googleapis.com/v1/video:batchAsyncGenerateVideoReferenceImages"
 
             headers = {
                 "Authorization": self.bearer_token,
