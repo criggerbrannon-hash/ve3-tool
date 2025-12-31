@@ -3868,10 +3868,12 @@ class SmartEngine:
             self.log("[VIDEO] Chưa có token - thử lấy token mới bằng DrissionPage...")
             try:
                 from modules.drission_flow_api import DrissionFlowAPI
+                ws_cfg = self.config.get('webshare_proxy', {})
                 drission_api = DrissionFlowAPI(
-                    proxy_mode=self.config.get('proxy_mode', 'local'),
                     headless=True,
-                    verbose=False
+                    verbose=False,
+                    webshare_enabled=ws_cfg.get('enabled', True),
+                    machine_id=ws_cfg.get('machine_id', 1)
                 )
                 if drission_api.setup():
                     # Lấy token bằng cách trigger một request đơn giản
@@ -4011,6 +4013,7 @@ class SmartEngine:
                 headless_mode = cfg.get('browser_headless', True)
                 ws_cfg = cfg.get('webshare_proxy', {})
                 use_webshare = ws_cfg.get('enabled', True)
+                machine_id = ws_cfg.get('machine_id', 1)  # Máy số mấy (1-99)
 
                 # === KHỞI TẠO PROXY MANAGER (giống browser_flow_generator) ===
                 if use_webshare:
@@ -4072,7 +4075,8 @@ class SmartEngine:
                     log_callback=lambda msg, lvl="INFO": self.log(f"[VIDEO] {msg}", lvl),
                     webshare_enabled=use_webshare,
                     worker_id=getattr(self, 'worker_id', 0),  # Giống image gen
-                    headless=headless_mode
+                    headless=headless_mode,
+                    machine_id=machine_id  # Máy số mấy - tránh trùng session
                 )
                 own_drission = True
 

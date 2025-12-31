@@ -1353,11 +1353,21 @@ class UnixVoiceToVideo:
         rotating_port = proxy_config.get('rotating_port', 80)
         rotating_password = proxy_config.get('rotating_password', 'cf1bi3yvq0t1')
         rotating_base_username = proxy_config.get('rotating_base_username', 'jhvbehdf-residential')
+        machine_id = proxy_config.get('machine_id', 1)  # Máy số mấy (1-99)
+
+        # Machine ID row - để tránh trùng session giữa các máy
+        machine_row = ttk.Frame(rotating_frame)
+        machine_row.pack(fill=tk.X, pady=(2, 5))
+        ttk.Label(machine_row, text="Máy số:", font=('Segoe UI', 9)).pack(side=tk.LEFT)
+        machine_id_var = tk.IntVar(value=machine_id)
+        machine_spinbox = ttk.Spinbox(machine_row, from_=1, to=99, width=5,
+                                       textvariable=machine_id_var, font=('Consolas', 9))
+        machine_spinbox.pack(side=tk.LEFT, padx=(5, 10))
+        ttk.Label(machine_row, text="(Máy 1→ 1... Máy 2→ 30001... Máy 3→ 60001...)",
+                  foreground='gray', font=('Segoe UI', 8)).pack(side=tk.LEFT)
 
         # Info label - session ID is auto-rotated
         ttk.Label(rotating_frame, text=f"Base: {rotating_base_username}", font=('Consolas', 9)).pack(anchor=tk.W)
-        ttk.Label(rotating_frame, text="Session ID: Tự động đổi mỗi lần chạy",
-                  foreground='green', font=('Segoe UI', 8)).pack(anchor=tk.W)
 
         # Test result label for rotating
         rotating_test_label = ttk.Label(rotating_frame, text="", font=('Segoe UI', 8))
@@ -1387,6 +1397,7 @@ class UnixVoiceToVideo:
                 'rotating_port': rotating_port,
                 'rotating_password': rotating_password,
                 'rotating_base_username': rotating_base_username,
+                'machine_id': machine_id_var.get(),  # Máy số mấy (tránh trùng session)
             }
             self._save_proxy_config(config)
             update_proxy_count()

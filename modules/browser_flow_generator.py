@@ -2916,6 +2916,7 @@ class BrowserFlowGenerator:
         # Ưu tiên base_username, fallback sang username cũ
         rotating_username = webshare_cfg.get('rotating_base_username') or webshare_cfg.get('rotating_username', 'jhvbehdf-residential')
         rotating_password = webshare_cfg.get('rotating_password', 'cf1bi3yvq0t1')
+        machine_id = webshare_cfg.get('machine_id', 1)  # Máy số mấy (1-99)
 
         # Khởi tạo Webshare Proxy Manager nếu enabled
         if use_webshare:
@@ -3026,7 +3027,8 @@ class BrowserFlowGenerator:
             log_callback=self._log,
             webshare_enabled=use_webshare,
             worker_id=self.worker_id,  # Parallel mode - mỗi worker có proxy riêng
-            headless=drission_headless  # Chạy Chrome ẩn (default: True)
+            headless=drission_headless,  # Chạy Chrome ẩn (default: True)
+            machine_id=machine_id  # Máy số mấy - tránh trùng session giữa các máy
         )
 
         self._log("🚀 DrissionPage + Interceptor")

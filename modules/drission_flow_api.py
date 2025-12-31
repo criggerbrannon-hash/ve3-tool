@@ -213,6 +213,7 @@ class DrissionFlowAPI:
         webshare_enabled: bool = True,  # BẬT Webshare proxy by default
         worker_id: int = 0,  # Worker ID cho proxy rotation (mỗi Chrome có proxy riêng)
         headless: bool = True,  # Chạy Chrome ẩn (default: ON)
+        machine_id: int = 1,  # Máy số mấy (1-99) - tránh trùng session giữa các máy
         # Legacy params (ignored)
         proxy_port: int = 1080,
         use_proxy: bool = False,
@@ -228,10 +229,12 @@ class DrissionFlowAPI:
             webshare_enabled: Dùng Webshare proxy pool (default True)
             worker_id: Worker ID cho proxy rotation (mỗi Chrome có proxy riêng)
             headless: Chạy Chrome ẩn không hiện cửa sổ (default True)
+            machine_id: Máy số mấy (1-99), mỗi máy cách nhau 30000 session để tránh trùng
         """
         self.profile_dir = Path(profile_dir)
         self.worker_id = worker_id  # Lưu worker_id để dùng cho proxy rotation
         self._headless = headless  # Lưu setting headless
+        self._machine_id = machine_id  # Máy số mấy (1-99)
         # Auto-generate unique port for parallel execution
         if chrome_port == 0:
             self.chrome_port = random.randint(9222, 9999)
@@ -247,7 +250,9 @@ class DrissionFlowAPI:
         self._webshare_proxy = None
         self._use_webshare = webshare_enabled
         self._proxy_bridge = None  # Local proxy bridge
-        self._rotating_session_id = self.worker_id + 1  # Session ID cho rotating (bắt đầu từ 1)
+        # Session ID = (machine_id - 1) * 30000 + worker_id + 1
+        # Máy 1: 1, 2, 3...  Máy 2: 30001, 30002...  Máy 3: 60001...
+        self._rotating_session_id = (self._machine_id - 1) * 30000 + self.worker_id + 1
         self._bridge_port = None   # Bridge port for API calls
         self._is_rotating_mode = False  # True = Rotating Endpoint (auto IP change)
         if webshare_enabled and WEBSHARE_AVAILABLE:
@@ -1767,6 +1772,7 @@ def create_drission_api(
     log_callback: Optional[Callable] = None,
     webshare_enabled: bool = True,  # BẬT Webshare by default
     worker_id: int = 0,  # Worker ID cho proxy rotation
+    machine_id: int = 1,  # Máy số mấy (1-99) - tránh trùng session
 ) -> DrissionFlowAPI:
     """
     Tạo DrissionFlowAPI instance.
@@ -1776,6 +1782,7 @@ def create_drission_api(
         log_callback: Callback để log
         webshare_enabled: Dùng Webshare proxy pool (default True)
         worker_id: Worker ID cho proxy rotation (mỗi Chrome có proxy riêng)
+        machine_id: Máy số mấy (1-99), mỗi máy cách nhau 30000 session
 
     Returns:
         DrissionFlowAPI instance
@@ -1785,4 +1792,5 @@ def create_drission_api(
         log_callback=log_callback,
         webshare_enabled=webshare_enabled,
         worker_id=worker_id,
+        machine_id=machine_id,
     )
