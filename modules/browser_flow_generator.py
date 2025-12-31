@@ -3699,8 +3699,11 @@ class BrowserFlowGenerator:
             video_count = 0
 
         # === KIỂM TRA: Tất cả scene images đã xong chưa? ===
+        # Chỉ chạy I2V khi TẤT CẢ scene images đã hoàn thành (status_img == 'done')
         all_images_done = True
         pending_scenes = []
+        numeric_scenes_count = 0  # Đếm số scene có trong Excel
+
         if video_count > 0 and workbook:
             try:
                 for scene in workbook.get_scenes():
@@ -3708,19 +3711,24 @@ class BrowserFlowGenerator:
                     if not scene_id or not scene_id.isdigit():
                         continue  # Bỏ qua nv/loc
 
-                    # Kiểm tra status_img
-                    status_img = getattr(scene, 'status_img', '') or ''
-                    prompt = getattr(scene, 'prompt', '') or ''
+                    numeric_scenes_count += 1
 
-                    # Nếu có prompt và chưa done → chưa xong
-                    if prompt and prompt.strip().upper() != 'DO_NOT_GENERATE' and status_img != 'done':
+                    # Kiểm tra status_img - KHÔNG cần kiểm tra prompt
+                    # Nếu scene tồn tại và status_img != 'done' → chưa xong
+                    status_img = getattr(scene, 'status_img', '') or ''
+                    if status_img != 'done':
                         all_images_done = False
                         pending_scenes.append(scene_id)
             except Exception as e:
                 self._log(f"[I2V] Warning: Cannot check pending scenes: {e}", "warn")
 
-        if not all_images_done:
-            self._log(f"[I2V] ⏳ SKIP - Còn {len(pending_scenes)} scene chưa có ảnh: {pending_scenes[:10]}...")
+        # === THÊM: Nếu không có scene nào trong Excel → chưa tạo scene, skip I2V ===
+        if numeric_scenes_count == 0:
+            self._log(f"[I2V] ⏳ SKIP - Chưa có scene nào trong Excel (chỉ có nv/loc)")
+            self._log(f"[I2V] I2V sẽ chạy sau khi scene images hoàn thành")
+            all_images_done = False  # Force skip I2V
+        elif not all_images_done:
+            self._log(f"[I2V] ⏳ SKIP - Còn {len(pending_scenes)}/{numeric_scenes_count} scene chưa có ảnh: {pending_scenes[:10]}...")
             self._log(f"[I2V] Video sẽ được tạo sau khi tất cả ảnh scene hoàn thành")
         elif video_count > 0 and drission_api._ready:
             self._log("")
