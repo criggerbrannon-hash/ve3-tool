@@ -247,6 +247,7 @@ class DrissionFlowAPI:
         self._webshare_proxy = None
         self._use_webshare = webshare_enabled
         self._proxy_bridge = None  # Local proxy bridge
+        self._rotating_session_id = self.worker_id + 1  # Session ID cho rotating (bắt đầu từ 1)
         self._bridge_port = None   # Bridge port for API calls
         self._is_rotating_mode = False  # True = Rotating Endpoint (auto IP change)
         if webshare_enabled and WEBSHARE_AVAILABLE:
@@ -461,23 +462,31 @@ class DrissionFlowAPI:
         return True  # Vẫn return True để tiếp tục
 
     def _kill_chrome(self):
-        """Kill tất cả Chrome processes để đảm bảo proxy mới được áp dụng."""
-        import subprocess
-        import sys
-
+        """
+        Close Chrome của tool này (không kill tất cả Chrome).
+        Chỉ đóng driver và proxy bridge.
+        """
         try:
-            if sys.platform == 'win32':
-                # Windows
-                subprocess.run(['taskkill', '/f', '/im', 'chrome.exe'],
-                             capture_output=True, timeout=10)
-            else:
-                # Linux/Mac
-                subprocess.run(['pkill', '-f', 'chrome'],
-                             capture_output=True, timeout=10)
-            self.log("✓ Killed existing Chrome processes")
+            # Chỉ close driver của tool này
+            if self.driver:
+                try:
+                    self.driver.quit()
+                except:
+                    pass
+                self.driver = None
+
+            # Stop proxy bridge
+            if hasattr(self, '_proxy_bridge') and self._proxy_bridge:
+                try:
+                    from proxy_bridge import stop_proxy_bridge
+                    stop_proxy_bridge(self._proxy_bridge)
+                except:
+                    pass
+                self._proxy_bridge = None
+
+            self.log("✓ Closed Chrome và proxy bridge của tool")
             time.sleep(1)
         except Exception as e:
-            # Không sao nếu không kill được (có thể không có Chrome đang chạy)
             pass
 
     def setup(
@@ -563,8 +572,8 @@ class DrissionFlowAPI:
                     rotating = manager.rotating_endpoint
                     self._is_rotating_mode = True
 
-                    # Session ID đơn giản: worker 0 = session 1, worker 1 = session 2...
-                    session_id = self.worker_id + 1
+                    # Session ID từ counter (tăng dần khi có lỗi)
+                    session_id = self._rotating_session_id
                     session_username = rotating.get_username_for_session(session_id)
 
                     try:
@@ -1066,16 +1075,26 @@ class DrissionFlowAPI:
             if error:
                 last_error = error
 
-                # === ERROR 253: Quota exceeded ===
-                # Kill Chrome hoàn toàn, đổi proxy, mở lại
-                if "253" in error or "quota" in error.lower() or "exceeds" in error.lower():
-                    self.log(f"⚠️ QUOTA EXCEEDED (Error 253) - Kill Chrome và đổi proxy...", "WARN")
+                # === ERROR 253/429: Quota exceeded ===
+                # Close Chrome, đổi session/proxy, mở lại
+                if "253" in error or "429" in error or "quota" in error.lower() or "exceeds" in error.lower():
+                    self.log(f"⚠️ QUOTA EXCEEDED - Đổi session và restart...", "WARN")
 
-                    # QUAN TRỌNG: Kill Chrome processes hoàn toàn (không chỉ close driver)
+                    # Close Chrome của tool (không kill tất cả Chrome)
                     self._kill_chrome()
                     self.close()
 
-                    # Rotate proxy nếu có
+                    # Rotating mode: Tăng session ID
+                    if hasattr(self, '_is_rotating_mode') and self._is_rotating_mode:
+                        self._rotating_session_id += 1
+                        self.log(f"  → Rotating: Đổi sang session {self._rotating_session_id}")
+                        if attempt < max_retries - 1:
+                            time.sleep(3)
+                            if self.setup(project_url=self._saved_project_url if hasattr(self, '_saved_project_url') else None):
+                                continue
+                        return False, [], f"Quota exceeded với session {self._rotating_session_id}"
+
+                    # Direct mode: Rotate proxy
                     if self._use_webshare and self._webshare_proxy:
                         success, msg = self._webshare_proxy.rotate_ip(self.worker_id, "253 Quota")
                         self.log(f"  → Webshare rotate [Worker {self.worker_id}]: {msg}", "WARN")
@@ -1103,13 +1122,20 @@ class DrissionFlowAPI:
                     self.log(f"⚠️ 403 error (attempt {attempt+1}/{max_retries})", "WARN")
 
                     # === ROTATING ENDPOINT MODE ===
-                    # Mỗi request tự động đổi IP → chỉ cần retry, không cần restart Chrome
+                    # Tăng session ID để đổi IP, restart Chrome với session mới
                     if hasattr(self, '_is_rotating_mode') and self._is_rotating_mode:
-                        self.log(f"  → Rotating mode: IP sẽ tự đổi ở request tiếp theo")
+                        self._rotating_session_id += 1  # Tăng session: -1 → -2 → -3...
+                        self.log(f"  → Rotating mode: Đổi sang session {self._rotating_session_id}")
                         if attempt < max_retries - 1:
-                            self.log(f"  → Retry ngay (không cần restart Chrome)...")
-                            time.sleep(2)  # Đợi ngắn
-                            continue
+                            # Restart Chrome với session mới
+                            self._kill_chrome()
+                            self.close()
+                            time.sleep(2)
+                            self.log(f"  → Restart Chrome với session mới...")
+                            if self.setup(project_url=self._saved_project_url if hasattr(self, '_saved_project_url') else None):
+                                continue
+                            else:
+                                return False, [], "Không restart được Chrome với session mới"
                         else:
                             return False, [], error
 
