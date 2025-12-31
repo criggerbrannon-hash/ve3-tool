@@ -43,67 +43,28 @@ webshare_proxy:
   proxy_mode: "direct"
 
   # === ROTATING RESIDENTIAL ===
-  # Mỗi request có thể dùng sticky session (giữ IP) hoặc rotate IP mới
-  # Số -1, -2, -3... trong username là Session ID (sticky session)
-  # Để chọn quốc gia: thêm country code vào username (VD: username-JP, username-US)
+  # Cách hoạt động:
+  #   - Username KHÔNG có số → IP tự đổi mỗi request (auto rotate)
+  #   - Username CÓ số (bất kỳ) → Giữ IP trong session timeout (sticky)
+  #
+  # VD: jhvbehdf-residential      → Auto rotate (mỗi request = IP mới)
+  #     jhvbehdf-residential-1    → Sticky session #1
+  #     jhvbehdf-residential-999  → Sticky session #999
+  #     Số có thể từ 1 đến vô hạn, mỗi số khác = IP khác
   rotating_host: "p.webshare.io"
   rotating_port: 80
   rotating_password: "cf1bi3yvq0t1"
-  rotating_base_username: "jhvbehdf-residential"  # Base username
+  rotating_base_username: "jhvbehdf-residential"
 
-  # Sticky Sessions (mỗi session giữ 1 IP trong thời gian session timeout)
-  # Session #1, #2, #3... sẽ có IP khác nhau
-  rotating_sessions:
-    - id: 1
-      label: "Session #1"
-    - id: 2
-      label: "Session #2"
-    - id: 3
-      label: "Session #3"
-    - id: 4
-      label: "Session #4"
-    - id: 5
-      label: "Session #5"
-    - id: 6
-      label: "Session #6"
-    - id: 7
-      label: "Session #7"
-    - id: 8
-      label: "Session #8"
-    - id: 9
-      label: "Session #9"
-    - id: 10
-      label: "Session #10"
+  # Chế độ: "auto" = IP đổi mỗi request, "sticky" = giữ IP theo session ID
+  rotating_mode: "auto"
 
-  # Country codes (thêm vào username để chọn quốc gia cụ thể)
-  # VD: jhvbehdf-residential-JP = Japan, jhvbehdf-residential-US = USA
-  rotating_countries:
-    - code: ""
-      label: "Random (tất cả quốc gia)"
-    - code: "JP"
-      label: "🇯🇵 Japan"
-    - code: "US"
-      label: "🇺🇸 USA"
-    - code: "KR"
-      label: "🇰🇷 Korea"
-    - code: "TW"
-      label: "🇹🇼 Taiwan"
-    - code: "DE"
-      label: "🇩🇪 Germany"
-    - code: "FR"
-      label: "🇫🇷 France"
-    - code: "GB"
-      label: "🇬🇧 UK"
-
-  # Session đang dùng (1-10)
+  # Session ID (chỉ dùng khi rotating_mode = "sticky")
+  # Số bất kỳ từ 1 đến vô hạn, mỗi số khác = IP khác
   rotating_session_id: 1
-  # Country code (để trống = random)
-  rotating_country_code: ""
 
-  # Username đang dùng (tự động tạo từ base + session + country)
-  # VD: jhvbehdf-residential-1 (session 1, random country)
-  # VD: jhvbehdf-residential-JP-1 (session 1, Japan)
-  rotating_username: "jhvbehdf-residential-1"
+  # Username cuối cùng (tự động tạo)
+  rotating_username: "jhvbehdf-residential"
 
   # === DIRECT PROXY LIST (100 IPs) ===
   proxy_file: "config/proxies.txt"  # File chứa danh sách proxy
