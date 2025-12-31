@@ -1304,16 +1304,13 @@ class UnixVoiceToVideo:
                         variable=proxy_mode_var, value="rotating").pack(side=tk.LEFT)
 
         # === DIRECT PROXY LIST FRAME ===
-        direct_frame = ttk.LabelFrame(proxy_tab, text="📁 Direct Proxy List", padding=10)
-        direct_frame.pack(fill=tk.X, pady=(5, 10))
-
-        ttk.Label(direct_frame, text="File chứa danh sách proxy (format: IP:PORT:USER:PASS)",
-                  foreground='gray', font=('Segoe UI', 8)).pack(anchor=tk.W)
+        direct_frame = ttk.LabelFrame(proxy_tab, text="📁 Direct Proxy List", padding=5)
+        direct_frame.pack(fill=tk.X, pady=(3, 5))
 
         file_entry_frame = ttk.Frame(direct_frame)
-        file_entry_frame.pack(fill=tk.X, pady=(5, 0))
+        file_entry_frame.pack(fill=tk.X)
 
-        ws_file_entry = ttk.Entry(file_entry_frame, width=50, font=('Consolas', 9))
+        ws_file_entry = ttk.Entry(file_entry_frame, width=40, font=('Consolas', 9))
         ws_file_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
         ws_file_entry.insert(0, proxy_config.get('proxy_file', 'config/proxies.txt'))
 
@@ -1327,10 +1324,10 @@ class UnixVoiceToVideo:
                 ws_file_entry.delete(0, tk.END)
                 ws_file_entry.insert(0, path)
 
-        ttk.Button(file_entry_frame, text="📂", width=3, command=browse_proxy_file).pack(side=tk.LEFT, padx=(5, 0))
+        ttk.Button(file_entry_frame, text="📂", width=3, command=browse_proxy_file).pack(side=tk.LEFT, padx=(3, 0))
 
-        proxy_count_label = ttk.Label(direct_frame, text="", foreground='green', font=('Segoe UI', 9))
-        proxy_count_label.pack(anchor=tk.W, pady=(5, 0))
+        proxy_count_label = ttk.Label(direct_frame, text="", foreground='green', font=('Segoe UI', 8))
+        proxy_count_label.pack(anchor=tk.W)
 
         def update_proxy_count():
             path = ws_file_entry.get().strip()
@@ -1348,11 +1345,8 @@ class UnixVoiceToVideo:
         update_proxy_count()
 
         # === ROTATING RESIDENTIAL FRAME ===
-        rotating_frame = ttk.LabelFrame(proxy_tab, text="🌍 Rotating Residential", padding=10)
-        rotating_frame.pack(fill=tk.X, pady=(5, 10))
-
-        ttk.Label(rotating_frame, text="Auto: IP đổi mỗi request | Sticky: giữ IP theo session ID",
-                  foreground='gray', font=('Segoe UI', 8)).pack(anchor=tk.W)
+        rotating_frame = ttk.LabelFrame(proxy_tab, text="🌍 Rotating Residential", padding=5)
+        rotating_frame.pack(fill=tk.X, pady=(3, 5))
 
         # Load rotating config
         rotating_host = proxy_config.get('rotating_host', 'p.webshare.io')
@@ -1362,25 +1356,20 @@ class UnixVoiceToVideo:
         current_rotating_mode = proxy_config.get('rotating_mode', 'auto')
         current_session_id = proxy_config.get('rotating_session_id', 1)
 
-        # Row 1: Mode selection
+        # Row 1: Mode + Session ID (same row)
         mode_row = ttk.Frame(rotating_frame)
-        mode_row.pack(fill=tk.X, pady=(5, 3))
+        mode_row.pack(fill=tk.X, pady=(2, 2))
 
         rotating_mode_var = tk.StringVar(value=current_rotating_mode)
-        ttk.Radiobutton(mode_row, text="🔄 Auto (IP đổi mỗi request)",
-                        variable=rotating_mode_var, value="auto").pack(side=tk.LEFT, padx=(0, 15))
-        ttk.Radiobutton(mode_row, text="📌 Sticky (giữ IP)",
-                        variable=rotating_mode_var, value="sticky").pack(side=tk.LEFT)
+        ttk.Radiobutton(mode_row, text="🔄 Auto",
+                        variable=rotating_mode_var, value="auto").pack(side=tk.LEFT)
+        ttk.Radiobutton(mode_row, text="📌 Sticky",
+                        variable=rotating_mode_var, value="sticky").pack(side=tk.LEFT, padx=(10, 10))
 
-        # Row 2: Session ID (for sticky mode)
-        session_row = ttk.Frame(rotating_frame)
-        session_row.pack(fill=tk.X, pady=(5, 3))
-
-        ttk.Label(session_row, text="Session ID:", font=('Segoe UI', 9)).pack(side=tk.LEFT)
+        ttk.Label(mode_row, text="Session:", font=('Segoe UI', 8)).pack(side=tk.LEFT)
         session_id_var = tk.StringVar(value=str(current_session_id))
-        session_entry = ttk.Entry(session_row, textvariable=session_id_var, width=10, font=('Consolas', 9))
-        session_entry.pack(side=tk.LEFT, padx=(5, 10))
-        ttk.Label(session_row, text="(số bất kỳ, mỗi số = IP khác)", foreground='gray', font=('Segoe UI', 8)).pack(side=tk.LEFT)
+        session_entry = ttk.Entry(mode_row, textvariable=session_id_var, width=8, font=('Consolas', 9))
+        session_entry.pack(side=tk.LEFT, padx=(3, 0))
 
         # Username preview label
         def update_username_preview(*args):
@@ -1390,18 +1379,18 @@ class UnixVoiceToVideo:
             else:
                 session_id = session_id_var.get().strip() or "1"
                 username = f"{rotating_base_username}-{session_id}"
-            username_preview_label.config(text=f"→ Username: {username}")
+            username_preview_label.config(text=f"→ {username}")
 
         rotating_mode_var.trace('w', update_username_preview)
         session_id_var.trace('w', update_username_preview)
 
-        username_preview_label = ttk.Label(rotating_frame, text="", font=('Consolas', 9), foreground='#666')
-        username_preview_label.pack(anchor=tk.W, pady=(3, 0))
-        update_username_preview()  # Initial update
+        username_preview_label = ttk.Label(rotating_frame, text="", font=('Consolas', 8), foreground='#666')
+        username_preview_label.pack(anchor=tk.W)
+        update_username_preview()
 
         # Test result label for rotating
-        rotating_test_label = ttk.Label(rotating_frame, text="", font=('Segoe UI', 9))
-        rotating_test_label.pack(anchor=tk.W, pady=(5, 0))
+        rotating_test_label = ttk.Label(rotating_frame, text="", font=('Segoe UI', 8))
+        rotating_test_label.pack(anchor=tk.W)
 
         # API Key (hidden)
         ws_api_entry = ttk.Entry(proxy_tab)
