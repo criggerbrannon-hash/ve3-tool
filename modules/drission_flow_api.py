@@ -790,21 +790,65 @@ class DrissionFlowAPI:
             self.log(f"✗ Chrome error: {e}", "ERROR")
             return False
 
-        # 3. Vào Google Flow (hoặc project cố định nếu có)
+        # 3. Vào Google Flow (hoặc project cố định nếu có) - VỚI RETRY
         target_url = project_url if project_url else self.FLOW_URL
         self.log(f"Vào: {target_url[:60]}...")
-        try:
-            self.driver.get(target_url)
-            time.sleep(3)
-            self.log(f"✓ URL: {self.driver.url}")
 
-            # Lưu project_url để dùng khi retry
-            if "/project/" in self.driver.url:
-                self._current_project_url = self.driver.url
-                self.log(f"  → Saved project URL for retry")
+        max_nav_retries = 3
+        nav_success = False
 
-        except Exception as e:
-            self.log(f"✗ Navigation error: {e}", "ERROR")
+        for nav_attempt in range(max_nav_retries):
+            try:
+                self.driver.get(target_url)
+                time.sleep(3)
+
+                # Kiểm tra xem trang có load được không
+                current_url = self.driver.url
+                if not current_url or current_url == "about:blank" or "error" in current_url.lower():
+                    raise Exception(f"Page không load được: {current_url}")
+
+                self.log(f"✓ URL: {current_url}")
+
+                # Lưu project_url để dùng khi retry
+                if "/project/" in current_url:
+                    self._current_project_url = current_url
+                    self.log(f"  → Saved project URL for retry")
+
+                nav_success = True
+                break
+
+            except Exception as e:
+                error_msg = str(e)
+                self.log(f"✗ Navigation error (attempt {nav_attempt+1}/{max_nav_retries}): {error_msg}", "WARN")
+
+                # Kiểm tra lỗi proxy/connection
+                is_proxy_error = any(x in error_msg.lower() for x in [
+                    "timeout", "connection", "proxy", "10060", "err_proxy", "err_connection"
+                ])
+
+                if is_proxy_error and nav_attempt < max_nav_retries - 1:
+                    self.log(f"  → Proxy/Connection error, restart Chrome...", "WARN")
+
+                    # Restart Chrome
+                    self._kill_chrome()
+                    self.close()
+                    time.sleep(3)
+
+                    # Restart với cùng config
+                    try:
+                        if not self._start_chrome():
+                            self.log("  → Không restart được Chrome", "ERROR")
+                            continue
+                        self.log("  → Chrome restarted, thử lại...")
+                    except Exception as restart_err:
+                        self.log(f"  → Restart Chrome lỗi: {restart_err}", "ERROR")
+                        continue
+                elif nav_attempt >= max_nav_retries - 1:
+                    self.log(f"✗ Navigation failed sau {max_nav_retries} lần thử", "ERROR")
+                    return False
+
+        if not nav_success:
+            self.log("✗ Không thể vào trang Google Flow", "ERROR")
             return False
 
         # 4. Auto setup project (click "Dự án mới" + chọn "Tạo hình ảnh")

@@ -83,18 +83,36 @@ class ProxyBridge:
             first_line = request_str.split('\r\n')[0]
             method = first_line.split()[0]
 
-            # Kết nối đến remote proxy (thread-safe read)
+            # Kết nối đến remote proxy (thread-safe read) với RETRY
             with self._lock:
                 remote_host = self.remote_host
                 remote_port = self.remote_port
 
-            remote_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            remote_socket.settimeout(30)
+            max_retries = 3
+            remote_socket = None
+            last_error = None
 
-            try:
-                remote_socket.connect((remote_host, remote_port))
-            except Exception as e:
-                print(f"[!] Cannot connect to remote proxy: {e}")
+            for attempt in range(max_retries):
+                try:
+                    remote_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    remote_socket.settimeout(30)
+                    remote_socket.connect((remote_host, remote_port))
+                    break  # Thành công
+                except Exception as e:
+                    last_error = e
+                    if remote_socket:
+                        try:
+                            remote_socket.close()
+                        except:
+                            pass
+                    if attempt < max_retries - 1:
+                        print(f"[!] Proxy connect failed (attempt {attempt+1}/{max_retries}): {e}")
+                        import time
+                        time.sleep(2)  # Wait before retry
+                    else:
+                        print(f"[!] Cannot connect to remote proxy after {max_retries} attempts: {e}")
+
+            if remote_socket is None or last_error:
                 client_socket.close()
                 return
 
