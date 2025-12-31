@@ -398,8 +398,10 @@ def group_srt_into_scenes(
                 "start_time": current_scene["start_time"],
                 "end_time": current_scene["end_time"],
                 "text": " ".join(current_scene["texts"]),
-                "srt_start": current_scene["srt_indices"][0],
-                "srt_end": current_scene["srt_indices"][-1],
+                "srt_start": format_srt_time(current_scene["start_time"]),  # FIX: format timestamp
+                "srt_end": format_srt_time(current_scene["end_time"]),      # FIX: format timestamp
+                "srt_indices": current_scene["srt_indices"],  # Giữ lại indices để debug
+                "duration": current_duration,
             })
             
             # Bắt đầu scene mới
@@ -417,13 +419,16 @@ def group_srt_into_scenes(
     
     # Thêm scene cuối cùng
     if current_scene["srt_indices"]:
+        final_duration = (current_scene["end_time"] - current_scene["start_time"]).total_seconds()
         scenes.append({
             "scene_id": len(scenes) + 1,
             "start_time": current_scene["start_time"],
             "end_time": current_scene["end_time"],
             "text": " ".join(current_scene["texts"]),
-            "srt_start": current_scene["srt_indices"][0],
-            "srt_end": current_scene["srt_indices"][-1],
+            "srt_start": format_srt_time(current_scene["start_time"]),  # FIX: format timestamp
+            "srt_end": format_srt_time(current_scene["end_time"]),      # FIX: format timestamp
+            "srt_indices": current_scene["srt_indices"],
+            "duration": final_duration,
         })
     
     return scenes
