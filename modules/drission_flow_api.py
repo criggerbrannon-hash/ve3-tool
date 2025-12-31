@@ -1090,7 +1090,7 @@ class DrissionFlowAPI:
                         self.log(f"  → Rotating: Đổi sang session {self._rotating_session_id}")
                         if attempt < max_retries - 1:
                             time.sleep(3)
-                            if self.setup(project_url=self._saved_project_url if hasattr(self, '_saved_project_url') else None):
+                            if self.setup(project_url=getattr(self, '_current_project_url', None)):
                                 continue
                         return False, [], f"Quota exceeded với session {self._rotating_session_id}"
 
@@ -1103,7 +1103,7 @@ class DrissionFlowAPI:
                             # Mở Chrome mới với proxy mới
                             self.log("  → Mở Chrome mới với proxy mới...")
                             time.sleep(3)  # Đợi proxy ổn định
-                            if self.setup(project_url=self._saved_project_url if hasattr(self, '_saved_project_url') else None):
+                            if self.setup(project_url=getattr(self, '_current_project_url', None)):
                                 continue
                             else:
                                 return False, [], "Không setup được Chrome mới sau khi đổi proxy"
@@ -1112,7 +1112,7 @@ class DrissionFlowAPI:
                     if attempt < max_retries - 1:
                         self.log(f"  → Đợi 30s rồi thử lại với Chrome mới...", "WARN")
                         time.sleep(30)
-                        if self.setup(project_url=self._saved_project_url if hasattr(self, '_saved_project_url') else None):
+                        if self.setup(project_url=getattr(self, '_current_project_url', None)):
                             continue
 
                     return False, [], f"Quota exceeded sau {max_retries} lần thử. Hãy đổi proxy hoặc tài khoản."
@@ -1132,7 +1132,7 @@ class DrissionFlowAPI:
                             self.close()
                             time.sleep(2)
                             self.log(f"  → Restart Chrome với session mới...")
-                            if self.setup(project_url=self._saved_project_url if hasattr(self, '_saved_project_url') else None):
+                            if self.setup(project_url=getattr(self, '_current_project_url', None)):
                                 continue
                             else:
                                 return False, [], "Không restart được Chrome với session mới"
