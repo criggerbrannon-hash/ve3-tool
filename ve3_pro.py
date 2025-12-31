@@ -1353,35 +1353,24 @@ class UnixVoiceToVideo:
         rotating_port = proxy_config.get('rotating_port', 80)
         rotating_password = proxy_config.get('rotating_password', 'cf1bi3yvq0t1')
         rotating_base_username = proxy_config.get('rotating_base_username', 'jhvbehdf-residential')
-        current_rotating_mode = proxy_config.get('rotating_mode', 'auto')
         current_session_id = proxy_config.get('rotating_session_id', 1)
 
-        # Row 1: Mode + Session ID (same row)
-        mode_row = ttk.Frame(rotating_frame)
-        mode_row.pack(fill=tk.X, pady=(2, 2))
+        # Row: Session ID input
+        session_row = ttk.Frame(rotating_frame)
+        session_row.pack(fill=tk.X, pady=(2, 2))
 
-        rotating_mode_var = tk.StringVar(value=current_rotating_mode)
-        ttk.Radiobutton(mode_row, text="🔄 Auto",
-                        variable=rotating_mode_var, value="auto").pack(side=tk.LEFT)
-        ttk.Radiobutton(mode_row, text="📌 Sticky",
-                        variable=rotating_mode_var, value="sticky").pack(side=tk.LEFT, padx=(10, 10))
-
-        ttk.Label(mode_row, text="Session:", font=('Segoe UI', 8)).pack(side=tk.LEFT)
+        ttk.Label(session_row, text="Session ID:", font=('Segoe UI', 9)).pack(side=tk.LEFT)
         session_id_var = tk.StringVar(value=str(current_session_id))
-        session_entry = ttk.Entry(mode_row, textvariable=session_id_var, width=8, font=('Consolas', 9))
-        session_entry.pack(side=tk.LEFT, padx=(3, 0))
+        session_entry = ttk.Entry(session_row, textvariable=session_id_var, width=8, font=('Consolas', 9))
+        session_entry.pack(side=tk.LEFT, padx=(5, 10))
+        ttk.Label(session_row, text="(mỗi số khác = IP khác)", foreground='gray', font=('Segoe UI', 8)).pack(side=tk.LEFT)
 
         # Username preview label
         def update_username_preview(*args):
-            mode = rotating_mode_var.get()
-            if mode == "auto":
-                username = rotating_base_username
-            else:
-                session_id = session_id_var.get().strip() or "1"
-                username = f"{rotating_base_username}-{session_id}"
+            session_id = session_id_var.get().strip() or "1"
+            username = f"{rotating_base_username}-{session_id}"
             username_preview_label.config(text=f"→ {username}")
 
-        rotating_mode_var.trace('w', update_username_preview)
         session_id_var.trace('w', update_username_preview)
 
         username_preview_label = ttk.Label(rotating_frame, text="", font=('Consolas', 8), foreground='#666')
@@ -1406,13 +1395,9 @@ class UnixVoiceToVideo:
         proxy_btn_frame.pack(fill=tk.X, pady=(10, 0))
 
         def save_proxy_config():
-            # Build username from mode + session
-            rot_mode = rotating_mode_var.get()
+            # Build username = base + session
             session_id = int(session_id_var.get().strip() or "1")
-            if rot_mode == "auto":
-                selected_username = rotating_base_username  # No suffix = auto rotate
-            else:
-                selected_username = f"{rotating_base_username}-{session_id}"  # Sticky
+            selected_username = f"{rotating_base_username}-{session_id}"
 
             config = {
                 'api_key': ws_api_entry.get().strip(),
@@ -1424,15 +1409,13 @@ class UnixVoiceToVideo:
                 'rotating_port': rotating_port,
                 'rotating_password': rotating_password,
                 'rotating_base_username': rotating_base_username,
-                'rotating_mode': rot_mode,
                 'rotating_session_id': session_id,
                 'rotating_username': selected_username,
             }
             self._save_proxy_config(config)
             update_proxy_count()
             mode_name = "Direct Proxy List" if proxy_mode_var.get() == "direct" else "Rotating Residential"
-            rot_info = "Auto (IP đổi mỗi request)" if rot_mode == "auto" else f"Sticky (session {session_id})"
-            messagebox.showinfo("Đã lưu", f"Proxy config đã được lưu!\nChế độ: {mode_name}\n{rot_info}\nUsername: {selected_username}")
+            messagebox.showinfo("Đã lưu", f"Proxy config đã được lưu!\nChế độ: {mode_name}\nUsername: {selected_username}")
 
         def test_proxy():
             try:
@@ -1440,13 +1423,9 @@ class UnixVoiceToVideo:
                 mode = proxy_mode_var.get()
 
                 if mode == "rotating":
-                    # Test Rotating Residential - build username from mode + session
-                    rot_mode = rotating_mode_var.get()
+                    # Test Rotating Residential - username = base + session
                     session_id = session_id_var.get().strip() or "1"
-                    if rot_mode == "auto":
-                        selected_username = rotating_base_username
-                    else:
-                        selected_username = f"{rotating_base_username}-{session_id}"
+                    selected_username = f"{rotating_base_username}-{session_id}"
 
                     rotating_test_label.config(text="⏳ Đang test...", foreground='gray')
                     win.update()
