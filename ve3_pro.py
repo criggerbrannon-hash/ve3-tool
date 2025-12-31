@@ -1891,57 +1891,54 @@ class UnixVoiceToVideo:
         return 'fast'  # Default: fast (ảnh tĩnh, nhanh nhất)
 
     def _open_browser_for_login(self, profile_path: str, profile_name: str):
-        """Open Chrome browser with profile for Google login."""
+        """Open Chrome browser with profile for Google login - dùng DrissionPage."""
         FLOW_URL = "https://labs.google/fx/vi/tools/flow"
 
         try:
-            from selenium import webdriver
-            from selenium.webdriver.chrome.options import Options
-            from selenium.webdriver.common.by import By
+            from DrissionPage import ChromiumPage, ChromiumOptions
+            import random
 
             self.log(f"Mở trình duyệt cho profile: {profile_name}...")
 
-            options = Options()
-            options.add_argument(f"--user-data-dir={profile_path}")
-            options.add_argument("--no-sandbox")
-            options.add_argument("--disable-dev-shm-usage")
-            options.add_argument("--disable-blink-features=AutomationControlled")
-            options.add_experimental_option("excludeSwitches", ["enable-automation"])
-            options.add_experimental_option("useAutomationExtension", False)
-            options.add_argument("--window-size=1280,900")
+            # Setup DrissionPage options
+            options = ChromiumOptions()
+            options.set_user_data_path(profile_path)
+            options.set_local_port(random.randint(9300, 9500))
+            options.set_argument('--no-sandbox')
+            options.set_argument('--disable-dev-shm-usage')
+            options.set_argument('--disable-blink-features=AutomationControlled')
+            options.set_argument('--window-size=1280,900')
 
-            # Random port to avoid conflicts
-            import random
-            debug_port = random.randint(9300, 9500)
-            options.add_argument(f"--remote-debugging-port={debug_port}")
+            # Xóa SingletonLock nếu có
+            lock_file = Path(profile_path) / "SingletonLock"
+            if lock_file.exists():
+                try:
+                    lock_file.unlink()
+                except:
+                    pass
 
-            driver = webdriver.Chrome(options=options)
-            driver.execute_script(
-                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-            )
-
+            # Mở Chrome
+            driver = ChromiumPage(addr_or_opts=options)
             driver.get(FLOW_URL)
+
             self.log("Trình duyệt đã mở - Hãy đăng nhập Google!", "OK")
             self.log("Đóng trình duyệt khi hoàn tất đăng nhập.")
 
             # Show message with detailed instructions
             messagebox.showinfo(
-                "Đăng nhập Google + Kích hoạt Token",
+                "Đăng nhập Google",
                 f"Trình duyệt đã mở cho profile '{profile_name}'.\n\n"
                 "📋 LÀM THEO CÁC BƯỚC SAU:\n\n"
                 "1️⃣ Đăng nhập tài khoản Google\n"
                 "2️⃣ Đợi trang Google Flow hiện lên\n"
-                "3️⃣ Nhấn F12 để mở DevTools\n"
-                "4️⃣ Chọn tab 'Console'\n"
-                "5️⃣ Gõ: allow pasting  rồi Enter\n"
-                "6️⃣ Paste lệnh: console.log('OK')  rồi Enter\n"
-                "7️⃣ Đóng trình duyệt khi xong\n\n"
-                "⚠️ Bước 5-6 cần làm 1 LẦN để cho phép paste code!"
+                "3️⃣ Tạo 1 project test để kích hoạt token\n"
+                "4️⃣ Đóng trình duyệt khi xong\n\n"
+                "✅ Profile sẽ lưu session đăng nhập!"
             )
 
         except Exception as e:
             self.log(f"Lỗi mở trình duyệt: {e}", "ERROR")
-            messagebox.showerror("Lỗi", f"Không thể mở trình duyệt:\n{e}\n\nCần cài selenium:\npip install selenium")
+            messagebox.showerror("Lỗi", f"Không thể mở trình duyệt:\n{e}\n\nCần cài DrissionPage:\npip install DrissionPage")
 
     # ========== MAIN PROCESSING ==========
     
