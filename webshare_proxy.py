@@ -39,22 +39,55 @@ from pathlib import Path
 
 @dataclass
 class RotatingEndpointConfig:
-    """Config cho Rotating Endpoint mode."""
+    """
+    Config cho Rotating Residential Endpoint mode.
+
+    Webshare Rotating Residential format:
+    - Username: {base_username}-{session_id}
+    - VD: jhvbehdf-residential-1, jhvbehdf-residential-999
+    - Mỗi session_id khác = IP khác
+    - Để đổi IP mỗi request: dùng session_id ngẫu nhiên
+    """
     host: str = "p.webshare.io"
     port: int = 80
-    username: str = ""
+    base_username: str = ""  # VD: jhvbehdf-residential
     password: str = ""
+    _request_count: int = field(default=0, repr=False)
 
     @property
     def endpoint(self) -> str:
         return f"{self.host}:{self.port}"
 
+    def get_username_for_session(self, session_id: int = None) -> str:
+        """
+        Tạo username với session ID.
+        Mỗi session_id khác = IP khác.
+        """
+        if session_id is None:
+            # Auto increment để đổi IP mỗi request
+            self._request_count += 1
+            session_id = self._request_count
+        return f"{self.base_username}-{session_id}"
+
+    @property
+    def username(self) -> str:
+        """Username hiện tại (auto-rotate)."""
+        return self.get_username_for_session()
+
+    def get_proxy_url(self, session_id: int = None) -> str:
+        """
+        URL cho requests library.
+        Mỗi lần gọi với session_id khác = IP khác.
+        """
+        username = self.get_username_for_session(session_id)
+        if username and self.password:
+            return f"http://{username}:{self.password}@{self.host}:{self.port}"
+        return f"http://{self.host}:{self.port}"
+
     @property
     def proxy_url(self) -> str:
-        """URL cho requests library."""
-        if self.username and self.password:
-            return f"http://{self.username}:{self.password}@{self.host}:{self.port}"
-        return f"http://{self.host}:{self.port}"
+        """URL với auto-rotate session (mỗi lần gọi = IP mới)."""
+        return self.get_proxy_url()
 
 
 @dataclass
@@ -230,29 +263,41 @@ class WebshareProxyManager:
     # === ROTATING ENDPOINT METHODS ===
 
     def setup_rotating_endpoint(self, host: str = "p.webshare.io", port: int = 80,
-                                 username: str = "", password: str = "") -> bool:
+                                 username: str = "", password: str = "",
+                                 base_username: str = "") -> bool:
         """
-        Setup Rotating Endpoint mode.
+        Setup Rotating Residential Endpoint mode.
         Mỗi request qua endpoint này tự động đổi IP.
 
         Args:
             host: Rotating endpoint host (default: p.webshare.io)
-            port: Port (lấy từ Webshare dashboard)
-            username: Proxy username
+            port: Port (default: 80)
+            username: Full username (legacy) - sẽ tách base_username nếu có dạng xxx-N
             password: Proxy password
+            base_username: Base username (VD: jhvbehdf-residential)
 
         Returns:
             True nếu setup thành công
         """
+        # Tách base_username từ username nếu có dạng xxx-N
+        if not base_username and username:
+            # VD: jhvbehdf-residential-1 → jhvbehdf-residential
+            parts = username.rsplit('-', 1)
+            if len(parts) == 2 and parts[1].isdigit():
+                base_username = parts[0]
+            else:
+                base_username = username
+
         self.rotating_endpoint = RotatingEndpointConfig(
             host=host,
             port=port,
-            username=username or self.default_username,
+            base_username=base_username or self.default_username,
             password=password or self.default_password
         )
         self._use_rotating_endpoint = True
-        print(f"[Webshare] Rotating Endpoint enabled: {host}:{port}")
-        print(f"[Webshare] Each request will automatically use a NEW IP!")
+        print(f"[Webshare] Rotating Residential enabled: {host}:{port}")
+        print(f"[Webshare] Base username: {self.rotating_endpoint.base_username}")
+        print(f"[Webshare] Each request = NEW session = NEW IP!")
         return True
 
     def disable_rotating_endpoint(self):
@@ -277,16 +322,23 @@ class WebshareProxyManager:
         return ""
 
     def test_rotating_endpoint(self) -> Tuple[bool, str]:
-        """Test rotating endpoint - gọi 2 lần để verify IP khác nhau."""
+        """Test rotating endpoint - gọi 2 lần với session khác để verify IP khác nhau."""
         if not self.rotating_endpoint:
             return False, "Rotating endpoint chưa được setup"
 
-        proxy_url = self.rotating_endpoint.proxy_url
-        proxies = {"http": proxy_url, "https": proxy_url}
-
         ips = []
+        usernames = []
         try:
             for i in range(2):
+                # Mỗi lần dùng session ID khác = IP khác
+                session_id = 1000 + i  # VD: 1000, 1001
+                proxy_url = self.rotating_endpoint.get_proxy_url(session_id)
+                username = self.rotating_endpoint.get_username_for_session(session_id)
+                usernames.append(username)
+
+                proxies = {"http": proxy_url, "https": proxy_url}
+
+                print(f"[Webshare] Test #{i+1}: {username}")
                 resp = requests.get(
                     "https://ipv4.webshare.io/",
                     proxies=proxies,
@@ -295,17 +347,23 @@ class WebshareProxyManager:
                 if resp.status_code == 200:
                     ip = resp.text.strip()
                     ips.append(ip)
-                    print(f"[Webshare] Rotating test #{i+1}: IP = {ip}")
+                    print(f"[Webshare] → IP = {ip}")
+                elif resp.status_code == 407:
+                    return False, f"407 Proxy Authentication Required - kiểm tra username/password"
                 else:
                     return False, f"HTTP {resp.status_code}"
-                time.sleep(1)
+                time.sleep(0.5)
 
             if len(ips) == 2:
                 if ips[0] != ips[1]:
-                    return True, f"✓ Rotating OK! IP1={ips[0]}, IP2={ips[1]} (Different)"
+                    return True, f"Rotating OK!\nSession 1: {ips[0]}\nSession 2: {ips[1]}"
                 else:
-                    return True, f"✓ Connected! IP={ips[0]} (Same - rotation may require more time)"
+                    return True, f"Connected!\nIP: {ips[0]}\n(2 sessions = same IP, có thể cùng pool)"
 
+        except requests.exceptions.ProxyError as e:
+            if "407" in str(e):
+                return False, f"407 Proxy Authentication Required\nKiểm tra: base_username, password"
+            return False, f"Proxy Error: {e}"
         except Exception as e:
             return False, f"Error: {e}"
 

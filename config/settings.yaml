@@ -31,7 +31,7 @@ flow_delay: 3.0
 # Webshare Proxy Pool
 # Có 2 chế độ:
 #   1. Direct Proxy List: 100 IP datacenter cố định, tự xoay khi block
-#   2. Rotating Residential: IP tự động đổi, nhiều quốc gia
+#   2. Rotating Residential: IP tự động đổi mỗi session
 #
 # Lấy API key: https://proxy.webshare.io/dashboard → API Keys
 webshare_proxy:
@@ -43,28 +43,15 @@ webshare_proxy:
   proxy_mode: "direct"
 
   # === ROTATING RESIDENTIAL ===
-  # Cách hoạt động:
-  #   - Username KHÔNG có số → IP tự đổi mỗi request (auto rotate)
-  #   - Username CÓ số (bất kỳ) → Giữ IP trong session timeout (sticky)
+  # Format: {base_username}-{session_id}:{password}@p.webshare.io:80
+  # VD: jhvbehdf-residential-1:cf1bi3yvq0t1@p.webshare.io:80
   #
-  # VD: jhvbehdf-residential      → Auto rotate (mỗi request = IP mới)
-  #     jhvbehdf-residential-1    → Sticky session #1
-  #     jhvbehdf-residential-999  → Sticky session #999
-  #     Số có thể từ 1 đến vô hạn, mỗi số khác = IP khác
+  # Mỗi session_id khác = IP khác
+  # Session có thể từ 1 đến vô hạn (1, 2, 999, 10000...)
   rotating_host: "p.webshare.io"
   rotating_port: 80
   rotating_password: "cf1bi3yvq0t1"
   rotating_base_username: "jhvbehdf-residential"
-
-  # Chế độ: "auto" = IP đổi mỗi request, "sticky" = giữ IP theo session ID
-  rotating_mode: "auto"
-
-  # Session ID (chỉ dùng khi rotating_mode = "sticky")
-  # Số bất kỳ từ 1 đến vô hạn, mỗi số khác = IP khác
-  rotating_session_id: 1
-
-  # Username cuối cùng (tự động tạo)
-  rotating_username: "jhvbehdf-residential"
 
   # === DIRECT PROXY LIST (100 IPs) ===
   proxy_file: "config/proxies.txt"  # File chứa danh sách proxy

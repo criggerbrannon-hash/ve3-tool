@@ -559,9 +559,14 @@ class DrissionFlowAPI:
 
                 # === CHECK ROTATING ENDPOINT MODE ===
                 if manager.is_rotating_mode():
-                    # ROTATING ENDPOINT: Mỗi request tự động đổi IP
+                    # ROTATING RESIDENTIAL: Mỗi worker dùng session ID riêng
                     rotating = manager.rotating_endpoint
-                    self._is_rotating_mode = True  # Flag để biết đang dùng rotating
+                    self._is_rotating_mode = True
+
+                    # Session ID = worker_id * 1000 + timestamp_suffix (đảm bảo unique)
+                    import time as _time
+                    session_id = (self.worker_id + 1) * 1000 + int(_time.time()) % 1000
+                    session_username = rotating.get_username_for_session(session_id)
 
                     try:
                         from proxy_bridge import start_proxy_bridge
@@ -570,7 +575,7 @@ class DrissionFlowAPI:
                             local_port=bridge_port,
                             remote_host=rotating.host,
                             remote_port=rotating.port,
-                            username=rotating.username,
+                            username=session_username,
                             password=rotating.password
                         )
                         self._bridge_port = bridge_port
@@ -580,9 +585,9 @@ class DrissionFlowAPI:
                         options.set_argument('--proxy-bypass-list=<-loopback>')
                         options.set_argument('--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1')
 
-                        self.log(f"🔄 ROTATING ENDPOINT [Worker {self.worker_id}]")
+                        self.log(f"🔄 ROTATING RESIDENTIAL [Worker {self.worker_id}]")
                         self.log(f"  → {rotating.host}:{rotating.port}")
-                        self.log(f"  → Mỗi request sẽ tự động đổi IP!")
+                        self.log(f"  → Session: {session_username}")
                         self.log(f"  Local: http://127.0.0.1:{bridge_port}")
 
                     except Exception as e:
