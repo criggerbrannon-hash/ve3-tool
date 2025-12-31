@@ -32,14 +32,18 @@ CHARACTERS_COLUMNS = [
 ]
 
 # Cột cho sheet Director Plan (lưu kế hoạch từ SRT trước khi tạo prompts)
-# Dùng để detect gaps và resume
+# Dùng để detect gaps và resume, có backup prompts với character/location refs
 DIRECTOR_PLAN_COLUMNS = [
     "plan_id",          # ID theo thứ tự (1, 2, 3, ...)
     "srt_start",        # Thời gian bắt đầu (HH:MM:SS,mmm)
     "srt_end",          # Thời gian kết thúc (HH:MM:SS,mmm)
     "duration",         # Độ dài (giây)
     "srt_text",         # Nội dung text
-    "status",           # pending/done (đã tạo prompt chưa)
+    "characters_used",  # JSON list nhân vật trong scene (backup)
+    "location_used",    # Location ID (backup)
+    "reference_files",  # JSON list reference files (backup)
+    "img_prompt",       # Backup prompt (dùng nếu director fail)
+    "status",           # backup/pending/done
 ]
 
 # Cột cho sheet Scenes
@@ -470,7 +474,11 @@ class PromptWorkbook:
             "srt_start": 15,
             "srt_end": 15,
             "duration": 10,
-            "srt_text": 60,
+            "srt_text": 50,
+            "characters_used": 25,
+            "location_used": 15,
+            "reference_files": 30,
+            "img_prompt": 60,
             "status": 10,
         }
 
@@ -770,7 +778,9 @@ class PromptWorkbook:
         Gọi hàm này TRƯỚC KHI tạo prompts để có thể detect gaps.
 
         Args:
-            scenes_data: List các scene dict với keys: scene_id, srt_start, srt_end, duration, text
+            scenes_data: List các scene dict với keys:
+                - scene_id, srt_start, srt_end, duration, text (required)
+                - characters_used, location_used, reference_files, img_prompt (optional - backup)
         """
         self._ensure_director_plan_sheet()
 
@@ -787,8 +797,13 @@ class PromptWorkbook:
             ws.cell(row=next_row, column=2, value=scene.get("srt_start", ""))
             ws.cell(row=next_row, column=3, value=scene.get("srt_end", ""))
             ws.cell(row=next_row, column=4, value=scene.get("duration", 0))
-            ws.cell(row=next_row, column=5, value=scene.get("text", "")[:500])  # Truncate text
-            ws.cell(row=next_row, column=6, value="pending")
+            ws.cell(row=next_row, column=5, value=scene.get("text", "")[:500])
+            # New columns for backup
+            ws.cell(row=next_row, column=6, value=scene.get("characters_used", "[]"))
+            ws.cell(row=next_row, column=7, value=scene.get("location_used", ""))
+            ws.cell(row=next_row, column=8, value=scene.get("reference_files", "[]"))
+            ws.cell(row=next_row, column=9, value=scene.get("img_prompt", "")[:1000])
+            ws.cell(row=next_row, column=10, value=scene.get("status", "backup"))
 
         self.save()
         self.logger.info(f"Saved {len(scenes_data)} scenes to director_plan")
@@ -798,7 +813,7 @@ class PromptWorkbook:
         Lấy kế hoạch scenes từ sheet director_plan.
 
         Returns:
-            List các scene dict
+            List các scene dict với backup info
         """
         self._ensure_director_plan_sheet()
 
@@ -809,13 +824,18 @@ class PromptWorkbook:
             if row[0] is None:
                 continue
 
+            # Handle both old format (6 cols) and new format (10 cols)
             plans.append({
                 "plan_id": row[0],
                 "srt_start": row[1] or "",
                 "srt_end": row[2] or "",
                 "duration": row[3] or 0,
                 "srt_text": row[4] or "",
-                "status": row[5] or "pending",
+                "characters_used": row[5] if len(row) > 5 else "[]",
+                "location_used": row[6] if len(row) > 6 else "",
+                "reference_files": row[7] if len(row) > 7 else "[]",
+                "img_prompt": row[8] if len(row) > 8 else "",
+                "status": row[9] if len(row) > 9 else "pending",
             })
 
         return plans

@@ -1085,7 +1085,143 @@ class PromptGenerator:
 
         self.logger.info(f"[VIDEO] Tổng thời lượng: {video_duration_seconds:.0f}s ({video_duration_seconds/60:.1f} phút)")
 
-        # Step 1.5: Director's Treatment - Phân tích cấu trúc câu chuyện
+        # === STEP 1.5: TẠO BACKUP SCENES VỚI CHARACTER/LOCATION MAPPING ===
+        # Mục đích: Nếu Director API fail, vẫn có scenes với đầy đủ tham chiếu
+        self.logger.info("=" * 50)
+        self.logger.info("Step 1.5: Tạo BACKUP SCENES với character/location mapping...")
+        self.logger.info("=" * 50)
+
+        # Tạo mapping từ character name → character id
+        char_name_to_id = {}
+        for c in characters:
+            if c.name:
+                # Lowercase và bỏ dấu để dễ match
+                name_lower = c.name.lower()
+                char_name_to_id[name_lower] = c.id
+                # Thêm các biến thể tên
+                if ' ' in c.name:
+                    # Tên đầy đủ và tên ngắn
+                    parts = c.name.split()
+                    for part in parts:
+                        if len(part) > 2:
+                            char_name_to_id[part.lower()] = c.id
+
+        # Tạo mapping từ location name → location id
+        loc_name_to_id = {}
+        default_location = None
+        for loc in locations:
+            if loc.name:
+                loc_name_to_id[loc.name.lower()] = loc.id
+                if not default_location:
+                    default_location = loc.id
+
+        # Chia SRT thành scenes (time-based)
+        backup_scenes = group_srt_into_scenes(
+            srt_entries,
+            min_duration=self.min_scene_duration,
+            max_duration=self.max_scene_duration
+        )
+        self.logger.info(f"[BACKUP] Tạo {len(backup_scenes)} backup scenes từ SRT")
+
+        # Cho mỗi scene, xác định characters và location
+        backup_scenes_data = []
+        for i, scene in enumerate(backup_scenes):
+            scene_text = scene.get("text", "")
+            scene_text_lower = scene_text.lower()
+
+            # Tìm characters xuất hiện trong scene
+            chars_in_scene = []
+            for char_name, char_id in char_name_to_id.items():
+                if char_name in scene_text_lower and char_id not in chars_in_scene:
+                    chars_in_scene.append(char_id)
+
+            # Nếu không tìm thấy character nào, dùng narrator (nvc)
+            if not chars_in_scene:
+                chars_in_scene = ["nvc"]
+
+            # Tìm location
+            location_in_scene = default_location or ""
+            for loc_name, loc_id in loc_name_to_id.items():
+                if loc_name in scene_text_lower:
+                    location_in_scene = loc_id
+                    break
+
+            # Format timestamps
+            start_time = scene.get("start_time")
+            end_time = scene.get("end_time")
+            if hasattr(start_time, 'strftime'):
+                srt_start = start_time.strftime("%H:%M:%S") + ",000"
+                srt_end = end_time.strftime("%H:%M:%S") + ",000"
+                duration = (end_time - start_time).total_seconds()
+            else:
+                srt_start = str(scene.get("srt_start", "00:00:00,000"))
+                srt_end = str(scene.get("srt_end", "00:00:00,000"))
+                duration = scene.get("duration", 5.0)
+
+            # === XÁC ĐỊNH SHOT TYPE DỰA VÀO NỘI DUNG ===
+            shot_type = "Medium shot"  # Default
+            scene_text_check = scene_text_lower
+
+            # Close-up: cảm xúc, đối thoại, nội tâm
+            closeup_keywords = ['nói', 'hỏi', 'trả lời', 'nghĩ', 'cảm', 'buồn', 'vui', 'giận',
+                               'khóc', 'cười', 'yêu', 'thương', 'sợ', 'lo', 'thì thầm', 'nước mắt']
+            if any(kw in scene_text_check for kw in closeup_keywords):
+                shot_type = "Close-up shot"
+
+            # Wide shot: bối cảnh, môi trường, di chuyển lớn
+            wide_keywords = ['nhìn ra', 'toàn cảnh', 'ngôi làng', 'thành phố', 'khu rừng',
+                            'bầu trời', 'đồng ruộng', 'biển', 'núi', 'xa xa', 'rộng lớn']
+            if any(kw in scene_text_check for kw in wide_keywords):
+                shot_type = "Wide establishing shot"
+
+            # Over-the-shoulder: đối thoại 2 người
+            if len(chars_in_scene) >= 2:
+                dialog_keywords = ['nói với', 'hỏi', 'trả lời', 'đối thoại']
+                if any(kw in scene_text_check for kw in dialog_keywords):
+                    shot_type = "Over-the-shoulder shot"
+
+            # Action shot: hành động
+            action_keywords = ['chạy', 'nhảy', 'đánh', 'bắn', 'chiến đấu', 'trốn', 'đuổi']
+            if any(kw in scene_text_check for kw in action_keywords):
+                shot_type = "Dynamic action shot"
+
+            # Tạo default prompt với character, location VÀ shot type
+            char_refs = ", ".join([f"{c}.png" for c in chars_in_scene])
+            default_prompt = (
+                f"{shot_type}, {scene_text[:150]}. "
+                f"Characters: {', '.join(chars_in_scene)}. "
+                f"Location: {location_in_scene or 'general setting'}. "
+                f"Cinematic lighting, 4K photorealistic, film grain."
+            )
+
+            backup_scenes_data.append({
+                "scene_id": scene.get("scene_id", i + 1),
+                "srt_start": srt_start,
+                "srt_end": srt_end,
+                "duration": round(duration, 2) if isinstance(duration, float) else duration,
+                "text": scene_text[:500],
+                "characters_used": json.dumps(chars_in_scene),
+                "location_used": location_in_scene,
+                "reference_files": json.dumps([f"{c}.png" for c in chars_in_scene]),
+                "img_prompt": default_prompt,
+                "shot_type": shot_type,  # Lưu shot type để reference
+                "status": "backup"  # Đánh dấu là backup, chưa được director override
+            })
+
+        # Lưu backup vào Excel (director_plan sheet)
+        try:
+            existing_plan = workbook.get_director_plan()
+            if not existing_plan:
+                self.logger.info(f"[BACKUP] Lưu {len(backup_scenes_data)} backup scenes vào Excel...")
+                workbook.save_director_plan(backup_scenes_data)
+                workbook.save()
+                self.logger.info(f"[BACKUP] ✓ Đã lưu backup với character/location mapping!")
+            else:
+                self.logger.info(f"[BACKUP] Đã có {len(existing_plan)} scenes trong director_plan, skip backup")
+        except Exception as e:
+            self.logger.warning(f"[BACKUP] Lỗi lưu: {e}")
+
+        # Step 2: Director's Treatment - Phân tích cấu trúc câu chuyện
         self.logger.info("=" * 50)
         self.logger.info("Step 2: Tạo DIRECTOR'S TREATMENT (Kịch bản đạo diễn)...")
         self.logger.info("=" * 50)
@@ -1715,8 +1851,48 @@ class PromptGenerator:
 
                         scene_text = scene.get("text", "")
 
-                        # Tạo simple prompt từ text
-                        simple_prompt = f"Medium shot, {scene_text[:200]}, cinematic lighting, 4K photorealistic"
+                        # === TÌM BACKUP DATA TỪ DIRECTOR_PLAN ===
+                        # Backup đã có character/location mapping
+                        backup_chars = "[]"
+                        backup_location = ""
+                        backup_refs = "[]"
+                        backup_prompt = ""
+
+                        try:
+                            # Parse scene start time to seconds
+                            scene_start_secs = 0
+                            if hasattr(start_time, 'total_seconds'):
+                                scene_start_secs = start_time.total_seconds()
+                            else:
+                                ts = srt_start.replace(',', '.')
+                                parts = ts.split(':')
+                                if len(parts) == 3:
+                                    scene_start_secs = int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+
+                            # Tìm backup scene gần nhất trong director_plan
+                            backup_plans = workbook.get_director_plan()
+                            for bp in backup_plans:
+                                bp_start = bp.get("srt_start", "")
+                                if bp_start:
+                                    ts = bp_start.replace(',', '.')
+                                    parts = ts.split(':')
+                                    if len(parts) == 3:
+                                        bp_start_secs = int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+                                        # Nếu backup scene gần với scene hiện tại (trong 10s)
+                                        if abs(bp_start_secs - scene_start_secs) < 10:
+                                            backup_chars = bp.get("characters_used", "[]")
+                                            backup_location = bp.get("location_used", "")
+                                            backup_refs = bp.get("reference_files", "[]")
+                                            backup_prompt = bp.get("img_prompt", "")
+                                            break
+                        except Exception as e:
+                            self.logger.debug(f"[GAP] Không tìm được backup: {e}")
+
+                        # Tạo prompt - ưu tiên backup prompt nếu có
+                        if backup_prompt:
+                            final_prompt = backup_prompt
+                        else:
+                            final_prompt = f"Cinematic illustration of: {scene_text[:200]}. 4K photorealistic, dramatic lighting."
 
                         new_scene = Scene(
                             scene_id=scene_id,
@@ -1725,13 +1901,13 @@ class PromptGenerator:
                             duration=scene.get("duration", gap['duration'] / len(gap_scenes)),
                             planned_duration=scene.get("duration", 5.0),
                             srt_text=scene_text[:500],
-                            img_prompt=simple_prompt,
-                            video_prompt=simple_prompt,
+                            img_prompt=final_prompt,
+                            video_prompt=final_prompt,
                             status_img="pending",
                             status_vid="pending",
-                            characters_used="[]",
-                            location_used="",
-                            reference_files="[]"
+                            characters_used=backup_chars,
+                            location_used=backup_location,
+                            reference_files=backup_refs
                         )
                         workbook.add_scene(new_scene)
                         total_new_scenes += 1
