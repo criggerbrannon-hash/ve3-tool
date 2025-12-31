@@ -78,6 +78,9 @@ webshare_proxy:
     - username: "jhvbehdf-residential-9"
       country: "Japan"
       flag: "🇯🇵"
+    - username: "jhvbehdf-residential-10"
+      country: "Malaysia"
+      flag: "🇲🇾"
 
   # Username đang dùng (chọn từ rotating_endpoints)
   rotating_username: "jhvbehdf-residential-9"
