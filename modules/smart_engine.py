@@ -859,8 +859,27 @@ class SmartEngine:
     def make_prompts(self, proj_dir: Path, name: str, excel_path: Path) -> bool:
         """Tao prompts tu SRT. Retry voi cac AI keys khac neu fail."""
         if excel_path.exists():
-            self.log(f"Prompts da ton tai: {excel_path.name}")
-            return True
+            # Kiểm tra xem các scenes đã có đủ prompts chưa
+            try:
+                from modules.excel_manager import PromptWorkbook
+                workbook = PromptWorkbook(str(excel_path))
+                stats = workbook.get_stats()
+                total_scenes = stats.get('total_scenes', 0)
+                scenes_with_prompts = stats.get('scenes_with_prompts', 0)
+
+                if total_scenes > 0 and scenes_with_prompts >= total_scenes:
+                    self.log(f"Prompts da ton tai: {excel_path.name} ({scenes_with_prompts}/{total_scenes} scenes)")
+                    return True
+                elif total_scenes > 0 and scenes_with_prompts < total_scenes:
+                    missing = total_scenes - scenes_with_prompts
+                    self.log(f"Excel ton tai nhung THIEU {missing} scene prompts - tiep tuc generate...", "WARN")
+                    # Tiếp tục xuống phần generate để bổ sung prompts
+                else:
+                    self.log(f"Prompts da ton tai: {excel_path.name}")
+                    return True
+            except Exception as e:
+                self.log(f"Kiem tra Excel loi: {e} - tiep tuc generate...", "WARN")
+                # Tiếp tục generate nếu có lỗi đọc Excel
 
         self.log("Generate prompts...")
 
@@ -3998,22 +4017,23 @@ class SmartEngine:
                     try:
                         from webshare_proxy import init_proxy_manager, get_proxy_manager
 
-                        rotating_enabled = ws_cfg.get('rotating_enabled', False)
-                        if rotating_enabled:
+                        # Đọc proxy_mode: "direct" hoặc "rotating"
+                        proxy_mode = ws_cfg.get('proxy_mode', 'direct')
+                        if proxy_mode == "rotating":
+                            # Rotating Residential mode
                             manager = init_proxy_manager(
-                                username=ws_cfg.get('username', ''),
-                                password=ws_cfg.get('password', ''),
+                                username=ws_cfg.get('rotating_username', ''),
+                                password=ws_cfg.get('rotating_password', ''),
                                 rotating_endpoint=True,
                                 rotating_host=ws_cfg.get('rotating_host', 'p.webshare.io'),
                                 rotating_port=ws_cfg.get('rotating_port', 80)
                             )
-                            self.log("[VIDEO] ✓ Rotating Endpoint mode")
+                            self.log("[VIDEO] ✓ Rotating Residential mode")
                         else:
+                            # Direct Proxy List mode
                             proxy_file = ws_cfg.get('proxy_file', 'config/proxies.txt')
                             manager = init_proxy_manager(
                                 api_key=ws_cfg.get('api_key', ''),
-                                username=ws_cfg.get('username', ''),
-                                password=ws_cfg.get('password', ''),
                                 proxy_file=proxy_file
                             )
                             if manager.proxies:

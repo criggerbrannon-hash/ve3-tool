@@ -28,25 +28,61 @@ flow_delay: 3.0
 # Sử dụng DrissionPage + Interceptor để tạo ảnh
 # IPv6 proxy đã bị bỏ - chỉ dùng Webshare
 
-# Webshare Proxy Pool (100 proxies datacenter)
-# Tự động xoay proxy khi bị block 403
-# Mỗi Chrome worker có proxy riêng, thử 3 lần rồi xoay sang proxy khác
-# Proxy bị block sẽ được reset sau 5 phút
+# Webshare Proxy Pool
+# Có 2 chế độ:
+#   1. Direct Proxy List: 100 IP datacenter cố định, tự xoay khi block
+#   2. Rotating Residential: IP tự động đổi, nhiều quốc gia
 #
 # Lấy API key: https://proxy.webshare.io/dashboard → API Keys
-# Gói khuyên dùng: Shared $2.99 (100 proxies, 250GB bandwidth)
 webshare_proxy:
   enabled: true               # BẬT Webshare proxy
 
+  # === PROXY MODE ===
+  # "direct" = Sử dụng Direct Proxy List (100 IP cố định)
+  # "rotating" = Sử dụng Rotating Residential (IP tự động đổi)
+  proxy_mode: "direct"
+
   # === ROTATING RESIDENTIAL ===
-  # ⚠️ KHÔNG DÙNG ĐƯỢC cho Google Flow (bị block)
-  rotating_enabled: false     # TẮT - Google Flow bị chặn qua Rotating Residential
+  # Mỗi request tự động đổi IP mới từ pool hàng triệu IP residential
+  # Có thể chọn quốc gia bằng cách đổi username (residential-1 đến residential-9)
   rotating_host: "p.webshare.io"
   rotating_port: 80
-  username: "jhvbehdf-residential-1"
-  password: "cf1bi3yvq0t1"
+  rotating_password: "cf1bi3yvq0t1"
 
-  # === DIRECT PROXY LIST (100 IPs) - DÙNG CÁI NÀY ===
+  # Danh sách endpoints theo quốc gia (thay đổi username để chọn)
+  rotating_endpoints:
+    - username: "jhvbehdf-residential-1"
+      country: "Pakistan"
+      flag: "🇵🇰"
+    - username: "jhvbehdf-residential-2"
+      country: "Korea"
+      flag: "🇰🇷"
+    - username: "jhvbehdf-residential-3"
+      country: "Taiwan"
+      flag: "🇹🇼"
+    - username: "jhvbehdf-residential-4"
+      country: "Poland"
+      flag: "🇵🇱"
+    - username: "jhvbehdf-residential-5"
+      country: "Belgium"
+      flag: "🇧🇪"
+    - username: "jhvbehdf-residential-6"
+      country: "Korea"
+      flag: "🇰🇷"
+    - username: "jhvbehdf-residential-7"
+      country: "Taiwan"
+      flag: "🇹🇼"
+    - username: "jhvbehdf-residential-8"
+      country: "France"
+      flag: "🇫🇷"
+    - username: "jhvbehdf-residential-9"
+      country: "Japan"
+      flag: "🇯🇵"
+
+  # Username đang dùng (chọn từ rotating_endpoints)
+  rotating_username: "jhvbehdf-residential-9"
+
+  # === DIRECT PROXY LIST (100 IPs) ===
   proxy_file: "config/proxies.txt"  # File chứa danh sách proxy
   api_key: "pfi2ljk73uysoze9ozg58nsp4af7au0vchs0b027"  # Webshare API key
 

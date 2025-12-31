@@ -1279,8 +1279,6 @@ class UnixVoiceToVideo:
 
         ttk.Label(proxy_tab, text="Webshare.io Proxy",
                   font=('Segoe UI', 11, 'bold')).pack(anchor=tk.W, pady=(0, 5))
-        ttk.Label(proxy_tab, text="Sử dụng proxy Webshare thay cho IPv6 local - tự restart Chrome khi lỗi 403",
-                  foreground='gray').pack(anchor=tk.W, pady=(0, 10))
 
         ws_link = ttk.Label(proxy_tab, text="🔗 Đăng ký tại webshare.io",
                            foreground='blue', cursor='hand2')
@@ -1290,14 +1288,29 @@ class UnixVoiceToVideo:
         # Load existing config
         proxy_config = self._load_proxy_config()
 
-        # Proxy File (danh sách proxy)
-        file_frame = ttk.LabelFrame(proxy_tab, text="📁 Proxy List File (khuyến nghị)", padding=10)
-        file_frame.pack(fill=tk.X, pady=(10, 10))
+        # === PROXY MODE SELECTION ===
+        mode_frame = ttk.LabelFrame(proxy_tab, text="🔀 Chế độ Proxy", padding=10)
+        mode_frame.pack(fill=tk.X, pady=(10, 10))
 
-        ttk.Label(file_frame, text="File chứa danh sách proxy (format: IP:PORT:USER:PASS mỗi dòng)",
+        current_mode = proxy_config.get('proxy_mode', 'direct')
+        proxy_mode_var = tk.StringVar(value=current_mode)
+
+        mode_row = ttk.Frame(mode_frame)
+        mode_row.pack(fill=tk.X)
+
+        ttk.Radiobutton(mode_row, text="📁 Direct Proxy List (100 IP cố định)",
+                        variable=proxy_mode_var, value="direct").pack(side=tk.LEFT, padx=(0, 20))
+        ttk.Radiobutton(mode_row, text="🌍 Rotating Residential (IP tự động đổi)",
+                        variable=proxy_mode_var, value="rotating").pack(side=tk.LEFT)
+
+        # === DIRECT PROXY LIST FRAME ===
+        direct_frame = ttk.LabelFrame(proxy_tab, text="📁 Direct Proxy List", padding=10)
+        direct_frame.pack(fill=tk.X, pady=(5, 10))
+
+        ttk.Label(direct_frame, text="File chứa danh sách proxy (format: IP:PORT:USER:PASS)",
                   foreground='gray', font=('Segoe UI', 8)).pack(anchor=tk.W)
 
-        file_entry_frame = ttk.Frame(file_frame)
+        file_entry_frame = ttk.Frame(direct_frame)
         file_entry_frame.pack(fill=tk.X, pady=(5, 0))
 
         ws_file_entry = ttk.Entry(file_entry_frame, width=50, font=('Consolas', 9))
@@ -1316,8 +1329,7 @@ class UnixVoiceToVideo:
 
         ttk.Button(file_entry_frame, text="📂", width=3, command=browse_proxy_file).pack(side=tk.LEFT, padx=(5, 0))
 
-        # Count proxies in file
-        proxy_count_label = ttk.Label(file_frame, text="", foreground='green', font=('Segoe UI', 9))
+        proxy_count_label = ttk.Label(direct_frame, text="", foreground='green', font=('Segoe UI', 9))
         proxy_count_label.pack(anchor=tk.W, pady=(5, 0))
 
         def update_proxy_count():
@@ -1335,27 +1347,55 @@ class UnixVoiceToVideo:
         ws_file_entry.bind('<FocusOut>', lambda e: update_proxy_count())
         update_proxy_count()
 
-        # Single Endpoint (fallback)
-        single_frame = ttk.LabelFrame(proxy_tab, text="🔗 Single Proxy (nếu không có file)", padding=10)
-        single_frame.pack(fill=tk.X, pady=(5, 10))
+        # === ROTATING RESIDENTIAL FRAME ===
+        rotating_frame = ttk.LabelFrame(proxy_tab, text="🌍 Rotating Residential", padding=10)
+        rotating_frame.pack(fill=tk.X, pady=(5, 10))
 
-        ttk.Label(single_frame, text="Endpoint (IP:PORT):", font=('Segoe UI', 9)).pack(anchor=tk.W)
-        ws_endpoint_entry = ttk.Entry(single_frame, width=50, font=('Consolas', 9))
-        ws_endpoint_entry.pack(fill=tk.X, pady=(2, 5))
-        ws_endpoint_entry.insert(0, proxy_config.get('endpoint', ''))
+        ttk.Label(rotating_frame, text="Mỗi request tự động đổi IP mới. Chọn quốc gia:",
+                  foreground='gray', font=('Segoe UI', 8)).pack(anchor=tk.W)
 
-        cred_frame = ttk.Frame(single_frame)
-        cred_frame.pack(fill=tk.X)
+        # Load rotating endpoints from config
+        rotating_endpoints = proxy_config.get('rotating_endpoints', [])
+        current_rotating_user = proxy_config.get('rotating_username', '')
 
-        ttk.Label(cred_frame, text="User:", font=('Segoe UI', 9)).pack(side=tk.LEFT)
-        ws_user_entry = ttk.Entry(cred_frame, width=20, font=('Consolas', 9))
-        ws_user_entry.pack(side=tk.LEFT, padx=(2, 10))
-        ws_user_entry.insert(0, proxy_config.get('username', ''))
+        country_row = ttk.Frame(rotating_frame)
+        country_row.pack(fill=tk.X, pady=(5, 0))
 
-        ttk.Label(cred_frame, text="Pass:", font=('Segoe UI', 9)).pack(side=tk.LEFT)
-        ws_pass_entry = ttk.Entry(cred_frame, width=20, font=('Consolas', 9), show='*')
-        ws_pass_entry.pack(side=tk.LEFT, padx=(2, 0))
-        ws_pass_entry.insert(0, proxy_config.get('password', ''))
+        ttk.Label(country_row, text="Quốc gia:", font=('Segoe UI', 9)).pack(side=tk.LEFT)
+
+        # Create dropdown values with flags
+        country_options = []
+        username_map = {}
+        for ep in rotating_endpoints:
+            display = f"{ep.get('flag', '')} {ep.get('country', '')} ({ep.get('username', '')})"
+            country_options.append(display)
+            username_map[display] = ep.get('username', '')
+
+        if not country_options:
+            # Default options if not in config
+            country_options = ["🇯🇵 Japan (jhvbehdf-residential-9)"]
+            username_map[country_options[0]] = "jhvbehdf-residential-9"
+
+        # Find current selection
+        current_display = country_options[0]
+        for display, username in username_map.items():
+            if username == current_rotating_user:
+                current_display = display
+                break
+
+        rotating_country_var = tk.StringVar(value=current_display)
+        rotating_combo = ttk.Combobox(country_row, textvariable=rotating_country_var,
+                                       values=country_options, state='readonly', width=35)
+        rotating_combo.pack(side=tk.LEFT, padx=(5, 0))
+
+        # Rotating credentials (hidden, loaded from config)
+        rotating_host = proxy_config.get('rotating_host', 'p.webshare.io')
+        rotating_port = proxy_config.get('rotating_port', 80)
+        rotating_password = proxy_config.get('rotating_password', '')
+
+        # Test result label for rotating
+        rotating_test_label = ttk.Label(rotating_frame, text="", font=('Segoe UI', 9))
+        rotating_test_label.pack(anchor=tk.W, pady=(5, 0))
 
         # API Key (hidden)
         ws_api_entry = ttk.Entry(proxy_tab)
@@ -1363,7 +1403,7 @@ class UnixVoiceToVideo:
 
         # Enable checkbox
         ws_enabled_var = tk.BooleanVar(value=proxy_config.get('enabled', False))
-        ttk.Checkbutton(proxy_tab, text="✅ Bật Webshare Proxy (100 proxies xoay tự động)",
+        ttk.Checkbutton(proxy_tab, text="✅ Bật Webshare Proxy",
                         variable=ws_enabled_var).pack(anchor=tk.W, pady=(10, 5))
 
         # Buttons
@@ -1371,52 +1411,84 @@ class UnixVoiceToVideo:
         proxy_btn_frame.pack(fill=tk.X, pady=(10, 0))
 
         def save_proxy_config():
+            # Get selected rotating username from dropdown
+            selected_display = rotating_country_var.get()
+            selected_username = username_map.get(selected_display, 'jhvbehdf-residential-9')
+
             config = {
                 'api_key': ws_api_entry.get().strip(),
-                'username': ws_user_entry.get().strip(),
-                'password': ws_pass_entry.get().strip(),
-                'endpoint': ws_endpoint_entry.get().strip(),
                 'proxy_file': ws_file_entry.get().strip(),
-                'enabled': ws_enabled_var.get()
+                'enabled': ws_enabled_var.get(),
+                'proxy_mode': proxy_mode_var.get(),
+                # Rotating config
+                'rotating_host': rotating_host,
+                'rotating_port': rotating_port,
+                'rotating_password': rotating_password,
+                'rotating_username': selected_username,
+                'rotating_endpoints': rotating_endpoints
             }
             self._save_proxy_config(config)
             update_proxy_count()
-            messagebox.showinfo("Đã lưu", "Proxy config đã được lưu!")
+            mode_name = "Direct Proxy List" if proxy_mode_var.get() == "direct" else "Rotating Residential"
+            messagebox.showinfo("Đã lưu", f"Proxy config đã được lưu!\nChế độ: {mode_name}")
 
         def test_proxy():
             try:
                 from webshare_proxy import init_proxy_manager
-                proxy_file = ws_file_entry.get().strip()
+                mode = proxy_mode_var.get()
 
-                if proxy_file and Path(proxy_file).exists():
+                if mode == "rotating":
+                    # Test Rotating Residential
+                    selected_display = rotating_country_var.get()
+                    selected_username = username_map.get(selected_display, 'jhvbehdf-residential-9')
+
+                    rotating_test_label.config(text="⏳ Đang test...", foreground='gray')
+                    win.update()
+
                     manager = init_proxy_manager(
-                        username=ws_user_entry.get().strip(),
-                        password=ws_pass_entry.get().strip(),
-                        proxy_file=proxy_file
-                    )
-                else:
-                    manager = init_proxy_manager(
-                        username=ws_user_entry.get().strip(),
-                        password=ws_pass_entry.get().strip(),
-                        proxy_list=[f"{ws_endpoint_entry.get().strip()}:{ws_user_entry.get().strip()}:{ws_pass_entry.get().strip()}"]
+                        username=selected_username,
+                        password=rotating_password,
+                        rotating_endpoint=True,
+                        rotating_host=rotating_host,
+                        rotating_port=rotating_port,
+                        force_reinit=True
                     )
 
-                if manager.proxies:
-                    success, msg = manager.test_current()
-                    stats = manager.get_stats()
+                    success, msg = manager.test_rotating_endpoint()
                     if success:
-                        messagebox.showinfo("Test OK", f"Kết nối thành công!\n{msg}\n\nTotal: {stats['total']} proxies")
+                        rotating_test_label.config(text=f"✓ {msg}", foreground='green')
+                        messagebox.showinfo("Test OK", f"Rotating Residential OK!\n\n{msg}")
                     else:
-                        messagebox.showerror("Test Failed", f"Lỗi kết nối:\n{msg}")
+                        rotating_test_label.config(text=f"✗ {msg}", foreground='red')
+                        messagebox.showerror("Test Failed", f"Lỗi:\n{msg}")
                 else:
-                    messagebox.showerror("Lỗi", "Không load được proxy nào!")
+                    # Test Direct Proxy List
+                    proxy_file = ws_file_entry.get().strip()
+                    if proxy_file and Path(proxy_file).exists():
+                        manager = init_proxy_manager(
+                            proxy_file=proxy_file,
+                            force_reinit=True
+                        )
+                    else:
+                        messagebox.showerror("Lỗi", "Không tìm thấy file proxy!")
+                        return
+
+                    if manager.proxies:
+                        success, msg = manager.test_proxy(0)
+                        stats = manager.get_stats()
+                        if success:
+                            messagebox.showinfo("Test OK", f"Kết nối thành công!\n{msg}\n\nTotal: {stats['total']} proxies")
+                        else:
+                            messagebox.showerror("Test Failed", f"Lỗi kết nối:\n{msg}")
+                    else:
+                        messagebox.showerror("Lỗi", "Không load được proxy nào!")
             except Exception as e:
                 messagebox.showerror("Lỗi", f"Không thể test:\n{e}")
 
         ttk.Button(proxy_btn_frame, text="💾 Lưu Config", command=save_proxy_config).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(proxy_btn_frame, text="🧪 Test Proxy", command=test_proxy).pack(side=tk.LEFT)
 
-        ttk.Label(proxy_tab, text="\nHướng dẫn:\n1. Tạo file config/proxies.txt với danh sách proxy\n2. Format mỗi dòng: IP:PORT:USER:PASS\n3. Tick 'Bật Webshare Proxy' → Lưu\n4. Tool sẽ tự xoay proxy khi bị block (403)",
+        ttk.Label(proxy_tab, text="\n💡 Direct: 100 IP cố định, xoay khi bị block\n💡 Rotating: IP tự động đổi mỗi request, nhiều quốc gia",
                   foreground='#666', font=('Segoe UI', 9)).pack(anchor=tk.W, pady=(10, 0))
 
         # Tab 4: Token

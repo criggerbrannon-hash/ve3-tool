@@ -2904,17 +2904,17 @@ class BrowserFlowGenerator:
         # IPv6 proxy đã bị bỏ - chỉ dùng Webshare
         webshare_cfg = self.config.get('webshare_proxy', {})
         webshare_api_key = webshare_cfg.get('api_key', '')
-        webshare_username = webshare_cfg.get('username', '')
-        webshare_password = webshare_cfg.get('password', '')
-        webshare_endpoint = webshare_cfg.get('endpoint', '')
         webshare_proxy_file = webshare_cfg.get('proxy_file', 'config/proxies.txt')  # Default file
         use_webshare = webshare_cfg.get('enabled', True)  # Default ON - Webshare enabled by default
 
-        # === ROTATING ENDPOINT CONFIG ===
-        # Nếu enabled, mỗi request tự động đổi IP (không cần quản lý proxy pool)
-        rotating_enabled = webshare_cfg.get('rotating_enabled', False)
+        # === PROXY MODE CONFIG ===
+        # "direct" = Direct Proxy List (100 IP cố định)
+        # "rotating" = Rotating Residential (IP tự động đổi)
+        proxy_mode = webshare_cfg.get('proxy_mode', 'direct')
         rotating_host = webshare_cfg.get('rotating_host', 'p.webshare.io')
         rotating_port = webshare_cfg.get('rotating_port', 80)
+        rotating_username = webshare_cfg.get('rotating_username', '')
+        rotating_password = webshare_cfg.get('rotating_password', '')
 
         # Khởi tạo Webshare Proxy Manager nếu enabled
         if use_webshare:
@@ -2922,15 +2922,16 @@ class BrowserFlowGenerator:
             try:
                 from webshare_proxy import init_proxy_manager, get_proxy_manager
 
-                # === ROTATING ENDPOINT MODE ===
-                if rotating_enabled:
-                    self._log(f"🔄 ROTATING ENDPOINT mode enabled")
+                # === ROTATING RESIDENTIAL MODE ===
+                if proxy_mode == "rotating":
+                    self._log(f"🌍 ROTATING RESIDENTIAL mode")
                     self._log(f"   → {rotating_host}:{rotating_port}")
+                    self._log(f"   → User: {rotating_username}")
                     self._log(f"   → Mỗi request sẽ tự động đổi IP!")
 
                     manager = init_proxy_manager(
-                        username=webshare_username,
-                        password=webshare_password,
+                        username=rotating_username,
+                        password=rotating_password,
                         rotating_endpoint=True,
                         rotating_host=rotating_host,
                         rotating_port=rotating_port
@@ -2938,7 +2939,6 @@ class BrowserFlowGenerator:
                 else:
                     # === DIRECT PROXY LIST MODE ===
                     # Load proxy list từ file hoặc API
-                    proxy_list = None
                     if webshare_proxy_file:
                         self._log(f"Loading proxies from: {webshare_proxy_file}")
                     else:
@@ -2950,21 +2950,8 @@ class BrowserFlowGenerator:
 
                     manager = init_proxy_manager(
                         api_key=webshare_api_key,
-                        username=webshare_username,
-                        password=webshare_password,
                         proxy_file=webshare_proxy_file if webshare_proxy_file else None
                     )
-
-                    # Nếu không có proxy từ file, thử single endpoint
-                    if not manager.proxies and webshare_endpoint:
-                        from webshare_proxy import ProxyInfo
-                        proxy = ProxyInfo(
-                            host=webshare_endpoint.split(':')[0],
-                            port=int(webshare_endpoint.split(':')[1]) if ':' in webshare_endpoint else 80,
-                            username=webshare_username,
-                            password=webshare_password
-                        )
-                        manager.proxies.append(proxy)
 
                 # Verify initialization
                 if manager.is_rotating_mode():
