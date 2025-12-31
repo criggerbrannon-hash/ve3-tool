@@ -863,6 +863,105 @@ class PromptWorkbook:
 
         return gaps
 
+    def detect_timeline_gaps(self, video_duration_seconds: float = None) -> List[Dict]:
+        """
+        Phát hiện gaps trong timeline của scenes (khoảng thời gian không có scene nào cover).
+
+        Args:
+            video_duration_seconds: Tổng thời lượng video (giây). Nếu None sẽ dùng scene cuối.
+
+        Returns:
+            List các gap dict: {start_seconds, end_seconds, start_time, end_time, duration}
+        """
+        scenes = self.get_scenes()
+        if not scenes:
+            return []
+
+        def parse_timestamp(ts: str) -> float:
+            """Convert HH:MM:SS,mmm to seconds"""
+            if not ts:
+                return 0
+            try:
+                # Handle both HH:MM:SS,mmm and HH:MM:SS formats
+                ts = ts.replace(',', '.')
+                parts = ts.split(':')
+                if len(parts) == 3:
+                    h, m, s = parts
+                    return int(h) * 3600 + int(m) * 60 + float(s)
+                elif len(parts) == 2:
+                    m, s = parts
+                    return int(m) * 60 + float(s)
+                return float(ts)
+            except:
+                return 0
+
+        def seconds_to_timestamp(secs: float) -> str:
+            """Convert seconds to HH:MM:SS,mmm"""
+            h = int(secs // 3600)
+            m = int((secs % 3600) // 60)
+            s = secs % 60
+            return f"{h:02d}:{m:02d}:{s:06.3f}".replace('.', ',')
+
+        # Sort scenes by start time
+        scene_times = []
+        for s in scenes:
+            if s.img_prompt and s.img_prompt.strip():  # Chỉ đếm scenes có prompt
+                start = parse_timestamp(s.srt_start)
+                end = parse_timestamp(s.srt_end)
+                if end > start:
+                    scene_times.append((start, end))
+
+        if not scene_times:
+            return []
+
+        scene_times.sort(key=lambda x: x[0])
+
+        # Determine video end time
+        if video_duration_seconds:
+            video_end = video_duration_seconds
+        else:
+            video_end = max(end for _, end in scene_times)
+
+        # Find gaps
+        gaps = []
+        MIN_GAP_SECONDS = 3  # Ignore gaps smaller than 3 seconds
+
+        # Gap from start?
+        first_start = scene_times[0][0]
+        if first_start > MIN_GAP_SECONDS:
+            gaps.append({
+                "start_seconds": 0,
+                "end_seconds": first_start,
+                "start_time": "00:00:00,000",
+                "end_time": seconds_to_timestamp(first_start),
+                "duration": first_start
+            })
+
+        # Gaps between scenes
+        current_end = scene_times[0][1]
+        for start, end in scene_times[1:]:
+            if start > current_end + MIN_GAP_SECONDS:
+                gaps.append({
+                    "start_seconds": current_end,
+                    "end_seconds": start,
+                    "start_time": seconds_to_timestamp(current_end),
+                    "end_time": seconds_to_timestamp(start),
+                    "duration": start - current_end
+                })
+            current_end = max(current_end, end)
+
+        # Gap at end?
+        if video_end > current_end + MIN_GAP_SECONDS:
+            gaps.append({
+                "start_seconds": current_end,
+                "end_seconds": video_end,
+                "start_time": seconds_to_timestamp(current_end),
+                "end_time": seconds_to_timestamp(video_end),
+                "duration": video_end - current_end
+            })
+
+        return gaps
+
     # ========================================================================
     # UTILITY METHODS
     # ========================================================================
