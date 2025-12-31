@@ -1351,47 +1351,65 @@ class UnixVoiceToVideo:
         rotating_frame = ttk.LabelFrame(proxy_tab, text="🌍 Rotating Residential", padding=10)
         rotating_frame.pack(fill=tk.X, pady=(5, 10))
 
-        ttk.Label(rotating_frame, text="Mỗi request tự động đổi IP mới. Chọn quốc gia:",
+        ttk.Label(rotating_frame, text="Sticky Session: mỗi session giữ 1 IP. Country: chọn quốc gia cụ thể.",
                   foreground='gray', font=('Segoe UI', 8)).pack(anchor=tk.W)
 
-        # Load rotating endpoints from config
-        rotating_endpoints = proxy_config.get('rotating_endpoints', [])
-        current_rotating_user = proxy_config.get('rotating_username', '')
-
-        country_row = ttk.Frame(rotating_frame)
-        country_row.pack(fill=tk.X, pady=(5, 0))
-
-        ttk.Label(country_row, text="Quốc gia:", font=('Segoe UI', 9)).pack(side=tk.LEFT)
-
-        # Create dropdown values with flags
-        country_options = []
-        username_map = {}
-        for ep in rotating_endpoints:
-            display = f"{ep.get('flag', '')} {ep.get('country', '')} ({ep.get('username', '')})"
-            country_options.append(display)
-            username_map[display] = ep.get('username', '')
-
-        if not country_options:
-            # Default options if not in config
-            country_options = ["🇯🇵 Japan (jhvbehdf-residential-9)"]
-            username_map[country_options[0]] = "jhvbehdf-residential-9"
-
-        # Find current selection
-        current_display = country_options[0]
-        for display, username in username_map.items():
-            if username == current_rotating_user:
-                current_display = display
-                break
-
-        rotating_country_var = tk.StringVar(value=current_display)
-        rotating_combo = ttk.Combobox(country_row, textvariable=rotating_country_var,
-                                       values=country_options, state='readonly', width=35)
-        rotating_combo.pack(side=tk.LEFT, padx=(5, 0))
-
-        # Rotating credentials (hidden, loaded from config)
+        # Load rotating config
         rotating_host = proxy_config.get('rotating_host', 'p.webshare.io')
         rotating_port = proxy_config.get('rotating_port', 80)
-        rotating_password = proxy_config.get('rotating_password', '')
+        rotating_password = proxy_config.get('rotating_password', 'cf1bi3yvq0t1')
+        rotating_base_username = proxy_config.get('rotating_base_username', 'jhvbehdf-residential')
+        rotating_sessions = proxy_config.get('rotating_sessions', [{'id': i, 'label': f'Session #{i}'} for i in range(1, 11)])
+        rotating_countries = proxy_config.get('rotating_countries', [
+            {'code': '', 'label': 'Random (tất cả quốc gia)'},
+            {'code': 'JP', 'label': '🇯🇵 Japan'},
+            {'code': 'US', 'label': '🇺🇸 USA'},
+            {'code': 'KR', 'label': '🇰🇷 Korea'}
+        ])
+        current_session_id = proxy_config.get('rotating_session_id', 1)
+        current_country_code = proxy_config.get('rotating_country_code', '')
+
+        # Row 1: Session dropdown
+        session_row = ttk.Frame(rotating_frame)
+        session_row.pack(fill=tk.X, pady=(5, 3))
+
+        ttk.Label(session_row, text="Session:", font=('Segoe UI', 9)).pack(side=tk.LEFT)
+        session_options = [s.get('label', f"Session #{s.get('id', 1)}") for s in rotating_sessions]
+        session_id_map = {s.get('label', f"Session #{s.get('id', 1)}"): s.get('id', 1) for s in rotating_sessions}
+        current_session_label = next((s.get('label') for s in rotating_sessions if s.get('id') == current_session_id), session_options[0])
+
+        rotating_session_var = tk.StringVar(value=current_session_label)
+        session_combo = ttk.Combobox(session_row, textvariable=rotating_session_var,
+                                      values=session_options, state='readonly', width=15)
+        session_combo.pack(side=tk.LEFT, padx=(5, 15))
+
+        # Row 1: Country dropdown (same row)
+        ttk.Label(session_row, text="Country:", font=('Segoe UI', 9)).pack(side=tk.LEFT)
+        country_options = [c.get('label', 'Random') for c in rotating_countries]
+        country_code_map = {c.get('label', 'Random'): c.get('code', '') for c in rotating_countries}
+        current_country_label = next((c.get('label') for c in rotating_countries if c.get('code') == current_country_code), country_options[0])
+
+        rotating_country_var = tk.StringVar(value=current_country_label)
+        country_combo = ttk.Combobox(session_row, textvariable=rotating_country_var,
+                                      values=country_options, state='readonly', width=20)
+        country_combo.pack(side=tk.LEFT, padx=(5, 0))
+
+        # Username preview label
+        def update_username_preview(*args):
+            session_id = session_id_map.get(rotating_session_var.get(), 1)
+            country_code = country_code_map.get(rotating_country_var.get(), '')
+            if country_code:
+                username = f"{rotating_base_username}-{country_code}-{session_id}"
+            else:
+                username = f"{rotating_base_username}-{session_id}"
+            username_preview_label.config(text=f"Username: {username}")
+
+        rotating_session_var.trace('w', update_username_preview)
+        rotating_country_var.trace('w', update_username_preview)
+
+        username_preview_label = ttk.Label(rotating_frame, text="", font=('Consolas', 9), foreground='#666')
+        username_preview_label.pack(anchor=tk.W, pady=(3, 0))
+        update_username_preview()  # Initial update
 
         # Test result label for rotating
         rotating_test_label = ttk.Label(rotating_frame, text="", font=('Segoe UI', 9))
@@ -1411,9 +1429,13 @@ class UnixVoiceToVideo:
         proxy_btn_frame.pack(fill=tk.X, pady=(10, 0))
 
         def save_proxy_config():
-            # Get selected rotating username from dropdown
-            selected_display = rotating_country_var.get()
-            selected_username = username_map.get(selected_display, 'jhvbehdf-residential-9')
+            # Build username from session + country
+            session_id = session_id_map.get(rotating_session_var.get(), 1)
+            country_code = country_code_map.get(rotating_country_var.get(), '')
+            if country_code:
+                selected_username = f"{rotating_base_username}-{country_code}-{session_id}"
+            else:
+                selected_username = f"{rotating_base_username}-{session_id}"
 
             config = {
                 'api_key': ws_api_entry.get().strip(),
@@ -1424,13 +1446,17 @@ class UnixVoiceToVideo:
                 'rotating_host': rotating_host,
                 'rotating_port': rotating_port,
                 'rotating_password': rotating_password,
+                'rotating_base_username': rotating_base_username,
+                'rotating_session_id': session_id,
+                'rotating_country_code': country_code,
                 'rotating_username': selected_username,
-                'rotating_endpoints': rotating_endpoints
+                'rotating_sessions': rotating_sessions,
+                'rotating_countries': rotating_countries
             }
             self._save_proxy_config(config)
             update_proxy_count()
             mode_name = "Direct Proxy List" if proxy_mode_var.get() == "direct" else "Rotating Residential"
-            messagebox.showinfo("Đã lưu", f"Proxy config đã được lưu!\nChế độ: {mode_name}")
+            messagebox.showinfo("Đã lưu", f"Proxy config đã được lưu!\nChế độ: {mode_name}\nUsername: {selected_username}")
 
         def test_proxy():
             try:
@@ -1438,9 +1464,13 @@ class UnixVoiceToVideo:
                 mode = proxy_mode_var.get()
 
                 if mode == "rotating":
-                    # Test Rotating Residential
-                    selected_display = rotating_country_var.get()
-                    selected_username = username_map.get(selected_display, 'jhvbehdf-residential-9')
+                    # Test Rotating Residential - build username from session + country
+                    session_id = session_id_map.get(rotating_session_var.get(), 1)
+                    country_code = country_code_map.get(rotating_country_var.get(), '')
+                    if country_code:
+                        selected_username = f"{rotating_base_username}-{country_code}-{session_id}"
+                    else:
+                        selected_username = f"{rotating_base_username}-{session_id}"
 
                     rotating_test_label.config(text="⏳ Đang test...", foreground='gray')
                     win.update()
