@@ -2190,18 +2190,13 @@ class SmartEngine:
 
         self.log("BROWSER MODE: Khong can token, su dung JS automation")
 
-        # === 3. DOI CHARACTER GENERATION (PARALLEL) ===
-        # Neu character generation dang chay song song, doi no xong
+        # === 3. CHARACTER GENERATION STATUS (KHÔNG CHỜ) ===
+        # Character images đang chạy song song, tiếp tục với scene images
+        # Sẽ đợi và merge kết quả sau khi scene images xong
         if self._character_gen_thread is not None:
-            self.log("[STEP 3] Doi character generation hoan thanh...")
-            self._wait_for_character_generation(timeout=600)
-
-            # Lay ket qua character generation
-            char_results = self._character_gen_result or {"success": 0, "failed": 0}
-            self.log(f"  Character images: success={char_results.get('success', 0)}, failed={char_results.get('failed', 0)}")
+            self.log("[STEP 3] Character images đang tạo song song → tiếp tục với scenes...")
         else:
-            self.log("[STEP 3] Character generation khong chay song song")
-            char_results = {"success": 0, "failed": 0}
+            self.log("[STEP 3] Không có character generation thread")
 
         # === 4. LOAD SCENE PROMPTS (chi scenes, bo qua characters da tao) ===
         self.log("[STEP 4] Load scene prompts...")
@@ -2416,6 +2411,17 @@ class SmartEngine:
                 if skipped_mp4 > 0:
                     self.log(f"[VIDEO] Resume: Skip {skipped_mp4} video đã tồn tại (.mp4)")
 
+            # === WAIT FOR CHARACTER GENERATION (IF RUNNING) ===
+            # Character images có thể vẫn đang chạy song song
+            char_results = {"success": 0, "failed": 0}
+            if self._character_gen_thread is not None:
+                if self._character_gen_thread.is_alive():
+                    self.log("[RESUME] Đợi character images hoàn thành...")
+                    self._wait_for_character_generation(timeout=300)
+
+                char_results = self._character_gen_result or {"success": 0, "failed": 0}
+                self.log(f"  Character images: success={char_results.get('success', 0)}, failed={char_results.get('failed', 0)}")
+
             # Merge results with character generation
             results = {
                 "success": char_results.get("success", 0),
@@ -2522,6 +2528,17 @@ class SmartEngine:
                     self.log(f"[VIDEO] Đã queue {queued} ảnh để tạo video")
                 if skipped_mp4 > 0:
                     self.log(f"[VIDEO] Skip {skipped_mp4} video đã tồn tại")
+
+            # === 5.5. WAIT FOR CHARACTER GENERATION (IF RUNNING) ===
+            # Character images đã chạy song song với scene images, giờ đợi nó xong
+            char_results = {"success": 0, "failed": 0}
+            if self._character_gen_thread is not None:
+                if self._character_gen_thread.is_alive():
+                    self.log("[STEP 5.5] Đợi character images hoàn thành...")
+                    self._wait_for_character_generation(timeout=300)  # 5 phút max
+
+                char_results = self._character_gen_result or {"success": 0, "failed": 0}
+                self.log(f"  Character images: success={char_results.get('success', 0)}, failed={char_results.get('failed', 0)}")
 
             # Merge results
             results = {

@@ -1030,15 +1030,33 @@ class PromptGenerator:
         # === PARALLEL OPTIMIZATION ===
         # Gọi callback để caller có thể bắt đầu tạo ảnh nhân vật SONG SONG
         # trong khi vẫn tiếp tục tạo scene prompts
-        # SKIP callback nếu resume mode (characters đã được tạo ảnh rồi)
-        if on_characters_ready and not resume_scenes_only:
+        # Kiểm tra xem ảnh nhân vật đã có chưa, nếu chưa thì vẫn phải tạo
+        need_character_images = False
+        if resume_scenes_only:
+            # Resume mode: Kiểm tra xem ảnh nhân vật đã có chưa
+            nv_dir = project_dir / "nv"
+            if nv_dir.exists():
+                existing_images = list(nv_dir.glob("*.png")) + list(nv_dir.glob("*.jpg"))
+                # So sánh số ảnh với số nhân vật (không tính location)
+                char_count = len([c for c in existing_characters if c.role != 'location'])
+                if len(existing_images) < char_count:
+                    self.logger.info(f"[RESUME] Có {len(existing_images)}/{char_count} ảnh nhân vật → cần tạo thêm")
+                    need_character_images = True
+                else:
+                    self.logger.info(f"[RESUME] Đã có đủ {len(existing_images)} ảnh nhân vật → bỏ qua")
+            else:
+                self.logger.info(f"[RESUME] Thư mục nv/ chưa có → cần tạo ảnh nhân vật")
+                need_character_images = True
+        else:
+            # Không phải resume mode → luôn tạo ảnh
+            need_character_images = True
+
+        if on_characters_ready and need_character_images:
             self.logger.info("[PARALLEL] Characters ready! Triggering character image generation...")
             try:
                 on_characters_ready(excel_path, project_dir)
             except Exception as e:
                 self.logger.warning(f"[PARALLEL] Callback error (non-fatal): {e}")
-        elif resume_scenes_only:
-            self.logger.info("[RESUME] Bỏ qua character image generation (đã có ảnh)")
 
         # Step 1.5: Director's Treatment - Phân tích cấu trúc câu chuyện
         self.logger.info("=" * 50)
