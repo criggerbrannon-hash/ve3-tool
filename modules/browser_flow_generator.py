@@ -3010,12 +3010,23 @@ class BrowserFlowGenerator:
                 self._log(f"⚠️ Không đọc được config từ Excel: {e}", "warn")
 
         # Chọn profile: ưu tiên saved profile từ Excel, fallback về default
+        # QUAN TRỌNG: Mỗi worker cần profile RIÊNG để chạy song song
         if saved_chrome_profile:
             profile_to_use = saved_chrome_profile
             self._log(f"🔄 Dùng Chrome profile đã lưu: {profile_to_use}")
         else:
-            profile_to_use = self._get_profile_path() or "./chrome_profile"
-            self._log(f"📁 Dùng Chrome profile mặc định: {profile_to_use}")
+            # === PARALLEL MODE: Mỗi worker có profile riêng ===
+            base_profile = self._get_profile_path()
+            if base_profile:
+                # Nếu có base profile, tạo subfolder cho mỗi worker
+                profile_to_use = f"{base_profile}/worker_{self.worker_id}"
+            else:
+                # Fallback: chrome_profiles/worker_X
+                profile_to_use = f"./chrome_profiles/worker_{self.worker_id}"
+
+            # Tạo folder nếu chưa có
+            Path(profile_to_use).mkdir(parents=True, exist_ok=True)
+            self._log(f"📁 Chrome profile: {profile_to_use} (Worker {self.worker_id})")
 
         # Đọc setting headless từ config (default: True = chạy ẩn)
         # Dùng chung setting 'browser_headless' với Selenium mode

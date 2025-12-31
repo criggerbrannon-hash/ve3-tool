@@ -3942,11 +3942,16 @@ class SmartEngine:
             try:
                 from modules.drission_flow_api import DrissionFlowAPI
                 ws_cfg = self.config.get('webshare_proxy', {})
+                # Tạo profile path riêng cho worker này
+                profile_dir = f"./chrome_profiles/worker_{self.worker_id}"
+                Path(profile_dir).mkdir(parents=True, exist_ok=True)
                 drission_api = DrissionFlowAPI(
+                    profile_dir=profile_dir,
                     headless=True,
                     verbose=False,
                     webshare_enabled=ws_cfg.get('enabled', True),
-                    machine_id=ws_cfg.get('machine_id', 1)
+                    machine_id=ws_cfg.get('machine_id', 1),
+                    worker_id=self.worker_id  # Để dùng đúng dải proxy
                 )
                 if drission_api.setup():
                     # Lấy token bằng cách trigger một request đơn giản
