@@ -874,9 +874,9 @@ class SmartEngine:
                     missing = total_scenes - scenes_with_prompts
                     self.log(f"Excel ton tai nhung THIEU {missing} scene prompts - tiep tuc generate...", "WARN")
                     # Tiếp tục xuống phần generate để bổ sung prompts
-                else:
-                    self.log(f"Prompts da ton tai: {excel_path.name}")
-                    return True
+                elif total_scenes == 0:
+                    # Scenes chưa được tạo - CẦN generate!
+                    self.log(f"Excel ton tai nhung CHUA CO scenes - can generate!", "WARN")
             except Exception as e:
                 self.log(f"Kiem tra Excel loi: {e} - tiep tuc generate...", "WARN")
                 # Tiếp tục generate nếu có lỗi đọc Excel
