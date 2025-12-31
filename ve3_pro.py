@@ -2320,13 +2320,20 @@ class UnixVoiceToVideo:
         Process folder with multiple voice files - PARALLEL mode.
 
         Chạy song song nhiều voice cùng lúc, mỗi voice độc lập như chạy file đơn.
-        Mỗi worker có Chrome riêng, proxy riêng, project folder riêng.
+        Mỗi worker có Chrome profile riêng, dải proxy riêng.
+
+        Logic:
+        - Đọc parallel_voices từ settings (mặc định 2)
+        - Mỗi worker = 1 luồng xử lý voice
+        - Mỗi worker có: Chrome profile riêng, dải proxy riêng
+        - Dải proxy: 30000 / num_workers (VD: 2 workers → 1-15000, 15001-30000)
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
         import threading
 
         try:
             from modules.smart_engine import SmartEngine
+            from modules.utils import load_settings
 
             folder = Path(self.input_path.get())
             voices = sorted(list(folder.glob("*.mp3")) + list(folder.glob("*.wav")))
@@ -2336,9 +2343,15 @@ class UnixVoiceToVideo:
                 return
 
             total = len(voices)
-            max_workers = 2  # Mặc định 2 workers song song
 
-            self.log(f"📁 Tìm thấy {total} file voice - Chế độ SONG SONG ({max_workers} workers)")
+            # === ĐỌC SỐ LUỒNG TỪ SETTINGS ===
+            settings = load_settings(Path("config/settings.yaml"))
+            max_workers = settings.get('parallel_voices', 2)  # Mặc định 2 luồng
+            max_workers = max(1, min(max_workers, 5))  # Giới hạn 1-5 luồng
+
+            self.log(f"📁 Tìm thấy {total} file voice")
+            self.log(f"⚡ Chế độ SONG SONG: {max_workers} luồng")
+            self.log(f"   Mỗi luồng = 1 Chrome profile riêng, dải proxy riêng")
             for i, v in enumerate(voices[:5]):
                 self.log(f"   {i+1}. {v.name}")
             if total > 5:
@@ -2352,6 +2365,10 @@ class UnixVoiceToVideo:
             thread_worker_map = {}
             next_worker_id = [0]  # Mutable để dùng trong closure
 
+            # === TÍNH DẢI PROXY CHO MỖI WORKER ===
+            # 30000 session / num_workers
+            sessions_per_worker = 30000 // max_workers
+
             def get_worker_id_for_thread() -> int:
                 """Gán worker_id dựa trên thread thực tế, không phải voice index."""
                 thread_id = threading.current_thread().ident
@@ -2362,37 +2379,24 @@ class UnixVoiceToVideo:
                     return thread_worker_map[thread_id]
 
             def process_single_voice(voice_path: Path) -> dict:
-                """Process a single voice file. Worker_id is auto-assigned per thread."""
+                """Process a single voice file - GIỐNG HỆT chạy file đơn."""
                 # Lấy worker_id dựa trên thread đang chạy
                 worker_id = get_worker_id_for_thread()
                 voice_name = voice_path.name
                 result = {"voice": voice_name, "success": 0, "failed": 0, "error": None}
 
-                # === TEST PROXY TRƯỚC KHI BẮT ĐẦU ===
-                proxy_manager = None
-                current_ip = "unknown"
-                try:
-                    from webshare_proxy import get_proxy_manager
-                    proxy_manager = get_proxy_manager()
-                    if proxy_manager and proxy_manager.proxies:
-                        proxy, ip = proxy_manager.test_and_get_proxy(worker_id)
-                        if proxy:
-                            current_ip = ip
-                            self.root.after(0, lambda w=worker_id, v=voice_name, ip=current_ip:
-                                self.log(f"[Worker {w}] 🌐 IP: {ip} → {v}"))
-                        else:
-                            self.root.after(0, lambda w=worker_id, err=ip:
-                                self.log(f"[Worker {w}] ⚠️ Proxy test failed: {err}", "WARN"))
-                except Exception as e:
-                    self.root.after(0, lambda w=worker_id:
-                        self.log(f"[Worker {w}] ⚠️ Không có proxy manager", "WARN"))
+                # === TÍNH SESSION OFFSET CHO WORKER NÀY ===
+                # Worker 0: session 1-15000, Worker 1: 15001-30000
+                session_offset = worker_id * sessions_per_worker
+
+                self.root.after(0, lambda w=worker_id, v=voice_name, offset=session_offset:
+                    self.log(f"[Worker {w}] 🎬 Bắt đầu: {v} (proxy range: {offset+1}-{offset+sessions_per_worker})"))
 
                 try:
-                    # Log với worker_id để phân biệt
-                    self.root.after(0, lambda w=worker_id, v=voice_name:
-                        self.log(f"[Worker {w}] 🎬 Bắt đầu: {v}"))
-
-                    # Create new engine for this worker
+                    # === TẠO ENGINE VỚI WORKER_ID ===
+                    # worker_id ảnh hưởng đến:
+                    # - Chrome profile được gán
+                    # - Dải proxy session được dùng
                     engine = SmartEngine(worker_id=worker_id)
 
                     def log_cb(msg):
@@ -2407,7 +2411,7 @@ class UnixVoiceToVideo:
                         prefixed_msg = f"[W{worker_id}] {msg}"
                         self.root.after(0, lambda m=prefixed_msg, l=level: self.log(m, l))
 
-                    # Run engine
+                    # === CHẠY GIỐNG HỆT FILE ĐƠN ===
                     engine_result = engine.run(str(voice_path), callback=log_cb)
 
                     if 'error' not in engine_result:
@@ -2429,16 +2433,6 @@ class UnixVoiceToVideo:
                     self.root.after(0, lambda w=worker_id, v=voice_name, err=e:
                         self.log(f"[Worker {w}] ❌ Exception {v}: {err}", "ERROR"))
 
-                finally:
-                    # === RELEASE PROXY VÀ ROTATE CHO VOICE TIẾP THEO ===
-                    if proxy_manager:
-                        try:
-                            proxy_manager.release_worker_proxy(worker_id, rotate_next=True)
-                            self.root.after(0, lambda w=worker_id:
-                                self.log(f"[Worker {w}] 🔄 Proxy released, will rotate next"))
-                        except Exception as e:
-                            pass
-
                 # Update progress
                 with results_lock:
                     total_results["completed"] += 1
@@ -2455,7 +2449,7 @@ class UnixVoiceToVideo:
             # Run workers in parallel
             self.log("")
             self.log("=" * 60)
-            self.log(f"🚀 Bắt đầu xử lý song song với {max_workers} workers...")
+            self.log(f"🚀 Bắt đầu xử lý song song với {max_workers} luồng...")
             self.log("=" * 60)
 
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -2501,410 +2495,16 @@ class UnixVoiceToVideo:
         """
         Process folder with multiple voice files - ROUND-ROBIN mode.
 
-        Thay vì chạy song song, mỗi voice lần lượt tạo 1 ảnh:
-        - Voice 1: ảnh 1 → đợi
-        - Voice 2: ảnh 1 → đợi
-        - Voice 1: ảnh 2 → đợi
-        - Voice 2: ảnh 2 → đợi
-        - ...
+        ĐƠN GIẢN HÓA: Giống hệt _process_folder (PARALLEL mode)
+        - Chạy song song N voices cùng lúc
+        - Mỗi voice = 1 worker với Chrome profile riêng, dải proxy riêng
+        - Chạy GIỐNG HỆT file đơn
 
-        Ưu điểm:
-        - Giãn cách API tự nhiên (không cần delay thủ công)
-        - Giảm 403 rate limit
-        - Mỗi voice có proxy riêng, Chrome riêng
+        Số luồng đọc từ settings.yaml (parallel_voices, mặc định 2)
         """
-        import threading
-        from pathlib import Path
-
-        try:
-            from modules.smart_engine import SmartEngine
-            from modules.round_robin_coordinator import RoundRobinCoordinator, VoiceTask
-            from modules.drission_flow_api import DrissionFlowAPI
-            from modules.browser_flow_generator import BrowserFlowGenerator
-
-            folder = Path(self.input_path.get())
-            voices = sorted(list(folder.glob("*.mp3")) + list(folder.glob("*.wav")))
-
-            if not voices:
-                self.root.after(0, lambda: messagebox.showerror("Lỗi", "Không tìm thấy file voice nào!"))
-                return
-
-            # Giới hạn số voice xử lý cùng lúc
-            max_workers = 2
-            voices = voices[:max_workers]
-            total_voices = len(voices)
-
-            self.log(f"📁 Tìm thấy {total_voices} voice - Chế độ ROUND-ROBIN")
-            for i, v in enumerate(voices):
-                self.log(f"   {i+1}. {v.name}")
-
-            # === PHASE 1: CHUẨN BỊ (SRT + Prompts) ===
-            self.log("")
-            self.log("=" * 60)
-            self.log("🔄 PHASE 1: Chuẩn bị SRT + Prompts...")
-            self.log("=" * 60)
-
-            voice_data = {}  # {voice_id: {'engine': ..., 'prompts': [...], 'proj_dir': ...}}
-
-            for i, voice_path in enumerate(voices):
-                if self._stop:
-                    break
-
-                voice_name = voice_path.stem
-                proj_dir = Path("PROJECTS") / voice_name
-                proj_dir.mkdir(parents=True, exist_ok=True)
-                for d in ["srt", "prompts", "nv", "img"]:
-                    (proj_dir / d).mkdir(exist_ok=True)
-
-                excel_path = proj_dir / "prompts" / f"{voice_name}_prompts.xlsx"
-                srt_path = proj_dir / "srt" / f"{voice_name}.srt"
-
-                self.log(f"[Voice {i}] 📄 {voice_name}")
-
-                # Tạo engine cho voice này
-                engine = SmartEngine(worker_id=i)
-
-                def log_cb(msg, wid=i):
-                    level = "INFO"
-                    if "[OK]" in msg or "OK!" in msg or "✓" in msg:
-                        level = "OK"
-                    elif "[ERROR]" in msg or "ERROR" in msg or "✗" in msg:
-                        level = "ERROR"
-                    elif "[WARN]" in msg or "⚠️" in msg:
-                        level = "WARN"
-                    prefixed_msg = f"[V{wid}] {msg}"
-                    self.root.after(0, lambda m=prefixed_msg, l=level: self.log(m, l))
-
-                engine.callback = log_cb
-
-                # Copy voice file
-                dest_voice = proj_dir / voice_path.name
-                if not dest_voice.exists():
-                    import shutil
-                    shutil.copy2(voice_path, dest_voice)
-
-                # Tạo SRT
-                if not srt_path.exists():
-                    self.log(f"[Voice {i}] Tạo SRT...")
-                    if not engine.make_srt(dest_voice, srt_path):
-                        self.log(f"[Voice {i}] ❌ SRT failed!", "ERROR")
-                        continue
-                else:
-                    self.log(f"[Voice {i}] ⏭️ SRT đã có")
-
-                # Tạo Prompts
-                if not excel_path.exists():
-                    self.log(f"[Voice {i}] Tạo Prompts...")
-                    if not engine.make_prompts(proj_dir, voice_name, excel_path):
-                        self.log(f"[Voice {i}] ❌ Prompts failed!", "ERROR")
-                        continue
-                else:
-                    self.log(f"[Voice {i}] ⏭️ Excel đã có")
-
-                # Load prompts
-                prompts = engine._load_prompts(excel_path, proj_dir)
-                if not prompts:
-                    self.log(f"[Voice {i}] ⚠️ Không có prompts!", "WARN")
-                    continue
-
-                # Filter prompts đã có ảnh
-                filtered = []
-                for p in prompts:
-                    pid = p.get('id', '')
-                    if pid.lower().startswith('nv') or pid.lower().startswith('loc'):
-                        out_path = proj_dir / "nv" / f"{pid}.png"
-                    else:
-                        out_path = proj_dir / "img" / f"{pid}.png"
-                    if not out_path.exists():
-                        filtered.append(p)
-
-                self.log(f"[Voice {i}] 📋 {len(filtered)}/{len(prompts)} prompts cần tạo")
-
-                voice_data[i] = {
-                    'engine': engine,
-                    'prompts': filtered,
-                    'proj_dir': proj_dir,
-                    'excel_path': excel_path,
-                    'voice_name': voice_name
-                }
-
-            if not voice_data:
-                self.log("⚠️ Không có voice nào có prompts!", "WARN")
-                return
-
-            # === PHASE 2: ROUND-ROBIN IMAGE GENERATION ===
-            self.log("")
-            self.log("=" * 60)
-            self.log("🔄 PHASE 2: Round-Robin Image Generation...")
-            self.log("=" * 60)
-
-            # Tạo coordinator
-            coordinator = RoundRobinCoordinator(
-                num_voices=len(voice_data),
-                log_callback=lambda msg, lvl="INFO": self.root.after(0, lambda m=msg, l=lvl: self.log(m, l))
-            )
-
-            # Add voices to coordinator
-            for vid, data in voice_data.items():
-                coordinator.add_voice(
-                    voice_id=vid,
-                    folder_path=data['proj_dir'],
-                    prompts=data['prompts'],
-                    excel_path=data['excel_path']
-                )
-
-            # Lưu trữ DrissionFlowAPI cho mỗi voice
-            drission_apis = {}  # {voice_id: DrissionFlowAPI}
-            results_lock = threading.Lock()
-            total_results = {"success": 0, "failed": 0, "total": sum(len(d['prompts']) for d in voice_data.values())}
-
-            # Đọc setting headless từ cài đặt
-            use_headless = self._get_headless_setting()
-
-            # Lấy danh sách profiles có sẵn từ cài đặt
-            profiles_dir = Path(self._get_profiles_dir())
-            available_profiles = []
-            if profiles_dir.exists():
-                for p in sorted(profiles_dir.iterdir()):
-                    if p.is_dir() and not p.name.startswith('.'):
-                        available_profiles.append(str(p))
-
-            if not available_profiles:
-                self.log("⚠️ Không có Chrome profile nào trong cài đặt!", "ERROR")
-                return
-
-            num_voices = len(voice_data)
-            self.log(f"📁 Tìm thấy {len(available_profiles)} Chrome profiles: {[Path(p).name for p in available_profiles]}")
-
-            # Kiểm tra đủ profile cho tất cả voices
-            if num_voices > len(available_profiles):
-                self.log(f"⚠️ Có {num_voices} voices nhưng chỉ có {len(available_profiles)} profiles!", "WARN")
-                self.log(f"   → Chỉ chạy song song {len(available_profiles)} voices, còn lại chờ", "WARN")
-
-            def setup_chrome(voice_id: int) -> bool:
-                """Setup Chrome với profile có sẵn cho voice."""
-                try:
-                    # Mỗi voice cần 1 profile riêng - không dùng chung
-                    if voice_id >= len(available_profiles):
-                        self.root.after(0, lambda vid=voice_id: self.log(f"[Voice {vid}] ⏳ Không đủ profile - đợi voice khác xong", "WARN"))
-                        return False  # Sẽ được xử lý sau
-
-                    profile_dir = available_profiles[voice_id]
-                    self.root.after(0, lambda vid=voice_id, p=profile_dir: self.log(f"[Voice {vid}] 🌐 Dùng profile: {Path(p).name}"))
-
-                    # Tạo DrissionFlowAPI (proxy được xử lý tự động qua Webshare với worker_id)
-                    api = DrissionFlowAPI(
-                        profile_dir=profile_dir,
-                        worker_id=voice_id,
-                        headless=use_headless,  # Đọc từ cài đặt
-                        log_callback=lambda msg, vid=voice_id: self.root.after(0, lambda m=msg: self.log(f"[V{vid}] {m}"))
-                    )
-
-                    # Setup Chrome
-                    if api.setup():
-                        drission_apis[voice_id] = api
-                        return True
-                    else:
-                        self.root.after(0, lambda vid=voice_id: self.log(f"[Voice {vid}] ❌ Chrome setup failed!", "ERROR"))
-                        return False
-
-                except Exception as e:
-                    self.root.after(0, lambda vid=voice_id, e=e: self.log(f"[Voice {vid}] ❌ Setup error: {e}", "ERROR"))
-                    return False
-
-            def process_image(voice_id: int, task: VoiceTask) -> tuple:
-                """
-                Tạo 1 ảnh cho voice.
-
-                Returns:
-                    tuple: (success: bool, is_403: bool)
-                    - success: True nếu tạo ảnh thành công
-                    - is_403: True nếu gặp lỗi 403 (cần retry sau)
-                """
-                pid = task.prompt_data.get('id', '?')
-                prompt = task.prompt_data.get('prompt', '')
-
-                # Lấy DrissionFlowAPI đã setup
-                api = drission_apis.get(voice_id)
-                if not api:
-                    return (False, False)
-
-                # Lấy reference images nếu có
-                ref_images = task.prompt_data.get('reference_images', [])
-                image_inputs = []
-
-                if ref_images and task.excel_path:
-                    try:
-                        from modules.excel_manager import PromptWorkbook
-                        wb = PromptWorkbook(task.excel_path)
-                        wb.load_or_create()
-                        media_ids = wb.get_media_ids()
-
-                        for ref_id in ref_images:
-                            media_id = media_ids.get(ref_id)
-                            if media_id:
-                                image_inputs.append({
-                                    "name": media_id,
-                                    "imageInputType": "IMAGE_INPUT_TYPE_REFERENCE"
-                                })
-                    except Exception as e:
-                        self.root.after(0, lambda e=e: self.log(f"⚠️ Lỗi load media_ids: {e}", "WARN"))
-
-                # === IMMEDIATE RETRY với exponential backoff khi gặp 403 ===
-                MAX_IMMEDIATE_RETRIES = 2  # Retry ngay 2 lần trước khi đưa vào queue
-                from modules.browser_flow_generator import AspectRatio
-
-                for attempt in range(MAX_IMMEDIATE_RETRIES + 1):
-                    try:
-                        if attempt == 0:
-                            self.root.after(0, lambda vid=voice_id, p=pid: self.log(f"[Voice {vid}] 🎨 Generating {p}..."))
-                        else:
-                            self.root.after(0, lambda vid=voice_id, p=pid, a=attempt:
-                                self.log(f"[Voice {vid}] 🔄 Retry {a}/{MAX_IMMEDIATE_RETRIES}: {p}..."))
-
-                        success, images, error = api.generate_images(
-                            prompt=prompt,
-                            count=1,
-                            aspect_ratio=AspectRatio.LANDSCAPE,
-                            image_inputs=image_inputs if image_inputs else None
-                        )
-
-                        if success and images:
-                            # Lưu ảnh thành công
-                            import base64
-                            img_data = base64.b64decode(images[0])
-                            task.output_path.parent.mkdir(parents=True, exist_ok=True)
-                            with open(task.output_path, 'wb') as f:
-                                f.write(img_data)
-
-                            # Lưu media_id nếu là nv/loc
-                            if pid.lower().startswith('nv') or pid.lower().startswith('loc'):
-                                if hasattr(api, '_last_media_name') and api._last_media_name:
-                                    try:
-                                        from modules.excel_manager import PromptWorkbook
-                                        wb = PromptWorkbook(task.excel_path)
-                                        wb.load_or_create()
-                                        wb.update_media_id(pid, api._last_media_name)
-                                        wb.save()
-                                    except:
-                                        pass
-
-                            with results_lock:
-                                total_results["success"] += 1
-                                done = total_results["success"] + total_results["failed"]
-                                total = total_results["total"]
-                                progress = (done / total) * 100
-                                self.root.after(0, lambda p=progress, d=done, t=total:
-                                    self.update_progress(p, f"Xong {d}/{t}"))
-
-                            self.root.after(0, lambda vid=voice_id, p=pid: self.log(f"[Voice {vid}] ✅ {p}", "OK"))
-                            return (True, False)  # success, not 403
-
-                        # Check error type
-                        error_str = str(error).lower() if error else ""
-                        is_403 = '403' in error_str or 'forbidden' in error_str or 'recaptcha' in error_str
-                        is_400 = '400' in error_str or 'invalid' in error_str
-
-                        if is_403 and attempt < MAX_IMMEDIATE_RETRIES:
-                            # Rotate proxy và retry ngay
-                            self.root.after(0, lambda vid=voice_id, p=pid, a=attempt:
-                                self.log(f"[Voice {vid}] ⚠️ 403 at {p} - Rotating proxy...", "WARN"))
-
-                            try:
-                                from webshare_proxy import get_proxy_manager
-                                manager = get_proxy_manager()
-                                if manager:
-                                    manager.rotate_worker_proxy(voice_id, "403_forbidden")
-                                    # Restart Chrome với proxy mới
-                                    api.restart_chrome()
-                            except Exception as e:
-                                self.root.after(0, lambda e=e: self.log(f"⚠️ Rotate error: {e}", "WARN"))
-
-                            # Exponential backoff: 2s, 4s
-                            wait_time = 2 * (attempt + 1)
-                            self.root.after(0, lambda vid=voice_id, w=wait_time:
-                                self.log(f"[Voice {vid}] ⏳ Waiting {w}s before retry..."))
-                            time.sleep(wait_time)
-                            continue  # Retry
-
-                        elif is_400 and attempt < MAX_IMMEDIATE_RETRIES:
-                            # Lỗi 400: Invalid argument - thử không có reference images
-                            self.root.after(0, lambda vid=voice_id, p=pid:
-                                self.log(f"[Voice {vid}] ⚠️ 400 at {p} - Retry without references...", "WARN"))
-
-                            # Retry với image_inputs rỗng
-                            image_inputs = []
-                            time.sleep(1)
-                            continue  # Retry
-
-                        # Lỗi khác hoặc hết retry
-                        self.root.after(0, lambda vid=voice_id, p=pid, e=error:
-                            self.log(f"[Voice {vid}] ❌ {p}: {e}", "ERROR"))
-
-                        if is_403:
-                            # Đưa vào retry queue để làm sau
-                            self.root.after(0, lambda vid=voice_id, p=pid:
-                                self.log(f"[Voice {vid}] 📋 {p} → Retry queue (403)", "WARN"))
-                            return (False, True)  # failed, is 403
-                        else:
-                            with results_lock:
-                                total_results["failed"] += 1
-                            return (False, False)  # failed, not 403
-
-                    except Exception as e:
-                        self.root.after(0, lambda vid=voice_id, p=pid, e=e:
-                            self.log(f"[Voice {vid}] ❌ {p}: {e}", "ERROR"))
-
-                        if attempt >= MAX_IMMEDIATE_RETRIES:
-                            with results_lock:
-                                total_results["failed"] += 1
-                            return (False, False)
-
-                # Shouldn't reach here
-                return (False, False)
-
-            # Start worker threads
-            threads = []
-            for vid in voice_data.keys():
-                t = threading.Thread(
-                    target=coordinator.run_voice_worker,
-                    args=(vid, process_image, setup_chrome),
-                    daemon=True
-                )
-                t.start()
-                threads.append(t)
-
-            # Wait for all workers
-            for t in threads:
-                t.join()
-
-            # Cleanup Chrome instances
-            for api in drission_apis.values():
-                try:
-                    api.cleanup()
-                except:
-                    pass
-
-            # Summary
-            stats = coordinator.get_stats()
-            self.log("")
-            self.log("=" * 60)
-            self.log(f"📊 ROUND-ROBIN HOÀN TẤT!", "OK")
-            self.log(f"   ✅ Success: {stats['success']}")
-            self.log(f"   ❌ Failed: {stats['failed']}")
-            self.log(f"   ⏭️ Skipped: {stats['skipped']}")
-            self.log("=" * 60)
-
-            self.root.after(0, lambda: self.update_progress(100, "Hoàn tất!"))
-
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            self.root.after(0, lambda err=e: self.log(f"Lỗi Round-Robin: {err}", "ERROR"))
-        finally:
-            self._running = False
-            self.root.after(0, self._reset_ui)
-
+        # === DÙNG LẠI LOGIC CỦA _process_folder ===
+        # Vì bản chất 2 mode này nên giống nhau theo yêu cầu user
+        return self._process_folder()
     def _on_complete(self, results):
         """Handle completion."""
         # Set current project for preview

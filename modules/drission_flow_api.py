@@ -250,9 +250,30 @@ class DrissionFlowAPI:
         self._webshare_proxy = None
         self._use_webshare = webshare_enabled
         self._proxy_bridge = None  # Local proxy bridge
-        # Session ID = (machine_id - 1) * 30000 + worker_id + 1
-        # Máy 1: 1, 2, 3...  Máy 2: 30001, 30002...  Máy 3: 60001...
-        self._rotating_session_id = (self._machine_id - 1) * 30000 + self.worker_id + 1
+
+        # === TÍNH SESSION ID DỰA TRÊN WORKER VÀ SỐ LUỒNG ===
+        # Đọc số luồng từ settings để chia dải proxy đều
+        num_workers = 2  # Default
+        try:
+            import yaml
+            settings_path = Path(__file__).parent.parent / "config" / "settings.yaml"
+            if settings_path.exists():
+                with open(settings_path, 'r', encoding='utf-8') as f:
+                    cfg = yaml.safe_load(f) or {}
+                num_workers = max(1, cfg.get('parallel_voices', 2))
+        except:
+            pass
+
+        # Mỗi worker có dải proxy riêng:
+        # - 2 workers: Worker 0 = 1-15000, Worker 1 = 15001-30000
+        # - 3 workers: Worker 0 = 1-10000, Worker 1 = 10001-20000, Worker 2 = 20001-30000
+        sessions_per_worker = 30000 // num_workers
+        base_offset = (self._machine_id - 1) * 30000  # Offset theo máy
+        worker_offset = self.worker_id * sessions_per_worker  # Offset theo worker
+        self._rotating_session_id = base_offset + worker_offset + 1
+        self._sessions_per_worker = sessions_per_worker  # Lưu để tăng đúng trong dải
+        self.log(f"[Session] Machine {self._machine_id}, Worker {self.worker_id}: session range {base_offset + worker_offset + 1}-{base_offset + worker_offset + sessions_per_worker}")
+
         self._bridge_port = None   # Bridge port for API calls
         self._is_rotating_mode = False  # True = Rotating Endpoint (auto IP change)
         if webshare_enabled and WEBSHARE_AVAILABLE:
