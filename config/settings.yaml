@@ -185,7 +185,7 @@ log_level: "INFO"
 # Số lượng voice xử lý song song (1-5)
 # Ví dụ: 3 voices x 90 phút = 270 phút (tuần tự) -> ~100 phút (song song)
 # Cần nhiều RAM và CPU khi tăng số này
-parallel_voices: 3
+parallel_voices: 2
 
 # Số lượng ảnh bắt đầu tạo video ngay (không chờ hết ảnh)
 # VD: 10 = khi có 10 ảnh đầu tiên sẽ bắt đầu tạo video song song với tạo ảnh
