@@ -626,6 +626,15 @@ class DrissionFlowAPI:
                 self._is_rotating_mode = False
                 self.log("⚠️ Webshare proxy không sẵn sàng - chạy không có proxy", "WARN")
 
+            # Clean up profile lock trước khi start (tránh conflict)
+            try:
+                lock_file = self.profile_dir / "SingletonLock"
+                if lock_file.exists():
+                    lock_file.unlink()
+                    self.log("  Đã xóa SingletonLock cũ")
+            except:
+                pass
+
             # Thử khởi tạo Chrome với retry
             max_retries = 3
             for attempt in range(max_retries):
@@ -640,7 +649,7 @@ class DrissionFlowAPI:
                         self.chrome_port = random.randint(9222, 9999)
                         options.set_local_port(self.chrome_port)
                         self.log(f"  → Retry với port {self.chrome_port}...")
-                        time.sleep(2)
+                        time.sleep(3)  # Đợi lâu hơn để Chrome cũ tắt hẳn
                     else:
                         raise chrome_err
 

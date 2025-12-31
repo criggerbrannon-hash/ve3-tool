@@ -2198,24 +2198,34 @@ class SmartEngine:
             else:
                 self.log(f"  [EXCEL] ⚠️ Không có media_id trong Excel", "WARN")
 
-                # === CHỈ XÓA ẢNH NV/LOC (KHÔNG XÓA SCENE) ===
-                # Scene images vẫn giữ lại, chỉ cần regenerate nv/loc để lấy media_id
+                # === XÓA TẤT CẢ ẢNH VÀ LÀM LẠI TỪ ĐẦU ===
                 nv_dir = proj_dir / "nv"
+                img_dir = proj_dir / "img"
 
                 # Kiểm tra có ảnh nv/loc tồn tại không
                 nv_images = list(nv_dir.glob("*.png")) if nv_dir.exists() else []
                 if nv_images:
                     self.log(f"  ⚠️ Có {len(nv_images)} ảnh nv/loc nhưng KHÔNG có media_id!", "WARN")
-                    self.log(f"  → Xóa ảnh nv/loc để tạo lại (giữ nguyên ảnh scene)!", "WARN")
+                    self.log(f"  → Xóa TẤT CẢ ảnh (nv + img) và tạo lại từ đầu!", "WARN")
 
-                    # Chỉ xóa ảnh nv/loc
+                    # Xóa tất cả ảnh nv/loc
                     for img_file in nv_images:
                         try:
                             img_file.unlink()
                         except:
                             pass
-                    self.log(f"  ✓ Đã xóa {len(nv_images)} ảnh nv/loc - sẽ tạo lại")
-                    # KHÔNG xóa scene images - chúng vẫn hợp lệ
+                    self.log(f"  ✓ Đã xóa {len(nv_images)} ảnh nv/loc")
+
+                    # Xóa tất cả ảnh scene
+                    if img_dir.exists():
+                        scene_images = list(img_dir.glob("*.png"))
+                        if scene_images:
+                            for img_file in scene_images:
+                                try:
+                                    img_file.unlink()
+                                except:
+                                    pass
+                            self.log(f"  ✓ Đã xóa {len(scene_images)} ảnh scene")
 
         except Exception as e:
             self.log(f"  [EXCEL] Lỗi load media_ids: {e}", "WARN")
