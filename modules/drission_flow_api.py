@@ -848,8 +848,70 @@ class DrissionFlowAPI:
                     return False
 
         if not nav_success:
-            self.log("✗ Không thể vào trang Google Flow", "ERROR")
-            return False
+            # === FALLBACK: Thử đổi proxy mode ===
+            fallback_tried = False
+
+            if hasattr(self, '_is_rotating_mode') and self._is_rotating_mode:
+                try:
+                    from webshare_proxy import get_proxy_manager
+                    manager = get_proxy_manager()
+
+                    if manager.is_rotating_mode() and manager.rotating_endpoint:
+                        rotating = manager.rotating_endpoint
+                        old_username = rotating.base_username
+
+                        # Xác định mode hiện tại và đổi sang mode khác
+                        if hasattr(self, '_is_random_ip_mode') and self._is_random_ip_mode:
+                            # Đang Random IP → thử Sticky Session
+                            self.log("⚠️ Random IP mode failed, thử STICKY SESSION mode...", "WARN")
+                            new_username = old_username.replace('-rotate', '')
+                            fallback_mode = "Sticky Session"
+                        else:
+                            # Đang Sticky Session → thử Random IP
+                            self.log("⚠️ Sticky Session mode failed, thử RANDOM IP mode...", "WARN")
+                            if not old_username.endswith('-rotate'):
+                                new_username = old_username + '-rotate'
+                            else:
+                                new_username = old_username
+                            fallback_mode = "Random IP"
+
+                        if new_username != old_username:
+                            # Kill everything
+                            self._kill_chrome()
+                            self.close()
+                            time.sleep(2)
+
+                            # Switch mode
+                            rotating.base_username = new_username
+                            self._is_random_ip_mode = new_username.endswith('-rotate')
+                            self.log(f"  → Đổi từ '{old_username}' sang '{new_username}'")
+
+                            if not self._is_random_ip_mode:
+                                self.log(f"  → Sticky Session ID: {self._rotating_session_id}")
+
+                            # Restart với mode mới
+                            if self._start_chrome():
+                                # Retry navigation
+                                try:
+                                    self.driver.get(target_url)
+                                    time.sleep(3)
+                                    if self.driver.url and self.driver.url != "about:blank":
+                                        self.log(f"✓ {fallback_mode} OK! URL: {self.driver.url}")
+                                        nav_success = True
+                                        fallback_tried = True
+                                except Exception as e:
+                                    self.log(f"  → {fallback_mode} cũng fail: {e}", "ERROR")
+                                    fallback_tried = True
+
+                except Exception as fallback_err:
+                    self.log(f"  → Fallback error: {fallback_err}", "ERROR")
+
+            if not nav_success:
+                if fallback_tried:
+                    self.log("✗ Cả hai proxy modes đều fail!", "ERROR")
+                else:
+                    self.log("✗ Không thể vào trang Google Flow", "ERROR")
+                return False
 
         # 4. Auto setup project (click "Dự án mới" + chọn "Tạo hình ảnh")
         if wait_for_project:
