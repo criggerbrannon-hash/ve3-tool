@@ -656,11 +656,14 @@ class DrissionFlowAPI:
 
                 # === CHECK ROTATING ENDPOINT MODE ===
                 if manager.is_rotating_mode():
-                    # ROTATING RESIDENTIAL: Mỗi worker dùng session ID riêng
+                    # ROTATING RESIDENTIAL: 2 modes
+                    # 1. Random IP: username ends with -rotate → mỗi request = IP ngẫu nhiên
+                    # 2. Sticky Session: username không -rotate → session ID tự động thêm
                     rotating = manager.rotating_endpoint
                     self._is_rotating_mode = True
+                    self._is_random_ip_mode = rotating.base_username.endswith('-rotate')
 
-                    # Session ID từ counter (tăng dần khi có lỗi)
+                    # Session ID từ counter (chỉ dùng cho Sticky Session mode)
                     session_id = self._rotating_session_id
                     session_username = rotating.get_username_for_session(session_id)
 
@@ -681,9 +684,14 @@ class DrissionFlowAPI:
                         options.set_argument('--proxy-bypass-list=<-loopback>')
                         options.set_argument('--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1')
 
-                        self.log(f"🔄 ROTATING RESIDENTIAL [Worker {self.worker_id}]")
-                        self.log(f"  → {rotating.host}:{rotating.port}")
-                        self.log(f"  → Session: {session_username}")
+                        if self._is_random_ip_mode:
+                            self.log(f"🎲 RANDOM IP MODE [Worker {self.worker_id}]")
+                            self.log(f"  → {rotating.host}:{rotating.port}")
+                            self.log(f"  → Username: {session_username} (mỗi request = IP mới)")
+                        else:
+                            self.log(f"🔄 STICKY SESSION [Worker {self.worker_id}]")
+                            self.log(f"  → {rotating.host}:{rotating.port}")
+                            self.log(f"  → Session: {session_username}")
                         self.log(f"  Local: http://127.0.0.1:{bridge_port}")
 
                     except Exception as e:
@@ -1172,22 +1180,28 @@ class DrissionFlowAPI:
                     self._kill_chrome()
                     self.close()
 
-                    # Rotating mode: Tăng session ID
+                    # Rotating mode: Restart Chrome với IP mới
                     if hasattr(self, '_is_rotating_mode') and self._is_rotating_mode:
-                        self._rotating_session_id += 1
-                        # Wrap around nếu hết dải
-                        if self._rotating_session_id > self._session_range_end:
-                            self._rotating_session_id = self._session_range_start
-                            self.log(f"  → ♻️ Hết dải, quay lại session {self._rotating_session_id}")
+                        if hasattr(self, '_is_random_ip_mode') and self._is_random_ip_mode:
+                            # Random IP mode: Chỉ cần restart Chrome, Webshare tự đổi IP
+                            self.log(f"  → 🎲 Random IP: Restart Chrome để lấy IP mới...")
                         else:
-                            self.log(f"  → Rotating: Đổi sang session {self._rotating_session_id}")
-                        # Lưu session ID để tiếp tục lần sau
-                        _save_last_session_id(self._machine_id, self.worker_id, self._rotating_session_id)
+                            # Sticky Session mode: Tăng session ID
+                            self._rotating_session_id += 1
+                            # Wrap around nếu hết dải
+                            if self._rotating_session_id > self._session_range_end:
+                                self._rotating_session_id = self._session_range_start
+                                self.log(f"  → ♻️ Hết dải, quay lại session {self._rotating_session_id}")
+                            else:
+                                self.log(f"  → Sticky: Đổi sang session {self._rotating_session_id}")
+                            # Lưu session ID để tiếp tục lần sau
+                            _save_last_session_id(self._machine_id, self.worker_id, self._rotating_session_id)
+
                         if attempt < max_retries - 1:
                             time.sleep(3)
                             if self.setup(project_url=getattr(self, '_current_project_url', None)):
                                 continue
-                        return False, [], f"Quota exceeded với session {self._rotating_session_id}"
+                        return False, [], f"Quota exceeded sau {max_retries} lần thử"
 
                     # Direct mode: Rotate proxy
                     if self._use_webshare and self._webshare_proxy:
@@ -1217,27 +1231,33 @@ class DrissionFlowAPI:
                     self.log(f"⚠️ 403 error (attempt {attempt+1}/{max_retries})", "WARN")
 
                     # === ROTATING ENDPOINT MODE ===
-                    # Tăng session ID để đổi IP, restart Chrome với session mới
+                    # Restart Chrome để đổi IP
                     if hasattr(self, '_is_rotating_mode') and self._is_rotating_mode:
-                        self._rotating_session_id += 1
-                        # Wrap around nếu hết dải
-                        if self._rotating_session_id > self._session_range_end:
-                            self._rotating_session_id = self._session_range_start
-                            self.log(f"  → ♻️ Hết dải, quay lại session {self._rotating_session_id}")
+                        if hasattr(self, '_is_random_ip_mode') and self._is_random_ip_mode:
+                            # Random IP mode: Chỉ cần restart Chrome, Webshare tự đổi IP
+                            self.log(f"  → 🎲 Random IP: Restart Chrome để lấy IP mới...")
                         else:
-                            self.log(f"  → Rotating mode: Đổi sang session {self._rotating_session_id}")
-                        # Lưu session ID để tiếp tục lần sau
-                        _save_last_session_id(self._machine_id, self.worker_id, self._rotating_session_id)
+                            # Sticky Session mode: Tăng session ID
+                            self._rotating_session_id += 1
+                            # Wrap around nếu hết dải
+                            if self._rotating_session_id > self._session_range_end:
+                                self._rotating_session_id = self._session_range_start
+                                self.log(f"  → ♻️ Hết dải, quay lại session {self._rotating_session_id}")
+                            else:
+                                self.log(f"  → Sticky: Đổi sang session {self._rotating_session_id}")
+                            # Lưu session ID để tiếp tục lần sau
+                            _save_last_session_id(self._machine_id, self.worker_id, self._rotating_session_id)
+
                         if attempt < max_retries - 1:
-                            # Restart Chrome với session mới
+                            # Restart Chrome với IP mới
                             self._kill_chrome()
                             self.close()
                             time.sleep(2)
-                            self.log(f"  → Restart Chrome với session mới...")
+                            self.log(f"  → Restart Chrome...")
                             if self.setup(project_url=getattr(self, '_current_project_url', None)):
                                 continue
                             else:
-                                return False, [], "Không restart được Chrome với session mới"
+                                return False, [], "Không restart được Chrome"
                         else:
                             return False, [], error
 
