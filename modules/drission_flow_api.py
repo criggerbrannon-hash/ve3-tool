@@ -1665,29 +1665,55 @@ class DrissionFlowAPI:
                     if "403" in error:
                         self.log(f"[I2V] ⚠️ 403 error (attempt {attempt+1}/{max_retries})", "WARN")
 
-                        # Rotating endpoint mode - chỉ cần retry, IP tự đổi
+                        # === ROTATING ENDPOINT MODE ===
+                        # Restart Chrome để đổi IP (giống như xử lý ảnh)
                         if hasattr(self, '_is_rotating_mode') and self._is_rotating_mode:
-                            self.log("[I2V] → Rotating mode: IP sẽ tự đổi ở request tiếp theo")
+                            if hasattr(self, '_is_random_ip_mode') and self._is_random_ip_mode:
+                                # Random IP mode: Chỉ cần restart Chrome, Webshare tự đổi IP
+                                self.log(f"[I2V] → 🎲 Random IP: Restart Chrome để lấy IP mới...")
+                            else:
+                                # Sticky Session mode: Tăng session ID
+                                self._rotating_session_id += 1
+                                # Wrap around nếu hết dải
+                                if self._rotating_session_id > self._session_range_end:
+                                    self._rotating_session_id = self._session_range_start
+                                    self.log(f"[I2V] → ♻️ Hết dải, quay lại session {self._rotating_session_id}")
+                                else:
+                                    self.log(f"[I2V] → Sticky: Đổi sang session {self._rotating_session_id}")
+                                # Lưu session ID để tiếp tục lần sau
+                                _save_last_session_id(self._machine_id, self.worker_id, self._rotating_session_id)
+
                             if attempt < max_retries - 1:
+                                # Restart Chrome với IP mới
+                                self._kill_chrome()
+                                self.close()
                                 time.sleep(2)
-                                continue
+                                self.log(f"[I2V] → Restart Chrome...")
+                                if self.setup(project_url=retry_project_url):
+                                    continue
+                                else:
+                                    return False, None, "Không restart được Chrome"
                             else:
                                 return False, None, error
 
-                        # Direct proxy list mode
+                        # === DIRECT PROXY LIST MODE ===
+                        # Cần xoay proxy và restart Chrome
                         if self._use_webshare and self._webshare_proxy:
                             success, msg = self._webshare_proxy.rotate_ip(self.worker_id, "I2V 403")
                             self.log(f"[I2V] → Webshare rotate: {msg}", "WARN")
 
                             if success and attempt < max_retries - 1:
-                                self.close()  # Chỉ close driver
-                                time.sleep(3)
-                                self.log("[I2V] → Mở Chrome vào đúng project...")
-                                if self.setup(project_url=retry_project_url):
+                                # Restart Chrome với IP mới
+                                self.log("[I2V] → Restart Chrome với IP mới...")
+                                if self.restart_chrome():
+                                    time.sleep(3)
                                     continue
+                                else:
+                                    return False, None, "Không restart được Chrome sau khi xoay IP"
 
                         if attempt < max_retries - 1:
-                            time.sleep(10)
+                            self.log("[I2V] → Đợi 5s rồi retry...", "WARN")
+                            time.sleep(5)
                             continue
 
                     # Other errors - simple retry
