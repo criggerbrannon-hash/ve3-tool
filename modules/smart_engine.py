@@ -4021,9 +4021,12 @@ class SmartEngine:
                         proxy_mode = ws_cfg.get('proxy_mode', 'direct')
                         if proxy_mode == "rotating":
                             # Rotating Residential mode
+                            # Ưu tiên base_username, fallback sang username cũ
+                            rotating_user = ws_cfg.get('rotating_base_username') or ws_cfg.get('rotating_username', 'jhvbehdf-residential')
+                            rotating_pass = ws_cfg.get('rotating_password', 'cf1bi3yvq0t1')
                             manager = init_proxy_manager(
-                                username=ws_cfg.get('rotating_username', ''),
-                                password=ws_cfg.get('rotating_password', ''),
+                                username=rotating_user,
+                                password=rotating_pass,
                                 rotating_endpoint=True,
                                 rotating_host=ws_cfg.get('rotating_host', 'p.webshare.io'),
                                 rotating_port=ws_cfg.get('rotating_port', 80)

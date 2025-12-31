@@ -2913,8 +2913,9 @@ class BrowserFlowGenerator:
         proxy_mode = webshare_cfg.get('proxy_mode', 'direct')
         rotating_host = webshare_cfg.get('rotating_host', 'p.webshare.io')
         rotating_port = webshare_cfg.get('rotating_port', 80)
-        rotating_username = webshare_cfg.get('rotating_username', '')
-        rotating_password = webshare_cfg.get('rotating_password', '')
+        # Ưu tiên base_username, fallback sang username cũ
+        rotating_username = webshare_cfg.get('rotating_base_username') or webshare_cfg.get('rotating_username', 'jhvbehdf-residential')
+        rotating_password = webshare_cfg.get('rotating_password', 'cf1bi3yvq0t1')
 
         # Khởi tạo Webshare Proxy Manager nếu enabled
         if use_webshare:
