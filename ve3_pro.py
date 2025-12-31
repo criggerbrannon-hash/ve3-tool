@@ -1655,6 +1655,19 @@ class UnixVoiceToVideo:
             pass
         return True  # Default: headless
 
+    def _get_profiles_dir(self) -> str:
+        """Get Chrome profiles directory from config."""
+        try:
+            import yaml
+            config_path = CONFIG_DIR / "settings.yaml"
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+                return config.get('browser_profiles_dir', './chrome_profiles')
+        except:
+            pass
+        return './chrome_profiles'  # Default
+
     def _save_headless_setting(self, headless: bool):
         """Save headless setting to config."""
         try:
@@ -2610,14 +2623,36 @@ class UnixVoiceToVideo:
             # Đọc setting headless từ cài đặt
             use_headless = self._get_headless_setting()
 
-            def setup_chrome(voice_id: int) -> bool:
-                """Setup Chrome với Webshare proxy cho voice."""
-                try:
-                    self.root.after(0, lambda vid=voice_id: self.log(f"[Voice {vid}] 🌐 Khởi tạo Chrome..."))
+            # Lấy danh sách profiles có sẵn từ cài đặt
+            profiles_dir = Path(self._get_profiles_dir())
+            available_profiles = []
+            if profiles_dir.exists():
+                for p in sorted(profiles_dir.iterdir()):
+                    if p.is_dir() and not p.name.startswith('.'):
+                        available_profiles.append(str(p))
 
-                    # Mỗi voice dùng profile riêng để tránh conflict
-                    profile_dir = f"./chrome_profiles/voice_{voice_id}"
-                    Path(profile_dir).mkdir(parents=True, exist_ok=True)
+            if not available_profiles:
+                self.log("⚠️ Không có Chrome profile nào trong cài đặt!", "ERROR")
+                return
+
+            num_voices = len(voice_data)
+            self.log(f"📁 Tìm thấy {len(available_profiles)} Chrome profiles: {[Path(p).name for p in available_profiles]}")
+
+            # Kiểm tra đủ profile cho tất cả voices
+            if num_voices > len(available_profiles):
+                self.log(f"⚠️ Có {num_voices} voices nhưng chỉ có {len(available_profiles)} profiles!", "WARN")
+                self.log(f"   → Chỉ chạy song song {len(available_profiles)} voices, còn lại chờ", "WARN")
+
+            def setup_chrome(voice_id: int) -> bool:
+                """Setup Chrome với profile có sẵn cho voice."""
+                try:
+                    # Mỗi voice cần 1 profile riêng - không dùng chung
+                    if voice_id >= len(available_profiles):
+                        self.root.after(0, lambda vid=voice_id: self.log(f"[Voice {vid}] ⏳ Không đủ profile - đợi voice khác xong", "WARN"))
+                        return False  # Sẽ được xử lý sau
+
+                    profile_dir = available_profiles[voice_id]
+                    self.root.after(0, lambda vid=voice_id, p=profile_dir: self.log(f"[Voice {vid}] 🌐 Dùng profile: {Path(p).name}"))
 
                     # Tạo DrissionFlowAPI (proxy được xử lý tự động qua Webshare với worker_id)
                     api = DrissionFlowAPI(
