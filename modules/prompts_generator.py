@@ -1098,8 +1098,52 @@ class PromptGenerator:
         self.logger.info("Step 3: DIRECTOR'S SHOOTING PLAN - Đạo diễn quyết định ảnh!")
         self.logger.info("=" * 50)
 
+        # === PROGRESSIVE SAVE CALLBACK cho Director ===
+        # Lưu mỗi part ngay khi hoàn thành (không đợi toàn bộ director xong)
+        director_parts_saved = []
+
+        def on_director_part_complete(part_data):
+            """Callback để lưu từng part của director ngay khi hoàn thành."""
+            try:
+                part_num = part_data.get("part_number", 0)
+                part_name = part_data.get("part_name", "Unknown")
+                story_parts = part_data.get("story_parts", [])
+
+                # Convert story_parts → scenes và lưu
+                temp_shooting_plan = {"story_parts": story_parts}
+                part_scenes = self._convert_shooting_plan_to_scenes(temp_shooting_plan)
+
+                if part_scenes:
+                    # Lưu vào director_plan sheet
+                    for scene in part_scenes:
+                        try:
+                            # Check if scene already exists
+                            existing = workbook.get_director_plan()
+                            existing_ids = {p['plan_id'] for p in existing} if existing else set()
+
+                            if scene['scene_id'] not in existing_ids:
+                                workbook._ensure_director_plan_sheet()
+                                ws = workbook.workbook[workbook.DIRECTOR_PLAN_SHEET]
+                                next_row = ws.max_row + 1
+                                ws.cell(row=next_row, column=1, value=scene.get("scene_id", 0))
+                                ws.cell(row=next_row, column=2, value=scene.get("srt_start", ""))
+                                ws.cell(row=next_row, column=3, value=scene.get("srt_end", ""))
+                                ws.cell(row=next_row, column=4, value=scene.get("duration", 0))
+                                ws.cell(row=next_row, column=5, value=scene.get("text", "")[:500])
+                                ws.cell(row=next_row, column=6, value="pending")
+                        except:
+                            pass
+
+                    workbook.save()
+                    director_parts_saved.append(part_num)
+                    self.logger.info(f"[DIRECTOR] Part {part_num} ({part_name}): {len(part_scenes)} scenes saved")
+
+            except Exception as e:
+                self.logger.warning(f"[DIRECTOR] Progressive save error: {e}")
+
         directors_shooting = self._create_directors_shooting_plan(
-            full_story, srt_entries, characters, locations, global_style
+            full_story, srt_entries, characters, locations, global_style,
+            on_part_complete=on_director_part_complete  # Truyền callback
         )
 
         using_director_prompts = False  # Flag để biết có dùng prompts từ đạo diễn không
