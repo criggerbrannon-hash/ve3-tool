@@ -1085,35 +1085,23 @@ class PromptGenerator:
 
         self.logger.info(f"[VIDEO] Tổng thời lượng: {video_duration_seconds:.0f}s ({video_duration_seconds/60:.1f} phút)")
 
-        # === STEP 1.5: TẠO BACKUP SCENES VỚI CHARACTER/LOCATION MAPPING ===
-        # Mục đích: Nếu Director API fail, vẫn có scenes với đầy đủ tham chiếu
+        # === STEP 1.5: TẠO BACKUP SCENES BẰNG AI ===
+        # Mục đích: Backup có chất lượng như prompts thật (AI-generated, không phải keyword matching)
         self.logger.info("=" * 50)
-        self.logger.info("Step 1.5: Tạo BACKUP SCENES với character/location mapping...")
+        self.logger.info("Step 1.5: Tạo BACKUP SCENES bằng AI (quality backup)...")
         self.logger.info("=" * 50)
 
-        # Tạo mapping từ character name → character id
-        char_name_to_id = {}
+        # Format character info cho AI
+        chars_info_list = []
         for c in characters:
-            if c.name:
-                # Lowercase và bỏ dấu để dễ match
-                name_lower = c.name.lower()
-                char_name_to_id[name_lower] = c.id
-                # Thêm các biến thể tên
-                if ' ' in c.name:
-                    # Tên đầy đủ và tên ngắn
-                    parts = c.name.split()
-                    for part in parts:
-                        if len(part) > 2:
-                            char_name_to_id[part.lower()] = c.id
+            chars_info_list.append(f"- {c.id}: {c.name} ({c.role})")
+        chars_info = "\n".join(chars_info_list) if chars_info_list else "- nvc: Narrator (người kể chuyện)"
 
-        # Tạo mapping từ location name → location id
-        loc_name_to_id = {}
-        default_location = None
+        # Format location info cho AI
+        locs_info_list = []
         for loc in locations:
-            if loc.name:
-                loc_name_to_id[loc.name.lower()] = loc.id
-                if not default_location:
-                    default_location = loc.id
+            locs_info_list.append(f"- {loc.id}: {loc.name}")
+        locs_info = "\n".join(locs_info_list) if locs_info_list else "- general: Bối cảnh chung"
 
         # Chia SRT thành scenes (time-based)
         backup_scenes = group_srt_into_scenes(
@@ -1121,92 +1109,149 @@ class PromptGenerator:
             min_duration=self.min_scene_duration,
             max_duration=self.max_scene_duration
         )
-        self.logger.info(f"[BACKUP] Tạo {len(backup_scenes)} backup scenes từ SRT")
+        self.logger.info(f"[BACKUP] Cần tạo backup cho {len(backup_scenes)} scenes")
 
-        # Cho mỗi scene, xác định characters và location
+        # Gọi AI để tạo backup prompts (batch để nhanh hơn)
         backup_scenes_data = []
-        for i, scene in enumerate(backup_scenes):
-            scene_text = scene.get("text", "")
-            scene_text_lower = scene_text.lower()
+        BATCH_SIZE = 15  # 15 scenes/batch để AI không bị quá tải
 
-            # Tìm characters xuất hiện trong scene
-            chars_in_scene = []
-            for char_name, char_id in char_name_to_id.items():
-                if char_name in scene_text_lower and char_id not in chars_in_scene:
-                    chars_in_scene.append(char_id)
+        # Danh sách shot types để AI chọn (đa dạng)
+        shot_types = [
+            "Close-up shot", "Medium shot", "Wide establishing shot",
+            "Over-the-shoulder shot", "Low angle shot", "High angle shot",
+            "Dutch angle shot", "Point-of-view shot", "Two-shot"
+        ]
 
-            # Nếu không tìm thấy character nào, dùng narrator (nvc)
-            if not chars_in_scene:
-                chars_in_scene = ["nvc"]
+        for batch_idx in range(0, len(backup_scenes), BATCH_SIZE):
+            batch = backup_scenes[batch_idx:batch_idx + BATCH_SIZE]
+            batch_num = batch_idx // BATCH_SIZE + 1
+            total_batches = (len(backup_scenes) + BATCH_SIZE - 1) // BATCH_SIZE
 
-            # Tìm location
-            location_in_scene = default_location or ""
-            for loc_name, loc_id in loc_name_to_id.items():
-                if loc_name in scene_text_lower:
-                    location_in_scene = loc_id
-                    break
+            self.logger.info(f"[BACKUP] Processing batch {batch_num}/{total_batches} ({len(batch)} scenes)...")
 
-            # Format timestamps
-            start_time = scene.get("start_time")
-            end_time = scene.get("end_time")
-            if hasattr(start_time, 'strftime'):
-                srt_start = start_time.strftime("%H:%M:%S") + ",000"
-                srt_end = end_time.strftime("%H:%M:%S") + ",000"
-                duration = (end_time - start_time).total_seconds()
-            else:
-                srt_start = str(scene.get("srt_start", "00:00:00,000"))
-                srt_end = str(scene.get("srt_end", "00:00:00,000"))
-                duration = scene.get("duration", 5.0)
+            # Format scenes cho prompt
+            scenes_text = ""
+            for i, scene in enumerate(batch):
+                scene_id = scene.get("scene_id", batch_idx + i + 1)
+                scene_text = scene.get("text", "")[:200]
 
-            # === XÁC ĐỊNH SHOT TYPE DỰA VÀO NỘI DUNG ===
-            shot_type = "Medium shot"  # Default
-            scene_text_check = scene_text_lower
+                start_time = scene.get("start_time")
+                if hasattr(start_time, 'strftime'):
+                    time_str = start_time.strftime("%H:%M:%S")
+                else:
+                    time_str = str(scene.get("srt_start", "00:00:00"))
 
-            # Close-up: cảm xúc, đối thoại, nội tâm
-            closeup_keywords = ['nói', 'hỏi', 'trả lời', 'nghĩ', 'cảm', 'buồn', 'vui', 'giận',
-                               'khóc', 'cười', 'yêu', 'thương', 'sợ', 'lo', 'thì thầm', 'nước mắt']
-            if any(kw in scene_text_check for kw in closeup_keywords):
-                shot_type = "Close-up shot"
+                scenes_text += f"\nScene {scene_id} [{time_str}]: \"{scene_text}\"\n"
 
-            # Wide shot: bối cảnh, môi trường, di chuyển lớn
-            wide_keywords = ['nhìn ra', 'toàn cảnh', 'ngôi làng', 'thành phố', 'khu rừng',
-                            'bầu trời', 'đồng ruộng', 'biển', 'núi', 'xa xa', 'rộng lớn']
-            if any(kw in scene_text_check for kw in wide_keywords):
-                shot_type = "Wide establishing shot"
+            # Prompt để AI tạo backup
+            backup_prompt = f"""Bạn là đạo diễn hình ảnh. Phân tích các scenes và tạo prompt cho mỗi scene.
 
-            # Over-the-shoulder: đối thoại 2 người
-            if len(chars_in_scene) >= 2:
-                dialog_keywords = ['nói với', 'hỏi', 'trả lời', 'đối thoại']
-                if any(kw in scene_text_check for kw in dialog_keywords):
-                    shot_type = "Over-the-shoulder shot"
+NHÂN VẬT CÓ SẴN:
+{chars_info}
 
-            # Action shot: hành động
-            action_keywords = ['chạy', 'nhảy', 'đánh', 'bắn', 'chiến đấu', 'trốn', 'đuổi']
-            if any(kw in scene_text_check for kw in action_keywords):
-                shot_type = "Dynamic action shot"
+BỐI CẢNH CÓ SẴN:
+{locs_info}
 
-            # Tạo default prompt với character, location VÀ shot type
-            char_refs = ", ".join([f"{c}.png" for c in chars_in_scene])
-            default_prompt = (
-                f"{shot_type}, {scene_text[:150]}. "
-                f"Characters: {', '.join(chars_in_scene)}. "
-                f"Location: {location_in_scene or 'general setting'}. "
-                f"Cinematic lighting, 4K photorealistic, film grain."
-            )
+CÁC LOẠI GÓC QUAY (chọn đa dạng, đừng lặp lại liên tục):
+{', '.join(shot_types)}
 
-            backup_scenes_data.append({
-                "scene_id": scene.get("scene_id", i + 1),
-                "srt_start": srt_start,
-                "srt_end": srt_end,
-                "duration": round(duration, 2) if isinstance(duration, float) else duration,
-                "text": scene_text[:500],
-                "characters_used": json.dumps(chars_in_scene),
-                "location_used": location_in_scene,
-                "reference_files": json.dumps([f"{c}.png" for c in chars_in_scene]),
-                "img_prompt": default_prompt,
-                "shot_type": shot_type,  # Lưu shot type để reference
-                "status": "backup"  # Đánh dấu là backup, chưa được director override
-            })
+SCENES CẦN PHÂN TÍCH:
+{scenes_text}
+
+Cho MỖI scene, trả về JSON với format:
+{{
+  "scenes": [
+    {{
+      "scene_id": 1,
+      "characters": ["char_id1", "char_id2"],  // ID từ danh sách trên, dùng "nvc" nếu là narrator
+      "location": "loc_id",  // ID từ danh sách trên
+      "shot_type": "Medium shot",  // Chọn đa dạng, phù hợp nội dung
+      "visual_description": "Mô tả ngắn cảnh quay",
+      "img_prompt": "Prompt chi tiết cho ảnh, bao gồm shot type, nhân vật, bối cảnh, ánh sáng, style"
+    }}
+  ]
+}}
+
+QUY TẮC:
+1. shot_type phải ĐA DẠNG (không dùng Medium shot cho tất cả)
+2. Close-up cho cảm xúc, Wide shot cho establishing, Action shot cho chuyển động
+3. img_prompt phải đủ chi tiết: shot type + nhân vật + hành động + bối cảnh + ánh sáng + style
+4. Chỉ dùng character/location IDs từ danh sách có sẵn
+
+Trả về JSON:"""
+
+            try:
+                # Gọi AI (dùng model nhỏ/nhanh cho backup)
+                response = self._generate_content(backup_prompt, temperature=0.7, max_tokens=4000)
+
+                if response:
+                    json_data = self._extract_json(response)
+                    if json_data and "scenes" in json_data:
+                        for ai_scene in json_data["scenes"]:
+                            scene_id = ai_scene.get("scene_id", 0)
+
+                            # Tìm scene gốc để lấy timestamps
+                            original_scene = None
+                            for s in batch:
+                                if s.get("scene_id") == scene_id:
+                                    original_scene = s
+                                    break
+
+                            if not original_scene:
+                                # Fallback: dùng index
+                                idx = scene_id - batch_idx - 1
+                                if 0 <= idx < len(batch):
+                                    original_scene = batch[idx]
+
+                            if original_scene:
+                                start_time = original_scene.get("start_time")
+                                end_time = original_scene.get("end_time")
+                                if hasattr(start_time, 'strftime'):
+                                    srt_start = start_time.strftime("%H:%M:%S") + ",000"
+                                    srt_end = end_time.strftime("%H:%M:%S") + ",000"
+                                    duration = (end_time - start_time).total_seconds()
+                                else:
+                                    srt_start = str(original_scene.get("srt_start", "00:00:00,000"))
+                                    srt_end = str(original_scene.get("srt_end", "00:00:00,000"))
+                                    duration = original_scene.get("duration", 5.0)
+
+                                chars_used = ai_scene.get("characters", ["nvc"])
+                                backup_scenes_data.append({
+                                    "scene_id": scene_id,
+                                    "srt_start": srt_start,
+                                    "srt_end": srt_end,
+                                    "duration": round(duration, 2) if isinstance(duration, float) else duration,
+                                    "text": original_scene.get("text", "")[:500],
+                                    "characters_used": json.dumps(chars_used),
+                                    "location_used": ai_scene.get("location", ""),
+                                    "reference_files": json.dumps([f"{c}.png" for c in chars_used if c != "nvc"]),
+                                    "img_prompt": ai_scene.get("img_prompt", ""),
+                                    "shot_type": ai_scene.get("shot_type", "Medium shot"),
+                                    "visual_description": ai_scene.get("visual_description", ""),
+                                    "status": "backup"
+                                })
+
+                        self.logger.info(f"[BACKUP] Batch {batch_num}: AI tạo {len(json_data['scenes'])} backup prompts")
+                    else:
+                        self.logger.warning(f"[BACKUP] Batch {batch_num}: AI response invalid, using fallback")
+                        # Fallback cho batch này
+                        for scene in batch:
+                            backup_scenes_data.append(self._create_simple_backup_scene(scene, characters, locations))
+                else:
+                    self.logger.warning(f"[BACKUP] Batch {batch_num}: No AI response, using fallback")
+                    for scene in batch:
+                        backup_scenes_data.append(self._create_simple_backup_scene(scene, characters, locations))
+
+            except Exception as e:
+                self.logger.warning(f"[BACKUP] Batch {batch_num} error: {e}, using fallback")
+                for scene in batch:
+                    backup_scenes_data.append(self._create_simple_backup_scene(scene, characters, locations))
+
+            # Rate limiting
+            if batch_idx + BATCH_SIZE < len(backup_scenes):
+                time.sleep(1)
+
+        self.logger.info(f"[BACKUP] Tổng cộng {len(backup_scenes_data)} backup scenes đã tạo")
 
         # Lưu backup vào Excel (director_plan sheet)
         try:
@@ -3048,6 +3093,70 @@ Estimated Shots: {part_info.get('estimated_shots', 5)}
 
         self.logger.info(f"[FALLBACK] Created {len(parts)} parts with {shot_num - start_shot_num} total shots")
         return parts
+
+    def _create_simple_backup_scene(self, scene: Dict, characters: List, locations: List) -> Dict:
+        """
+        FALLBACK: Tạo backup scene đơn giản khi AI backup fails.
+        Dùng keyword matching thay vì AI.
+        """
+        scene_text = scene.get("text", "")
+        scene_text_lower = scene_text.lower()
+
+        # Tìm characters bằng keyword matching
+        chars_in_scene = []
+        for c in characters:
+            if c.name and c.name.lower() in scene_text_lower:
+                chars_in_scene.append(c.id)
+        if not chars_in_scene:
+            chars_in_scene = ["nvc"]
+
+        # Tìm location
+        location_in_scene = locations[0].id if locations else ""
+        for loc in locations:
+            if loc.name and loc.name.lower() in scene_text_lower:
+                location_in_scene = loc.id
+                break
+
+        # Format timestamps
+        start_time = scene.get("start_time")
+        end_time = scene.get("end_time")
+        if hasattr(start_time, 'strftime'):
+            srt_start = start_time.strftime("%H:%M:%S") + ",000"
+            srt_end = end_time.strftime("%H:%M:%S") + ",000"
+            duration = (end_time - start_time).total_seconds()
+        else:
+            srt_start = str(scene.get("srt_start", "00:00:00,000"))
+            srt_end = str(scene.get("srt_end", "00:00:00,000"))
+            duration = scene.get("duration", 5.0)
+
+        # Simple shot type detection
+        shot_type = "Medium shot"
+        if any(kw in scene_text_lower for kw in ['nói', 'hỏi', 'khóc', 'cười']):
+            shot_type = "Close-up shot"
+        elif any(kw in scene_text_lower for kw in ['nhìn ra', 'toàn cảnh', 'bầu trời']):
+            shot_type = "Wide establishing shot"
+
+        # Create prompt
+        default_prompt = (
+            f"{shot_type}, {scene_text[:150]}. "
+            f"Characters: {', '.join(chars_in_scene)}. "
+            f"Location: {location_in_scene or 'general'}. "
+            f"Cinematic lighting, 4K photorealistic."
+        )
+
+        return {
+            "scene_id": scene.get("scene_id", 0),
+            "srt_start": srt_start,
+            "srt_end": srt_end,
+            "duration": round(duration, 2) if isinstance(duration, float) else duration,
+            "text": scene_text[:500],
+            "characters_used": json.dumps(chars_in_scene),
+            "location_used": location_in_scene,
+            "reference_files": json.dumps([f"{c}.png" for c in chars_in_scene if c != "nvc"]),
+            "img_prompt": default_prompt,
+            "shot_type": shot_type,
+            "status": "backup_fallback"
+        }
 
     def _convert_shooting_plan_to_scenes(self, shooting_plan: Dict) -> List[Dict[str, Any]]:
         """
