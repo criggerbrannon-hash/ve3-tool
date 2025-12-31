@@ -3778,9 +3778,8 @@ class BrowserFlowGenerator:
                         )
 
                         if success and video_url:
-                            # Download video
-                            video_dir = excel_path.parent / "video" if excel_path else output_dir / "video"
-                            video_dir.mkdir(parents=True, exist_ok=True)
+                            # Download video - lưu vào img/ folder (giống smart_engine)
+                            video_dir = output_dir  # img/ folder
                             video_file = video_dir / f"{scene_id}.mp4"
 
                             try:
