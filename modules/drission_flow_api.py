@@ -545,9 +545,8 @@ class DrissionFlowAPI:
 
             # Headless mode - chạy Chrome ẩn
             if self._headless:
-                options.set_argument('--headless=new')  # Chrome 109+ headless mode
-                options.set_argument('--window-size=1920,1080')  # Cần set size cho headless
-                options.set_argument('--disable-extensions')
+                options.headless()  # Dùng method built-in của DrissionPage
+                options.set_argument('--window-size=1920,1080')
                 options.set_argument('--disable-popup-blocking')
                 options.set_argument('--ignore-certificate-errors')
                 self.log("🔇 Headless mode: ON (Chrome chạy ẩn)")
