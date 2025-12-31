@@ -563,9 +563,8 @@ class DrissionFlowAPI:
                     rotating = manager.rotating_endpoint
                     self._is_rotating_mode = True
 
-                    # Session ID = worker_id * 1000 + timestamp_suffix (đảm bảo unique)
-                    import time as _time
-                    session_id = (self.worker_id + 1) * 1000 + int(_time.time()) % 1000
+                    # Session ID đơn giản: worker 0 = session 1, worker 1 = session 2...
+                    session_id = self.worker_id + 1
                     session_username = rotating.get_username_for_session(session_id)
 
                     try:
