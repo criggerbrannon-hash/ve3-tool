@@ -630,6 +630,9 @@ class DrissionFlowAPI:
                 self._is_rotating_mode = False
                 self.log("⚠️ Webshare proxy không sẵn sàng - chạy không có proxy", "WARN")
 
+            # Tắt Chrome đang dùng profile này trước (tránh conflict)
+            self._kill_chrome_using_profile()
+
             # Clean up profile lock trước khi start (tránh conflict)
             try:
                 lock_file = self.profile_dir / "SingletonLock"
@@ -1589,6 +1592,52 @@ class DrissionFlowAPI:
             self._bridge_port = None
 
         self._ready = False
+
+    def _kill_chrome_using_profile(self):
+        """Tắt Chrome đang dùng profile này để tránh conflict."""
+        import subprocess
+        import platform
+
+        profile_path = str(self.profile_dir.absolute())
+
+        try:
+            if platform.system() == 'Windows':
+                # Windows: tìm và kill Chrome process dùng profile này
+                result = subprocess.run(
+                    ['wmic', 'process', 'where', "name='chrome.exe'", 'get', 'commandline,processid'],
+                    capture_output=True, text=True, timeout=10
+                )
+
+                if result.returncode == 0:
+                    lines = result.stdout.strip().split('\n')
+                    for line in lines:
+                        if profile_path.replace('/', '\\') in line or profile_path in line:
+                            # Tìm PID ở cuối dòng
+                            parts = line.strip().split()
+                            if parts:
+                                pid = parts[-1]
+                                if pid.isdigit():
+                                    subprocess.run(['taskkill', '/F', '/PID', pid],
+                                                 capture_output=True, timeout=5)
+                                    self.log(f"  Đã tắt Chrome cũ (PID: {pid})")
+            else:
+                # Linux/Mac: dùng pkill
+                result = subprocess.run(
+                    ['pgrep', '-f', profile_path],
+                    capture_output=True, text=True, timeout=10
+                )
+                if result.returncode == 0:
+                    pids = result.stdout.strip().split('\n')
+                    for pid in pids:
+                        if pid.isdigit():
+                            subprocess.run(['kill', '-9', pid], capture_output=True, timeout=5)
+                            self.log(f"  Đã tắt Chrome cũ (PID: {pid})")
+
+            # Đợi Chrome tắt hẳn
+            time.sleep(1)
+
+        except Exception as e:
+            pass  # Không quan trọng nếu không kill được
 
     def _setup_proxy_auth(self):
         """
