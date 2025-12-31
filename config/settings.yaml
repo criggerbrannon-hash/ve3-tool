@@ -11,6 +11,13 @@ project_root: "./VE3_TOOL"
 chrome_path: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
 chrome_profile: "C:\\Users\\admin\\AppData\\Local\\Google\\Chrome\\User Data\\Profile 2"
 
+# Nhiều Chrome profiles cho chạy song song (parallel_voices)
+# Mỗi worker dùng 1 profile, xong voice này thì lấy voice tiếp theo
+# Số profiles nên >= parallel_voices
+chrome_profiles:
+  - "C:\\Users\\admin\\AppData\\Local\\Google\\Chrome\\User Data\\Profile 2"
+  - "C:\\Users\\admin\\AppData\\Local\\Google\\Chrome\\User Data\\Profile 3"
+
 # ============================================================================
 # GOOGLE FLOW API Configuration
 # ============================================================================
