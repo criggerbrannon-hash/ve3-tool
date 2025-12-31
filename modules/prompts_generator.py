@@ -1066,17 +1066,77 @@ class PromptGenerator:
             except Exception as e:
                 self.logger.warning(f"[PARALLEL] Callback error (non-fatal): {e}")
 
-        # Step 1.5: Director's Treatment - Phân tích cấu trúc câu chuyện
+        # === GROUND TRUTH: Tính số scenes CẦN CÓ từ SRT (không phụ thuộc AI) ===
+        # Đây là "sự thật" - số scenes thực sự cần dựa trên timestamps
         self.logger.info("=" * 50)
-        self.logger.info("Step 1.5: Tạo DIRECTOR'S TREATMENT (Kịch bản đạo diễn)...")
+        self.logger.info("Step 1.5: Tính GROUND TRUTH scenes từ SRT...")
+        self.logger.info("=" * 50)
+
+        ground_truth_scenes = group_srt_into_scenes(
+            srt_entries,
+            min_duration=self.min_scene_duration,
+            max_duration=self.max_scene_duration
+        )
+        self.logger.info(f"[GROUND TRUTH] SRT cần {len(ground_truth_scenes)} scenes (max {self.max_scene_duration}s/scene)")
+
+        # Convert ground truth sang format chuẩn
+        ground_truth_data = []
+        for i, scene in enumerate(ground_truth_scenes):
+            # Format timestamp
+            start_time = scene.get("start_time")
+            end_time = scene.get("end_time")
+            if hasattr(start_time, 'strftime'):
+                srt_start = start_time.strftime("%H:%M:%S") + ",000"
+                srt_end = end_time.strftime("%H:%M:%S") + ",000"
+            else:
+                srt_start = str(scene.get("srt_start", "00:00:00,000"))
+                srt_end = str(scene.get("srt_end", "00:00:00,000"))
+
+            duration = scene.get("duration", 0)
+            if isinstance(duration, (int, float)):
+                pass
+            elif hasattr(start_time, 'total_seconds'):
+                duration = (end_time - start_time).total_seconds()
+            else:
+                duration = 5.0
+
+            ground_truth_data.append({
+                "scene_id": scene.get("scene_id", i + 1),
+                "srt_start": srt_start,
+                "srt_end": srt_end,
+                "duration": round(duration, 2),
+                "text": scene.get("text", "")[:500]
+            })
+
+        # === LƯU GROUND TRUTH VÀO EXCEL (TRƯỚC KHI GỌI AI) ===
+        try:
+            existing_plan = workbook.get_director_plan()
+            if not existing_plan:
+                self.logger.info(f"[GROUND TRUTH] Lưu {len(ground_truth_data)} scenes vào director_plan...")
+                workbook.save_director_plan(ground_truth_data)
+            elif len(existing_plan) < len(ground_truth_data):
+                # Plan cũ thiếu → cập nhật với ground truth
+                self.logger.warning(
+                    f"[GROUND TRUTH] Plan cũ chỉ có {len(existing_plan)} scenes, "
+                    f"cần {len(ground_truth_data)} → cập nhật!"
+                )
+                workbook.save_director_plan(ground_truth_data)
+            else:
+                self.logger.info(f"[GROUND TRUTH] Đã có plan {len(existing_plan)} scenes")
+        except Exception as e:
+            self.logger.warning(f"[GROUND TRUTH] Lỗi lưu: {e}")
+
+        # Step 2: Director's Treatment - Phân tích cấu trúc câu chuyện
+        self.logger.info("=" * 50)
+        self.logger.info("Step 2: Tạo DIRECTOR'S TREATMENT (Kịch bản đạo diễn)...")
         self.logger.info("=" * 50)
         directors_treatment = self._create_directors_treatment(full_story)
         if directors_treatment:
             self.logger.info(f"[Director's Treatment] Story parts: {len(directors_treatment.get('story_parts', []))}")
 
-        # Step 2: DIRECTOR'S SHOOTING PLAN - Đạo diễn lên kế hoạch quay
+        # Step 3: DIRECTOR'S SHOOTING PLAN - Đạo diễn lên kế hoạch quay
         self.logger.info("=" * 50)
-        self.logger.info("Step 2: DIRECTOR'S SHOOTING PLAN - Đạo diễn quyết định ảnh!")
+        self.logger.info("Step 3: DIRECTOR'S SHOOTING PLAN - Đạo diễn quyết định ảnh!")
         self.logger.info("=" * 50)
 
         directors_shooting = self._create_directors_shooting_plan(
@@ -1090,35 +1150,19 @@ class PromptGenerator:
             scenes_data = self._convert_shooting_plan_to_scenes(directors_shooting["shooting_plan"])
             using_director_prompts = True
             self.logger.info(f"[Director] ✓ Sử dụng {len(scenes_data)} shots từ đạo diễn")
+
+            # === VALIDATE: So sánh với ground truth ===
+            if len(scenes_data) < len(ground_truth_data):
+                self.logger.warning(
+                    f"[VALIDATE] ⚠️ AI chỉ trả về {len(scenes_data)}/{len(ground_truth_data)} scenes!"
+                )
         else:
             # Fallback: Dùng smart_divide_scenes cũ
             self.logger.warning("[Director] Không có kế hoạch quay, sử dụng smart_divide_scenes...")
             scenes_data = self._smart_divide_scenes(srt_entries, characters, locations, directors_treatment, global_style)
             using_director_prompts = False
 
-        self.logger.info(f"Tổng cộng {len(scenes_data)} scenes")
-
-        # === LƯU DIRECTOR PLAN VÀO EXCEL (TRƯỚC KHI TẠO PROMPTS) ===
-        # Mục đích: Để detect gaps nếu API fail giữa chừng
-        try:
-            # Kiểm tra xem đã có plan chưa
-            existing_plan = workbook.get_director_plan()
-            if not existing_plan:
-                # Chưa có plan → lưu mới
-                self.logger.info(f"[DIRECTOR PLAN] Lưu {len(scenes_data)} scenes vào director_plan sheet...")
-                workbook.save_director_plan(scenes_data)
-            else:
-                # Đã có plan → so sánh
-                if len(existing_plan) != len(scenes_data):
-                    self.logger.warning(
-                        f"[DIRECTOR PLAN] Kế hoạch cũ có {len(existing_plan)} scenes, "
-                        f"kế hoạch mới có {len(scenes_data)} scenes - cập nhật!"
-                    )
-                    workbook.save_director_plan(scenes_data)
-                else:
-                    self.logger.info(f"[DIRECTOR PLAN] Đã có kế hoạch {len(existing_plan)} scenes")
-        except Exception as e:
-            self.logger.warning(f"[DIRECTOR PLAN] Lỗi lưu: {e}")
+        self.logger.info(f"Tổng cộng {len(scenes_data)} scenes (ground truth: {len(ground_truth_data)})")
 
         # === THÔNG BÁO TỔNG SỐ SCENES CHO CALLER ===
         if total_scenes_callback:
@@ -1572,21 +1616,121 @@ class PromptGenerator:
         else:
             self.logger.info(f"[PROGRESSIVE] Hoàn thành - đã lưu {len(scenes_data)} scenes")
 
-        # === DETECT GAPS: Kiểm tra scenes thiếu ===
-        try:
-            gaps = workbook.detect_scene_gaps()
-            if gaps:
-                self.logger.warning(f"[GAP DETECTED] Phát hiện {len(gaps)} scenes THIẾU prompt:")
-                for gap in gaps[:10]:  # Chỉ log 10 đầu tiên
+        # === AUTO-RETRY: Tự động tạo lại scenes thiếu ===
+        max_gap_retries = 3
+        for retry_round in range(max_gap_retries):
+            try:
+                gaps = workbook.detect_scene_gaps()
+                if not gaps:
+                    self.logger.info(f"[GAP CHECK] ✓ Không có scenes thiếu - hoàn thành!")
+                    break
+
+                self.logger.warning(f"[GAP RETRY {retry_round + 1}/{max_gap_retries}] Phát hiện {len(gaps)} scenes THIẾU:")
+                for gap in gaps[:5]:
                     self.logger.warning(
-                        f"  - Scene {gap['plan_id']}: {gap['srt_start']} → {gap['srt_end']} "
-                        f"({gap['srt_text'][:50]}...)"
+                        f"  - Scene {gap['plan_id']}: {gap['srt_start']} → {gap['srt_end']}"
                     )
-                if len(gaps) > 10:
-                    self.logger.warning(f"  ... và {len(gaps) - 10} scenes nữa")
-                self.logger.warning("[GAP] Chạy lại để tạo prompt cho scenes thiếu!")
-        except Exception as e:
-            self.logger.debug(f"[GAP] Không kiểm tra được gaps: {e}")
+                if len(gaps) > 5:
+                    self.logger.warning(f"  ... và {len(gaps) - 5} scenes nữa")
+
+                # Lấy data từ director_plan để retry
+                plan_data = workbook.get_director_plan()
+                gap_ids = {g['plan_id'] for g in gaps}
+
+                # Tạo scenes_data cho retry từ plan
+                retry_scenes = []
+                for plan in plan_data:
+                    if plan['plan_id'] in gap_ids:
+                        retry_scenes.append({
+                            "scene_id": plan['plan_id'],
+                            "srt_start": plan['srt_start'],
+                            "srt_end": plan['srt_end'],
+                            "duration": plan['duration'],
+                            "text": plan['srt_text'],
+                            "visual_moment": plan['srt_text'][:200],
+                            "shot_type": "Medium shot",
+                            "characters_in_scene": [],
+                            "location_id": ""
+                        })
+
+                if not retry_scenes:
+                    self.logger.warning("[GAP RETRY] Không tìm được data từ plan để retry")
+                    break
+
+                self.logger.info(f"[GAP RETRY] Đang tạo prompts cho {len(retry_scenes)} scenes thiếu...")
+
+                # Generate prompts cho scenes thiếu
+                retry_prompts = self._generate_scene_prompts(
+                    characters, retry_scenes, context_lock,
+                    locations=locations,
+                    global_style_override=global_style
+                )
+
+                # Lưu vào Excel
+                saved_count = 0
+                for scene_data, prompts in zip(retry_scenes, retry_prompts):
+                    if not prompts.get("img_prompt"):
+                        continue
+
+                    chars_used = prompts.get("characters_used", [])
+                    chars_str = json.dumps(chars_used) if isinstance(chars_used, list) else str(chars_used)
+
+                    ref_files = []
+                    if chars_used:
+                        if isinstance(chars_used, str):
+                            try:
+                                chars_used = json.loads(chars_used)
+                            except:
+                                chars_used = [chars_used]
+                        for char_id in chars_used:
+                            if char_id and not char_id.endswith('.png'):
+                                ref_files.append(f"{char_id}.png")
+                    refs_str = json.dumps(ref_files)
+
+                    scene = Scene(
+                        scene_id=scene_data["scene_id"],
+                        srt_start=scene_data.get("srt_start", "00:00:00,000"),
+                        srt_end=scene_data.get("srt_end", "00:00:05,000"),
+                        duration=scene_data.get("duration", 5.0),
+                        planned_duration=scene_data.get("duration", 5.0),
+                        srt_text=scene_data.get("text", "")[:500],
+                        img_prompt=prompts.get("img_prompt", ""),
+                        video_prompt=prompts.get("video_prompt", ""),
+                        status_img="pending",
+                        status_vid="pending",
+                        characters_used=chars_str,
+                        location_used=prompts.get("location_used", ""),
+                        reference_files=refs_str
+                    )
+                    workbook.add_scene(scene)
+                    saved_count += 1
+
+                    # Update director_plan status
+                    try:
+                        workbook.update_director_plan_status(scene_data["scene_id"], "done")
+                    except:
+                        pass
+
+                workbook.save()
+                self.logger.info(f"[GAP RETRY] ✓ Đã tạo thêm {saved_count}/{len(retry_scenes)} scenes")
+
+                # Delay trước retry tiếp theo
+                if retry_round < max_gap_retries - 1:
+                    time.sleep(2)
+
+            except Exception as e:
+                self.logger.error(f"[GAP RETRY] Lỗi: {e}")
+                break
+
+        # Final check
+        try:
+            final_gaps = workbook.detect_scene_gaps()
+            if final_gaps:
+                self.logger.warning(f"[FINAL] Vẫn còn {len(final_gaps)} scenes thiếu sau {max_gap_retries} retry!")
+            else:
+                self.logger.info("[FINAL] ✓ Tất cả scenes đã có prompts!")
+        except:
+            pass
 
         return True
     
