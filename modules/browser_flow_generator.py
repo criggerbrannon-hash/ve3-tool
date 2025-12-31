@@ -155,39 +155,17 @@ class BrowserFlowGenerator:
             print(f"[{timestamp}] {icons.get(level, '')} {message}")
 
     def _get_profile_path(self) -> Optional[str]:
-        """Lấy Chrome profile path từ config.
+        """Lấy Chrome profile path - LUÔN dùng profiles của TOOL.
 
-        Ưu tiên:
-        1. chrome_profiles[worker_id] - list profiles cho parallel
-        2. chrome_profile - single profile (legacy)
-        3. profile_dir - tool profile
+        Mỗi worker có profile riêng: ./chrome_profiles/worker_0, worker_1, ...
+        Không dùng Chrome profile của user để tránh conflict.
         """
-        # === ƯU TIÊN 1: List profiles cho parallel (chrome_profiles) ===
-        chrome_profiles = self.config.get('chrome_profiles', [])
-        if chrome_profiles and isinstance(chrome_profiles, list):
-            # Lấy profile theo worker_id (round-robin nếu ít hơn workers)
-            profile_index = self.worker_id % len(chrome_profiles)
-            profile_path = chrome_profiles[profile_index]
-            if profile_path and Path(profile_path).exists():
-                self._log(f"[Profile] Worker {self.worker_id} → Profile #{profile_index}: {Path(profile_path).name}")
-                return str(profile_path)
-
-        # === ƯU TIÊN 2: Single profile (chrome_profile) ===
-        chrome_profile = self.config.get('chrome_profile', '')
-        if chrome_profile:
-            profile_path = Path(chrome_profile)
-            if profile_path.exists():
-                return str(profile_path)
-            # Thử resolve từ project root
-            abs_path = Path.cwd() / chrome_profile
-            if abs_path.exists():
-                return str(abs_path)
-
-        # === FALLBACK: Tool profile ===
-        if hasattr(self, 'profile_dir') and self.profile_dir:
-            return str(self.profile_dir)
-
-        return None
+        # === LUÔN DÙNG PROFILE CỦA TOOL ===
+        # Mỗi worker có profile riêng trong thư mục chrome_profiles của tool
+        profiles_dir = self.config.get('browser_profiles_dir', './chrome_profiles')
+        profile_path = Path(profiles_dir) / f"worker_{self.worker_id}"
+        profile_path.mkdir(parents=True, exist_ok=True)
+        return str(profile_path)
 
     def _find_excel_file(self) -> Optional[Path]:
         """Tim file Excel prompts trong project."""
@@ -3025,36 +3003,10 @@ class BrowserFlowGenerator:
             except Exception as e:
                 self._log(f"⚠️ Không đọc được config từ Excel: {e}", "warn")
 
-        # Chọn profile: ưu tiên saved profile từ Excel, fallback về default
-        # QUAN TRỌNG: Mỗi worker cần profile RIÊNG để chạy song song
-        if saved_chrome_profile:
-            profile_to_use = saved_chrome_profile
-            self._log(f"🔄 Dùng Chrome profile đã lưu: {profile_to_use}")
-        else:
-            # === PARALLEL MODE: Mỗi worker có profile riêng ===
-            # Kiểm tra có chrome_profiles list không (đã được chọn theo worker_id)
-            chrome_profiles_list = self.config.get('chrome_profiles', [])
-
-            if chrome_profiles_list and isinstance(chrome_profiles_list, list):
-                # Có list profiles → dùng trực tiếp (đã chọn theo worker_id trong _get_profile_path)
-                profile_to_use = self._get_profile_path()
-                if profile_to_use:
-                    self._log(f"📁 Chrome profile từ list: {Path(profile_to_use).name} (Worker {self.worker_id})")
-                else:
-                    # Fallback nếu profile không tồn tại
-                    profile_to_use = f"./chrome_profiles/worker_{self.worker_id}"
-                    Path(profile_to_use).mkdir(parents=True, exist_ok=True)
-                    self._log(f"📁 Tạo profile mới: {profile_to_use} (Worker {self.worker_id})")
-            else:
-                # Không có list → tạo subfolder cho mỗi worker
-                base_profile = self._get_profile_path()
-                if base_profile:
-                    profile_to_use = f"{base_profile}/worker_{self.worker_id}"
-                else:
-                    profile_to_use = f"./chrome_profiles/worker_{self.worker_id}"
-
-                Path(profile_to_use).mkdir(parents=True, exist_ok=True)
-                self._log(f"📁 Chrome profile: {profile_to_use} (Worker {self.worker_id})")
+        # Chọn profile: LUÔN dùng profile của TOOL (mỗi worker có profile riêng)
+        # Không dùng saved_chrome_profile vì có thể conflict khi chạy parallel
+        profile_to_use = self._get_profile_path()
+        self._log(f"📁 Chrome profile: {Path(profile_to_use).name} (Worker {self.worker_id})")
 
         # Đọc setting headless từ config (default: True = chạy ẩn)
         # Dùng chung setting 'browser_headless' với Selenium mode

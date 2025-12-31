@@ -3943,21 +3943,13 @@ class SmartEngine:
                 from modules.drission_flow_api import DrissionFlowAPI
                 ws_cfg = self.config.get('webshare_proxy', {})
 
-                # === Chọn profile cho worker này ===
-                # Ưu tiên chrome_profiles list, fallback về tạo mới
-                chrome_profiles = self.config.get('chrome_profiles', [])
-                if chrome_profiles and isinstance(chrome_profiles, list):
-                    profile_index = self.worker_id % len(chrome_profiles)
-                    profile_dir = chrome_profiles[profile_index]
-                    if not Path(profile_dir).exists():
-                        profile_dir = f"./chrome_profiles/worker_{self.worker_id}"
-                        Path(profile_dir).mkdir(parents=True, exist_ok=True)
-                else:
-                    profile_dir = f"./chrome_profiles/worker_{self.worker_id}"
-                    Path(profile_dir).mkdir(parents=True, exist_ok=True)
+                # === Profile của TOOL - mỗi worker có profile riêng ===
+                profiles_dir = self.config.get('browser_profiles_dir', './chrome_profiles')
+                profile_dir = Path(profiles_dir) / f"worker_{self.worker_id}"
+                profile_dir.mkdir(parents=True, exist_ok=True)
 
                 drission_api = DrissionFlowAPI(
-                    profile_dir=profile_dir,
+                    profile_dir=str(profile_dir),
                     headless=True,
                     verbose=False,
                     webshare_enabled=ws_cfg.get('enabled', True),

@@ -6,17 +6,11 @@ project_root: "./VE3_TOOL"
 # ============================================================================
 # CHROME SETTINGS (Cho tự động lấy Bearer Token)
 # ============================================================================
-# Tool sẽ sử dụng Chrome profile của bạn để tự động lấy token
+# Tool sử dụng Chrome profiles RIÊNG trong ./chrome_profiles/
+# Mỗi worker có profile riêng: worker_0, worker_1, ...
+# KHÔNG dùng Chrome profile của user để tránh conflict
 
 chrome_path: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
-chrome_profile: "C:\\Users\\admin\\AppData\\Local\\Google\\Chrome\\User Data\\Profile 2"
-
-# Nhiều Chrome profiles cho chạy song song (parallel_voices)
-# Mỗi worker dùng 1 profile, xong voice này thì lấy voice tiếp theo
-# Số profiles nên >= parallel_voices
-chrome_profiles:
-  - "C:\\Users\\admin\\AppData\\Local\\Google\\Chrome\\User Data\\Profile 2"
-  - "C:\\Users\\admin\\AppData\\Local\\Google\\Chrome\\User Data\\Profile 3"
 
 # ============================================================================
 # GOOGLE FLOW API Configuration
