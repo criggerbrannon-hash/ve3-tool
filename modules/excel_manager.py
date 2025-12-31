@@ -5,7 +5,7 @@ Quản lý file Excel chứa prompts và thông tin nhân vật.
 """
 
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 from datetime import datetime
 
 from openpyxl import Workbook, load_workbook
@@ -29,6 +29,21 @@ CHARACTERS_COLUMNS = [
     "image_file",       # Tên file ảnh tham chiếu (nvc.png, nvp1.png, ...)
     "status",           # Trạng thái (pending/done/error)
     "media_id",         # Media ID từ Google Flow API (dùng cho reference)
+]
+
+# Cột cho sheet Director Plan (lưu kế hoạch từ SRT trước khi tạo prompts)
+# Dùng để detect gaps và resume, có backup prompts với character/location refs
+DIRECTOR_PLAN_COLUMNS = [
+    "plan_id",          # ID theo thứ tự (1, 2, 3, ...)
+    "srt_start",        # Thời gian bắt đầu (HH:MM:SS,mmm)
+    "srt_end",          # Thời gian kết thúc (HH:MM:SS,mmm)
+    "duration",         # Độ dài (giây)
+    "srt_text",         # Nội dung text
+    "characters_used",  # JSON list nhân vật trong scene (backup)
+    "location_used",    # Location ID (backup)
+    "reference_files",  # JSON list reference files (backup)
+    "img_prompt",       # Backup prompt (dùng nếu director fail)
+    "status",           # backup/pending/done
 ]
 
 # Cột cho sheet Scenes
@@ -321,15 +336,17 @@ class PromptWorkbook:
     
     CHARACTERS_SHEET = "characters"
     SCENES_SHEET = "scenes"
+    DIRECTOR_PLAN_SHEET = "director_plan"
     
-    def __init__(self, path: Path):
+    def __init__(self, path: Union[str, Path]):
         """
         Khởi tạo PromptWorkbook.
-        
+
         Args:
-            path: Path đến file Excel
+            path: Path đến file Excel (có thể là str hoặc Path)
         """
-        self.path = path
+        # Chuyển str thành Path để đảm bảo tương thích
+        self.path = Path(path) if isinstance(path, str) else path
         self.workbook: Optional[Workbook] = None
         self.logger = get_logger("excel_manager")
     
@@ -358,10 +375,13 @@ class PromptWorkbook:
         
         # Tạo sheet Characters
         self._create_characters_sheet()
-        
+
         # Tạo sheet Scenes
         self._create_scenes_sheet()
-        
+
+        # Tạo sheet Director Plan
+        self._create_director_plan_sheet()
+
         # Xóa sheet mặc định
         if default_sheet and default_sheet.title == "Sheet":
             self.workbook.remove(default_sheet)
@@ -431,7 +451,40 @@ class PromptWorkbook:
         
         for col, column_name in enumerate(SCENES_COLUMNS, start=1):
             ws.column_dimensions[get_column_letter(col)].width = column_widths.get(column_name, 15)
-    
+
+    def _create_director_plan_sheet(self) -> None:
+        """Tạo sheet Director Plan với header."""
+        ws = self.workbook.create_sheet(self.DIRECTOR_PLAN_SHEET)
+
+        # Header style - màu cam để phân biệt
+        header_font = Font(bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="ED7D31", end_color="ED7D31", fill_type="solid")
+        header_alignment = Alignment(horizontal="center", vertical="center")
+
+        # Thêm header
+        for col, column_name in enumerate(DIRECTOR_PLAN_COLUMNS, start=1):
+            cell = ws.cell(row=1, column=col, value=column_name)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = header_alignment
+
+        # Điều chỉnh độ rộng cột
+        column_widths = {
+            "plan_id": 10,
+            "srt_start": 15,
+            "srt_end": 15,
+            "duration": 10,
+            "srt_text": 50,
+            "characters_used": 25,
+            "location_used": 15,
+            "reference_files": 30,
+            "img_prompt": 60,
+            "status": 10,
+        }
+
+        for col, column_name in enumerate(DIRECTOR_PLAN_COLUMNS, start=1):
+            ws.column_dimensions[get_column_letter(col)].width = column_widths.get(column_name, 15)
+
     def save(self) -> None:
         """Lưu workbook ra file."""
         if self.workbook is None:
@@ -705,7 +758,230 @@ class PromptWorkbook:
         """Lấy danh sách scenes chưa tạo video (nhưng đã có ảnh)."""
         scenes = self.get_scenes()
         return [s for s in scenes if s.status_vid != "done" and s.img_path and s.video_prompt]
-    
+
+    # ========================================================================
+    # DIRECTOR PLAN METHODS
+    # ========================================================================
+
+    def _ensure_director_plan_sheet(self) -> None:
+        """Đảm bảo sheet director_plan tồn tại (cho Excel cũ)."""
+        if self.workbook is None:
+            self.load_or_create()
+
+        if self.DIRECTOR_PLAN_SHEET not in self.workbook.sheetnames:
+            self._create_director_plan_sheet()
+            self.save()
+
+    def save_director_plan(self, scenes_data: List[Dict]) -> None:
+        """
+        Lưu kế hoạch scenes từ SRT vào sheet director_plan.
+        Gọi hàm này TRƯỚC KHI tạo prompts để có thể detect gaps.
+
+        Args:
+            scenes_data: List các scene dict với keys:
+                - scene_id, srt_start, srt_end, duration, text (required)
+                - characters_used, location_used, reference_files, img_prompt (optional - backup)
+        """
+        self._ensure_director_plan_sheet()
+
+        ws = self.workbook[self.DIRECTOR_PLAN_SHEET]
+
+        # Xóa dữ liệu cũ (giữ header)
+        if ws.max_row > 1:
+            ws.delete_rows(2, ws.max_row)
+
+        # Thêm scenes
+        for scene in scenes_data:
+            next_row = ws.max_row + 1
+            ws.cell(row=next_row, column=1, value=scene.get("scene_id", 0))
+            ws.cell(row=next_row, column=2, value=scene.get("srt_start", ""))
+            ws.cell(row=next_row, column=3, value=scene.get("srt_end", ""))
+            ws.cell(row=next_row, column=4, value=scene.get("duration", 0))
+            ws.cell(row=next_row, column=5, value=scene.get("text", "")[:500])
+            # New columns for backup
+            ws.cell(row=next_row, column=6, value=scene.get("characters_used", "[]"))
+            ws.cell(row=next_row, column=7, value=scene.get("location_used", ""))
+            ws.cell(row=next_row, column=8, value=scene.get("reference_files", "[]"))
+            ws.cell(row=next_row, column=9, value=scene.get("img_prompt", "")[:1000])
+            ws.cell(row=next_row, column=10, value=scene.get("status", "backup"))
+
+        self.save()
+        self.logger.info(f"Saved {len(scenes_data)} scenes to director_plan")
+
+    def get_director_plan(self) -> List[Dict]:
+        """
+        Lấy kế hoạch scenes từ sheet director_plan.
+
+        Returns:
+            List các scene dict với backup info
+        """
+        self._ensure_director_plan_sheet()
+
+        ws = self.workbook[self.DIRECTOR_PLAN_SHEET]
+        plans = []
+
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if row[0] is None:
+                continue
+
+            # Handle both old format (6 cols) and new format (10 cols)
+            plans.append({
+                "plan_id": row[0],
+                "srt_start": row[1] or "",
+                "srt_end": row[2] or "",
+                "duration": row[3] or 0,
+                "srt_text": row[4] or "",
+                "characters_used": row[5] if len(row) > 5 else "[]",
+                "location_used": row[6] if len(row) > 6 else "",
+                "reference_files": row[7] if len(row) > 7 else "[]",
+                "img_prompt": row[8] if len(row) > 8 else "",
+                "status": row[9] if len(row) > 9 else "pending",
+            })
+
+        return plans
+
+    def update_director_plan_status(self, plan_id: int, status: str) -> bool:
+        """Cập nhật status của một plan entry."""
+        self._ensure_director_plan_sheet()
+
+        ws = self.workbook[self.DIRECTOR_PLAN_SHEET]
+
+        for row_idx in range(2, ws.max_row + 1):
+            if ws.cell(row=row_idx, column=1).value == plan_id:
+                ws.cell(row=row_idx, column=6, value=status)
+                return True
+
+        return False
+
+    def detect_scene_gaps(self) -> List[Dict]:
+        """
+        So sánh director_plan với scenes để detect gaps (scenes thiếu).
+
+        Returns:
+            List các gap dict: {plan_id, srt_start, srt_end, reason}
+        """
+        plans = self.get_director_plan()
+        scenes = self.get_scenes()
+
+        # Tạo set scene_ids đã có prompts
+        scene_ids_with_prompts = {
+            s.scene_id for s in scenes
+            if s.img_prompt and s.img_prompt.strip()
+        }
+
+        gaps = []
+        for plan in plans:
+            plan_id = plan["plan_id"]
+            if plan_id not in scene_ids_with_prompts:
+                gaps.append({
+                    "plan_id": plan_id,
+                    "srt_start": plan["srt_start"],
+                    "srt_end": plan["srt_end"],
+                    "srt_text": plan["srt_text"][:100],
+                    "reason": "missing_prompt"
+                })
+
+        return gaps
+
+    def detect_timeline_gaps(self, video_duration_seconds: float = None) -> List[Dict]:
+        """
+        Phát hiện gaps trong timeline của scenes (khoảng thời gian không có scene nào cover).
+
+        Args:
+            video_duration_seconds: Tổng thời lượng video (giây). Nếu None sẽ dùng scene cuối.
+
+        Returns:
+            List các gap dict: {start_seconds, end_seconds, start_time, end_time, duration}
+        """
+        scenes = self.get_scenes()
+        if not scenes:
+            return []
+
+        def parse_timestamp(ts: str) -> float:
+            """Convert HH:MM:SS,mmm to seconds"""
+            if not ts:
+                return 0
+            try:
+                # Handle both HH:MM:SS,mmm and HH:MM:SS formats
+                ts = ts.replace(',', '.')
+                parts = ts.split(':')
+                if len(parts) == 3:
+                    h, m, s = parts
+                    return int(h) * 3600 + int(m) * 60 + float(s)
+                elif len(parts) == 2:
+                    m, s = parts
+                    return int(m) * 60 + float(s)
+                return float(ts)
+            except:
+                return 0
+
+        def seconds_to_timestamp(secs: float) -> str:
+            """Convert seconds to HH:MM:SS,mmm"""
+            h = int(secs // 3600)
+            m = int((secs % 3600) // 60)
+            s = secs % 60
+            return f"{h:02d}:{m:02d}:{s:06.3f}".replace('.', ',')
+
+        # Sort scenes by start time
+        scene_times = []
+        for s in scenes:
+            if s.img_prompt and s.img_prompt.strip():  # Chỉ đếm scenes có prompt
+                start = parse_timestamp(s.srt_start)
+                end = parse_timestamp(s.srt_end)
+                if end > start:
+                    scene_times.append((start, end))
+
+        if not scene_times:
+            return []
+
+        scene_times.sort(key=lambda x: x[0])
+
+        # Determine video end time
+        if video_duration_seconds:
+            video_end = video_duration_seconds
+        else:
+            video_end = max(end for _, end in scene_times)
+
+        # Find gaps
+        gaps = []
+        MIN_GAP_SECONDS = 3  # Ignore gaps smaller than 3 seconds
+
+        # Gap from start?
+        first_start = scene_times[0][0]
+        if first_start > MIN_GAP_SECONDS:
+            gaps.append({
+                "start_seconds": 0,
+                "end_seconds": first_start,
+                "start_time": "00:00:00,000",
+                "end_time": seconds_to_timestamp(first_start),
+                "duration": first_start
+            })
+
+        # Gaps between scenes
+        current_end = scene_times[0][1]
+        for start, end in scene_times[1:]:
+            if start > current_end + MIN_GAP_SECONDS:
+                gaps.append({
+                    "start_seconds": current_end,
+                    "end_seconds": start,
+                    "start_time": seconds_to_timestamp(current_end),
+                    "end_time": seconds_to_timestamp(start),
+                    "duration": start - current_end
+                })
+            current_end = max(current_end, end)
+
+        # Gap at end?
+        if video_end > current_end + MIN_GAP_SECONDS:
+            gaps.append({
+                "start_seconds": current_end,
+                "end_seconds": video_end,
+                "start_time": seconds_to_timestamp(current_end),
+                "end_time": seconds_to_timestamp(video_end),
+                "duration": video_end - current_end
+            })
+
+        return gaps
+
     # ========================================================================
     # UTILITY METHODS
     # ========================================================================
@@ -718,13 +994,22 @@ class PromptWorkbook:
     def get_stats(self) -> Dict[str, Any]:
         """
         Lấy thống kê tổng quan.
-        
+
         Returns:
             Dictionary chứa các thống kê
         """
         characters = self.get_characters()
         scenes = self.get_scenes()
-        
+
+        # Director plan stats
+        try:
+            plans = self.get_director_plan()
+            total_planned = len(plans)
+            plans_done = sum(1 for p in plans if p.get("status") == "done")
+        except:
+            total_planned = 0
+            plans_done = 0
+
         return {
             "total_characters": len(characters),
             "total_scenes": len(scenes),
@@ -733,4 +1018,8 @@ class PromptWorkbook:
             "images_error": sum(1 for s in scenes if s.status_img == "error"),
             "videos_done": sum(1 for s in scenes if s.status_vid == "done"),
             "videos_error": sum(1 for s in scenes if s.status_vid == "error"),
+            # Director plan
+            "total_planned": total_planned,
+            "plans_done": plans_done,
+            "scenes_missing": total_planned - len(scenes) if total_planned > 0 else 0,
         }

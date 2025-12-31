@@ -2904,17 +2904,19 @@ class BrowserFlowGenerator:
         # IPv6 proxy đã bị bỏ - chỉ dùng Webshare
         webshare_cfg = self.config.get('webshare_proxy', {})
         webshare_api_key = webshare_cfg.get('api_key', '')
-        webshare_username = webshare_cfg.get('username', '')
-        webshare_password = webshare_cfg.get('password', '')
-        webshare_endpoint = webshare_cfg.get('endpoint', '')
         webshare_proxy_file = webshare_cfg.get('proxy_file', 'config/proxies.txt')  # Default file
         use_webshare = webshare_cfg.get('enabled', True)  # Default ON - Webshare enabled by default
 
-        # === ROTATING ENDPOINT CONFIG ===
-        # Nếu enabled, mỗi request tự động đổi IP (không cần quản lý proxy pool)
-        rotating_enabled = webshare_cfg.get('rotating_enabled', False)
+        # === PROXY MODE CONFIG ===
+        # "direct" = Direct Proxy List (100 IP cố định)
+        # "rotating" = Rotating Residential (IP tự động đổi)
+        proxy_mode = webshare_cfg.get('proxy_mode', 'direct')
         rotating_host = webshare_cfg.get('rotating_host', 'p.webshare.io')
         rotating_port = webshare_cfg.get('rotating_port', 80)
+        # Ưu tiên base_username, fallback sang username cũ
+        rotating_username = webshare_cfg.get('rotating_base_username') or webshare_cfg.get('rotating_username', 'jhvbehdf-residential')
+        rotating_password = webshare_cfg.get('rotating_password', 'cf1bi3yvq0t1')
+        machine_id = webshare_cfg.get('machine_id', 1)  # Máy số mấy (1-99)
 
         # Khởi tạo Webshare Proxy Manager nếu enabled
         if use_webshare:
@@ -2922,15 +2924,16 @@ class BrowserFlowGenerator:
             try:
                 from webshare_proxy import init_proxy_manager, get_proxy_manager
 
-                # === ROTATING ENDPOINT MODE ===
-                if rotating_enabled:
-                    self._log(f"🔄 ROTATING ENDPOINT mode enabled")
+                # === ROTATING RESIDENTIAL MODE ===
+                if proxy_mode == "rotating":
+                    self._log(f"🌍 ROTATING RESIDENTIAL mode")
                     self._log(f"   → {rotating_host}:{rotating_port}")
+                    self._log(f"   → User: {rotating_username}")
                     self._log(f"   → Mỗi request sẽ tự động đổi IP!")
 
                     manager = init_proxy_manager(
-                        username=webshare_username,
-                        password=webshare_password,
+                        username=rotating_username,
+                        password=rotating_password,
                         rotating_endpoint=True,
                         rotating_host=rotating_host,
                         rotating_port=rotating_port
@@ -2938,7 +2941,6 @@ class BrowserFlowGenerator:
                 else:
                     # === DIRECT PROXY LIST MODE ===
                     # Load proxy list từ file hoặc API
-                    proxy_list = None
                     if webshare_proxy_file:
                         self._log(f"Loading proxies from: {webshare_proxy_file}")
                     else:
@@ -2950,21 +2952,8 @@ class BrowserFlowGenerator:
 
                     manager = init_proxy_manager(
                         api_key=webshare_api_key,
-                        username=webshare_username,
-                        password=webshare_password,
                         proxy_file=webshare_proxy_file if webshare_proxy_file else None
                     )
-
-                    # Nếu không có proxy từ file, thử single endpoint
-                    if not manager.proxies and webshare_endpoint:
-                        from webshare_proxy import ProxyInfo
-                        proxy = ProxyInfo(
-                            host=webshare_endpoint.split(':')[0],
-                            port=int(webshare_endpoint.split(':')[1]) if ':' in webshare_endpoint else 80,
-                            username=webshare_username,
-                            password=webshare_password
-                        )
-                        manager.proxies.append(proxy)
 
                 # Verify initialization
                 if manager.is_rotating_mode():
@@ -3038,7 +3027,8 @@ class BrowserFlowGenerator:
             log_callback=self._log,
             webshare_enabled=use_webshare,
             worker_id=self.worker_id,  # Parallel mode - mỗi worker có proxy riêng
-            headless=drission_headless  # Chạy Chrome ẩn (default: True)
+            headless=drission_headless,  # Chạy Chrome ẩn (default: True)
+            machine_id=machine_id  # Máy số mấy - tránh trùng session giữa các máy
         )
 
         self._log("🚀 DrissionPage + Interceptor")
@@ -3365,10 +3355,33 @@ class BrowserFlowGenerator:
                     self._log(f"   ✗ Thất bại: {error}", "error")
                     self.stats["failed"] += 1
 
-                    # Check for token expiry
+                    # Check for token expiry - thử refresh và retry
                     if error and "401" in str(error):
-                        self._log("❌ Bearer token hết hạn!", "error")
-                        break
+                        self._log("⚠️ Bearer token hết hạn - thử restart Chrome...", "warn")
+                        try:
+                            if drission_api.restart_chrome():
+                                self._log(f"→ Retry prompt: {pid}...", "info")
+                                success2, images2, error2 = drission_api.generate_image(
+                                    prompt=prompt,
+                                    save_dir=save_dir,
+                                    filename=pid,
+                                    image_inputs=image_inputs if image_inputs else None
+                                )
+                                if success2 and images2:
+                                    self._log(f"   ✓ Retry thành công!")
+                                    self.stats["success"] += 1
+                                    self.stats["failed"] -= 1
+                                    consecutive_errors = 0
+                                    continue
+                                else:
+                                    self._log(f"   ✗ Retry vẫn thất bại - token không hợp lệ", "error")
+                                    break  # Token thực sự hết hạn
+                            else:
+                                self._log("✗ Không restart được Chrome - dừng", "error")
+                                break
+                        except Exception as e:
+                            self._log(f"✗ Refresh token error: {e}", "error")
+                            break
 
                     # Check for 429 - Quota exceeded, cần đổi proxy/tài khoản
                     if error and "429" in str(error):
@@ -3778,9 +3791,8 @@ class BrowserFlowGenerator:
                         )
 
                         if success and video_url:
-                            # Download video
-                            video_dir = excel_path.parent / "video" if excel_path else output_dir / "video"
-                            video_dir.mkdir(parents=True, exist_ok=True)
+                            # Download video - lưu vào img/ folder (giống smart_engine)
+                            video_dir = output_dir  # img/ folder
                             video_file = video_dir / f"{scene_id}.mp4"
 
                             try:

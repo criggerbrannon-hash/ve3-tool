@@ -903,7 +903,9 @@ class PromptGenerator:
         project_dir: Path,
         code: str,
         overwrite: bool = False,
-        on_characters_ready: Callable = None
+        on_characters_ready: Callable = None,
+        on_scenes_batch_ready: Callable = None,
+        total_scenes_callback: Callable = None
     ) -> bool:
         """
         Tạo prompts cho một project.
@@ -915,6 +917,12 @@ class PromptGenerator:
             on_characters_ready: Callback được gọi ngay khi characters được save
                                  Signature: on_characters_ready(excel_path, proj_dir)
                                  Cho phép caller bắt đầu tạo ảnh nhân vật song song
+            on_scenes_batch_ready: Callback được gọi sau mỗi batch scenes được save
+                                   Signature: on_scenes_batch_ready(excel_path, proj_dir, saved_count, total_count)
+                                   Cho phép caller bắt đầu tạo ảnh scenes song song
+            total_scenes_callback: Callback để thông báo tổng số scenes cần tạo
+                                   Signature: total_scenes_callback(total_count)
+                                   Gọi trước khi bắt đầu generate để caller biết số lượng
 
         Returns:
             True nếu thành công
@@ -932,19 +940,34 @@ class PromptGenerator:
         
         # Load hoặc tạo Excel
         workbook = PromptWorkbook(excel_path).load_or_create()
-        
-        # Kiểm tra đã có prompts chưa
+
+        # === RESUME MODE CHECK ===
+        # Kiểm tra characters và scenes đã có chưa
+        existing_characters = workbook.get_characters()
+        stats = workbook.get_stats()
+        total_scenes = stats.get('total_scenes', 0)
+        scenes_with_prompts = stats.get('scenes_with_prompts', 0)
+
+        # Đã có đầy đủ scenes với prompts → skip
         if workbook.has_prompts() and not overwrite:
-            self.logger.info("Prompts đã tồn tại, bỏ qua (dùng --overwrite-prompts để ghi đè)")
-            return True
-        
+            if total_scenes > 0 and scenes_with_prompts >= total_scenes:
+                self.logger.info("Prompts đã tồn tại đầy đủ, bỏ qua")
+                return True
+
+        # === RESUME MODE: Characters có, scenes thiếu ===
+        resume_scenes_only = False
+        if existing_characters and (total_scenes == 0 or scenes_with_prompts < total_scenes):
+            self.logger.info(f"RESUME: Đã có {len(existing_characters)} nhân vật, tiếp tục tạo scenes...")
+            resume_scenes_only = True
+
         # Clear dữ liệu cũ nếu overwrite
         if overwrite:
             self.logger.info("Xóa prompts cũ...")
             workbook.clear_characters()
             workbook.clear_scenes()
             workbook.save()
-        
+            resume_scenes_only = False  # Clear = tạo lại tất cả
+
         # Đọc và parse SRT
         self.logger.info(f"Đọc SRT file: {srt_path}")
         srt_entries = parse_srt_file(srt_path)
@@ -958,7 +981,8 @@ class PromptGenerator:
         # Tạo full story text để phân tích
         full_story = " ".join([e.text for e in srt_entries])
 
-        # Step 1: Phân tích nhân vật + bối cảnh TRƯỚC
+        # Step 1: Phân tích nhân vật + bối cảnh
+        # (Luôn phân tích để có context, nhưng chỉ lưu vào Excel nếu chưa có)
         self.logger.info("Phân tích nhân vật và bối cảnh...")
         characters, locations, context_lock, global_style = self._analyze_characters(full_story)
 
@@ -968,36 +992,45 @@ class PromptGenerator:
 
         self.logger.info(f"Tìm thấy {len(characters)} nhân vật, {len(locations)} bối cảnh")
 
-        # Lưu nhân vật vào Excel (skip children - họ sẽ được mô tả inline trong scene)
-        children_skipped = 0
-        for char in characters:
-            # Children don't need reference images - they will be described inline in scene prompts
-            if char.is_child or char.english_prompt == "DO_NOT_GENERATE":
-                char.image_file = "NONE"
-                char.status = "skip"  # Skip image generation
-                children_skipped += 1
-                self.logger.info(f"  -> Skipping child character: {char.id} (will use inline description)")
-            else:
-                char.image_file = f"{char.id}.png"
-                char.status = "pending"
-            workbook.add_character(char)
+        # === SKIP nếu RESUME MODE (characters đã có) ===
+        if resume_scenes_only:
+            self.logger.info("RESUME: Bỏ qua thêm nhân vật (đã có trong Excel)")
+            # Dùng characters từ Excel thay vì phân tích lại
+            characters = [c for c in existing_characters if c.role != 'location']
+            locations_from_excel = [c for c in existing_characters if c.role == 'location']
+            # Convert back to Location objects nếu cần
+            self.logger.info(f"  Dùng {len(characters)} nhân vật + {len(locations_from_excel)} locations từ Excel")
+        else:
+            # Lưu nhân vật vào Excel (skip children - họ sẽ được mô tả inline trong scene)
+            children_skipped = 0
+            for char in characters:
+                # Children don't need reference images - they will be described inline in scene prompts
+                if char.is_child or char.english_prompt == "DO_NOT_GENERATE":
+                    char.image_file = "NONE"
+                    char.status = "skip"  # Skip image generation
+                    children_skipped += 1
+                    self.logger.info(f"  -> Skipping child character: {char.id} (will use inline description)")
+                else:
+                    char.image_file = f"{char.id}.png"
+                    char.status = "pending"
+                workbook.add_character(char)
 
-        if children_skipped > 0:
-            self.logger.info(f"  -> {children_skipped} child characters skipped for image generation")
+            if children_skipped > 0:
+                self.logger.info(f"  -> {children_skipped} child characters skipped for image generation")
 
-        # Lưu locations (as Character with role="location")
-        for loc in locations:
-            loc_char = Character(
-                id=loc.id,
-                role="location",
-                name=loc.name,
-                english_prompt=loc.english_prompt,  # location_prompt - for generating reference image
-                character_lock=loc.location_lock,   # location_lock - for scene prompts (IMPORTANT!)
-                vietnamese_prompt=loc.location_lock,  # Keep for backwards compat
-                image_file=f"{loc.id}.png",
-                status="pending"
-            )
-            workbook.add_character(loc_char)
+            # Lưu locations (as Character with role="location")
+            for loc in locations:
+                loc_char = Character(
+                    id=loc.id,
+                    role="location",
+                    name=loc.name,
+                    english_prompt=loc.english_prompt,  # location_prompt - for generating reference image
+                    character_lock=loc.location_lock,   # location_lock - for scene prompts (IMPORTANT!)
+                    vietnamese_prompt=loc.location_lock,  # Keep for backwards compat
+                    image_file=f"{loc.id}.png",
+                    status="pending"
+                )
+                workbook.add_character(loc_char)
 
         workbook.save()
         self.logger.info(f"Đã lưu {len(characters)} nhân vật + {len(locations)} bối cảnh")
@@ -1005,28 +1038,293 @@ class PromptGenerator:
         # === PARALLEL OPTIMIZATION ===
         # Gọi callback để caller có thể bắt đầu tạo ảnh nhân vật SONG SONG
         # trong khi vẫn tiếp tục tạo scene prompts
-        if on_characters_ready:
+        # Kiểm tra xem ảnh nhân vật đã có chưa, nếu chưa thì vẫn phải tạo
+        need_character_images = False
+        if resume_scenes_only:
+            # Resume mode: Kiểm tra xem ảnh nhân vật đã có chưa
+            nv_dir = project_dir / "nv"
+            if nv_dir.exists():
+                existing_images = list(nv_dir.glob("*.png")) + list(nv_dir.glob("*.jpg"))
+                # So sánh số ảnh với số nhân vật (không tính location)
+                char_count = len([c for c in existing_characters if c.role != 'location'])
+                if len(existing_images) < char_count:
+                    self.logger.info(f"[RESUME] Có {len(existing_images)}/{char_count} ảnh nhân vật → cần tạo thêm")
+                    need_character_images = True
+                else:
+                    self.logger.info(f"[RESUME] Đã có đủ {len(existing_images)} ảnh nhân vật → bỏ qua")
+            else:
+                self.logger.info(f"[RESUME] Thư mục nv/ chưa có → cần tạo ảnh nhân vật")
+                need_character_images = True
+        else:
+            # Không phải resume mode → luôn tạo ảnh
+            need_character_images = True
+
+        if on_characters_ready and need_character_images:
             self.logger.info("[PARALLEL] Characters ready! Triggering character image generation...")
             try:
                 on_characters_ready(excel_path, project_dir)
             except Exception as e:
                 self.logger.warning(f"[PARALLEL] Callback error (non-fatal): {e}")
 
-        # Step 1.5: Director's Treatment - Phân tích cấu trúc câu chuyện
+        # === TÍNH TỔNG THỜI LƯỢNG VIDEO TỪ SRT ===
+        video_duration_seconds = 0
+        if srt_entries:
+            last_entry = srt_entries[-1]
+            if hasattr(last_entry.end_time, 'total_seconds'):
+                video_duration_seconds = last_entry.end_time.total_seconds()
+            elif hasattr(last_entry, 'end_time'):
+                # Parse string timestamp
+                try:
+                    ts = str(last_entry.end_time).replace(',', '.')
+                    parts = ts.split(':')
+                    if len(parts) == 3:
+                        h, m, s = parts
+                        video_duration_seconds = int(h) * 3600 + int(m) * 60 + float(s)
+                except:
+                    video_duration_seconds = len(srt_entries) * 5  # Fallback
+
+        self.logger.info(f"[VIDEO] Tổng thời lượng: {video_duration_seconds:.0f}s ({video_duration_seconds/60:.1f} phút)")
+
+        # === STEP 1.5: TẠO BACKUP SCENES BẰNG AI ===
+        # Mục đích: Backup có chất lượng như prompts thật (AI-generated, không phải keyword matching)
         self.logger.info("=" * 50)
-        self.logger.info("Step 1.5: Tạo DIRECTOR'S TREATMENT (Kịch bản đạo diễn)...")
+        self.logger.info("Step 1.5: Tạo BACKUP SCENES bằng AI (quality backup)...")
+        self.logger.info("=" * 50)
+
+        # Format character info cho AI
+        chars_info_list = []
+        for c in characters:
+            chars_info_list.append(f"- {c.id}: {c.name} ({c.role})")
+        chars_info = "\n".join(chars_info_list) if chars_info_list else "- nvc: Narrator (người kể chuyện)"
+
+        # Format location info cho AI
+        locs_info_list = []
+        for loc in locations:
+            locs_info_list.append(f"- {loc.id}: {loc.name}")
+        locs_info = "\n".join(locs_info_list) if locs_info_list else "- general: Bối cảnh chung"
+
+        # Chia SRT thành scenes (time-based)
+        backup_scenes = group_srt_into_scenes(
+            srt_entries,
+            min_duration=self.min_scene_duration,
+            max_duration=self.max_scene_duration
+        )
+        self.logger.info(f"[BACKUP] Cần tạo backup cho {len(backup_scenes)} scenes")
+
+        # Gọi AI để tạo backup prompts (batch để nhanh hơn)
+        backup_scenes_data = []
+        BATCH_SIZE = 15  # 15 scenes/batch để AI không bị quá tải
+
+        # Danh sách shot types để AI chọn (đa dạng)
+        shot_types = [
+            "Close-up shot", "Medium shot", "Wide establishing shot",
+            "Over-the-shoulder shot", "Low angle shot", "High angle shot",
+            "Dutch angle shot", "Point-of-view shot", "Two-shot"
+        ]
+
+        for batch_idx in range(0, len(backup_scenes), BATCH_SIZE):
+            batch = backup_scenes[batch_idx:batch_idx + BATCH_SIZE]
+            batch_num = batch_idx // BATCH_SIZE + 1
+            total_batches = (len(backup_scenes) + BATCH_SIZE - 1) // BATCH_SIZE
+
+            self.logger.info(f"[BACKUP] Processing batch {batch_num}/{total_batches} ({len(batch)} scenes)...")
+
+            # Format scenes cho prompt
+            scenes_text = ""
+            for i, scene in enumerate(batch):
+                scene_id = scene.get("scene_id", batch_idx + i + 1)
+                scene_text = scene.get("text", "")[:200]
+
+                start_time = scene.get("start_time")
+                if hasattr(start_time, 'strftime'):
+                    time_str = start_time.strftime("%H:%M:%S")
+                else:
+                    time_str = str(scene.get("srt_start", "00:00:00"))
+
+                scenes_text += f"\nScene {scene_id} [{time_str}]: \"{scene_text}\"\n"
+
+            # Prompt để AI tạo backup
+            backup_prompt = f"""Bạn là đạo diễn hình ảnh. Phân tích các scenes và tạo prompt cho mỗi scene.
+
+NHÂN VẬT CÓ SẴN:
+{chars_info}
+
+BỐI CẢNH CÓ SẴN:
+{locs_info}
+
+CÁC LOẠI GÓC QUAY (chọn đa dạng, đừng lặp lại liên tục):
+{', '.join(shot_types)}
+
+SCENES CẦN PHÂN TÍCH:
+{scenes_text}
+
+Cho MỖI scene, trả về JSON với format:
+{{
+  "scenes": [
+    {{
+      "scene_id": 1,
+      "characters": ["char_id1", "char_id2"],  // ID từ danh sách trên, dùng "nvc" nếu là narrator
+      "location": "loc_id",  // ID từ danh sách trên
+      "shot_type": "Medium shot",  // Chọn đa dạng, phù hợp nội dung
+      "visual_description": "Mô tả ngắn cảnh quay",
+      "img_prompt": "Prompt chi tiết cho ảnh, bao gồm shot type, nhân vật, bối cảnh, ánh sáng, style"
+    }}
+  ]
+}}
+
+QUY TẮC:
+1. shot_type phải ĐA DẠNG (không dùng Medium shot cho tất cả)
+2. Close-up cho cảm xúc, Wide shot cho establishing, Action shot cho chuyển động
+3. img_prompt phải đủ chi tiết: shot type + nhân vật + hành động + bối cảnh + ánh sáng + style
+4. Chỉ dùng character/location IDs từ danh sách có sẵn
+
+Trả về JSON:"""
+
+            try:
+                # Gọi AI (dùng model nhỏ/nhanh cho backup)
+                response = self._generate_content(backup_prompt, temperature=0.7, max_tokens=4000)
+
+                if response:
+                    json_data = self._extract_json(response)
+                    if json_data and "scenes" in json_data:
+                        for ai_scene in json_data["scenes"]:
+                            scene_id = ai_scene.get("scene_id", 0)
+
+                            # Tìm scene gốc để lấy timestamps
+                            original_scene = None
+                            for s in batch:
+                                if s.get("scene_id") == scene_id:
+                                    original_scene = s
+                                    break
+
+                            if not original_scene:
+                                # Fallback: dùng index
+                                idx = scene_id - batch_idx - 1
+                                if 0 <= idx < len(batch):
+                                    original_scene = batch[idx]
+
+                            if original_scene:
+                                start_time = original_scene.get("start_time")
+                                end_time = original_scene.get("end_time")
+                                if hasattr(start_time, 'strftime'):
+                                    srt_start = start_time.strftime("%H:%M:%S") + ",000"
+                                    srt_end = end_time.strftime("%H:%M:%S") + ",000"
+                                    duration = (end_time - start_time).total_seconds()
+                                else:
+                                    srt_start = str(original_scene.get("srt_start", "00:00:00,000"))
+                                    srt_end = str(original_scene.get("srt_end", "00:00:00,000"))
+                                    duration = original_scene.get("duration", 5.0)
+
+                                chars_used = ai_scene.get("characters", ["nvc"])
+                                backup_scenes_data.append({
+                                    "scene_id": scene_id,
+                                    "srt_start": srt_start,
+                                    "srt_end": srt_end,
+                                    "duration": round(duration, 2) if isinstance(duration, float) else duration,
+                                    "text": original_scene.get("text", "")[:500],
+                                    "characters_used": json.dumps(chars_used),
+                                    "location_used": ai_scene.get("location", ""),
+                                    "reference_files": json.dumps([f"{c}.png" for c in chars_used if c != "nvc"]),
+                                    "img_prompt": ai_scene.get("img_prompt", ""),
+                                    "shot_type": ai_scene.get("shot_type", "Medium shot"),
+                                    "visual_description": ai_scene.get("visual_description", ""),
+                                    "status": "backup"
+                                })
+
+                        self.logger.info(f"[BACKUP] Batch {batch_num}: AI tạo {len(json_data['scenes'])} backup prompts")
+                    else:
+                        self.logger.warning(f"[BACKUP] Batch {batch_num}: AI response invalid, using fallback")
+                        # Fallback cho batch này
+                        for scene in batch:
+                            backup_scenes_data.append(self._create_simple_backup_scene(scene, characters, locations))
+                else:
+                    self.logger.warning(f"[BACKUP] Batch {batch_num}: No AI response, using fallback")
+                    for scene in batch:
+                        backup_scenes_data.append(self._create_simple_backup_scene(scene, characters, locations))
+
+            except Exception as e:
+                self.logger.warning(f"[BACKUP] Batch {batch_num} error: {e}, using fallback")
+                for scene in batch:
+                    backup_scenes_data.append(self._create_simple_backup_scene(scene, characters, locations))
+
+            # Rate limiting
+            if batch_idx + BATCH_SIZE < len(backup_scenes):
+                time.sleep(1)
+
+        self.logger.info(f"[BACKUP] Tổng cộng {len(backup_scenes_data)} backup scenes đã tạo")
+
+        # Lưu backup vào Excel (director_plan sheet)
+        try:
+            existing_plan = workbook.get_director_plan()
+            if not existing_plan:
+                self.logger.info(f"[BACKUP] Lưu {len(backup_scenes_data)} backup scenes vào Excel...")
+                workbook.save_director_plan(backup_scenes_data)
+                workbook.save()
+                self.logger.info(f"[BACKUP] ✓ Đã lưu backup với character/location mapping!")
+            else:
+                self.logger.info(f"[BACKUP] Đã có {len(existing_plan)} scenes trong director_plan, skip backup")
+        except Exception as e:
+            self.logger.warning(f"[BACKUP] Lỗi lưu: {e}")
+
+        # Step 2: Director's Treatment - Phân tích cấu trúc câu chuyện
+        self.logger.info("=" * 50)
+        self.logger.info("Step 2: Tạo DIRECTOR'S TREATMENT (Kịch bản đạo diễn)...")
         self.logger.info("=" * 50)
         directors_treatment = self._create_directors_treatment(full_story)
         if directors_treatment:
             self.logger.info(f"[Director's Treatment] Story parts: {len(directors_treatment.get('story_parts', []))}")
 
-        # Step 2: DIRECTOR'S SHOOTING PLAN - Đạo diễn lên kế hoạch quay
+        # Step 3: DIRECTOR'S SHOOTING PLAN - Đạo diễn lên kế hoạch quay
         self.logger.info("=" * 50)
-        self.logger.info("Step 2: DIRECTOR'S SHOOTING PLAN - Đạo diễn quyết định ảnh!")
+        self.logger.info("Step 3: DIRECTOR'S SHOOTING PLAN - Đạo diễn quyết định ảnh!")
         self.logger.info("=" * 50)
 
+        # === PROGRESSIVE SAVE CALLBACK cho Director ===
+        # Lưu mỗi part ngay khi hoàn thành (không đợi toàn bộ director xong)
+        director_parts_saved = []
+
+        def on_director_part_complete(part_data):
+            """Callback để lưu từng part của director ngay khi hoàn thành."""
+            try:
+                part_num = part_data.get("part_number", 0)
+                part_name = part_data.get("part_name", "Unknown")
+                story_parts = part_data.get("story_parts", [])
+
+                # Convert story_parts → scenes và lưu
+                temp_shooting_plan = {"story_parts": story_parts}
+                part_scenes = self._convert_shooting_plan_to_scenes(temp_shooting_plan)
+
+                if part_scenes:
+                    # Lưu vào director_plan sheet
+                    for scene in part_scenes:
+                        try:
+                            # Check if scene already exists
+                            existing = workbook.get_director_plan()
+                            existing_ids = {p['plan_id'] for p in existing} if existing else set()
+
+                            if scene['scene_id'] not in existing_ids:
+                                workbook._ensure_director_plan_sheet()
+                                ws = workbook.workbook[workbook.DIRECTOR_PLAN_SHEET]
+                                next_row = ws.max_row + 1
+                                ws.cell(row=next_row, column=1, value=scene.get("scene_id", 0))
+                                ws.cell(row=next_row, column=2, value=scene.get("srt_start", ""))
+                                ws.cell(row=next_row, column=3, value=scene.get("srt_end", ""))
+                                ws.cell(row=next_row, column=4, value=scene.get("duration", 0))
+                                ws.cell(row=next_row, column=5, value=scene.get("text", "")[:500])
+                                ws.cell(row=next_row, column=6, value="pending")
+                        except:
+                            pass
+
+                    workbook.save()
+                    director_parts_saved.append(part_num)
+                    self.logger.info(f"[DIRECTOR] Part {part_num} ({part_name}): {len(part_scenes)} scenes saved")
+
+            except Exception as e:
+                self.logger.warning(f"[DIRECTOR] Progressive save error: {e}")
+
         directors_shooting = self._create_directors_shooting_plan(
-            full_story, srt_entries, characters, locations, global_style
+            full_story, srt_entries, characters, locations, global_style,
+            on_part_complete=on_director_part_complete  # Truyền callback
         )
 
         using_director_prompts = False  # Flag để biết có dùng prompts từ đạo diễn không
@@ -1044,6 +1342,23 @@ class PromptGenerator:
 
         self.logger.info(f"Tổng cộng {len(scenes_data)} scenes")
 
+        # === LƯU DIRECTOR PLAN VÀO EXCEL ===
+        try:
+            existing_plan = workbook.get_director_plan()
+            if not existing_plan or len(existing_plan) < len(scenes_data):
+                self.logger.info(f"[DIRECTOR PLAN] Lưu {len(scenes_data)} scenes vào director_plan...")
+                workbook.save_director_plan(scenes_data)
+        except Exception as e:
+            self.logger.warning(f"[DIRECTOR PLAN] Lỗi lưu: {e}")
+
+        # === THÔNG BÁO TỔNG SỐ SCENES CHO CALLER ===
+        if total_scenes_callback:
+            try:
+                total_scenes_callback(len(scenes_data))
+                self.logger.info(f"[PIPELINE] Thông báo: {len(scenes_data)} scenes cần tạo")
+            except Exception as e:
+                self.logger.warning(f"[PIPELINE] total_scenes_callback error: {e}")
+
         # Step 3: Tạo prompts cho từng batch scenes (PARALLEL)
         self.logger.info("=" * 50)
         self.logger.info("Step 3: Tạo IMG PROMPTS cho scenes...")
@@ -1053,7 +1368,52 @@ class PromptGenerator:
             self.logger.error("KHÔNG CÓ SCENES DATA! Dừng.")
             return False
 
+        # === RESUME MODE: Kiểm tra scenes đã có trong Excel ===
+        existing_scene_ids = set()
+        existing_prompts_map = {}  # scene_id -> prompts data
+        missing_scenes_data = []  # Scenes cần generate
+
+        try:
+            existing_scenes = workbook.get_scenes()
+            for s in existing_scenes:
+                # Chỉ đếm scenes đã có img_prompt (không rỗng)
+                if s.img_prompt and s.img_prompt.strip():
+                    existing_scene_ids.add(s.scene_id)
+                    existing_prompts_map[s.scene_id] = {
+                        "img_prompt": s.img_prompt,
+                        "video_prompt": s.video_prompt or s.img_prompt,
+                        "characters_used": s.characters_used,
+                        "location_used": s.location_used or "",
+                        "reference_files": s.reference_files or []
+                    }
+
+            if existing_scene_ids:
+                self.logger.info(f"[RESUME] Phát hiện {len(existing_scene_ids)} scenes đã có prompts trong Excel")
+
+                # Lọc ra scenes chưa có prompt
+                for scene in scenes_data:
+                    if scene["scene_id"] not in existing_scene_ids:
+                        missing_scenes_data.append(scene)
+
+                if not missing_scenes_data:
+                    # Tất cả scenes đã có → skip hoàn toàn
+                    self.logger.info(f"[RESUME] ✓ Tất cả {len(scenes_data)} scenes đã có prompts - SKIP!")
+                    return True
+                else:
+                    # Một số scenes thiếu → chỉ generate phần thiếu
+                    self.logger.info(f"[RESUME] Cần tạo thêm {len(missing_scenes_data)}/{len(scenes_data)} scenes")
+                    # Thay thế scenes_data bằng missing_scenes_data
+                    original_scenes_data = scenes_data  # Lưu lại để merge sau
+                    scenes_data = missing_scenes_data
+            else:
+                # Không có scene nào có prompt → tạo mới tất cả
+                original_scenes_data = None
+        except Exception as e:
+            self.logger.warning(f"[RESUME] Không đọc được Excel scenes: {e}")
+            original_scenes_data = None
+
         all_scene_prompts = []
+        progressive_saved = False  # Flag để biết đã lưu progressive chưa
 
         # === NẾU ĐẠO DIỄN ĐÃ TẠO PROMPTS → DÙ LUÔN, KHÔNG CẦN GỌI AI NỮA ===
         if using_director_prompts:
@@ -1131,7 +1491,8 @@ class PromptGenerator:
 
                 print(f"[Parallel] Hoan thanh {len(all_scene_prompts)} scene prompts")
             else:
-                # SEQUENTIAL PROCESSING (fallback)
+                # SEQUENTIAL PROCESSING (fallback) - LƯU SAU MỖI BATCH
+                saved_scene_count = 0
                 for i, batch in enumerate(batches):
                     self.logger.info(f"Xu ly batch {i + 1}/{total_batches}")
 
@@ -1141,6 +1502,65 @@ class PromptGenerator:
                         global_style_override=global_style
                     )
                     all_scene_prompts.extend(scene_prompts)
+
+                    # === PROGRESSIVE SAVE: Lưu batch này vào Excel ngay ===
+                    try:
+                        batch_start_idx = saved_scene_count
+                        for j, (scene_data, prompts) in enumerate(zip(batch, scene_prompts)):
+                            # Quick save với data cơ bản
+                            chars_used = prompts.get("characters_used", [])
+                            chars_str = json.dumps(chars_used) if isinstance(chars_used, list) else str(chars_used)
+
+                            # Simple ref_files từ characters_used
+                            ref_files = []
+                            if chars_used:
+                                if isinstance(chars_used, str):
+                                    try:
+                                        chars_used = json.loads(chars_used)
+                                    except:
+                                        chars_used = [chars_used]
+                                for char_id in chars_used:
+                                    if char_id and not char_id.endswith('.png'):
+                                        ref_files.append(f"{char_id}.png")
+                            refs_str = json.dumps(ref_files)
+
+                            scene = Scene(
+                                scene_id=scene_data["scene_id"],
+                                srt_start=scene_data.get("srt_start", "00:00:00,000"),
+                                srt_end=scene_data.get("srt_end", "00:00:05,000"),
+                                duration=scene_data.get("duration", 5.0),
+                                planned_duration=scene_data.get("planned_duration", 5.0),
+                                srt_text=scene_data.get("text", "")[:500],
+                                img_prompt=prompts.get("img_prompt", ""),
+                                video_prompt=prompts.get("video_prompt", ""),
+                                status_img="pending",
+                                status_vid="pending",
+                                characters_used=chars_str,
+                                location_used=prompts.get("location_used", ""),
+                                reference_files=refs_str
+                            )
+                            workbook.add_scene(scene)
+                            saved_scene_count += 1
+
+                            # Update director_plan status
+                            try:
+                                workbook.update_director_plan_status(scene_data["scene_id"], "done")
+                            except:
+                                pass
+
+                        workbook.save()
+                        progressive_saved = True  # Đánh dấu đã lưu progressive
+                        self.logger.info(f"[PROGRESSIVE] Đã lưu batch {i+1}/{total_batches} ({saved_scene_count}/{len(scenes_data)} scenes)")
+
+                        # Callback để thông báo có scenes mới
+                        if on_scenes_batch_ready:
+                            try:
+                                on_scenes_batch_ready(excel_path, project_dir, saved_scene_count, len(scenes_data))
+                            except Exception as e:
+                                self.logger.warning(f"[PROGRESSIVE] Callback error: {e}")
+
+                    except Exception as e:
+                        self.logger.warning(f"[PROGRESSIVE] Lưu batch {i+1} lỗi: {e}")
 
                     # Rate limiting
                     if i + 1 < total_batches:
@@ -1165,8 +1585,17 @@ class PromptGenerator:
                 })
                 self.logger.info(f"Created fallback prompt for scene {idx + 1}")
 
-        # Lưu scenes vào Excel
+        # === LƯU SCENES VÀO EXCEL ===
+        # Nếu đã lưu progressive (sequential mode), skip phần này
+        if progressive_saved:
+            self.logger.info(f"[PROGRESSIVE] Đã lưu {len(all_scene_prompts)} scenes progressive, skip save cuối")
+        else:
+            # Lưu scenes vào Excel (Director Flow hoặc Parallel)
+            self.logger.info(f"Lưu {len(scenes_data)} scenes vào Excel...")
+
         for scene_data, prompts in zip(scenes_data, all_scene_prompts):
+            if progressive_saved:
+                continue  # Skip nếu đã lưu progressive
             # Convert lists to JSON strings for storage
             chars_used = prompts.get("characters_used", [])
 
@@ -1366,10 +1795,322 @@ class PromptGenerator:
                 reference_files=refs_str
             )
             workbook.add_scene(scene)
-        
-        workbook.save()
-        self.logger.info(f"Đã lưu {len(scenes_data)} scenes với prompts")
-        
+
+        # Save final (nếu chưa save progressive)
+        if not progressive_saved:
+            workbook.save()
+            self.logger.info(f"Đã lưu {len(scenes_data)} scenes với prompts")
+        else:
+            self.logger.info(f"[PROGRESSIVE] Hoàn thành - đã lưu {len(scenes_data)} scenes")
+
+        # === AUTO-RETRY: Tự động tạo scenes cho timeline gaps ===
+        max_gap_retries = 3
+        for retry_round in range(max_gap_retries):
+            try:
+                # Detect timeline gaps (khoảng thời gian không có scene nào)
+                timeline_gaps = workbook.detect_timeline_gaps(video_duration_seconds)
+                if not timeline_gaps:
+                    self.logger.info(f"[TIMELINE CHECK] ✓ Không có gaps trong timeline - hoàn thành!")
+                    break
+
+                total_gap_duration = sum(g['duration'] for g in timeline_gaps)
+                self.logger.warning(
+                    f"[TIMELINE RETRY {retry_round + 1}/{max_gap_retries}] "
+                    f"Phát hiện {len(timeline_gaps)} gaps ({total_gap_duration:.0f}s thiếu):"
+                )
+                for gap in timeline_gaps[:5]:
+                    self.logger.warning(
+                        f"  - {gap['start_time']} → {gap['end_time']} ({gap['duration']:.0f}s)"
+                    )
+                if len(timeline_gaps) > 5:
+                    self.logger.warning(f"  ... và {len(timeline_gaps) - 5} gaps nữa")
+
+                # Lọc SRT entries cho từng gap và tạo scenes
+                total_new_scenes = 0
+                for gap in timeline_gaps:
+                    gap_start = gap['start_seconds']
+                    gap_end = gap['end_seconds']
+
+                    # Lọc SRT entries trong khoảng gap
+                    gap_srt_entries = []
+                    for entry in srt_entries:
+                        # Parse entry timestamp
+                        entry_start = 0
+                        entry_end = 0
+                        if hasattr(entry.start_time, 'total_seconds'):
+                            entry_start = entry.start_time.total_seconds()
+                            entry_end = entry.end_time.total_seconds()
+                        else:
+                            try:
+                                ts = str(entry.start_time).replace(',', '.')
+                                parts = ts.split(':')
+                                if len(parts) == 3:
+                                    entry_start = int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+                                ts = str(entry.end_time).replace(',', '.')
+                                parts = ts.split(':')
+                                if len(parts) == 3:
+                                    entry_end = int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+                            except:
+                                continue
+
+                        # Entry nằm trong gap?
+                        if entry_start >= gap_start - 1 and entry_end <= gap_end + 1:
+                            gap_srt_entries.append(entry)
+
+                    if not gap_srt_entries:
+                        self.logger.debug(f"[GAP] Không có SRT entries cho gap {gap['start_time']} → {gap['end_time']}")
+                        continue
+
+                    self.logger.info(
+                        f"[GAP] Processing gap {gap['start_time']} → {gap['end_time']}: "
+                        f"{len(gap_srt_entries)} SRT entries"
+                    )
+
+                    # Tạo scenes cho gap này (dùng time-based split)
+                    gap_scenes = group_srt_into_scenes(
+                        gap_srt_entries,
+                        min_duration=self.min_scene_duration,
+                        max_duration=self.max_scene_duration
+                    )
+
+                    if not gap_scenes:
+                        continue
+
+                    # Get next scene_id
+                    existing_scenes = workbook.get_scenes()
+                    next_scene_id = max([s.scene_id for s in existing_scenes], default=0) + 1
+
+                    # Generate prompts và lưu
+                    for i, scene in enumerate(gap_scenes):
+                        scene_id = next_scene_id + i
+
+                        # Format scene data
+                        start_time = scene.get("start_time")
+                        end_time = scene.get("end_time")
+                        if hasattr(start_time, 'strftime'):
+                            srt_start = start_time.strftime("%H:%M:%S") + ",000"
+                            srt_end = end_time.strftime("%H:%M:%S") + ",000"
+                        else:
+                            srt_start = str(scene.get("srt_start", gap['start_time']))
+                            srt_end = str(scene.get("srt_end", gap['end_time']))
+
+                        scene_text = scene.get("text", "")
+
+                        # === TÌM BACKUP DATA TỪ DIRECTOR_PLAN ===
+                        # Backup đã có character/location mapping
+                        # Ưu tiên: 1) Timestamp match, 2) Text similarity match
+                        backup_chars = "[]"
+                        backup_location = ""
+                        backup_refs = "[]"
+                        backup_prompt = ""
+                        backup_found = False
+
+                        try:
+                            # Parse scene start time to seconds
+                            scene_start_secs = 0
+                            if hasattr(start_time, 'total_seconds'):
+                                scene_start_secs = start_time.total_seconds()
+                            else:
+                                ts = srt_start.replace(',', '.')
+                                parts = ts.split(':')
+                                if len(parts) == 3:
+                                    scene_start_secs = int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+
+                            # Tìm backup scene trong director_plan
+                            backup_plans = workbook.get_director_plan()
+
+                            # === STRATEGY 1: Timestamp match (±15s) ===
+                            best_time_match = None
+                            best_time_diff = float('inf')
+
+                            for bp in backup_plans:
+                                bp_start = bp.get("srt_start", "")
+                                if bp_start:
+                                    try:
+                                        ts = bp_start.replace(',', '.')
+                                        parts = ts.split(':')
+                                        if len(parts) == 3:
+                                            bp_start_secs = int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+                                            time_diff = abs(bp_start_secs - scene_start_secs)
+                                            if time_diff < 15 and time_diff < best_time_diff:
+                                                best_time_diff = time_diff
+                                                best_time_match = bp
+                                    except:
+                                        pass
+
+                            if best_time_match:
+                                backup_chars = best_time_match.get("characters_used", "[]")
+                                backup_location = best_time_match.get("location_used", "")
+                                backup_refs = best_time_match.get("reference_files", "[]")
+                                backup_prompt = best_time_match.get("img_prompt", "")
+                                backup_found = True
+                                self.logger.debug(f"[GAP] Timestamp match: {best_time_diff:.1f}s diff")
+
+                            # === STRATEGY 2: Text similarity match (nếu timestamp không khớp) ===
+                            if not backup_found and scene_text:
+                                best_text_match = None
+                                best_similarity = 0
+                                scene_words = set(scene_text.lower().split())
+
+                                for bp in backup_plans:
+                                    bp_text = bp.get("srt_text", "") or bp.get("text", "")
+                                    if bp_text:
+                                        bp_words = set(bp_text.lower().split())
+                                        # Jaccard similarity
+                                        if scene_words and bp_words:
+                                            intersection = len(scene_words & bp_words)
+                                            union = len(scene_words | bp_words)
+                                            similarity = intersection / union if union > 0 else 0
+                                            if similarity > 0.5 and similarity > best_similarity:
+                                                best_similarity = similarity
+                                                best_text_match = bp
+
+                                if best_text_match:
+                                    backup_chars = best_text_match.get("characters_used", "[]")
+                                    backup_location = best_text_match.get("location_used", "")
+                                    backup_refs = best_text_match.get("reference_files", "[]")
+                                    backup_prompt = best_text_match.get("img_prompt", "")
+                                    backup_found = True
+                                    self.logger.debug(f"[GAP] Text similarity match: {best_similarity:.2f}")
+
+                        except Exception as e:
+                            self.logger.debug(f"[GAP] Không tìm được backup: {e}")
+
+                        # Tạo prompt - ưu tiên backup prompt nếu có
+                        if backup_prompt:
+                            final_prompt = backup_prompt
+                        else:
+                            # Không có backup prompt → tạo prompt tốt hơn với global_style
+                            # Dùng _create_simple_backup_scene để có character/location mapping
+                            fallback_data = self._create_simple_backup_scene(
+                                scene, characters, locations
+                            )
+                            final_prompt = fallback_data.get("img_prompt", "")
+                            if not final_prompt:
+                                final_prompt = f"Cinematic illustration of: {scene_text[:200]}. 4K photorealistic, dramatic lighting."
+                            # Nếu chưa có backup_chars, dùng từ fallback
+                            if backup_chars == "[]":
+                                backup_chars = fallback_data.get("characters_used", "[]")
+                                backup_location = fallback_data.get("location_used", "")
+                                backup_refs = fallback_data.get("reference_files", "[]")
+                            self.logger.info(f"[GAP] Scene {scene_id}: dùng fallback prompt với character/location mapping")
+
+                        new_scene = Scene(
+                            scene_id=scene_id,
+                            srt_start=srt_start,
+                            srt_end=srt_end,
+                            duration=scene.get("duration", gap['duration'] / len(gap_scenes)),
+                            planned_duration=scene.get("duration", 5.0),
+                            srt_text=scene_text[:500],
+                            img_prompt=final_prompt,
+                            video_prompt=final_prompt,
+                            status_img="pending",
+                            status_vid="pending",
+                            characters_used=backup_chars,
+                            location_used=backup_location,
+                            reference_files=backup_refs
+                        )
+                        workbook.add_scene(new_scene)
+                        total_new_scenes += 1
+
+                workbook.save()
+                self.logger.info(f"[TIMELINE RETRY] ✓ Đã tạo thêm {total_new_scenes} scenes cho gaps")
+
+                # Delay trước retry tiếp theo
+                if retry_round < max_gap_retries - 1:
+                    time.sleep(2)
+
+            except Exception as e:
+                self.logger.error(f"[TIMELINE RETRY] Lỗi: {e}")
+                import traceback
+                self.logger.debug(traceback.format_exc())
+                break
+
+        # Final check - force fill nếu vẫn còn gaps
+        try:
+            final_gaps = workbook.detect_timeline_gaps(video_duration_seconds)
+            if final_gaps:
+                total_missing = sum(g['duration'] for g in final_gaps)
+                self.logger.warning(
+                    f"[FINAL] Còn {len(final_gaps)} gaps ({total_missing:.0f}s) - FORCE FILL từ backup..."
+                )
+
+                # === FORCE FILL: Tạo scenes cho TẤT CẢ gaps còn lại ===
+                backup_plans = workbook.get_director_plan()
+                existing_scenes = workbook.get_scenes()
+                next_scene_id = max([s.scene_id for s in existing_scenes], default=0) + 1
+                force_filled = 0
+
+                for gap in final_gaps:
+                    gap_start = gap['start_seconds']
+                    gap_end = gap['end_seconds']
+                    gap_duration = gap['duration']
+
+                    # Tìm backup scenes trong khoảng gap
+                    relevant_backups = []
+                    for bp in backup_plans:
+                        bp_start = bp.get("srt_start", "")
+                        if bp_start:
+                            try:
+                                ts = bp_start.replace(',', '.')
+                                parts = ts.split(':')
+                                if len(parts) == 3:
+                                    bp_secs = int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+                                    if gap_start - 5 <= bp_secs <= gap_end + 5:
+                                        relevant_backups.append(bp)
+                            except:
+                                pass
+
+                    if relevant_backups:
+                        # Dùng backup scenes
+                        for bp in relevant_backups:
+                            new_scene = Scene(
+                                scene_id=next_scene_id,
+                                srt_start=bp.get("srt_start", gap['start_time']),
+                                srt_end=bp.get("srt_end", gap['end_time']),
+                                duration=bp.get("duration", gap_duration),
+                                planned_duration=bp.get("duration", 5.0),
+                                srt_text=bp.get("srt_text", "")[:500],
+                                img_prompt=bp.get("img_prompt", "Cinematic scene, 4K photorealistic"),
+                                video_prompt=bp.get("img_prompt", "Cinematic scene"),
+                                status_img="pending",
+                                status_vid="pending",
+                                characters_used=bp.get("characters_used", "[]"),
+                                location_used=bp.get("location_used", ""),
+                                reference_files=bp.get("reference_files", "[]")
+                            )
+                            workbook.add_scene(new_scene)
+                            next_scene_id += 1
+                            force_filled += 1
+                    else:
+                        # Không có backup → tạo scene placeholder với thông tin từ gap
+                        new_scene = Scene(
+                            scene_id=next_scene_id,
+                            srt_start=gap['start_time'],
+                            srt_end=gap['end_time'],
+                            duration=gap_duration,
+                            planned_duration=min(gap_duration, 8.0),
+                            srt_text=f"[Gap {gap['start_time']} - {gap['end_time']}]",
+                            img_prompt="Cinematic illustration, atmospheric scene, 4K photorealistic, dramatic lighting",
+                            video_prompt="Cinematic scene with smooth camera movement",
+                            status_img="pending",
+                            status_vid="pending",
+                            characters_used="[]",
+                            location_used="",
+                            reference_files="[]"
+                        )
+                        workbook.add_scene(new_scene)
+                        next_scene_id += 1
+                        force_filled += 1
+
+                if force_filled > 0:
+                    workbook.save()
+                    self.logger.info(f"[FINAL] ✓ Force filled {force_filled} scenes cho gaps còn lại!")
+            else:
+                self.logger.info("[FINAL] ✓ Timeline đầy đủ - không còn gaps!")
+        except Exception as e:
+            self.logger.error(f"[FINAL] Lỗi force fill: {e}")
+
         return True
     
     def _analyze_characters(self, story_text: str) -> tuple:
@@ -2479,6 +3220,70 @@ Estimated Shots: {part_info.get('estimated_shots', 5)}
 
         self.logger.info(f"[FALLBACK] Created {len(parts)} parts with {shot_num - start_shot_num} total shots")
         return parts
+
+    def _create_simple_backup_scene(self, scene: Dict, characters: List, locations: List) -> Dict:
+        """
+        FALLBACK: Tạo backup scene đơn giản khi AI backup fails.
+        Dùng keyword matching thay vì AI.
+        """
+        scene_text = scene.get("text", "")
+        scene_text_lower = scene_text.lower()
+
+        # Tìm characters bằng keyword matching
+        chars_in_scene = []
+        for c in characters:
+            if c.name and c.name.lower() in scene_text_lower:
+                chars_in_scene.append(c.id)
+        if not chars_in_scene:
+            chars_in_scene = ["nvc"]
+
+        # Tìm location
+        location_in_scene = locations[0].id if locations else ""
+        for loc in locations:
+            if loc.name and loc.name.lower() in scene_text_lower:
+                location_in_scene = loc.id
+                break
+
+        # Format timestamps
+        start_time = scene.get("start_time")
+        end_time = scene.get("end_time")
+        if hasattr(start_time, 'strftime'):
+            srt_start = start_time.strftime("%H:%M:%S") + ",000"
+            srt_end = end_time.strftime("%H:%M:%S") + ",000"
+            duration = (end_time - start_time).total_seconds()
+        else:
+            srt_start = str(scene.get("srt_start", "00:00:00,000"))
+            srt_end = str(scene.get("srt_end", "00:00:00,000"))
+            duration = scene.get("duration", 5.0)
+
+        # Simple shot type detection
+        shot_type = "Medium shot"
+        if any(kw in scene_text_lower for kw in ['nói', 'hỏi', 'khóc', 'cười']):
+            shot_type = "Close-up shot"
+        elif any(kw in scene_text_lower for kw in ['nhìn ra', 'toàn cảnh', 'bầu trời']):
+            shot_type = "Wide establishing shot"
+
+        # Create prompt
+        default_prompt = (
+            f"{shot_type}, {scene_text[:150]}. "
+            f"Characters: {', '.join(chars_in_scene)}. "
+            f"Location: {location_in_scene or 'general'}. "
+            f"Cinematic lighting, 4K photorealistic."
+        )
+
+        return {
+            "scene_id": scene.get("scene_id", 0),
+            "srt_start": srt_start,
+            "srt_end": srt_end,
+            "duration": round(duration, 2) if isinstance(duration, float) else duration,
+            "text": scene_text[:500],
+            "characters_used": json.dumps(chars_in_scene),
+            "location_used": location_in_scene,
+            "reference_files": json.dumps([f"{c}.png" for c in chars_in_scene if c != "nvc"]),
+            "img_prompt": default_prompt,
+            "shot_type": shot_type,
+            "status": "backup_fallback"
+        }
 
     def _convert_shooting_plan_to_scenes(self, shooting_plan: Dict) -> List[Dict[str, Any]]:
         """

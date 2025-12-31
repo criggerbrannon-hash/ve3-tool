@@ -28,25 +28,34 @@ flow_delay: 3.0
 # Sử dụng DrissionPage + Interceptor để tạo ảnh
 # IPv6 proxy đã bị bỏ - chỉ dùng Webshare
 
-# Webshare Proxy Pool (100 proxies datacenter)
-# Tự động xoay proxy khi bị block 403
-# Mỗi Chrome worker có proxy riêng, thử 3 lần rồi xoay sang proxy khác
-# Proxy bị block sẽ được reset sau 5 phút
+# Webshare Proxy Pool
+# Có 2 chế độ:
+#   1. Direct Proxy List: 100 IP datacenter cố định, tự xoay khi block
+#   2. Rotating Residential: IP tự động đổi mỗi session
 #
 # Lấy API key: https://proxy.webshare.io/dashboard → API Keys
-# Gói khuyên dùng: Shared $2.99 (100 proxies, 250GB bandwidth)
 webshare_proxy:
   enabled: true               # BẬT Webshare proxy
 
+  # === PROXY MODE ===
+  # "direct" = Sử dụng Direct Proxy List (100 IP cố định)
+  # "rotating" = Sử dụng Rotating Residential (IP tự động đổi)
+  proxy_mode: "rotating"  # Mặc định: Rotating (IP tự đổi mỗi lần chạy)
+
   # === ROTATING RESIDENTIAL ===
-  # ⚠️ KHÔNG DÙNG ĐƯỢC cho Google Flow (bị block)
-  rotating_enabled: false     # TẮT - Google Flow bị chặn qua Rotating Residential
+  # Có 2 mode:
+  #   1. Random IP: username kết thúc bằng '-rotate' → mỗi request = IP ngẫu nhiên
+  #   2. Sticky Session: username không có '-rotate' → session ID tự động thêm
+  #
+  # VD Random: jhvbehdf-residential-rotate:password@p.webshare.io:80
+  # VD Sticky: jhvbehdf-residential-1:password@p.webshare.io:80
   rotating_host: "p.webshare.io"
   rotating_port: 80
-  username: "jhvbehdf-residential-1"
-  password: "cf1bi3yvq0t1"
+  rotating_password: "cf1bi3yvq0t1"
+  rotating_base_username: "jhvbehdf-residential-rotate"  # -rotate = Random IP mỗi request
+  machine_id: 1  # Chỉ dùng khi Sticky Session (Máy 1→ 1... Máy 2→ 30001...)
 
-  # === DIRECT PROXY LIST (100 IPs) - DÙNG CÁI NÀY ===
+  # === DIRECT PROXY LIST (100 IPs) ===
   proxy_file: "config/proxies.txt"  # File chứa danh sách proxy
   api_key: "pfi2ljk73uysoze9ozg58nsp4af7au0vchs0b027"  # Webshare API key
 

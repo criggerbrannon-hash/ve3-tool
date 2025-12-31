@@ -167,6 +167,12 @@ class SmartEngine:
         self._character_gen_result = None
         self._character_gen_error = None
 
+        # Pipeline: Prompts generation thread (chạy song song với image generation)
+        self._prompts_gen_thread = None
+        self._prompts_gen_done = False
+        self._prompts_gen_error = None
+        self._expected_scene_count = 0  # Tổng số scenes cần tạo (từ callback)
+
         # Browser generator - reuse cho ca characters va scenes
         self._browser_generator = None
 
@@ -859,8 +865,27 @@ class SmartEngine:
     def make_prompts(self, proj_dir: Path, name: str, excel_path: Path) -> bool:
         """Tao prompts tu SRT. Retry voi cac AI keys khac neu fail."""
         if excel_path.exists():
-            self.log(f"Prompts da ton tai: {excel_path.name}")
-            return True
+            # Kiểm tra xem các scenes đã có đủ prompts chưa
+            try:
+                from modules.excel_manager import PromptWorkbook
+                workbook = PromptWorkbook(str(excel_path))
+                stats = workbook.get_stats()
+                total_scenes = stats.get('total_scenes', 0)
+                scenes_with_prompts = stats.get('scenes_with_prompts', 0)
+
+                if total_scenes > 0 and scenes_with_prompts >= total_scenes:
+                    self.log(f"Prompts da ton tai: {excel_path.name} ({scenes_with_prompts}/{total_scenes} scenes)")
+                    return True
+                elif total_scenes > 0 and scenes_with_prompts < total_scenes:
+                    missing = total_scenes - scenes_with_prompts
+                    self.log(f"Excel ton tai nhung THIEU {missing} scene prompts - tiep tuc generate...", "WARN")
+                    # Tiếp tục xuống phần generate để bổ sung prompts
+                elif total_scenes == 0:
+                    # Scenes chưa được tạo - CẦN generate!
+                    self.log(f"Excel ton tai nhung CHUA CO scenes - can generate!", "WARN")
+            except Exception as e:
+                self.log(f"Kiem tra Excel loi: {e} - tiep tuc generate...", "WARN")
+                # Tiếp tục generate nếu có lỗi đọc Excel
 
         self.log("Generate prompts...")
 
@@ -901,10 +926,12 @@ class SmartEngine:
                 from modules.prompts_generator import PromptGenerator
                 gen = PromptGenerator(cfg)
 
-                # Pass callback de bat dau character generation song song
+                # Pass callbacks để chạy song song
                 if gen.generate_for_project(
                     proj_dir, name,
-                    on_characters_ready=lambda ep, pd: self._on_characters_ready(ep, pd)
+                    on_characters_ready=lambda ep, pd: self._on_characters_ready(ep, pd),
+                    on_scenes_batch_ready=lambda ep, pd, saved, total: self._on_scenes_batch_ready(ep, pd, saved, total),
+                    total_scenes_callback=lambda total: self._on_total_scenes_known(total)
                 ):
                     self.mark_resource_used(ai_key, True)
                     self.log(f"OK: {excel_path.name}", "OK")
@@ -1183,6 +1210,23 @@ class SmartEngine:
         Bat dau generate character images song song.
         """
         self._generate_characters_async(excel_path, proj_dir)
+
+    def _on_total_scenes_known(self, total: int):
+        """
+        Callback khi biết tổng số scenes cần tạo.
+        Lưu để tracking progress.
+        """
+        self._expected_scene_count = total
+        self.log(f"[PIPELINE] Tổng số scenes: {total}")
+
+    def _on_scenes_batch_ready(self, excel_path: Path, proj_dir: Path, saved_count: int, total_count: int):
+        """
+        Callback khi một batch scenes được save vào Excel.
+        Có thể trigger scene image generation ở đây.
+        """
+        self.log(f"[PIPELINE] Scenes batch ready: {saved_count}/{total_count}")
+        # Scene image generation sẽ được xử lý trong run() sau khi prompts hoàn tất
+        # Vì cần đợi characters xong trước
 
     # ========== IMAGE GENERATION ==========
 
@@ -2128,30 +2172,56 @@ class SmartEngine:
                 if not self.make_srt(voice_path, srt_path):
                     return {"error": "srt_failed"}
 
-        # Tao Prompts (skip nếu đã có)
+        # Tao Prompts (skip nếu đã có ĐẦY ĐỦ scenes)
         if ext == '.xlsx':
             if inp != excel_path:
                 shutil.copy2(inp, excel_path)
         elif excel_path.exists():
-            self.log("  ⏭️ Excel đã tồn tại, skip!")
+            # Check xem scenes đã có prompt chưa trước khi skip
+            try:
+                from modules.excel_manager import PromptWorkbook
+                workbook = PromptWorkbook(str(excel_path))
+                stats = workbook.get_stats()
+                total_scenes = stats.get('total_scenes', 0)
+                scenes_with_prompts = stats.get('scenes_with_prompts', 0)
+
+                if total_scenes > 0 and scenes_with_prompts >= total_scenes:
+                    # Đã có đầy đủ scenes với prompts
+                    self.log(f"  ⏭️ Excel đã có đủ {scenes_with_prompts} scene prompts, skip!")
+                elif total_scenes == 0:
+                    # Scenes sheet trống hoặc chưa được tạo - cần generate
+                    self.log(f"  ⚠️ Excel tồn tại nhưng CHƯA CÓ scenes - cần generate!", "WARN")
+                    if srt_path.exists():
+                        if not self.make_prompts(proj_dir, name, excel_path):
+                            return {"error": "prompts_failed"}
+                    else:
+                        self.log("  ❌ Không có SRT để tạo scene prompts!", "ERROR")
+                        return {"error": "no_srt"}
+                else:
+                    # Thiếu một số scene prompts - tiếp tục generate
+                    missing = total_scenes - scenes_with_prompts
+                    self.log(f"  ⚠️ Excel thiếu {missing}/{total_scenes} scene prompts - tiếp tục generate!", "WARN")
+                    if srt_path.exists():
+                        if not self.make_prompts(proj_dir, name, excel_path):
+                            return {"error": "prompts_failed"}
+                    else:
+                        self.log("  ❌ Không có SRT để tạo scene prompts!", "ERROR")
+                        return {"error": "no_srt"}
+            except Exception as e:
+                self.log(f"  ⚠️ Check Excel lỗi: {e} - skip", "WARN")
         else:
             if not self.make_prompts(proj_dir, name, excel_path):
                 return {"error": "prompts_failed"}
 
         self.log("BROWSER MODE: Khong can token, su dung JS automation")
 
-        # === 3. DOI CHARACTER GENERATION (PARALLEL) ===
-        # Neu character generation dang chay song song, doi no xong
+        # === 3. CHARACTER GENERATION STATUS (KHÔNG CHỜ) ===
+        # Character images đang chạy song song, tiếp tục với scene images
+        # Sẽ đợi và merge kết quả sau khi scene images xong
         if self._character_gen_thread is not None:
-            self.log("[STEP 3] Doi character generation hoan thanh...")
-            self._wait_for_character_generation(timeout=600)
-
-            # Lay ket qua character generation
-            char_results = self._character_gen_result or {"success": 0, "failed": 0}
-            self.log(f"  Character images: success={char_results.get('success', 0)}, failed={char_results.get('failed', 0)}")
+            self.log("[STEP 3] Character images đang tạo song song → tiếp tục với scenes...")
         else:
-            self.log("[STEP 3] Character generation khong chay song song")
-            char_results = {"success": 0, "failed": 0}
+            self.log("[STEP 3] Không có character generation thread")
 
         # === 4. LOAD SCENE PROMPTS (chi scenes, bo qua characters da tao) ===
         self.log("[STEP 4] Load scene prompts...")
@@ -2198,7 +2268,7 @@ class SmartEngine:
             else:
                 self.log(f"  [EXCEL] ⚠️ Không có media_id trong Excel", "WARN")
 
-                # === KIỂM TRA VÀ XÓA TẤT CẢ ẢNH NẾU KHÔNG CÓ MEDIA_ID ===
+                # === XÓA TẤT CẢ ẢNH VÀ LÀM LẠI TỪ ĐẦU ===
                 nv_dir = proj_dir / "nv"
                 img_dir = proj_dir / "img"
 
@@ -2216,7 +2286,7 @@ class SmartEngine:
                             pass
                     self.log(f"  ✓ Đã xóa {len(nv_images)} ảnh nv/loc")
 
-                    # Xóa tất cả ảnh scene (vì không có tham chiếu đúng)
+                    # Xóa tất cả ảnh scene
                     if img_dir.exists():
                         scene_images = list(img_dir.glob("*.png"))
                         if scene_images:
@@ -2225,7 +2295,7 @@ class SmartEngine:
                                     img_file.unlink()
                                 except:
                                     pass
-                            self.log(f"  ✓ Đã xóa {len(scene_images)} ảnh scene (không có tham chiếu đúng)")
+                            self.log(f"  ✓ Đã xóa {len(scene_images)} ảnh scene")
 
         except Exception as e:
             self.log(f"  [EXCEL] Lỗi load media_ids: {e}", "WARN")
@@ -2366,6 +2436,17 @@ class SmartEngine:
                 if skipped_mp4 > 0:
                     self.log(f"[VIDEO] Resume: Skip {skipped_mp4} video đã tồn tại (.mp4)")
 
+            # === WAIT FOR CHARACTER GENERATION (IF RUNNING) ===
+            # Character images có thể vẫn đang chạy song song
+            char_results = {"success": 0, "failed": 0}
+            if self._character_gen_thread is not None:
+                if self._character_gen_thread.is_alive():
+                    self.log("[RESUME] Đợi character images hoàn thành...")
+                    self._wait_for_character_generation(timeout=300)
+
+                char_results = self._character_gen_result or {"success": 0, "failed": 0}
+                self.log(f"  Character images: success={char_results.get('success', 0)}, failed={char_results.get('failed', 0)}")
+
             # Merge results with character generation
             results = {
                 "success": char_results.get("success", 0),
@@ -2472,6 +2553,17 @@ class SmartEngine:
                     self.log(f"[VIDEO] Đã queue {queued} ảnh để tạo video")
                 if skipped_mp4 > 0:
                     self.log(f"[VIDEO] Skip {skipped_mp4} video đã tồn tại")
+
+            # === 5.5. WAIT FOR CHARACTER GENERATION (IF RUNNING) ===
+            # Character images đã chạy song song với scene images, giờ đợi nó xong
+            char_results = {"success": 0, "failed": 0}
+            if self._character_gen_thread is not None:
+                if self._character_gen_thread.is_alive():
+                    self.log("[STEP 5.5] Đợi character images hoàn thành...")
+                    self._wait_for_character_generation(timeout=300)  # 5 phút max
+
+                char_results = self._character_gen_result or {"success": 0, "failed": 0}
+                self.log(f"  Character images: success={char_results.get('success', 0)}, failed={char_results.get('failed', 0)}")
 
             # Merge results
             results = {
@@ -3849,10 +3941,12 @@ class SmartEngine:
             self.log("[VIDEO] Chưa có token - thử lấy token mới bằng DrissionPage...")
             try:
                 from modules.drission_flow_api import DrissionFlowAPI
+                ws_cfg = self.config.get('webshare_proxy', {})
                 drission_api = DrissionFlowAPI(
-                    proxy_mode=self.config.get('proxy_mode', 'local'),
                     headless=True,
-                    verbose=False
+                    verbose=False,
+                    webshare_enabled=ws_cfg.get('enabled', True),
+                    machine_id=ws_cfg.get('machine_id', 1)
                 )
                 if drission_api.setup():
                     # Lấy token bằng cách trigger một request đơn giản
@@ -3992,28 +4086,33 @@ class SmartEngine:
                 headless_mode = cfg.get('browser_headless', True)
                 ws_cfg = cfg.get('webshare_proxy', {})
                 use_webshare = ws_cfg.get('enabled', True)
+                machine_id = ws_cfg.get('machine_id', 1)  # Máy số mấy (1-99)
 
                 # === KHỞI TẠO PROXY MANAGER (giống browser_flow_generator) ===
                 if use_webshare:
                     try:
                         from webshare_proxy import init_proxy_manager, get_proxy_manager
 
-                        rotating_enabled = ws_cfg.get('rotating_enabled', False)
-                        if rotating_enabled:
+                        # Đọc proxy_mode: "direct" hoặc "rotating"
+                        proxy_mode = ws_cfg.get('proxy_mode', 'direct')
+                        if proxy_mode == "rotating":
+                            # Rotating Residential mode
+                            # Ưu tiên base_username, fallback sang username cũ
+                            rotating_user = ws_cfg.get('rotating_base_username') or ws_cfg.get('rotating_username', 'jhvbehdf-residential')
+                            rotating_pass = ws_cfg.get('rotating_password', 'cf1bi3yvq0t1')
                             manager = init_proxy_manager(
-                                username=ws_cfg.get('username', ''),
-                                password=ws_cfg.get('password', ''),
+                                username=rotating_user,
+                                password=rotating_pass,
                                 rotating_endpoint=True,
                                 rotating_host=ws_cfg.get('rotating_host', 'p.webshare.io'),
                                 rotating_port=ws_cfg.get('rotating_port', 80)
                             )
-                            self.log("[VIDEO] ✓ Rotating Endpoint mode")
+                            self.log("[VIDEO] ✓ Rotating Residential mode")
                         else:
+                            # Direct Proxy List mode
                             proxy_file = ws_cfg.get('proxy_file', 'config/proxies.txt')
                             manager = init_proxy_manager(
                                 api_key=ws_cfg.get('api_key', ''),
-                                username=ws_cfg.get('username', ''),
-                                password=ws_cfg.get('password', ''),
                                 proxy_file=proxy_file
                             )
                             if manager.proxies:
@@ -4049,7 +4148,8 @@ class SmartEngine:
                     log_callback=lambda msg, lvl="INFO": self.log(f"[VIDEO] {msg}", lvl),
                     webshare_enabled=use_webshare,
                     worker_id=getattr(self, 'worker_id', 0),  # Giống image gen
-                    headless=headless_mode
+                    headless=headless_mode,
+                    machine_id=machine_id  # Máy số mấy - tránh trùng session
                 )
                 own_drission = True
 

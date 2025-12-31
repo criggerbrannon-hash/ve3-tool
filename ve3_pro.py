@@ -1279,8 +1279,6 @@ class UnixVoiceToVideo:
 
         ttk.Label(proxy_tab, text="Webshare.io Proxy",
                   font=('Segoe UI', 11, 'bold')).pack(anchor=tk.W, pady=(0, 5))
-        ttk.Label(proxy_tab, text="Sử dụng proxy Webshare thay cho IPv6 local - tự restart Chrome khi lỗi 403",
-                  foreground='gray').pack(anchor=tk.W, pady=(0, 10))
 
         ws_link = ttk.Label(proxy_tab, text="🔗 Đăng ký tại webshare.io",
                            foreground='blue', cursor='hand2')
@@ -1290,17 +1288,29 @@ class UnixVoiceToVideo:
         # Load existing config
         proxy_config = self._load_proxy_config()
 
-        # Proxy File (danh sách proxy)
-        file_frame = ttk.LabelFrame(proxy_tab, text="📁 Proxy List File (khuyến nghị)", padding=10)
-        file_frame.pack(fill=tk.X, pady=(10, 10))
+        # === PROXY MODE SELECTION ===
+        mode_frame = ttk.LabelFrame(proxy_tab, text="🔀 Chế độ Proxy", padding=10)
+        mode_frame.pack(fill=tk.X, pady=(10, 10))
 
-        ttk.Label(file_frame, text="File chứa danh sách proxy (format: IP:PORT:USER:PASS mỗi dòng)",
-                  foreground='gray', font=('Segoe UI', 8)).pack(anchor=tk.W)
+        current_mode = proxy_config.get('proxy_mode', 'direct')
+        proxy_mode_var = tk.StringVar(value=current_mode)
 
-        file_entry_frame = ttk.Frame(file_frame)
-        file_entry_frame.pack(fill=tk.X, pady=(5, 0))
+        mode_row = ttk.Frame(mode_frame)
+        mode_row.pack(fill=tk.X)
 
-        ws_file_entry = ttk.Entry(file_entry_frame, width=50, font=('Consolas', 9))
+        ttk.Radiobutton(mode_row, text="📁 Direct Proxy List (100 IP cố định)",
+                        variable=proxy_mode_var, value="direct").pack(side=tk.LEFT, padx=(0, 20))
+        ttk.Radiobutton(mode_row, text="🌍 Rotating Residential (IP tự động đổi)",
+                        variable=proxy_mode_var, value="rotating").pack(side=tk.LEFT)
+
+        # === DIRECT PROXY LIST FRAME ===
+        direct_frame = ttk.LabelFrame(proxy_tab, text="📁 Direct Proxy List", padding=5)
+        direct_frame.pack(fill=tk.X, pady=(3, 5))
+
+        file_entry_frame = ttk.Frame(direct_frame)
+        file_entry_frame.pack(fill=tk.X)
+
+        ws_file_entry = ttk.Entry(file_entry_frame, width=40, font=('Consolas', 9))
         ws_file_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
         ws_file_entry.insert(0, proxy_config.get('proxy_file', 'config/proxies.txt'))
 
@@ -1314,11 +1324,10 @@ class UnixVoiceToVideo:
                 ws_file_entry.delete(0, tk.END)
                 ws_file_entry.insert(0, path)
 
-        ttk.Button(file_entry_frame, text="📂", width=3, command=browse_proxy_file).pack(side=tk.LEFT, padx=(5, 0))
+        ttk.Button(file_entry_frame, text="📂", width=3, command=browse_proxy_file).pack(side=tk.LEFT, padx=(3, 0))
 
-        # Count proxies in file
-        proxy_count_label = ttk.Label(file_frame, text="", foreground='green', font=('Segoe UI', 9))
-        proxy_count_label.pack(anchor=tk.W, pady=(5, 0))
+        proxy_count_label = ttk.Label(direct_frame, text="", foreground='green', font=('Segoe UI', 8))
+        proxy_count_label.pack(anchor=tk.W)
 
         def update_proxy_count():
             path = ws_file_entry.get().strip()
@@ -1335,27 +1344,80 @@ class UnixVoiceToVideo:
         ws_file_entry.bind('<FocusOut>', lambda e: update_proxy_count())
         update_proxy_count()
 
-        # Single Endpoint (fallback)
-        single_frame = ttk.LabelFrame(proxy_tab, text="🔗 Single Proxy (nếu không có file)", padding=10)
-        single_frame.pack(fill=tk.X, pady=(5, 10))
+        # === ROTATING RESIDENTIAL FRAME ===
+        rotating_frame = ttk.LabelFrame(proxy_tab, text="🌍 Rotating Residential", padding=5)
+        rotating_frame.pack(fill=tk.X, pady=(3, 5))
 
-        ttk.Label(single_frame, text="Endpoint (IP:PORT):", font=('Segoe UI', 9)).pack(anchor=tk.W)
-        ws_endpoint_entry = ttk.Entry(single_frame, width=50, font=('Consolas', 9))
-        ws_endpoint_entry.pack(fill=tk.X, pady=(2, 5))
-        ws_endpoint_entry.insert(0, proxy_config.get('endpoint', ''))
+        # Load rotating config
+        rotating_host = proxy_config.get('rotating_host', 'p.webshare.io')
+        rotating_port = proxy_config.get('rotating_port', 80)
+        rotating_password = proxy_config.get('rotating_password', 'cf1bi3yvq0t1')
+        rotating_base_username = proxy_config.get('rotating_base_username', 'jhvbehdf-residential-rotate')
+        machine_id = proxy_config.get('machine_id', 1)  # Máy số mấy (1-99)
 
-        cred_frame = ttk.Frame(single_frame)
-        cred_frame.pack(fill=tk.X)
+        # === SESSION MODE SELECTION ===
+        session_mode_row = ttk.Frame(rotating_frame)
+        session_mode_row.pack(fill=tk.X, pady=(2, 5))
+        ttk.Label(session_mode_row, text="Session Mode:", font=('Segoe UI', 9)).pack(side=tk.LEFT)
+        # Detect current mode from base_username
+        is_rotate_mode = rotating_base_username.endswith('-rotate')
+        session_mode_var = tk.StringVar(value='rotate' if is_rotate_mode else 'session')
+        ttk.Radiobutton(session_mode_row, text="🎲 Random IP",
+                        variable=session_mode_var, value="rotate").pack(side=tk.LEFT, padx=(10, 5))
+        ttk.Radiobutton(session_mode_row, text="📌 Sticky Session",
+                        variable=session_mode_var, value="session").pack(side=tk.LEFT, padx=(5, 0))
 
-        ttk.Label(cred_frame, text="User:", font=('Segoe UI', 9)).pack(side=tk.LEFT)
-        ws_user_entry = ttk.Entry(cred_frame, width=20, font=('Consolas', 9))
-        ws_user_entry.pack(side=tk.LEFT, padx=(2, 10))
-        ws_user_entry.insert(0, proxy_config.get('username', ''))
+        # Base username row
+        username_row = ttk.Frame(rotating_frame)
+        username_row.pack(fill=tk.X, pady=(2, 5))
+        ttk.Label(username_row, text="Username:", font=('Segoe UI', 9)).pack(side=tk.LEFT)
+        # Get base part without -rotate suffix for display
+        base_part = rotating_base_username.replace('-rotate', '') if is_rotate_mode else rotating_base_username
+        rotating_username_var = tk.StringVar(value=base_part)
+        rotating_username_entry = ttk.Entry(username_row, textvariable=rotating_username_var,
+                                            width=25, font=('Consolas', 9))
+        rotating_username_entry.pack(side=tk.LEFT, padx=(5, 5))
+        ttk.Label(username_row, text="(VD: jhvbehdf-residential)", foreground='gray',
+                  font=('Segoe UI', 8)).pack(side=tk.LEFT)
 
-        ttk.Label(cred_frame, text="Pass:", font=('Segoe UI', 9)).pack(side=tk.LEFT)
-        ws_pass_entry = ttk.Entry(cred_frame, width=20, font=('Consolas', 9), show='*')
-        ws_pass_entry.pack(side=tk.LEFT, padx=(2, 0))
-        ws_pass_entry.insert(0, proxy_config.get('password', ''))
+        # Password row
+        password_row = ttk.Frame(rotating_frame)
+        password_row.pack(fill=tk.X, pady=(2, 5))
+        ttk.Label(password_row, text="Password:", font=('Segoe UI', 9)).pack(side=tk.LEFT)
+        rotating_password_var = tk.StringVar(value=rotating_password)
+        rotating_password_entry = ttk.Entry(password_row, textvariable=rotating_password_var,
+                                            width=25, font=('Consolas', 9), show='*')
+        rotating_password_entry.pack(side=tk.LEFT, padx=(5, 5))
+
+        # Machine ID row - chỉ hiển thị khi dùng Sticky Session
+        machine_row = ttk.Frame(rotating_frame)
+        machine_row.pack(fill=tk.X, pady=(2, 5))
+        ttk.Label(machine_row, text="Máy số:", font=('Segoe UI', 9)).pack(side=tk.LEFT)
+        machine_id_var = tk.IntVar(value=machine_id)
+        machine_spinbox = ttk.Spinbox(machine_row, from_=1, to=99, width=5,
+                                       textvariable=machine_id_var, font=('Consolas', 9))
+        machine_spinbox.pack(side=tk.LEFT, padx=(5, 10))
+        ttk.Label(machine_row, text="(Sticky Session: Máy 1→ 1... Máy 2→ 30001...)",
+                  foreground='gray', font=('Segoe UI', 8)).pack(side=tk.LEFT)
+
+        # Session mode explanation
+        mode_info_label = ttk.Label(rotating_frame, text="", font=('Segoe UI', 8), foreground='blue')
+        mode_info_label.pack(anchor=tk.W, pady=(2, 0))
+
+        def update_mode_info(*args):
+            if session_mode_var.get() == 'rotate':
+                mode_info_label.config(text="🎲 Random: Mỗi request = IP ngẫu nhiên (không cần quản lý session)")
+                machine_spinbox.config(state='disabled')
+            else:
+                mode_info_label.config(text="📌 Sticky: Cùng session = cùng IP (tự động chuyển khi bị block)")
+                machine_spinbox.config(state='normal')
+
+        session_mode_var.trace_add('write', update_mode_info)
+        update_mode_info()  # Initial update
+
+        # Test result label for rotating
+        rotating_test_label = ttk.Label(rotating_frame, text="", font=('Segoe UI', 8))
+        rotating_test_label.pack(anchor=tk.W)
 
         # API Key (hidden)
         ws_api_entry = ttk.Entry(proxy_tab)
@@ -1363,7 +1425,7 @@ class UnixVoiceToVideo:
 
         # Enable checkbox
         ws_enabled_var = tk.BooleanVar(value=proxy_config.get('enabled', False))
-        ttk.Checkbutton(proxy_tab, text="✅ Bật Webshare Proxy (100 proxies xoay tự động)",
+        ttk.Checkbutton(proxy_tab, text="✅ Bật Webshare Proxy",
                         variable=ws_enabled_var).pack(anchor=tk.W, pady=(10, 5))
 
         # Buttons
@@ -1371,52 +1433,96 @@ class UnixVoiceToVideo:
         proxy_btn_frame.pack(fill=tk.X, pady=(10, 0))
 
         def save_proxy_config():
+            # Build username with/without -rotate suffix
+            base_username = rotating_username_var.get().strip()
+            if session_mode_var.get() == 'rotate':
+                # Random IP mode: append -rotate suffix
+                if not base_username.endswith('-rotate'):
+                    full_username = f"{base_username}-rotate"
+                else:
+                    full_username = base_username
+            else:
+                # Sticky session mode: no suffix (session ID appended at runtime)
+                full_username = base_username.replace('-rotate', '')
+
             config = {
                 'api_key': ws_api_entry.get().strip(),
-                'username': ws_user_entry.get().strip(),
-                'password': ws_pass_entry.get().strip(),
-                'endpoint': ws_endpoint_entry.get().strip(),
                 'proxy_file': ws_file_entry.get().strip(),
-                'enabled': ws_enabled_var.get()
+                'enabled': ws_enabled_var.get(),
+                'proxy_mode': proxy_mode_var.get(),
+                # Rotating config
+                'rotating_host': rotating_host,
+                'rotating_port': rotating_port,
+                'rotating_password': rotating_password_var.get().strip(),
+                'rotating_base_username': full_username,
+                'machine_id': machine_id_var.get(),  # Máy số mấy (tránh trùng session)
             }
             self._save_proxy_config(config)
             update_proxy_count()
-            messagebox.showinfo("Đã lưu", "Proxy config đã được lưu!")
+            mode_name = "Direct Proxy List" if proxy_mode_var.get() == "direct" else "Rotating Residential"
+            session_mode = "Random IP" if session_mode_var.get() == 'rotate' else "Sticky Session"
+            messagebox.showinfo("Đã lưu", f"Proxy config đã được lưu!\nChế độ: {mode_name}\nSession: {session_mode}")
 
         def test_proxy():
             try:
                 from webshare_proxy import init_proxy_manager
-                proxy_file = ws_file_entry.get().strip()
+                mode = proxy_mode_var.get()
 
-                if proxy_file and Path(proxy_file).exists():
+                if mode == "rotating":
+                    # Test Rotating Residential
+                    rotating_test_label.config(text="⏳ Đang test...", foreground='gray')
+                    win.update()
+
+                    # Build test username
+                    test_username = rotating_username_var.get().strip()
+                    if session_mode_var.get() == 'rotate':
+                        if not test_username.endswith('-rotate'):
+                            test_username = f"{test_username}-rotate"
+
                     manager = init_proxy_manager(
-                        username=ws_user_entry.get().strip(),
-                        password=ws_pass_entry.get().strip(),
-                        proxy_file=proxy_file
-                    )
-                else:
-                    manager = init_proxy_manager(
-                        username=ws_user_entry.get().strip(),
-                        password=ws_pass_entry.get().strip(),
-                        proxy_list=[f"{ws_endpoint_entry.get().strip()}:{ws_user_entry.get().strip()}:{ws_pass_entry.get().strip()}"]
+                        username=test_username,
+                        password=rotating_password_var.get().strip(),
+                        rotating_endpoint=True,
+                        rotating_host=rotating_host,
+                        rotating_port=rotating_port,
+                        force_reinit=True
                     )
 
-                if manager.proxies:
-                    success, msg = manager.test_current()
-                    stats = manager.get_stats()
+                    success, msg = manager.test_rotating_endpoint()
                     if success:
-                        messagebox.showinfo("Test OK", f"Kết nối thành công!\n{msg}\n\nTotal: {stats['total']} proxies")
+                        rotating_test_label.config(text="✓ OK", foreground='green')
+                        messagebox.showinfo("Test OK", f"Rotating Residential OK!\n\n{msg}")
                     else:
-                        messagebox.showerror("Test Failed", f"Lỗi kết nối:\n{msg}")
+                        rotating_test_label.config(text=f"✗ Lỗi", foreground='red')
+                        messagebox.showerror("Test Failed", f"Lỗi:\n{msg}")
                 else:
-                    messagebox.showerror("Lỗi", "Không load được proxy nào!")
+                    # Test Direct Proxy List
+                    proxy_file = ws_file_entry.get().strip()
+                    if proxy_file and Path(proxy_file).exists():
+                        manager = init_proxy_manager(
+                            proxy_file=proxy_file,
+                            force_reinit=True
+                        )
+                    else:
+                        messagebox.showerror("Lỗi", "Không tìm thấy file proxy!")
+                        return
+
+                    if manager.proxies:
+                        success, msg = manager.test_proxy(0)
+                        stats = manager.get_stats()
+                        if success:
+                            messagebox.showinfo("Test OK", f"Kết nối thành công!\n{msg}\n\nTotal: {stats['total']} proxies")
+                        else:
+                            messagebox.showerror("Test Failed", f"Lỗi kết nối:\n{msg}")
+                    else:
+                        messagebox.showerror("Lỗi", "Không load được proxy nào!")
             except Exception as e:
                 messagebox.showerror("Lỗi", f"Không thể test:\n{e}")
 
         ttk.Button(proxy_btn_frame, text="💾 Lưu Config", command=save_proxy_config).pack(side=tk.LEFT, padx=(0, 5))
         ttk.Button(proxy_btn_frame, text="🧪 Test Proxy", command=test_proxy).pack(side=tk.LEFT)
 
-        ttk.Label(proxy_tab, text="\nHướng dẫn:\n1. Tạo file config/proxies.txt với danh sách proxy\n2. Format mỗi dòng: IP:PORT:USER:PASS\n3. Tick 'Bật Webshare Proxy' → Lưu\n4. Tool sẽ tự xoay proxy khi bị block (403)",
+        ttk.Label(proxy_tab, text="\n💡 Direct: 100 IP cố định, xoay khi bị block\n💡 Rotating: IP tự động đổi mỗi request, nhiều quốc gia",
                   foreground='#666', font=('Segoe UI', 9)).pack(anchor=tk.W, pady=(10, 0))
 
         # Tab 4: Token
@@ -1655,6 +1761,19 @@ class UnixVoiceToVideo:
             pass
         return True  # Default: headless
 
+    def _get_profiles_dir(self) -> str:
+        """Get Chrome profiles directory from config."""
+        try:
+            import yaml
+            config_path = CONFIG_DIR / "settings.yaml"
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    config = yaml.safe_load(f) or {}
+                return config.get('browser_profiles_dir', './chrome_profiles')
+        except:
+            pass
+        return './chrome_profiles'  # Default
+
     def _save_headless_setting(self, headless: bool):
         """Save headless setting to config."""
         try:
@@ -1878,57 +1997,54 @@ class UnixVoiceToVideo:
         return 'fast'  # Default: fast (ảnh tĩnh, nhanh nhất)
 
     def _open_browser_for_login(self, profile_path: str, profile_name: str):
-        """Open Chrome browser with profile for Google login."""
+        """Open Chrome browser with profile for Google login - dùng DrissionPage."""
         FLOW_URL = "https://labs.google/fx/vi/tools/flow"
 
         try:
-            from selenium import webdriver
-            from selenium.webdriver.chrome.options import Options
-            from selenium.webdriver.common.by import By
+            from DrissionPage import ChromiumPage, ChromiumOptions
+            import random
 
             self.log(f"Mở trình duyệt cho profile: {profile_name}...")
 
-            options = Options()
-            options.add_argument(f"--user-data-dir={profile_path}")
-            options.add_argument("--no-sandbox")
-            options.add_argument("--disable-dev-shm-usage")
-            options.add_argument("--disable-blink-features=AutomationControlled")
-            options.add_experimental_option("excludeSwitches", ["enable-automation"])
-            options.add_experimental_option("useAutomationExtension", False)
-            options.add_argument("--window-size=1280,900")
+            # Setup DrissionPage options
+            options = ChromiumOptions()
+            options.set_user_data_path(profile_path)
+            options.set_local_port(random.randint(9300, 9500))
+            options.set_argument('--no-sandbox')
+            options.set_argument('--disable-dev-shm-usage')
+            options.set_argument('--disable-blink-features=AutomationControlled')
+            options.set_argument('--window-size=1280,900')
 
-            # Random port to avoid conflicts
-            import random
-            debug_port = random.randint(9300, 9500)
-            options.add_argument(f"--remote-debugging-port={debug_port}")
+            # Xóa SingletonLock nếu có
+            lock_file = Path(profile_path) / "SingletonLock"
+            if lock_file.exists():
+                try:
+                    lock_file.unlink()
+                except:
+                    pass
 
-            driver = webdriver.Chrome(options=options)
-            driver.execute_script(
-                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-            )
-
+            # Mở Chrome
+            driver = ChromiumPage(addr_or_opts=options)
             driver.get(FLOW_URL)
+
             self.log("Trình duyệt đã mở - Hãy đăng nhập Google!", "OK")
             self.log("Đóng trình duyệt khi hoàn tất đăng nhập.")
 
             # Show message with detailed instructions
             messagebox.showinfo(
-                "Đăng nhập Google + Kích hoạt Token",
+                "Đăng nhập Google",
                 f"Trình duyệt đã mở cho profile '{profile_name}'.\n\n"
                 "📋 LÀM THEO CÁC BƯỚC SAU:\n\n"
                 "1️⃣ Đăng nhập tài khoản Google\n"
                 "2️⃣ Đợi trang Google Flow hiện lên\n"
-                "3️⃣ Nhấn F12 để mở DevTools\n"
-                "4️⃣ Chọn tab 'Console'\n"
-                "5️⃣ Gõ: allow pasting  rồi Enter\n"
-                "6️⃣ Paste lệnh: console.log('OK')  rồi Enter\n"
-                "7️⃣ Đóng trình duyệt khi xong\n\n"
-                "⚠️ Bước 5-6 cần làm 1 LẦN để cho phép paste code!"
+                "3️⃣ Tạo 1 project test để kích hoạt token\n"
+                "4️⃣ Đóng trình duyệt khi xong\n\n"
+                "✅ Profile sẽ lưu session đăng nhập!"
             )
 
         except Exception as e:
             self.log(f"Lỗi mở trình duyệt: {e}", "ERROR")
-            messagebox.showerror("Lỗi", f"Không thể mở trình duyệt:\n{e}\n\nCần cài selenium:\npip install selenium")
+            messagebox.showerror("Lỗi", f"Không thể mở trình duyệt:\n{e}\n\nCần cài DrissionPage:\npip install DrissionPage")
 
     # ========== MAIN PROCESSING ==========
     
@@ -2269,13 +2385,20 @@ class UnixVoiceToVideo:
         Process folder with multiple voice files - PARALLEL mode.
 
         Chạy song song nhiều voice cùng lúc, mỗi voice độc lập như chạy file đơn.
-        Mỗi worker có Chrome riêng, proxy riêng, project folder riêng.
+        Mỗi worker có Chrome profile riêng, dải proxy riêng.
+
+        Logic:
+        - Đọc parallel_voices từ settings (mặc định 2)
+        - Mỗi worker = 1 luồng xử lý voice
+        - Mỗi worker có: Chrome profile riêng, dải proxy riêng
+        - Dải proxy: 30000 / num_workers (VD: 2 workers → 1-15000, 15001-30000)
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
         import threading
 
         try:
             from modules.smart_engine import SmartEngine
+            from modules.utils import load_settings
 
             folder = Path(self.input_path.get())
             voices = sorted(list(folder.glob("*.mp3")) + list(folder.glob("*.wav")))
@@ -2285,9 +2408,15 @@ class UnixVoiceToVideo:
                 return
 
             total = len(voices)
-            max_workers = 2  # Mặc định 2 workers song song
 
-            self.log(f"📁 Tìm thấy {total} file voice - Chế độ SONG SONG ({max_workers} workers)")
+            # === ĐỌC SỐ LUỒNG TỪ SETTINGS ===
+            settings = load_settings(Path("config/settings.yaml"))
+            max_workers = settings.get('parallel_voices', 2)  # Mặc định 2 luồng
+            max_workers = max(1, min(max_workers, 5))  # Giới hạn 1-5 luồng
+
+            self.log(f"📁 Tìm thấy {total} file voice")
+            self.log(f"⚡ Chế độ SONG SONG: {max_workers} luồng")
+            self.log(f"   Mỗi luồng = 1 Chrome profile riêng, dải proxy riêng")
             for i, v in enumerate(voices[:5]):
                 self.log(f"   {i+1}. {v.name}")
             if total > 5:
@@ -2301,6 +2430,10 @@ class UnixVoiceToVideo:
             thread_worker_map = {}
             next_worker_id = [0]  # Mutable để dùng trong closure
 
+            # === TÍNH DẢI PROXY CHO MỖI WORKER ===
+            # 30000 session / num_workers
+            sessions_per_worker = 30000 // max_workers
+
             def get_worker_id_for_thread() -> int:
                 """Gán worker_id dựa trên thread thực tế, không phải voice index."""
                 thread_id = threading.current_thread().ident
@@ -2311,37 +2444,34 @@ class UnixVoiceToVideo:
                     return thread_worker_map[thread_id]
 
             def process_single_voice(voice_path: Path) -> dict:
-                """Process a single voice file. Worker_id is auto-assigned per thread."""
+                """Process a single voice file - GIỐNG HỆT chạy file đơn."""
+                import time as time_module
+                start_time = time_module.time()
+
                 # Lấy worker_id dựa trên thread đang chạy
                 worker_id = get_worker_id_for_thread()
-                voice_name = voice_path.name
-                result = {"voice": voice_name, "success": 0, "failed": 0, "error": None}
+                voice_name = voice_path.stem  # Không có extension
+                result = {"voice": voice_name, "success": 0, "failed": 0, "error": None, "skipped": False}
 
-                # === TEST PROXY TRƯỚC KHI BẮT ĐẦU ===
-                proxy_manager = None
-                current_ip = "unknown"
-                try:
-                    from webshare_proxy import get_proxy_manager
-                    proxy_manager = get_proxy_manager()
-                    if proxy_manager and proxy_manager.proxies:
-                        proxy, ip = proxy_manager.test_and_get_proxy(worker_id)
-                        if proxy:
-                            current_ip = ip
-                            self.root.after(0, lambda w=worker_id, v=voice_name, ip=current_ip:
-                                self.log(f"[Worker {w}] 🌐 IP: {ip} → {v}"))
-                        else:
-                            self.root.after(0, lambda w=worker_id, err=ip:
-                                self.log(f"[Worker {w}] ⚠️ Proxy test failed: {err}", "WARN"))
-                except Exception as e:
-                    self.root.after(0, lambda w=worker_id:
-                        self.log(f"[Worker {w}] ⚠️ Không có proxy manager", "WARN"))
+                # === CHECK ĐÃ HOÀN THÀNH CHƯA ===
+                proj_dir = Path("PROJECTS") / voice_name
+                video_dir = proj_dir / "video"
+                if video_dir.exists():
+                    mp4_files = list(video_dir.glob("*.mp4"))
+                    if mp4_files:
+                        self.root.after(0, lambda w=worker_id, v=voice_name, n=len(mp4_files):
+                            self.log(f"[Worker {w}] ⏭️ SKIP: {v} (đã có {n} video)", "OK"))
+                        result["skipped"] = True
+                        return result
+
+                # === TÍNH SESSION OFFSET CHO WORKER NÀY ===
+                session_offset = worker_id * sessions_per_worker
+
+                self.root.after(0, lambda w=worker_id, v=voice_name, offset=session_offset, t=start_time:
+                    self.log(f"[Worker {w}] 🎬 BẮT ĐẦU: {v} (proxy: {offset+1}-{offset+sessions_per_worker})"))
 
                 try:
-                    # Log với worker_id để phân biệt
-                    self.root.after(0, lambda w=worker_id, v=voice_name:
-                        self.log(f"[Worker {w}] 🎬 Bắt đầu: {v}"))
-
-                    # Create new engine for this worker
+                    # === TẠO ENGINE VỚI WORKER_ID ===
                     engine = SmartEngine(worker_id=worker_id)
 
                     def log_cb(msg):
@@ -2356,19 +2486,22 @@ class UnixVoiceToVideo:
                         prefixed_msg = f"[W{worker_id}] {msg}"
                         self.root.after(0, lambda m=prefixed_msg, l=level: self.log(m, l))
 
-                    # Run engine
+                    # === CHẠY GIỐNG HỆT FILE ĐƠN ===
                     engine_result = engine.run(str(voice_path), callback=log_cb)
 
                     if 'error' not in engine_result:
                         result["success"] = engine_result.get('success', 0)
                         result["failed"] = engine_result.get('failed', 0)
-                        self.root.after(0, lambda w=worker_id, v=voice_name:
-                            self.log(f"[Worker {w}] ✅ Xong: {v}", "OK"))
+                        elapsed = time_module.time() - start_time
+                        elapsed_min = int(elapsed // 60)
+                        elapsed_sec = int(elapsed % 60)
+                        self.root.after(0, lambda w=worker_id, v=voice_name, m=elapsed_min, s=elapsed_sec:
+                            self.log(f"[Worker {w}] ✅ XONG: {v} ({m}m {s}s)", "OK"))
                     else:
                         result["error"] = engine_result.get('error', 'Unknown')
                         result["failed"] = 1
                         self.root.after(0, lambda w=worker_id, v=voice_name, e=result["error"]:
-                            self.log(f"[Worker {w}] ❌ Lỗi {v}: {e}", "ERROR"))
+                            self.log(f"[Worker {w}] ❌ LỖI {v}: {e}", "ERROR"))
 
                 except Exception as e:
                     import traceback
@@ -2377,16 +2510,6 @@ class UnixVoiceToVideo:
                     result["failed"] = 1
                     self.root.after(0, lambda w=worker_id, v=voice_name, err=e:
                         self.log(f"[Worker {w}] ❌ Exception {v}: {err}", "ERROR"))
-
-                finally:
-                    # === RELEASE PROXY VÀ ROTATE CHO VOICE TIẾP THEO ===
-                    if proxy_manager:
-                        try:
-                            proxy_manager.release_worker_proxy(worker_id, rotate_next=True)
-                            self.root.after(0, lambda w=worker_id:
-                                self.log(f"[Worker {w}] 🔄 Proxy released, will rotate next"))
-                        except Exception as e:
-                            pass
 
                 # Update progress
                 with results_lock:
@@ -2404,8 +2527,13 @@ class UnixVoiceToVideo:
             # Run workers in parallel
             self.log("")
             self.log("=" * 60)
-            self.log(f"🚀 Bắt đầu xử lý song song với {max_workers} workers...")
+            self.log(f"🚀 CHẠY SONG SONG: {max_workers} luồng, {total} voices")
+            self.log(f"   → Mỗi lúc xử lý {max_workers} voice cùng lúc")
+            self.log(f"   → Mỗi worker có Chrome profile + dải proxy riêng")
             self.log("=" * 60)
+
+            import time as time_module
+            batch_start = time_module.time()
 
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 # Submit all voices - worker_id tự động gán theo thread
@@ -2413,9 +2541,9 @@ class UnixVoiceToVideo:
                 for i, voice_path in enumerate(voices):
                     if self._stop:
                         break
-                    # Không truyền worker_id - sẽ được gán tự động khi thread thực thi
                     future = executor.submit(process_single_voice, voice_path)
                     futures[future] = voice_path
+                    self.log(f"   📋 Queued: {voice_path.stem} (position {i+1}/{total})")
 
                 # Wait for completion (with stop check)
                 for future in as_completed(futures):
@@ -2425,18 +2553,25 @@ class UnixVoiceToVideo:
                         break
 
             # Summary
+            total_elapsed = time_module.time() - batch_start
+            total_min = int(total_elapsed // 60)
+            total_sec = int(total_elapsed % 60)
+
             self.root.after(0, lambda: self.update_progress(100, "Hoàn tất!"))
             self.log("")
             self.log("=" * 60)
-            self.log(f"📊 TỔNG KẾT: {total_results['success']} ✅ | {total_results['failed']} ❌", "OK")
+            self.log(f"📊 TỔNG KẾT ({total_min}m {total_sec}s):")
+            self.log(f"   ✅ Thành công: {total_results['success']} voices")
+            self.log(f"   ❌ Thất bại: {total_results['failed']} voices")
+            self.log(f"   ⏭️ Đã skip: {total - total_results['completed']} voices (đã hoàn thành trước)")
             self.log("=" * 60)
 
             if total_results["failed"] > 0:
-                self.root.after(0, lambda s=total_results["success"], f=total_results["failed"]:
-                    messagebox.showwarning("Chưa hoàn thành", f"✅ Thành công: {s}\n❌ Thất bại: {f}"))
+                self.root.after(0, lambda s=total_results["success"], f=total_results["failed"], t=f"{total_min}m {total_sec}s":
+                    messagebox.showwarning("Chưa hoàn thành", f"Thời gian: {t}\n✅ Thành công: {s}\n❌ Thất bại: {f}"))
             else:
-                self.root.after(0, lambda s=total_results["success"]:
-                    messagebox.showinfo("Hoàn tất!", f"✅ Đã tạo {s} ảnh!"))
+                self.root.after(0, lambda s=total_results["success"], t=f"{total_min}m {total_sec}s":
+                    messagebox.showinfo("Hoàn tất!", f"Thời gian: {t}\n✅ Đã xử lý {s} voices!"))
 
         except Exception as e:
             import traceback
@@ -2450,379 +2585,16 @@ class UnixVoiceToVideo:
         """
         Process folder with multiple voice files - ROUND-ROBIN mode.
 
-        Thay vì chạy song song, mỗi voice lần lượt tạo 1 ảnh:
-        - Voice 1: ảnh 1 → đợi
-        - Voice 2: ảnh 1 → đợi
-        - Voice 1: ảnh 2 → đợi
-        - Voice 2: ảnh 2 → đợi
-        - ...
+        ĐƠN GIẢN HÓA: Giống hệt _process_folder (PARALLEL mode)
+        - Chạy song song N voices cùng lúc
+        - Mỗi voice = 1 worker với Chrome profile riêng, dải proxy riêng
+        - Chạy GIỐNG HỆT file đơn
 
-        Ưu điểm:
-        - Giãn cách API tự nhiên (không cần delay thủ công)
-        - Giảm 403 rate limit
-        - Mỗi voice có proxy riêng, Chrome riêng
+        Số luồng đọc từ settings.yaml (parallel_voices, mặc định 2)
         """
-        import threading
-        from pathlib import Path
-
-        try:
-            from modules.smart_engine import SmartEngine
-            from modules.round_robin_coordinator import RoundRobinCoordinator, VoiceTask
-            from modules.drission_flow_api import DrissionFlowAPI
-            from modules.browser_flow_generator import BrowserFlowGenerator
-
-            folder = Path(self.input_path.get())
-            voices = sorted(list(folder.glob("*.mp3")) + list(folder.glob("*.wav")))
-
-            if not voices:
-                self.root.after(0, lambda: messagebox.showerror("Lỗi", "Không tìm thấy file voice nào!"))
-                return
-
-            # Giới hạn số voice xử lý cùng lúc
-            max_workers = 2
-            voices = voices[:max_workers]
-            total_voices = len(voices)
-
-            self.log(f"📁 Tìm thấy {total_voices} voice - Chế độ ROUND-ROBIN")
-            for i, v in enumerate(voices):
-                self.log(f"   {i+1}. {v.name}")
-
-            # === PHASE 1: CHUẨN BỊ (SRT + Prompts) ===
-            self.log("")
-            self.log("=" * 60)
-            self.log("🔄 PHASE 1: Chuẩn bị SRT + Prompts...")
-            self.log("=" * 60)
-
-            voice_data = {}  # {voice_id: {'engine': ..., 'prompts': [...], 'proj_dir': ...}}
-
-            for i, voice_path in enumerate(voices):
-                if self._stop:
-                    break
-
-                voice_name = voice_path.stem
-                proj_dir = Path("PROJECTS") / voice_name
-                proj_dir.mkdir(parents=True, exist_ok=True)
-                for d in ["srt", "prompts", "nv", "img"]:
-                    (proj_dir / d).mkdir(exist_ok=True)
-
-                excel_path = proj_dir / "prompts" / f"{voice_name}_prompts.xlsx"
-                srt_path = proj_dir / "srt" / f"{voice_name}.srt"
-
-                self.log(f"[Voice {i}] 📄 {voice_name}")
-
-                # Tạo engine cho voice này
-                engine = SmartEngine(worker_id=i)
-
-                def log_cb(msg, wid=i):
-                    level = "INFO"
-                    if "[OK]" in msg or "OK!" in msg or "✓" in msg:
-                        level = "OK"
-                    elif "[ERROR]" in msg or "ERROR" in msg or "✗" in msg:
-                        level = "ERROR"
-                    elif "[WARN]" in msg or "⚠️" in msg:
-                        level = "WARN"
-                    prefixed_msg = f"[V{wid}] {msg}"
-                    self.root.after(0, lambda m=prefixed_msg, l=level: self.log(m, l))
-
-                engine.callback = log_cb
-
-                # Copy voice file
-                dest_voice = proj_dir / voice_path.name
-                if not dest_voice.exists():
-                    import shutil
-                    shutil.copy2(voice_path, dest_voice)
-
-                # Tạo SRT
-                if not srt_path.exists():
-                    self.log(f"[Voice {i}] Tạo SRT...")
-                    if not engine.make_srt(dest_voice, srt_path):
-                        self.log(f"[Voice {i}] ❌ SRT failed!", "ERROR")
-                        continue
-                else:
-                    self.log(f"[Voice {i}] ⏭️ SRT đã có")
-
-                # Tạo Prompts
-                if not excel_path.exists():
-                    self.log(f"[Voice {i}] Tạo Prompts...")
-                    if not engine.make_prompts(proj_dir, voice_name, excel_path):
-                        self.log(f"[Voice {i}] ❌ Prompts failed!", "ERROR")
-                        continue
-                else:
-                    self.log(f"[Voice {i}] ⏭️ Excel đã có")
-
-                # Load prompts
-                prompts = engine._load_prompts(excel_path, proj_dir)
-                if not prompts:
-                    self.log(f"[Voice {i}] ⚠️ Không có prompts!", "WARN")
-                    continue
-
-                # Filter prompts đã có ảnh
-                filtered = []
-                for p in prompts:
-                    pid = p.get('id', '')
-                    if pid.lower().startswith('nv') or pid.lower().startswith('loc'):
-                        out_path = proj_dir / "nv" / f"{pid}.png"
-                    else:
-                        out_path = proj_dir / "img" / f"{pid}.png"
-                    if not out_path.exists():
-                        filtered.append(p)
-
-                self.log(f"[Voice {i}] 📋 {len(filtered)}/{len(prompts)} prompts cần tạo")
-
-                voice_data[i] = {
-                    'engine': engine,
-                    'prompts': filtered,
-                    'proj_dir': proj_dir,
-                    'excel_path': excel_path,
-                    'voice_name': voice_name
-                }
-
-            if not voice_data:
-                self.log("⚠️ Không có voice nào có prompts!", "WARN")
-                return
-
-            # === PHASE 2: ROUND-ROBIN IMAGE GENERATION ===
-            self.log("")
-            self.log("=" * 60)
-            self.log("🔄 PHASE 2: Round-Robin Image Generation...")
-            self.log("=" * 60)
-
-            # Tạo coordinator
-            coordinator = RoundRobinCoordinator(
-                num_voices=len(voice_data),
-                log_callback=lambda msg, lvl="INFO": self.root.after(0, lambda m=msg, l=lvl: self.log(m, l))
-            )
-
-            # Add voices to coordinator
-            for vid, data in voice_data.items():
-                coordinator.add_voice(
-                    voice_id=vid,
-                    folder_path=data['proj_dir'],
-                    prompts=data['prompts'],
-                    excel_path=data['excel_path']
-                )
-
-            # Lưu trữ DrissionFlowAPI cho mỗi voice
-            drission_apis = {}  # {voice_id: DrissionFlowAPI}
-            results_lock = threading.Lock()
-            total_results = {"success": 0, "failed": 0, "total": sum(len(d['prompts']) for d in voice_data.values())}
-
-            def setup_chrome(voice_id: int) -> bool:
-                """Setup Chrome với Webshare proxy cho voice."""
-                try:
-                    self.root.after(0, lambda vid=voice_id: self.log(f"[Voice {vid}] 🌐 Khởi tạo Chrome..."))
-
-                    # Tạo DrissionFlowAPI (proxy được xử lý tự động qua Webshare với worker_id)
-                    api = DrissionFlowAPI(
-                        worker_id=voice_id,
-                        log_callback=lambda msg, vid=voice_id: self.root.after(0, lambda m=msg: self.log(f"[V{vid}] {m}"))
-                    )
-
-                    # Setup Chrome
-                    if api.setup():
-                        drission_apis[voice_id] = api
-                        return True
-                    else:
-                        self.root.after(0, lambda vid=voice_id: self.log(f"[Voice {vid}] ❌ Chrome setup failed!", "ERROR"))
-                        return False
-
-                except Exception as e:
-                    self.root.after(0, lambda vid=voice_id, e=e: self.log(f"[Voice {vid}] ❌ Setup error: {e}", "ERROR"))
-                    return False
-
-            def process_image(voice_id: int, task: VoiceTask) -> tuple:
-                """
-                Tạo 1 ảnh cho voice.
-
-                Returns:
-                    tuple: (success: bool, is_403: bool)
-                    - success: True nếu tạo ảnh thành công
-                    - is_403: True nếu gặp lỗi 403 (cần retry sau)
-                """
-                pid = task.prompt_data.get('id', '?')
-                prompt = task.prompt_data.get('prompt', '')
-
-                # Lấy DrissionFlowAPI đã setup
-                api = drission_apis.get(voice_id)
-                if not api:
-                    return (False, False)
-
-                # Lấy reference images nếu có
-                ref_images = task.prompt_data.get('reference_images', [])
-                image_inputs = []
-
-                if ref_images and task.excel_path:
-                    try:
-                        from modules.excel_manager import PromptWorkbook
-                        wb = PromptWorkbook(task.excel_path)
-                        wb.load_or_create()
-                        media_ids = wb.get_media_ids()
-
-                        for ref_id in ref_images:
-                            media_id = media_ids.get(ref_id)
-                            if media_id:
-                                image_inputs.append({
-                                    "name": media_id,
-                                    "imageInputType": "IMAGE_INPUT_TYPE_REFERENCE"
-                                })
-                    except Exception as e:
-                        self.root.after(0, lambda e=e: self.log(f"⚠️ Lỗi load media_ids: {e}", "WARN"))
-
-                # === IMMEDIATE RETRY với exponential backoff khi gặp 403 ===
-                MAX_IMMEDIATE_RETRIES = 2  # Retry ngay 2 lần trước khi đưa vào queue
-                from modules.browser_flow_generator import AspectRatio
-
-                for attempt in range(MAX_IMMEDIATE_RETRIES + 1):
-                    try:
-                        if attempt == 0:
-                            self.root.after(0, lambda vid=voice_id, p=pid: self.log(f"[Voice {vid}] 🎨 Generating {p}..."))
-                        else:
-                            self.root.after(0, lambda vid=voice_id, p=pid, a=attempt:
-                                self.log(f"[Voice {vid}] 🔄 Retry {a}/{MAX_IMMEDIATE_RETRIES}: {p}..."))
-
-                        success, images, error = api.generate_images(
-                            prompt=prompt,
-                            count=1,
-                            aspect_ratio=AspectRatio.LANDSCAPE,
-                            image_inputs=image_inputs if image_inputs else None
-                        )
-
-                        if success and images:
-                            # Lưu ảnh thành công
-                            import base64
-                            img_data = base64.b64decode(images[0])
-                            task.output_path.parent.mkdir(parents=True, exist_ok=True)
-                            with open(task.output_path, 'wb') as f:
-                                f.write(img_data)
-
-                            # Lưu media_id nếu là nv/loc
-                            if pid.lower().startswith('nv') or pid.lower().startswith('loc'):
-                                if hasattr(api, '_last_media_name') and api._last_media_name:
-                                    try:
-                                        from modules.excel_manager import PromptWorkbook
-                                        wb = PromptWorkbook(task.excel_path)
-                                        wb.load_or_create()
-                                        wb.update_media_id(pid, api._last_media_name)
-                                        wb.save()
-                                    except:
-                                        pass
-
-                            with results_lock:
-                                total_results["success"] += 1
-                                done = total_results["success"] + total_results["failed"]
-                                total = total_results["total"]
-                                progress = (done / total) * 100
-                                self.root.after(0, lambda p=progress, d=done, t=total:
-                                    self.update_progress(p, f"Xong {d}/{t}"))
-
-                            self.root.after(0, lambda vid=voice_id, p=pid: self.log(f"[Voice {vid}] ✅ {p}", "OK"))
-                            return (True, False)  # success, not 403
-
-                        # Check error type
-                        error_str = str(error).lower() if error else ""
-                        is_403 = '403' in error_str or 'forbidden' in error_str or 'recaptcha' in error_str
-                        is_400 = '400' in error_str or 'invalid' in error_str
-
-                        if is_403 and attempt < MAX_IMMEDIATE_RETRIES:
-                            # Rotate proxy và retry ngay
-                            self.root.after(0, lambda vid=voice_id, p=pid, a=attempt:
-                                self.log(f"[Voice {vid}] ⚠️ 403 at {p} - Rotating proxy...", "WARN"))
-
-                            try:
-                                from webshare_proxy import get_proxy_manager
-                                manager = get_proxy_manager()
-                                if manager:
-                                    manager.rotate_worker_proxy(voice_id, "403_forbidden")
-                                    # Restart Chrome với proxy mới
-                                    api.restart_chrome()
-                            except Exception as e:
-                                self.root.after(0, lambda e=e: self.log(f"⚠️ Rotate error: {e}", "WARN"))
-
-                            # Exponential backoff: 2s, 4s
-                            wait_time = 2 * (attempt + 1)
-                            self.root.after(0, lambda vid=voice_id, w=wait_time:
-                                self.log(f"[Voice {vid}] ⏳ Waiting {w}s before retry..."))
-                            time.sleep(wait_time)
-                            continue  # Retry
-
-                        elif is_400 and attempt < MAX_IMMEDIATE_RETRIES:
-                            # Lỗi 400: Invalid argument - thử không có reference images
-                            self.root.after(0, lambda vid=voice_id, p=pid:
-                                self.log(f"[Voice {vid}] ⚠️ 400 at {p} - Retry without references...", "WARN"))
-
-                            # Retry với image_inputs rỗng
-                            image_inputs = []
-                            time.sleep(1)
-                            continue  # Retry
-
-                        # Lỗi khác hoặc hết retry
-                        self.root.after(0, lambda vid=voice_id, p=pid, e=error:
-                            self.log(f"[Voice {vid}] ❌ {p}: {e}", "ERROR"))
-
-                        if is_403:
-                            # Đưa vào retry queue để làm sau
-                            self.root.after(0, lambda vid=voice_id, p=pid:
-                                self.log(f"[Voice {vid}] 📋 {p} → Retry queue (403)", "WARN"))
-                            return (False, True)  # failed, is 403
-                        else:
-                            with results_lock:
-                                total_results["failed"] += 1
-                            return (False, False)  # failed, not 403
-
-                    except Exception as e:
-                        self.root.after(0, lambda vid=voice_id, p=pid, e=e:
-                            self.log(f"[Voice {vid}] ❌ {p}: {e}", "ERROR"))
-
-                        if attempt >= MAX_IMMEDIATE_RETRIES:
-                            with results_lock:
-                                total_results["failed"] += 1
-                            return (False, False)
-
-                # Shouldn't reach here
-                return (False, False)
-
-            # Start worker threads
-            threads = []
-            for vid in voice_data.keys():
-                t = threading.Thread(
-                    target=coordinator.run_voice_worker,
-                    args=(vid, process_image, setup_chrome),
-                    daemon=True
-                )
-                t.start()
-                threads.append(t)
-
-            # Wait for all workers
-            for t in threads:
-                t.join()
-
-            # Cleanup Chrome instances
-            for api in drission_apis.values():
-                try:
-                    api.cleanup()
-                except:
-                    pass
-
-            # Summary
-            stats = coordinator.get_stats()
-            self.log("")
-            self.log("=" * 60)
-            self.log(f"📊 ROUND-ROBIN HOÀN TẤT!", "OK")
-            self.log(f"   ✅ Success: {stats['success']}")
-            self.log(f"   ❌ Failed: {stats['failed']}")
-            self.log(f"   ⏭️ Skipped: {stats['skipped']}")
-            self.log("=" * 60)
-
-            self.root.after(0, lambda: self.update_progress(100, "Hoàn tất!"))
-
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            self.root.after(0, lambda err=e: self.log(f"Lỗi Round-Robin: {err}", "ERROR"))
-        finally:
-            self._running = False
-            self.root.after(0, self._reset_ui)
-
+        # === DÙNG LẠI LOGIC CỦA _process_folder ===
+        # Vì bản chất 2 mode này nên giống nhau theo yêu cầu user
+        return self._process_folder()
     def _on_complete(self, results):
         """Handle completion."""
         # Set current project for preview

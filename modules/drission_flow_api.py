@@ -17,6 +17,7 @@ import random
 import base64
 import requests
 import threading
+import os
 from pathlib import Path
 from typing import Optional, Tuple, List, Dict, Any, Callable
 from dataclasses import dataclass
@@ -40,6 +41,47 @@ except ImportError:
     WebshareProxy = None
     get_proxy_manager = None
     init_proxy_manager = None
+
+
+# ============================================================================
+# SESSION STATE PERSISTENCE
+# ============================================================================
+SESSION_STATE_FILE = Path(__file__).parent.parent / "config" / "session_state.yaml"
+
+def _load_session_state() -> Dict[str, Any]:
+    """Load session state from file."""
+    try:
+        if SESSION_STATE_FILE.exists():
+            import yaml
+            with open(SESSION_STATE_FILE, 'r', encoding='utf-8') as f:
+                return yaml.safe_load(f) or {}
+    except Exception:
+        pass
+    return {}
+
+def _save_session_state(state: Dict[str, Any]) -> None:
+    """Save session state to file."""
+    try:
+        import yaml
+        SESSION_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(SESSION_STATE_FILE, 'w', encoding='utf-8') as f:
+            yaml.dump(state, f, allow_unicode=True)
+    except Exception:
+        pass
+
+def _get_last_session_id(machine_id: int, worker_id: int) -> Optional[int]:
+    """Get last session ID for a machine/worker from persistent storage."""
+    state = _load_session_state()
+    key = f"machine_{machine_id}_worker_{worker_id}"
+    return state.get(key)
+
+def _save_last_session_id(machine_id: int, worker_id: int, session_id: int) -> None:
+    """Save last session ID for a machine/worker to persistent storage."""
+    state = _load_session_state()
+    key = f"machine_{machine_id}_worker_{worker_id}"
+    state[key] = session_id
+    state['last_updated'] = datetime.now().isoformat()
+    _save_session_state(state)
 
 
 @dataclass
@@ -212,6 +254,7 @@ class DrissionFlowAPI:
         webshare_enabled: bool = True,  # BẬT Webshare proxy by default
         worker_id: int = 0,  # Worker ID cho proxy rotation (mỗi Chrome có proxy riêng)
         headless: bool = True,  # Chạy Chrome ẩn (default: ON)
+        machine_id: int = 1,  # Máy số mấy (1-99) - tránh trùng session giữa các máy
         # Legacy params (ignored)
         proxy_port: int = 1080,
         use_proxy: bool = False,
@@ -227,10 +270,12 @@ class DrissionFlowAPI:
             webshare_enabled: Dùng Webshare proxy pool (default True)
             worker_id: Worker ID cho proxy rotation (mỗi Chrome có proxy riêng)
             headless: Chạy Chrome ẩn không hiện cửa sổ (default True)
+            machine_id: Máy số mấy (1-99), mỗi máy cách nhau 30000 session để tránh trùng
         """
         self.profile_dir = Path(profile_dir)
         self.worker_id = worker_id  # Lưu worker_id để dùng cho proxy rotation
         self._headless = headless  # Lưu setting headless
+        self._machine_id = machine_id  # Máy số mấy (1-99)
         # Auto-generate unique port for parallel execution
         if chrome_port == 0:
             self.chrome_port = random.randint(9222, 9999)
@@ -246,6 +291,51 @@ class DrissionFlowAPI:
         self._webshare_proxy = None
         self._use_webshare = webshare_enabled
         self._proxy_bridge = None  # Local proxy bridge
+
+        # === TÍNH SESSION ID DỰA TRÊN WORKER VÀ SỐ LUỒNG ===
+        # Đọc số luồng từ settings để chia dải proxy đều
+        num_workers = 2  # Default
+        try:
+            import yaml
+            settings_path = Path(__file__).parent.parent / "config" / "settings.yaml"
+            if settings_path.exists():
+                with open(settings_path, 'r', encoding='utf-8') as f:
+                    cfg = yaml.safe_load(f) or {}
+                num_workers = max(1, cfg.get('parallel_voices', 2))
+        except:
+            pass
+
+        # Mỗi worker có dải proxy riêng:
+        # - 2 workers: Worker 0 = 1-15000, Worker 1 = 15001-30000
+        # - 3 workers: Worker 0 = 1-10000, Worker 1 = 10001-20000, Worker 2 = 20001-30000
+        sessions_per_worker = 30000 // num_workers
+        base_offset = (self._machine_id - 1) * 30000  # Offset theo máy
+        worker_offset = self.worker_id * sessions_per_worker  # Offset theo worker
+        range_start = base_offset + worker_offset + 1
+        range_end = base_offset + worker_offset + sessions_per_worker
+        self._sessions_per_worker = sessions_per_worker  # Lưu để tăng đúng trong dải
+        self._session_range_start = range_start
+        self._session_range_end = range_end
+
+        # === LOAD LAST SESSION ID FROM FILE ===
+        # Tiếp tục từ session cuối để không lặp lại các session đã dùng
+        last_session = _get_last_session_id(self._machine_id, self.worker_id)
+        if last_session and range_start <= last_session < range_end:
+            # Tiếp tục từ session cuối + 1
+            self._rotating_session_id = last_session + 1
+            # Nếu đã hết dải, quay lại đầu
+            if self._rotating_session_id > range_end:
+                self._rotating_session_id = range_start
+                self.log(f"[Session] ♻️ Đã hết dải, quay lại từ đầu: {range_start}")
+            else:
+                self.log(f"[Session] ⏩ Tiếp tục từ session {self._rotating_session_id} (last={last_session})")
+        else:
+            # Bắt đầu từ đầu dải
+            self._rotating_session_id = range_start
+            self.log(f"[Session] 🆕 Bắt đầu từ session {range_start}")
+
+        self.log(f"[Session] Machine {self._machine_id}, Worker {self.worker_id}: session range {range_start}-{range_end}")
+
         self._bridge_port = None   # Bridge port for API calls
         self._is_rotating_mode = False  # True = Rotating Endpoint (auto IP change)
         if webshare_enabled and WEBSHARE_AVAILABLE:
@@ -460,23 +550,31 @@ class DrissionFlowAPI:
         return True  # Vẫn return True để tiếp tục
 
     def _kill_chrome(self):
-        """Kill tất cả Chrome processes để đảm bảo proxy mới được áp dụng."""
-        import subprocess
-        import sys
-
+        """
+        Close Chrome của tool này (không kill tất cả Chrome).
+        Chỉ đóng driver và proxy bridge.
+        """
         try:
-            if sys.platform == 'win32':
-                # Windows
-                subprocess.run(['taskkill', '/f', '/im', 'chrome.exe'],
-                             capture_output=True, timeout=10)
-            else:
-                # Linux/Mac
-                subprocess.run(['pkill', '-f', 'chrome'],
-                             capture_output=True, timeout=10)
-            self.log("✓ Killed existing Chrome processes")
+            # Chỉ close driver của tool này
+            if self.driver:
+                try:
+                    self.driver.quit()
+                except:
+                    pass
+                self.driver = None
+
+            # Stop proxy bridge
+            if hasattr(self, '_proxy_bridge') and self._proxy_bridge:
+                try:
+                    from proxy_bridge import stop_proxy_bridge
+                    stop_proxy_bridge(self._proxy_bridge)
+                except:
+                    pass
+                self._proxy_bridge = None
+
+            self.log("✓ Closed Chrome và proxy bridge của tool")
             time.sleep(1)
         except Exception as e:
-            # Không sao nếu không kill được (có thể không có Chrome đang chạy)
             pass
 
     def setup(
@@ -519,19 +617,35 @@ class DrissionFlowAPI:
             options.set_user_data_path(str(self.profile_dir))
             options.set_local_port(self.chrome_port)
 
-            # Thêm arguments cần thiết cho Linux/headless
+            # Tìm và set đường dẫn Chrome
             import platform
-            if platform.system() == 'Linux':
-                options.set_argument('--no-sandbox')
-                options.set_argument('--disable-dev-shm-usage')
+            if platform.system() == 'Windows':
+                chrome_paths = [
+                    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+                    os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+                ]
+                for chrome_path in chrome_paths:
+                    if os.path.exists(chrome_path):
+                        options.set_browser_path(chrome_path)
+                        self.log(f"  Chrome path: {chrome_path}")
+                        break
 
-            # Disable GPU để tránh lỗi
+            # Thêm arguments cần thiết
+            options.set_argument('--no-sandbox')  # Cần cho cả Windows và Linux
+            options.set_argument('--disable-dev-shm-usage')
             options.set_argument('--disable-gpu')
             options.set_argument('--disable-software-rasterizer')
+            options.set_argument('--disable-extensions')
+            options.set_argument('--no-first-run')
+            options.set_argument('--no-default-browser-check')
 
             # Headless mode - chạy Chrome ẩn
             if self._headless:
-                options.set_argument('--headless=new')  # Chrome 109+ headless mode
+                options.headless()  # Dùng method built-in của DrissionPage
+                options.set_argument('--window-size=1920,1080')
+                options.set_argument('--disable-popup-blocking')
+                options.set_argument('--ignore-certificate-errors')
                 self.log("🔇 Headless mode: ON (Chrome chạy ẩn)")
             else:
                 self.log("👁️ Headless mode: OFF (Chrome hiển thị)")
@@ -542,9 +656,16 @@ class DrissionFlowAPI:
 
                 # === CHECK ROTATING ENDPOINT MODE ===
                 if manager.is_rotating_mode():
-                    # ROTATING ENDPOINT: Mỗi request tự động đổi IP
+                    # ROTATING RESIDENTIAL: 2 modes
+                    # 1. Random IP: username ends with -rotate → mỗi request = IP ngẫu nhiên
+                    # 2. Sticky Session: username không -rotate → session ID tự động thêm
                     rotating = manager.rotating_endpoint
-                    self._is_rotating_mode = True  # Flag để biết đang dùng rotating
+                    self._is_rotating_mode = True
+                    self._is_random_ip_mode = rotating.base_username.endswith('-rotate')
+
+                    # Session ID từ counter (chỉ dùng cho Sticky Session mode)
+                    session_id = self._rotating_session_id
+                    session_username = rotating.get_username_for_session(session_id)
 
                     try:
                         from proxy_bridge import start_proxy_bridge
@@ -553,7 +674,7 @@ class DrissionFlowAPI:
                             local_port=bridge_port,
                             remote_host=rotating.host,
                             remote_port=rotating.port,
-                            username=rotating.username,
+                            username=session_username,
                             password=rotating.password
                         )
                         self._bridge_port = bridge_port
@@ -563,9 +684,14 @@ class DrissionFlowAPI:
                         options.set_argument('--proxy-bypass-list=<-loopback>')
                         options.set_argument('--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1')
 
-                        self.log(f"🔄 ROTATING ENDPOINT [Worker {self.worker_id}]")
-                        self.log(f"  → {rotating.host}:{rotating.port}")
-                        self.log(f"  → Mỗi request sẽ tự động đổi IP!")
+                        if self._is_random_ip_mode:
+                            self.log(f"🎲 RANDOM IP MODE [Worker {self.worker_id}]")
+                            self.log(f"  → {rotating.host}:{rotating.port}")
+                            self.log(f"  → Username: {session_username} (mỗi request = IP mới)")
+                        else:
+                            self.log(f"🔄 STICKY SESSION [Worker {self.worker_id}]")
+                            self.log(f"  → {rotating.host}:{rotating.port}")
+                            self.log(f"  → Session: {session_username}")
                         self.log(f"  Local: http://127.0.0.1:{bridge_port}")
 
                     except Exception as e:
@@ -626,6 +752,18 @@ class DrissionFlowAPI:
                 self._is_rotating_mode = False
                 self.log("⚠️ Webshare proxy không sẵn sàng - chạy không có proxy", "WARN")
 
+            # Tắt Chrome đang dùng profile này trước (tránh conflict)
+            self._kill_chrome_using_profile()
+
+            # Clean up profile lock trước khi start (tránh conflict)
+            try:
+                lock_file = self.profile_dir / "SingletonLock"
+                if lock_file.exists():
+                    lock_file.unlink()
+                    self.log("  Đã xóa SingletonLock cũ")
+            except:
+                pass
+
             # Thử khởi tạo Chrome với retry
             max_retries = 3
             for attempt in range(max_retries):
@@ -640,7 +778,7 @@ class DrissionFlowAPI:
                         self.chrome_port = random.randint(9222, 9999)
                         options.set_local_port(self.chrome_port)
                         self.log(f"  → Retry với port {self.chrome_port}...")
-                        time.sleep(2)
+                        time.sleep(3)  # Đợi lâu hơn để Chrome cũ tắt hẳn
                     else:
                         raise chrome_err
 
@@ -652,22 +790,128 @@ class DrissionFlowAPI:
             self.log(f"✗ Chrome error: {e}", "ERROR")
             return False
 
-        # 3. Vào Google Flow (hoặc project cố định nếu có)
+        # 3. Vào Google Flow (hoặc project cố định nếu có) - VỚI RETRY
         target_url = project_url if project_url else self.FLOW_URL
         self.log(f"Vào: {target_url[:60]}...")
-        try:
-            self.driver.get(target_url)
-            time.sleep(3)
-            self.log(f"✓ URL: {self.driver.url}")
 
-            # Lưu project_url để dùng khi retry
-            if "/project/" in self.driver.url:
-                self._current_project_url = self.driver.url
-                self.log(f"  → Saved project URL for retry")
+        max_nav_retries = 3
+        nav_success = False
 
-        except Exception as e:
-            self.log(f"✗ Navigation error: {e}", "ERROR")
-            return False
+        for nav_attempt in range(max_nav_retries):
+            try:
+                self.driver.get(target_url)
+                time.sleep(3)
+
+                # Kiểm tra xem trang có load được không
+                current_url = self.driver.url
+                if not current_url or current_url == "about:blank" or "error" in current_url.lower():
+                    raise Exception(f"Page không load được: {current_url}")
+
+                self.log(f"✓ URL: {current_url}")
+
+                # Lưu project_url để dùng khi retry
+                if "/project/" in current_url:
+                    self._current_project_url = current_url
+                    self.log(f"  → Saved project URL for retry")
+
+                nav_success = True
+                break
+
+            except Exception as e:
+                error_msg = str(e)
+                self.log(f"✗ Navigation error (attempt {nav_attempt+1}/{max_nav_retries}): {error_msg}", "WARN")
+
+                # Kiểm tra lỗi proxy/connection
+                is_proxy_error = any(x in error_msg.lower() for x in [
+                    "timeout", "connection", "proxy", "10060", "err_proxy", "err_connection"
+                ])
+
+                if is_proxy_error and nav_attempt < max_nav_retries - 1:
+                    self.log(f"  → Proxy/Connection error, restart Chrome...", "WARN")
+
+                    # Restart Chrome
+                    self._kill_chrome()
+                    self.close()
+                    time.sleep(3)
+
+                    # Restart với cùng config
+                    try:
+                        if not self._start_chrome():
+                            self.log("  → Không restart được Chrome", "ERROR")
+                            continue
+                        self.log("  → Chrome restarted, thử lại...")
+                    except Exception as restart_err:
+                        self.log(f"  → Restart Chrome lỗi: {restart_err}", "ERROR")
+                        continue
+                elif nav_attempt >= max_nav_retries - 1:
+                    self.log(f"✗ Navigation failed sau {max_nav_retries} lần thử", "ERROR")
+                    return False
+
+        if not nav_success:
+            # === FALLBACK: Thử đổi proxy mode ===
+            fallback_tried = False
+
+            if hasattr(self, '_is_rotating_mode') and self._is_rotating_mode:
+                try:
+                    from webshare_proxy import get_proxy_manager
+                    manager = get_proxy_manager()
+
+                    if manager.is_rotating_mode() and manager.rotating_endpoint:
+                        rotating = manager.rotating_endpoint
+                        old_username = rotating.base_username
+
+                        # Xác định mode hiện tại và đổi sang mode khác
+                        if hasattr(self, '_is_random_ip_mode') and self._is_random_ip_mode:
+                            # Đang Random IP → thử Sticky Session
+                            self.log("⚠️ Random IP mode failed, thử STICKY SESSION mode...", "WARN")
+                            new_username = old_username.replace('-rotate', '')
+                            fallback_mode = "Sticky Session"
+                        else:
+                            # Đang Sticky Session → thử Random IP
+                            self.log("⚠️ Sticky Session mode failed, thử RANDOM IP mode...", "WARN")
+                            if not old_username.endswith('-rotate'):
+                                new_username = old_username + '-rotate'
+                            else:
+                                new_username = old_username
+                            fallback_mode = "Random IP"
+
+                        if new_username != old_username:
+                            # Kill everything
+                            self._kill_chrome()
+                            self.close()
+                            time.sleep(2)
+
+                            # Switch mode
+                            rotating.base_username = new_username
+                            self._is_random_ip_mode = new_username.endswith('-rotate')
+                            self.log(f"  → Đổi từ '{old_username}' sang '{new_username}'")
+
+                            if not self._is_random_ip_mode:
+                                self.log(f"  → Sticky Session ID: {self._rotating_session_id}")
+
+                            # Restart với mode mới
+                            if self._start_chrome():
+                                # Retry navigation
+                                try:
+                                    self.driver.get(target_url)
+                                    time.sleep(3)
+                                    if self.driver.url and self.driver.url != "about:blank":
+                                        self.log(f"✓ {fallback_mode} OK! URL: {self.driver.url}")
+                                        nav_success = True
+                                        fallback_tried = True
+                                except Exception as e:
+                                    self.log(f"  → {fallback_mode} cũng fail: {e}", "ERROR")
+                                    fallback_tried = True
+
+                except Exception as fallback_err:
+                    self.log(f"  → Fallback error: {fallback_err}", "ERROR")
+
+            if not nav_success:
+                if fallback_tried:
+                    self.log("✗ Cả hai proxy modes đều fail!", "ERROR")
+                else:
+                    self.log("✗ Không thể vào trang Google Flow", "ERROR")
+                return False
 
         # 4. Auto setup project (click "Dự án mới" + chọn "Tạo hình ảnh")
         if wait_for_project:
@@ -1033,16 +1277,39 @@ class DrissionFlowAPI:
             if error:
                 last_error = error
 
-                # === ERROR 253: Quota exceeded ===
-                # Kill Chrome hoàn toàn, đổi proxy, mở lại
-                if "253" in error or "quota" in error.lower() or "exceeds" in error.lower():
-                    self.log(f"⚠️ QUOTA EXCEEDED (Error 253) - Kill Chrome và đổi proxy...", "WARN")
+                # === ERROR 253/429: Quota exceeded ===
+                # Close Chrome, đổi session/proxy, mở lại
+                if "253" in error or "429" in error or "quota" in error.lower() or "exceeds" in error.lower():
+                    self.log(f"⚠️ QUOTA EXCEEDED - Đổi session và restart...", "WARN")
 
-                    # QUAN TRỌNG: Kill Chrome processes hoàn toàn (không chỉ close driver)
+                    # Close Chrome của tool (không kill tất cả Chrome)
                     self._kill_chrome()
                     self.close()
 
-                    # Rotate proxy nếu có
+                    # Rotating mode: Restart Chrome với IP mới
+                    if hasattr(self, '_is_rotating_mode') and self._is_rotating_mode:
+                        if hasattr(self, '_is_random_ip_mode') and self._is_random_ip_mode:
+                            # Random IP mode: Chỉ cần restart Chrome, Webshare tự đổi IP
+                            self.log(f"  → 🎲 Random IP: Restart Chrome để lấy IP mới...")
+                        else:
+                            # Sticky Session mode: Tăng session ID
+                            self._rotating_session_id += 1
+                            # Wrap around nếu hết dải
+                            if self._rotating_session_id > self._session_range_end:
+                                self._rotating_session_id = self._session_range_start
+                                self.log(f"  → ♻️ Hết dải, quay lại session {self._rotating_session_id}")
+                            else:
+                                self.log(f"  → Sticky: Đổi sang session {self._rotating_session_id}")
+                            # Lưu session ID để tiếp tục lần sau
+                            _save_last_session_id(self._machine_id, self.worker_id, self._rotating_session_id)
+
+                        if attempt < max_retries - 1:
+                            time.sleep(3)
+                            if self.setup(project_url=getattr(self, '_current_project_url', None)):
+                                continue
+                        return False, [], f"Quota exceeded sau {max_retries} lần thử"
+
+                    # Direct mode: Rotate proxy
                     if self._use_webshare and self._webshare_proxy:
                         success, msg = self._webshare_proxy.rotate_ip(self.worker_id, "253 Quota")
                         self.log(f"  → Webshare rotate [Worker {self.worker_id}]: {msg}", "WARN")
@@ -1051,7 +1318,7 @@ class DrissionFlowAPI:
                             # Mở Chrome mới với proxy mới
                             self.log("  → Mở Chrome mới với proxy mới...")
                             time.sleep(3)  # Đợi proxy ổn định
-                            if self.setup(project_url=self._saved_project_url if hasattr(self, '_saved_project_url') else None):
+                            if self.setup(project_url=getattr(self, '_current_project_url', None)):
                                 continue
                             else:
                                 return False, [], "Không setup được Chrome mới sau khi đổi proxy"
@@ -1060,7 +1327,7 @@ class DrissionFlowAPI:
                     if attempt < max_retries - 1:
                         self.log(f"  → Đợi 30s rồi thử lại với Chrome mới...", "WARN")
                         time.sleep(30)
-                        if self.setup(project_url=self._saved_project_url if hasattr(self, '_saved_project_url') else None):
+                        if self.setup(project_url=getattr(self, '_current_project_url', None)):
                             continue
 
                     return False, [], f"Quota exceeded sau {max_retries} lần thử. Hãy đổi proxy hoặc tài khoản."
@@ -1070,13 +1337,33 @@ class DrissionFlowAPI:
                     self.log(f"⚠️ 403 error (attempt {attempt+1}/{max_retries})", "WARN")
 
                     # === ROTATING ENDPOINT MODE ===
-                    # Mỗi request tự động đổi IP → chỉ cần retry, không cần restart Chrome
+                    # Restart Chrome để đổi IP
                     if hasattr(self, '_is_rotating_mode') and self._is_rotating_mode:
-                        self.log(f"  → Rotating mode: IP sẽ tự đổi ở request tiếp theo")
+                        if hasattr(self, '_is_random_ip_mode') and self._is_random_ip_mode:
+                            # Random IP mode: Chỉ cần restart Chrome, Webshare tự đổi IP
+                            self.log(f"  → 🎲 Random IP: Restart Chrome để lấy IP mới...")
+                        else:
+                            # Sticky Session mode: Tăng session ID
+                            self._rotating_session_id += 1
+                            # Wrap around nếu hết dải
+                            if self._rotating_session_id > self._session_range_end:
+                                self._rotating_session_id = self._session_range_start
+                                self.log(f"  → ♻️ Hết dải, quay lại session {self._rotating_session_id}")
+                            else:
+                                self.log(f"  → Sticky: Đổi sang session {self._rotating_session_id}")
+                            # Lưu session ID để tiếp tục lần sau
+                            _save_last_session_id(self._machine_id, self.worker_id, self._rotating_session_id)
+
                         if attempt < max_retries - 1:
-                            self.log(f"  → Retry ngay (không cần restart Chrome)...")
-                            time.sleep(2)  # Đợi ngắn
-                            continue
+                            # Restart Chrome với IP mới
+                            self._kill_chrome()
+                            self.close()
+                            time.sleep(2)
+                            self.log(f"  → Restart Chrome...")
+                            if self.setup(project_url=getattr(self, '_current_project_url', None)):
+                                continue
+                            else:
+                                return False, [], "Không restart được Chrome"
                         else:
                             return False, [], error
 
@@ -1378,29 +1665,55 @@ class DrissionFlowAPI:
                     if "403" in error:
                         self.log(f"[I2V] ⚠️ 403 error (attempt {attempt+1}/{max_retries})", "WARN")
 
-                        # Rotating endpoint mode - chỉ cần retry, IP tự đổi
+                        # === ROTATING ENDPOINT MODE ===
+                        # Restart Chrome để đổi IP (giống như xử lý ảnh)
                         if hasattr(self, '_is_rotating_mode') and self._is_rotating_mode:
-                            self.log("[I2V] → Rotating mode: IP sẽ tự đổi ở request tiếp theo")
+                            if hasattr(self, '_is_random_ip_mode') and self._is_random_ip_mode:
+                                # Random IP mode: Chỉ cần restart Chrome, Webshare tự đổi IP
+                                self.log(f"[I2V] → 🎲 Random IP: Restart Chrome để lấy IP mới...")
+                            else:
+                                # Sticky Session mode: Tăng session ID
+                                self._rotating_session_id += 1
+                                # Wrap around nếu hết dải
+                                if self._rotating_session_id > self._session_range_end:
+                                    self._rotating_session_id = self._session_range_start
+                                    self.log(f"[I2V] → ♻️ Hết dải, quay lại session {self._rotating_session_id}")
+                                else:
+                                    self.log(f"[I2V] → Sticky: Đổi sang session {self._rotating_session_id}")
+                                # Lưu session ID để tiếp tục lần sau
+                                _save_last_session_id(self._machine_id, self.worker_id, self._rotating_session_id)
+
                             if attempt < max_retries - 1:
+                                # Restart Chrome với IP mới
+                                self._kill_chrome()
+                                self.close()
                                 time.sleep(2)
-                                continue
+                                self.log(f"[I2V] → Restart Chrome...")
+                                if self.setup(project_url=retry_project_url):
+                                    continue
+                                else:
+                                    return False, None, "Không restart được Chrome"
                             else:
                                 return False, None, error
 
-                        # Direct proxy list mode
+                        # === DIRECT PROXY LIST MODE ===
+                        # Cần xoay proxy và restart Chrome
                         if self._use_webshare and self._webshare_proxy:
                             success, msg = self._webshare_proxy.rotate_ip(self.worker_id, "I2V 403")
                             self.log(f"[I2V] → Webshare rotate: {msg}", "WARN")
 
                             if success and attempt < max_retries - 1:
-                                self.close()  # Chỉ close driver
-                                time.sleep(3)
-                                self.log("[I2V] → Mở Chrome vào đúng project...")
-                                if self.setup(project_url=retry_project_url):
+                                # Restart Chrome với IP mới
+                                self.log("[I2V] → Restart Chrome với IP mới...")
+                                if self.restart_chrome():
+                                    time.sleep(3)
                                     continue
+                                else:
+                                    return False, None, "Không restart được Chrome sau khi xoay IP"
 
                         if attempt < max_retries - 1:
-                            time.sleep(10)
+                            self.log("[I2V] → Đợi 5s rồi retry...", "WARN")
+                            time.sleep(5)
                             continue
 
                     # Other errors - simple retry
@@ -1577,6 +1890,52 @@ class DrissionFlowAPI:
 
         self._ready = False
 
+    def _kill_chrome_using_profile(self):
+        """Tắt Chrome đang dùng profile này để tránh conflict."""
+        import subprocess
+        import platform
+
+        profile_path = str(self.profile_dir.absolute())
+
+        try:
+            if platform.system() == 'Windows':
+                # Windows: tìm và kill Chrome process dùng profile này
+                result = subprocess.run(
+                    ['wmic', 'process', 'where', "name='chrome.exe'", 'get', 'commandline,processid'],
+                    capture_output=True, text=True, timeout=10
+                )
+
+                if result.returncode == 0:
+                    lines = result.stdout.strip().split('\n')
+                    for line in lines:
+                        if profile_path.replace('/', '\\') in line or profile_path in line:
+                            # Tìm PID ở cuối dòng
+                            parts = line.strip().split()
+                            if parts:
+                                pid = parts[-1]
+                                if pid.isdigit():
+                                    subprocess.run(['taskkill', '/F', '/PID', pid],
+                                                 capture_output=True, timeout=5)
+                                    self.log(f"  Đã tắt Chrome cũ (PID: {pid})")
+            else:
+                # Linux/Mac: dùng pkill
+                result = subprocess.run(
+                    ['pgrep', '-f', profile_path],
+                    capture_output=True, text=True, timeout=10
+                )
+                if result.returncode == 0:
+                    pids = result.stdout.strip().split('\n')
+                    for pid in pids:
+                        if pid.isdigit():
+                            subprocess.run(['kill', '-9', pid], capture_output=True, timeout=5)
+                            self.log(f"  Đã tắt Chrome cũ (PID: {pid})")
+
+            # Đợi Chrome tắt hẳn
+            time.sleep(1)
+
+        except Exception as e:
+            pass  # Không quan trọng nếu không kill được
+
     def _setup_proxy_auth(self):
         """
         Setup CDP để tự động xử lý proxy authentication.
@@ -1662,6 +2021,7 @@ def create_drission_api(
     log_callback: Optional[Callable] = None,
     webshare_enabled: bool = True,  # BẬT Webshare by default
     worker_id: int = 0,  # Worker ID cho proxy rotation
+    machine_id: int = 1,  # Máy số mấy (1-99) - tránh trùng session
 ) -> DrissionFlowAPI:
     """
     Tạo DrissionFlowAPI instance.
@@ -1671,6 +2031,7 @@ def create_drission_api(
         log_callback: Callback để log
         webshare_enabled: Dùng Webshare proxy pool (default True)
         worker_id: Worker ID cho proxy rotation (mỗi Chrome có proxy riêng)
+        machine_id: Máy số mấy (1-99), mỗi máy cách nhau 30000 session
 
     Returns:
         DrissionFlowAPI instance
@@ -1680,4 +2041,5 @@ def create_drission_api(
         log_callback=log_callback,
         webshare_enabled=webshare_enabled,
         worker_id=worker_id,
+        machine_id=machine_id,
     )
