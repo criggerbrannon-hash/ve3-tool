@@ -5,7 +5,7 @@ Quản lý file Excel chứa prompts và thông tin nhân vật.
 """
 
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 from datetime import datetime
 
 from openpyxl import Workbook, load_workbook
@@ -322,14 +322,15 @@ class PromptWorkbook:
     CHARACTERS_SHEET = "characters"
     SCENES_SHEET = "scenes"
     
-    def __init__(self, path: Path):
+    def __init__(self, path: Union[str, Path]):
         """
         Khởi tạo PromptWorkbook.
-        
+
         Args:
-            path: Path đến file Excel
+            path: Path đến file Excel (có thể là str hoặc Path)
         """
-        self.path = path
+        # Chuyển str thành Path để đảm bảo tương thích
+        self.path = Path(path) if isinstance(path, str) else path
         self.workbook: Optional[Workbook] = None
         self.logger = get_logger("excel_manager")
     

@@ -43,16 +43,17 @@ webshare_proxy:
   proxy_mode: "rotating"  # Mặc định: Rotating (IP tự đổi mỗi lần chạy)
 
   # === ROTATING RESIDENTIAL ===
-  # Format: {base_username}-{session_id}:{password}@p.webshare.io:80
-  # VD: jhvbehdf-residential-1:cf1bi3yvq0t1@p.webshare.io:80
+  # Có 2 mode:
+  #   1. Random IP: username kết thúc bằng '-rotate' → mỗi request = IP ngẫu nhiên
+  #   2. Sticky Session: username không có '-rotate' → session ID tự động thêm
   #
-  # Mỗi session_id khác = IP khác
-  # Session có thể từ 1 đến vô hạn (1, 2, 999, 10000...)
+  # VD Random: jhvbehdf-residential-rotate:password@p.webshare.io:80
+  # VD Sticky: jhvbehdf-residential-1:password@p.webshare.io:80
   rotating_host: "p.webshare.io"
   rotating_port: 80
   rotating_password: "cf1bi3yvq0t1"
-  rotating_base_username: "jhvbehdf-residential"
-  machine_id: 1  # Máy số mấy (1-99) - Máy 1→ session 1... Máy 2→ 30001... Máy 3→ 60001...
+  rotating_base_username: "jhvbehdf-residential-rotate"  # -rotate = Random IP mỗi request
+  machine_id: 1  # Chỉ dùng khi Sticky Session (Máy 1→ 1... Máy 2→ 30001...)
 
   # === DIRECT PROXY LIST (100 IPs) ===
   proxy_file: "config/proxies.txt"  # File chứa danh sách proxy

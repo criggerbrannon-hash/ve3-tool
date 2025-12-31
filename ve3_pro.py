@@ -1352,10 +1352,44 @@ class UnixVoiceToVideo:
         rotating_host = proxy_config.get('rotating_host', 'p.webshare.io')
         rotating_port = proxy_config.get('rotating_port', 80)
         rotating_password = proxy_config.get('rotating_password', 'cf1bi3yvq0t1')
-        rotating_base_username = proxy_config.get('rotating_base_username', 'jhvbehdf-residential')
+        rotating_base_username = proxy_config.get('rotating_base_username', 'jhvbehdf-residential-rotate')
         machine_id = proxy_config.get('machine_id', 1)  # Máy số mấy (1-99)
 
-        # Machine ID row - để tránh trùng session giữa các máy
+        # === SESSION MODE SELECTION ===
+        session_mode_row = ttk.Frame(rotating_frame)
+        session_mode_row.pack(fill=tk.X, pady=(2, 5))
+        ttk.Label(session_mode_row, text="Session Mode:", font=('Segoe UI', 9)).pack(side=tk.LEFT)
+        # Detect current mode from base_username
+        is_rotate_mode = rotating_base_username.endswith('-rotate')
+        session_mode_var = tk.StringVar(value='rotate' if is_rotate_mode else 'session')
+        ttk.Radiobutton(session_mode_row, text="🎲 Random IP",
+                        variable=session_mode_var, value="rotate").pack(side=tk.LEFT, padx=(10, 5))
+        ttk.Radiobutton(session_mode_row, text="📌 Sticky Session",
+                        variable=session_mode_var, value="session").pack(side=tk.LEFT, padx=(5, 0))
+
+        # Base username row
+        username_row = ttk.Frame(rotating_frame)
+        username_row.pack(fill=tk.X, pady=(2, 5))
+        ttk.Label(username_row, text="Username:", font=('Segoe UI', 9)).pack(side=tk.LEFT)
+        # Get base part without -rotate suffix for display
+        base_part = rotating_base_username.replace('-rotate', '') if is_rotate_mode else rotating_base_username
+        rotating_username_var = tk.StringVar(value=base_part)
+        rotating_username_entry = ttk.Entry(username_row, textvariable=rotating_username_var,
+                                            width=25, font=('Consolas', 9))
+        rotating_username_entry.pack(side=tk.LEFT, padx=(5, 5))
+        ttk.Label(username_row, text="(VD: jhvbehdf-residential)", foreground='gray',
+                  font=('Segoe UI', 8)).pack(side=tk.LEFT)
+
+        # Password row
+        password_row = ttk.Frame(rotating_frame)
+        password_row.pack(fill=tk.X, pady=(2, 5))
+        ttk.Label(password_row, text="Password:", font=('Segoe UI', 9)).pack(side=tk.LEFT)
+        rotating_password_var = tk.StringVar(value=rotating_password)
+        rotating_password_entry = ttk.Entry(password_row, textvariable=rotating_password_var,
+                                            width=25, font=('Consolas', 9), show='*')
+        rotating_password_entry.pack(side=tk.LEFT, padx=(5, 5))
+
+        # Machine ID row - chỉ hiển thị khi dùng Sticky Session
         machine_row = ttk.Frame(rotating_frame)
         machine_row.pack(fill=tk.X, pady=(2, 5))
         ttk.Label(machine_row, text="Máy số:", font=('Segoe UI', 9)).pack(side=tk.LEFT)
@@ -1363,11 +1397,23 @@ class UnixVoiceToVideo:
         machine_spinbox = ttk.Spinbox(machine_row, from_=1, to=99, width=5,
                                        textvariable=machine_id_var, font=('Consolas', 9))
         machine_spinbox.pack(side=tk.LEFT, padx=(5, 10))
-        ttk.Label(machine_row, text="(Máy 1→ 1... Máy 2→ 30001... Máy 3→ 60001...)",
+        ttk.Label(machine_row, text="(Sticky Session: Máy 1→ 1... Máy 2→ 30001...)",
                   foreground='gray', font=('Segoe UI', 8)).pack(side=tk.LEFT)
 
-        # Info label - session ID is auto-rotated
-        ttk.Label(rotating_frame, text=f"Base: {rotating_base_username}", font=('Consolas', 9)).pack(anchor=tk.W)
+        # Session mode explanation
+        mode_info_label = ttk.Label(rotating_frame, text="", font=('Segoe UI', 8), foreground='blue')
+        mode_info_label.pack(anchor=tk.W, pady=(2, 0))
+
+        def update_mode_info(*args):
+            if session_mode_var.get() == 'rotate':
+                mode_info_label.config(text="🎲 Random: Mỗi request = IP ngẫu nhiên (không cần quản lý session)")
+                machine_spinbox.config(state='disabled')
+            else:
+                mode_info_label.config(text="📌 Sticky: Cùng session = cùng IP (tự động chuyển khi bị block)")
+                machine_spinbox.config(state='normal')
+
+        session_mode_var.trace_add('write', update_mode_info)
+        update_mode_info()  # Initial update
 
         # Test result label for rotating
         rotating_test_label = ttk.Label(rotating_frame, text="", font=('Segoe UI', 8))
@@ -1387,22 +1433,35 @@ class UnixVoiceToVideo:
         proxy_btn_frame.pack(fill=tk.X, pady=(10, 0))
 
         def save_proxy_config():
+            # Build username with/without -rotate suffix
+            base_username = rotating_username_var.get().strip()
+            if session_mode_var.get() == 'rotate':
+                # Random IP mode: append -rotate suffix
+                if not base_username.endswith('-rotate'):
+                    full_username = f"{base_username}-rotate"
+                else:
+                    full_username = base_username
+            else:
+                # Sticky session mode: no suffix (session ID appended at runtime)
+                full_username = base_username.replace('-rotate', '')
+
             config = {
                 'api_key': ws_api_entry.get().strip(),
                 'proxy_file': ws_file_entry.get().strip(),
                 'enabled': ws_enabled_var.get(),
                 'proxy_mode': proxy_mode_var.get(),
-                # Rotating config (session ID tự động đổi)
+                # Rotating config
                 'rotating_host': rotating_host,
                 'rotating_port': rotating_port,
-                'rotating_password': rotating_password,
-                'rotating_base_username': rotating_base_username,
+                'rotating_password': rotating_password_var.get().strip(),
+                'rotating_base_username': full_username,
                 'machine_id': machine_id_var.get(),  # Máy số mấy (tránh trùng session)
             }
             self._save_proxy_config(config)
             update_proxy_count()
             mode_name = "Direct Proxy List" if proxy_mode_var.get() == "direct" else "Rotating Residential"
-            messagebox.showinfo("Đã lưu", f"Proxy config đã được lưu!\nChế độ: {mode_name}")
+            session_mode = "Random IP" if session_mode_var.get() == 'rotate' else "Sticky Session"
+            messagebox.showinfo("Đã lưu", f"Proxy config đã được lưu!\nChế độ: {mode_name}\nSession: {session_mode}")
 
         def test_proxy():
             try:
@@ -1414,9 +1473,15 @@ class UnixVoiceToVideo:
                     rotating_test_label.config(text="⏳ Đang test...", foreground='gray')
                     win.update()
 
+                    # Build test username
+                    test_username = rotating_username_var.get().strip()
+                    if session_mode_var.get() == 'rotate':
+                        if not test_username.endswith('-rotate'):
+                            test_username = f"{test_username}-rotate"
+
                     manager = init_proxy_manager(
-                        username=rotating_base_username,  # Base username, session tự động
-                        password=rotating_password,
+                        username=test_username,
+                        password=rotating_password_var.get().strip(),
                         rotating_endpoint=True,
                         rotating_host=rotating_host,
                         rotating_port=rotating_port,
@@ -2380,23 +2445,33 @@ class UnixVoiceToVideo:
 
             def process_single_voice(voice_path: Path) -> dict:
                 """Process a single voice file - GIỐNG HỆT chạy file đơn."""
+                import time as time_module
+                start_time = time_module.time()
+
                 # Lấy worker_id dựa trên thread đang chạy
                 worker_id = get_worker_id_for_thread()
-                voice_name = voice_path.name
-                result = {"voice": voice_name, "success": 0, "failed": 0, "error": None}
+                voice_name = voice_path.stem  # Không có extension
+                result = {"voice": voice_name, "success": 0, "failed": 0, "error": None, "skipped": False}
+
+                # === CHECK ĐÃ HOÀN THÀNH CHƯA ===
+                proj_dir = Path("PROJECTS") / voice_name
+                video_dir = proj_dir / "video"
+                if video_dir.exists():
+                    mp4_files = list(video_dir.glob("*.mp4"))
+                    if mp4_files:
+                        self.root.after(0, lambda w=worker_id, v=voice_name, n=len(mp4_files):
+                            self.log(f"[Worker {w}] ⏭️ SKIP: {v} (đã có {n} video)", "OK"))
+                        result["skipped"] = True
+                        return result
 
                 # === TÍNH SESSION OFFSET CHO WORKER NÀY ===
-                # Worker 0: session 1-15000, Worker 1: 15001-30000
                 session_offset = worker_id * sessions_per_worker
 
-                self.root.after(0, lambda w=worker_id, v=voice_name, offset=session_offset:
-                    self.log(f"[Worker {w}] 🎬 Bắt đầu: {v} (proxy range: {offset+1}-{offset+sessions_per_worker})"))
+                self.root.after(0, lambda w=worker_id, v=voice_name, offset=session_offset, t=start_time:
+                    self.log(f"[Worker {w}] 🎬 BẮT ĐẦU: {v} (proxy: {offset+1}-{offset+sessions_per_worker})"))
 
                 try:
                     # === TẠO ENGINE VỚI WORKER_ID ===
-                    # worker_id ảnh hưởng đến:
-                    # - Chrome profile được gán
-                    # - Dải proxy session được dùng
                     engine = SmartEngine(worker_id=worker_id)
 
                     def log_cb(msg):
@@ -2417,13 +2492,16 @@ class UnixVoiceToVideo:
                     if 'error' not in engine_result:
                         result["success"] = engine_result.get('success', 0)
                         result["failed"] = engine_result.get('failed', 0)
-                        self.root.after(0, lambda w=worker_id, v=voice_name:
-                            self.log(f"[Worker {w}] ✅ Xong: {v}", "OK"))
+                        elapsed = time_module.time() - start_time
+                        elapsed_min = int(elapsed // 60)
+                        elapsed_sec = int(elapsed % 60)
+                        self.root.after(0, lambda w=worker_id, v=voice_name, m=elapsed_min, s=elapsed_sec:
+                            self.log(f"[Worker {w}] ✅ XONG: {v} ({m}m {s}s)", "OK"))
                     else:
                         result["error"] = engine_result.get('error', 'Unknown')
                         result["failed"] = 1
                         self.root.after(0, lambda w=worker_id, v=voice_name, e=result["error"]:
-                            self.log(f"[Worker {w}] ❌ Lỗi {v}: {e}", "ERROR"))
+                            self.log(f"[Worker {w}] ❌ LỖI {v}: {e}", "ERROR"))
 
                 except Exception as e:
                     import traceback
@@ -2449,8 +2527,13 @@ class UnixVoiceToVideo:
             # Run workers in parallel
             self.log("")
             self.log("=" * 60)
-            self.log(f"🚀 Bắt đầu xử lý song song với {max_workers} luồng...")
+            self.log(f"🚀 CHẠY SONG SONG: {max_workers} luồng, {total} voices")
+            self.log(f"   → Mỗi lúc xử lý {max_workers} voice cùng lúc")
+            self.log(f"   → Mỗi worker có Chrome profile + dải proxy riêng")
             self.log("=" * 60)
+
+            import time as time_module
+            batch_start = time_module.time()
 
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 # Submit all voices - worker_id tự động gán theo thread
@@ -2458,9 +2541,9 @@ class UnixVoiceToVideo:
                 for i, voice_path in enumerate(voices):
                     if self._stop:
                         break
-                    # Không truyền worker_id - sẽ được gán tự động khi thread thực thi
                     future = executor.submit(process_single_voice, voice_path)
                     futures[future] = voice_path
+                    self.log(f"   📋 Queued: {voice_path.stem} (position {i+1}/{total})")
 
                 # Wait for completion (with stop check)
                 for future in as_completed(futures):
@@ -2470,18 +2553,25 @@ class UnixVoiceToVideo:
                         break
 
             # Summary
+            total_elapsed = time_module.time() - batch_start
+            total_min = int(total_elapsed // 60)
+            total_sec = int(total_elapsed % 60)
+
             self.root.after(0, lambda: self.update_progress(100, "Hoàn tất!"))
             self.log("")
             self.log("=" * 60)
-            self.log(f"📊 TỔNG KẾT: {total_results['success']} ✅ | {total_results['failed']} ❌", "OK")
+            self.log(f"📊 TỔNG KẾT ({total_min}m {total_sec}s):")
+            self.log(f"   ✅ Thành công: {total_results['success']} voices")
+            self.log(f"   ❌ Thất bại: {total_results['failed']} voices")
+            self.log(f"   ⏭️ Đã skip: {total - total_results['completed']} voices (đã hoàn thành trước)")
             self.log("=" * 60)
 
             if total_results["failed"] > 0:
-                self.root.after(0, lambda s=total_results["success"], f=total_results["failed"]:
-                    messagebox.showwarning("Chưa hoàn thành", f"✅ Thành công: {s}\n❌ Thất bại: {f}"))
+                self.root.after(0, lambda s=total_results["success"], f=total_results["failed"], t=f"{total_min}m {total_sec}s":
+                    messagebox.showwarning("Chưa hoàn thành", f"Thời gian: {t}\n✅ Thành công: {s}\n❌ Thất bại: {f}"))
             else:
-                self.root.after(0, lambda s=total_results["success"]:
-                    messagebox.showinfo("Hoàn tất!", f"✅ Đã tạo {s} ảnh!"))
+                self.root.after(0, lambda s=total_results["success"], t=f"{total_min}m {total_sec}s":
+                    messagebox.showinfo("Hoàn tất!", f"Thời gian: {t}\n✅ Đã xử lý {s} voices!"))
 
         except Exception as e:
             import traceback

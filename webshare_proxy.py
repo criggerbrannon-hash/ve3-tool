@@ -62,7 +62,15 @@ class RotatingEndpointConfig:
         """
         Tạo username với session ID.
         Mỗi session_id khác = IP khác.
+
+        Nếu base_username kết thúc bằng '-rotate', trả về nguyên username
+        (random IP mode - không cần quản lý session).
         """
+        # Mode 2: Random IP (username ends with -rotate)
+        if self.base_username.endswith('-rotate'):
+            return self.base_username
+
+        # Mode 1: Sticky session (append session ID)
         if session_id is None:
             # Auto increment để đổi IP mỗi request
             self._request_count += 1

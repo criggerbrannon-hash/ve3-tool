@@ -43,6 +43,47 @@ except ImportError:
     init_proxy_manager = None
 
 
+# ============================================================================
+# SESSION STATE PERSISTENCE
+# ============================================================================
+SESSION_STATE_FILE = Path(__file__).parent.parent / "config" / "session_state.yaml"
+
+def _load_session_state() -> Dict[str, Any]:
+    """Load session state from file."""
+    try:
+        if SESSION_STATE_FILE.exists():
+            import yaml
+            with open(SESSION_STATE_FILE, 'r', encoding='utf-8') as f:
+                return yaml.safe_load(f) or {}
+    except Exception:
+        pass
+    return {}
+
+def _save_session_state(state: Dict[str, Any]) -> None:
+    """Save session state to file."""
+    try:
+        import yaml
+        SESSION_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(SESSION_STATE_FILE, 'w', encoding='utf-8') as f:
+            yaml.dump(state, f, allow_unicode=True)
+    except Exception:
+        pass
+
+def _get_last_session_id(machine_id: int, worker_id: int) -> Optional[int]:
+    """Get last session ID for a machine/worker from persistent storage."""
+    state = _load_session_state()
+    key = f"machine_{machine_id}_worker_{worker_id}"
+    return state.get(key)
+
+def _save_last_session_id(machine_id: int, worker_id: int, session_id: int) -> None:
+    """Save last session ID for a machine/worker to persistent storage."""
+    state = _load_session_state()
+    key = f"machine_{machine_id}_worker_{worker_id}"
+    state[key] = session_id
+    state['last_updated'] = datetime.now().isoformat()
+    _save_session_state(state)
+
+
 @dataclass
 class GeneratedImage:
     """Kết quả ảnh được tạo."""
@@ -270,9 +311,30 @@ class DrissionFlowAPI:
         sessions_per_worker = 30000 // num_workers
         base_offset = (self._machine_id - 1) * 30000  # Offset theo máy
         worker_offset = self.worker_id * sessions_per_worker  # Offset theo worker
-        self._rotating_session_id = base_offset + worker_offset + 1
+        range_start = base_offset + worker_offset + 1
+        range_end = base_offset + worker_offset + sessions_per_worker
         self._sessions_per_worker = sessions_per_worker  # Lưu để tăng đúng trong dải
-        self.log(f"[Session] Machine {self._machine_id}, Worker {self.worker_id}: session range {base_offset + worker_offset + 1}-{base_offset + worker_offset + sessions_per_worker}")
+        self._session_range_start = range_start
+        self._session_range_end = range_end
+
+        # === LOAD LAST SESSION ID FROM FILE ===
+        # Tiếp tục từ session cuối để không lặp lại các session đã dùng
+        last_session = _get_last_session_id(self._machine_id, self.worker_id)
+        if last_session and range_start <= last_session < range_end:
+            # Tiếp tục từ session cuối + 1
+            self._rotating_session_id = last_session + 1
+            # Nếu đã hết dải, quay lại đầu
+            if self._rotating_session_id > range_end:
+                self._rotating_session_id = range_start
+                self.log(f"[Session] ♻️ Đã hết dải, quay lại từ đầu: {range_start}")
+            else:
+                self.log(f"[Session] ⏩ Tiếp tục từ session {self._rotating_session_id} (last={last_session})")
+        else:
+            # Bắt đầu từ đầu dải
+            self._rotating_session_id = range_start
+            self.log(f"[Session] 🆕 Bắt đầu từ session {range_start}")
+
+        self.log(f"[Session] Machine {self._machine_id}, Worker {self.worker_id}: session range {range_start}-{range_end}")
 
         self._bridge_port = None   # Bridge port for API calls
         self._is_rotating_mode = False  # True = Rotating Endpoint (auto IP change)
@@ -1113,7 +1175,14 @@ class DrissionFlowAPI:
                     # Rotating mode: Tăng session ID
                     if hasattr(self, '_is_rotating_mode') and self._is_rotating_mode:
                         self._rotating_session_id += 1
-                        self.log(f"  → Rotating: Đổi sang session {self._rotating_session_id}")
+                        # Wrap around nếu hết dải
+                        if self._rotating_session_id > self._session_range_end:
+                            self._rotating_session_id = self._session_range_start
+                            self.log(f"  → ♻️ Hết dải, quay lại session {self._rotating_session_id}")
+                        else:
+                            self.log(f"  → Rotating: Đổi sang session {self._rotating_session_id}")
+                        # Lưu session ID để tiếp tục lần sau
+                        _save_last_session_id(self._machine_id, self.worker_id, self._rotating_session_id)
                         if attempt < max_retries - 1:
                             time.sleep(3)
                             if self.setup(project_url=getattr(self, '_current_project_url', None)):
@@ -1150,8 +1219,15 @@ class DrissionFlowAPI:
                     # === ROTATING ENDPOINT MODE ===
                     # Tăng session ID để đổi IP, restart Chrome với session mới
                     if hasattr(self, '_is_rotating_mode') and self._is_rotating_mode:
-                        self._rotating_session_id += 1  # Tăng session: -1 → -2 → -3...
-                        self.log(f"  → Rotating mode: Đổi sang session {self._rotating_session_id}")
+                        self._rotating_session_id += 1
+                        # Wrap around nếu hết dải
+                        if self._rotating_session_id > self._session_range_end:
+                            self._rotating_session_id = self._session_range_start
+                            self.log(f"  → ♻️ Hết dải, quay lại session {self._rotating_session_id}")
+                        else:
+                            self.log(f"  → Rotating mode: Đổi sang session {self._rotating_session_id}")
+                        # Lưu session ID để tiếp tục lần sau
+                        _save_last_session_id(self._machine_id, self.worker_id, self._rotating_session_id)
                         if attempt < max_retries - 1:
                             # Restart Chrome với session mới
                             self._kill_chrome()
