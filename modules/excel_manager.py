@@ -31,6 +31,17 @@ CHARACTERS_COLUMNS = [
     "media_id",         # Media ID từ Google Flow API (dùng cho reference)
 ]
 
+# Cột cho sheet Director Plan (lưu kế hoạch từ SRT trước khi tạo prompts)
+# Dùng để detect gaps và resume
+DIRECTOR_PLAN_COLUMNS = [
+    "plan_id",          # ID theo thứ tự (1, 2, 3, ...)
+    "srt_start",        # Thời gian bắt đầu (HH:MM:SS,mmm)
+    "srt_end",          # Thời gian kết thúc (HH:MM:SS,mmm)
+    "duration",         # Độ dài (giây)
+    "srt_text",         # Nội dung text
+    "status",           # pending/done (đã tạo prompt chưa)
+]
+
 # Cột cho sheet Scenes
 # QUAN TRONG: srt_start/srt_end la timestamp chinh (khong dung start_time/end_time nua)
 SCENES_COLUMNS = [
@@ -321,6 +332,7 @@ class PromptWorkbook:
     
     CHARACTERS_SHEET = "characters"
     SCENES_SHEET = "scenes"
+    DIRECTOR_PLAN_SHEET = "director_plan"
     
     def __init__(self, path: Union[str, Path]):
         """
@@ -359,10 +371,13 @@ class PromptWorkbook:
         
         # Tạo sheet Characters
         self._create_characters_sheet()
-        
+
         # Tạo sheet Scenes
         self._create_scenes_sheet()
-        
+
+        # Tạo sheet Director Plan
+        self._create_director_plan_sheet()
+
         # Xóa sheet mặc định
         if default_sheet and default_sheet.title == "Sheet":
             self.workbook.remove(default_sheet)
@@ -432,7 +447,36 @@ class PromptWorkbook:
         
         for col, column_name in enumerate(SCENES_COLUMNS, start=1):
             ws.column_dimensions[get_column_letter(col)].width = column_widths.get(column_name, 15)
-    
+
+    def _create_director_plan_sheet(self) -> None:
+        """Tạo sheet Director Plan với header."""
+        ws = self.workbook.create_sheet(self.DIRECTOR_PLAN_SHEET)
+
+        # Header style - màu cam để phân biệt
+        header_font = Font(bold=True, color="FFFFFF")
+        header_fill = PatternFill(start_color="ED7D31", end_color="ED7D31", fill_type="solid")
+        header_alignment = Alignment(horizontal="center", vertical="center")
+
+        # Thêm header
+        for col, column_name in enumerate(DIRECTOR_PLAN_COLUMNS, start=1):
+            cell = ws.cell(row=1, column=col, value=column_name)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = header_alignment
+
+        # Điều chỉnh độ rộng cột
+        column_widths = {
+            "plan_id": 10,
+            "srt_start": 15,
+            "srt_end": 15,
+            "duration": 10,
+            "srt_text": 60,
+            "status": 10,
+        }
+
+        for col, column_name in enumerate(DIRECTOR_PLAN_COLUMNS, start=1):
+            ws.column_dimensions[get_column_letter(col)].width = column_widths.get(column_name, 15)
+
     def save(self) -> None:
         """Lưu workbook ra file."""
         if self.workbook is None:
@@ -706,7 +750,119 @@ class PromptWorkbook:
         """Lấy danh sách scenes chưa tạo video (nhưng đã có ảnh)."""
         scenes = self.get_scenes()
         return [s for s in scenes if s.status_vid != "done" and s.img_path and s.video_prompt]
-    
+
+    # ========================================================================
+    # DIRECTOR PLAN METHODS
+    # ========================================================================
+
+    def _ensure_director_plan_sheet(self) -> None:
+        """Đảm bảo sheet director_plan tồn tại (cho Excel cũ)."""
+        if self.workbook is None:
+            self.load_or_create()
+
+        if self.DIRECTOR_PLAN_SHEET not in self.workbook.sheetnames:
+            self._create_director_plan_sheet()
+            self.save()
+
+    def save_director_plan(self, scenes_data: List[Dict]) -> None:
+        """
+        Lưu kế hoạch scenes từ SRT vào sheet director_plan.
+        Gọi hàm này TRƯỚC KHI tạo prompts để có thể detect gaps.
+
+        Args:
+            scenes_data: List các scene dict với keys: scene_id, srt_start, srt_end, duration, text
+        """
+        self._ensure_director_plan_sheet()
+
+        ws = self.workbook[self.DIRECTOR_PLAN_SHEET]
+
+        # Xóa dữ liệu cũ (giữ header)
+        if ws.max_row > 1:
+            ws.delete_rows(2, ws.max_row)
+
+        # Thêm scenes
+        for scene in scenes_data:
+            next_row = ws.max_row + 1
+            ws.cell(row=next_row, column=1, value=scene.get("scene_id", 0))
+            ws.cell(row=next_row, column=2, value=scene.get("srt_start", ""))
+            ws.cell(row=next_row, column=3, value=scene.get("srt_end", ""))
+            ws.cell(row=next_row, column=4, value=scene.get("duration", 0))
+            ws.cell(row=next_row, column=5, value=scene.get("text", "")[:500])  # Truncate text
+            ws.cell(row=next_row, column=6, value="pending")
+
+        self.save()
+        self.logger.info(f"Saved {len(scenes_data)} scenes to director_plan")
+
+    def get_director_plan(self) -> List[Dict]:
+        """
+        Lấy kế hoạch scenes từ sheet director_plan.
+
+        Returns:
+            List các scene dict
+        """
+        self._ensure_director_plan_sheet()
+
+        ws = self.workbook[self.DIRECTOR_PLAN_SHEET]
+        plans = []
+
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if row[0] is None:
+                continue
+
+            plans.append({
+                "plan_id": row[0],
+                "srt_start": row[1] or "",
+                "srt_end": row[2] or "",
+                "duration": row[3] or 0,
+                "srt_text": row[4] or "",
+                "status": row[5] or "pending",
+            })
+
+        return plans
+
+    def update_director_plan_status(self, plan_id: int, status: str) -> bool:
+        """Cập nhật status của một plan entry."""
+        self._ensure_director_plan_sheet()
+
+        ws = self.workbook[self.DIRECTOR_PLAN_SHEET]
+
+        for row_idx in range(2, ws.max_row + 1):
+            if ws.cell(row=row_idx, column=1).value == plan_id:
+                ws.cell(row=row_idx, column=6, value=status)
+                return True
+
+        return False
+
+    def detect_scene_gaps(self) -> List[Dict]:
+        """
+        So sánh director_plan với scenes để detect gaps (scenes thiếu).
+
+        Returns:
+            List các gap dict: {plan_id, srt_start, srt_end, reason}
+        """
+        plans = self.get_director_plan()
+        scenes = self.get_scenes()
+
+        # Tạo set scene_ids đã có prompts
+        scene_ids_with_prompts = {
+            s.scene_id for s in scenes
+            if s.img_prompt and s.img_prompt.strip()
+        }
+
+        gaps = []
+        for plan in plans:
+            plan_id = plan["plan_id"]
+            if plan_id not in scene_ids_with_prompts:
+                gaps.append({
+                    "plan_id": plan_id,
+                    "srt_start": plan["srt_start"],
+                    "srt_end": plan["srt_end"],
+                    "srt_text": plan["srt_text"][:100],
+                    "reason": "missing_prompt"
+                })
+
+        return gaps
+
     # ========================================================================
     # UTILITY METHODS
     # ========================================================================
@@ -719,13 +875,22 @@ class PromptWorkbook:
     def get_stats(self) -> Dict[str, Any]:
         """
         Lấy thống kê tổng quan.
-        
+
         Returns:
             Dictionary chứa các thống kê
         """
         characters = self.get_characters()
         scenes = self.get_scenes()
-        
+
+        # Director plan stats
+        try:
+            plans = self.get_director_plan()
+            total_planned = len(plans)
+            plans_done = sum(1 for p in plans if p.get("status") == "done")
+        except:
+            total_planned = 0
+            plans_done = 0
+
         return {
             "total_characters": len(characters),
             "total_scenes": len(scenes),
@@ -734,4 +899,8 @@ class PromptWorkbook:
             "images_error": sum(1 for s in scenes if s.status_img == "error"),
             "videos_done": sum(1 for s in scenes if s.status_vid == "done"),
             "videos_error": sum(1 for s in scenes if s.status_vid == "error"),
+            # Director plan
+            "total_planned": total_planned,
+            "plans_done": plans_done,
+            "scenes_missing": total_planned - len(scenes) if total_planned > 0 else 0,
         }

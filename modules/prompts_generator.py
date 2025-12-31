@@ -1098,6 +1098,28 @@ class PromptGenerator:
 
         self.logger.info(f"Tổng cộng {len(scenes_data)} scenes")
 
+        # === LƯU DIRECTOR PLAN VÀO EXCEL (TRƯỚC KHI TẠO PROMPTS) ===
+        # Mục đích: Để detect gaps nếu API fail giữa chừng
+        try:
+            # Kiểm tra xem đã có plan chưa
+            existing_plan = workbook.get_director_plan()
+            if not existing_plan:
+                # Chưa có plan → lưu mới
+                self.logger.info(f"[DIRECTOR PLAN] Lưu {len(scenes_data)} scenes vào director_plan sheet...")
+                workbook.save_director_plan(scenes_data)
+            else:
+                # Đã có plan → so sánh
+                if len(existing_plan) != len(scenes_data):
+                    self.logger.warning(
+                        f"[DIRECTOR PLAN] Kế hoạch cũ có {len(existing_plan)} scenes, "
+                        f"kế hoạch mới có {len(scenes_data)} scenes - cập nhật!"
+                    )
+                    workbook.save_director_plan(scenes_data)
+                else:
+                    self.logger.info(f"[DIRECTOR PLAN] Đã có kế hoạch {len(existing_plan)} scenes")
+        except Exception as e:
+            self.logger.warning(f"[DIRECTOR PLAN] Lỗi lưu: {e}")
+
         # === THÔNG BÁO TỔNG SỐ SCENES CHO CALLER ===
         if total_scenes_callback:
             try:
@@ -1288,6 +1310,12 @@ class PromptGenerator:
                             )
                             workbook.add_scene(scene)
                             saved_scene_count += 1
+
+                            # Update director_plan status
+                            try:
+                                workbook.update_director_plan_status(scene_data["scene_id"], "done")
+                            except:
+                                pass
 
                         workbook.save()
                         progressive_saved = True  # Đánh dấu đã lưu progressive
@@ -1543,6 +1571,22 @@ class PromptGenerator:
             self.logger.info(f"Đã lưu {len(scenes_data)} scenes với prompts")
         else:
             self.logger.info(f"[PROGRESSIVE] Hoàn thành - đã lưu {len(scenes_data)} scenes")
+
+        # === DETECT GAPS: Kiểm tra scenes thiếu ===
+        try:
+            gaps = workbook.detect_scene_gaps()
+            if gaps:
+                self.logger.warning(f"[GAP DETECTED] Phát hiện {len(gaps)} scenes THIẾU prompt:")
+                for gap in gaps[:10]:  # Chỉ log 10 đầu tiên
+                    self.logger.warning(
+                        f"  - Scene {gap['plan_id']}: {gap['srt_start']} → {gap['srt_end']} "
+                        f"({gap['srt_text'][:50]}...)"
+                    )
+                if len(gaps) > 10:
+                    self.logger.warning(f"  ... và {len(gaps) - 10} scenes nữa")
+                self.logger.warning("[GAP] Chạy lại để tạo prompt cho scenes thiếu!")
+        except Exception as e:
+            self.logger.debug(f"[GAP] Không kiểm tra được gaps: {e}")
 
         return True
     
