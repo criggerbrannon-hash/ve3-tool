@@ -40,7 +40,7 @@ webshare_proxy:
   # === PROXY MODE ===
   # "direct" = Sử dụng Direct Proxy List (100 IP cố định)
   # "rotating" = Sử dụng Rotating Residential (IP tự động đổi)
-  proxy_mode: "direct"
+  proxy_mode: "rotating"  # Mặc định: Rotating (IP tự đổi mỗi lần chạy)
 
   # === ROTATING RESIDENTIAL ===
   # Format: {base_username}-{session_id}:{password}@p.webshare.io:80
