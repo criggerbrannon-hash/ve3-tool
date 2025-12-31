@@ -1898,10 +1898,12 @@ Trả về JSON:"""
 
                         # === TÌM BACKUP DATA TỪ DIRECTOR_PLAN ===
                         # Backup đã có character/location mapping
+                        # Ưu tiên: 1) Timestamp match, 2) Text similarity match
                         backup_chars = "[]"
                         backup_location = ""
                         backup_refs = "[]"
                         backup_prompt = ""
+                        backup_found = False
 
                         try:
                             # Parse scene start time to seconds
@@ -1914,22 +1916,63 @@ Trả về JSON:"""
                                 if len(parts) == 3:
                                     scene_start_secs = int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
 
-                            # Tìm backup scene gần nhất trong director_plan
+                            # Tìm backup scene trong director_plan
                             backup_plans = workbook.get_director_plan()
+
+                            # === STRATEGY 1: Timestamp match (±15s) ===
+                            best_time_match = None
+                            best_time_diff = float('inf')
+
                             for bp in backup_plans:
                                 bp_start = bp.get("srt_start", "")
                                 if bp_start:
-                                    ts = bp_start.replace(',', '.')
-                                    parts = ts.split(':')
-                                    if len(parts) == 3:
-                                        bp_start_secs = int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
-                                        # Nếu backup scene gần với scene hiện tại (trong 10s)
-                                        if abs(bp_start_secs - scene_start_secs) < 10:
-                                            backup_chars = bp.get("characters_used", "[]")
-                                            backup_location = bp.get("location_used", "")
-                                            backup_refs = bp.get("reference_files", "[]")
-                                            backup_prompt = bp.get("img_prompt", "")
-                                            break
+                                    try:
+                                        ts = bp_start.replace(',', '.')
+                                        parts = ts.split(':')
+                                        if len(parts) == 3:
+                                            bp_start_secs = int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+                                            time_diff = abs(bp_start_secs - scene_start_secs)
+                                            if time_diff < 15 and time_diff < best_time_diff:
+                                                best_time_diff = time_diff
+                                                best_time_match = bp
+                                    except:
+                                        pass
+
+                            if best_time_match:
+                                backup_chars = best_time_match.get("characters_used", "[]")
+                                backup_location = best_time_match.get("location_used", "")
+                                backup_refs = best_time_match.get("reference_files", "[]")
+                                backup_prompt = best_time_match.get("img_prompt", "")
+                                backup_found = True
+                                self.logger.debug(f"[GAP] Timestamp match: {best_time_diff:.1f}s diff")
+
+                            # === STRATEGY 2: Text similarity match (nếu timestamp không khớp) ===
+                            if not backup_found and scene_text:
+                                best_text_match = None
+                                best_similarity = 0
+                                scene_words = set(scene_text.lower().split())
+
+                                for bp in backup_plans:
+                                    bp_text = bp.get("srt_text", "") or bp.get("text", "")
+                                    if bp_text:
+                                        bp_words = set(bp_text.lower().split())
+                                        # Jaccard similarity
+                                        if scene_words and bp_words:
+                                            intersection = len(scene_words & bp_words)
+                                            union = len(scene_words | bp_words)
+                                            similarity = intersection / union if union > 0 else 0
+                                            if similarity > 0.5 and similarity > best_similarity:
+                                                best_similarity = similarity
+                                                best_text_match = bp
+
+                                if best_text_match:
+                                    backup_chars = best_text_match.get("characters_used", "[]")
+                                    backup_location = best_text_match.get("location_used", "")
+                                    backup_refs = best_text_match.get("reference_files", "[]")
+                                    backup_prompt = best_text_match.get("img_prompt", "")
+                                    backup_found = True
+                                    self.logger.debug(f"[GAP] Text similarity match: {best_similarity:.2f}")
+
                         except Exception as e:
                             self.logger.debug(f"[GAP] Không tìm được backup: {e}")
 
@@ -1937,7 +1980,20 @@ Trả về JSON:"""
                         if backup_prompt:
                             final_prompt = backup_prompt
                         else:
-                            final_prompt = f"Cinematic illustration of: {scene_text[:200]}. 4K photorealistic, dramatic lighting."
+                            # Không có backup prompt → tạo prompt tốt hơn với global_style
+                            # Dùng _create_simple_backup_scene để có character/location mapping
+                            fallback_data = self._create_simple_backup_scene(
+                                scene, characters, locations
+                            )
+                            final_prompt = fallback_data.get("img_prompt", "")
+                            if not final_prompt:
+                                final_prompt = f"Cinematic illustration of: {scene_text[:200]}. 4K photorealistic, dramatic lighting."
+                            # Nếu chưa có backup_chars, dùng từ fallback
+                            if backup_chars == "[]":
+                                backup_chars = fallback_data.get("characters_used", "[]")
+                                backup_location = fallback_data.get("location_used", "")
+                                backup_refs = fallback_data.get("reference_files", "[]")
+                            self.logger.info(f"[GAP] Scene {scene_id}: dùng fallback prompt với character/location mapping")
 
                         new_scene = Scene(
                             scene_id=scene_id,
@@ -1970,19 +2026,90 @@ Trả về JSON:"""
                 self.logger.debug(traceback.format_exc())
                 break
 
-        # Final check
+        # Final check - force fill nếu vẫn còn gaps
         try:
             final_gaps = workbook.detect_timeline_gaps(video_duration_seconds)
             if final_gaps:
                 total_missing = sum(g['duration'] for g in final_gaps)
                 self.logger.warning(
-                    f"[FINAL] Vẫn còn {len(final_gaps)} gaps ({total_missing:.0f}s) "
-                    f"sau {max_gap_retries} retry!"
+                    f"[FINAL] Còn {len(final_gaps)} gaps ({total_missing:.0f}s) - FORCE FILL từ backup..."
                 )
+
+                # === FORCE FILL: Tạo scenes cho TẤT CẢ gaps còn lại ===
+                backup_plans = workbook.get_director_plan()
+                existing_scenes = workbook.get_scenes()
+                next_scene_id = max([s.scene_id for s in existing_scenes], default=0) + 1
+                force_filled = 0
+
+                for gap in final_gaps:
+                    gap_start = gap['start_seconds']
+                    gap_end = gap['end_seconds']
+                    gap_duration = gap['duration']
+
+                    # Tìm backup scenes trong khoảng gap
+                    relevant_backups = []
+                    for bp in backup_plans:
+                        bp_start = bp.get("srt_start", "")
+                        if bp_start:
+                            try:
+                                ts = bp_start.replace(',', '.')
+                                parts = ts.split(':')
+                                if len(parts) == 3:
+                                    bp_secs = int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+                                    if gap_start - 5 <= bp_secs <= gap_end + 5:
+                                        relevant_backups.append(bp)
+                            except:
+                                pass
+
+                    if relevant_backups:
+                        # Dùng backup scenes
+                        for bp in relevant_backups:
+                            new_scene = Scene(
+                                scene_id=next_scene_id,
+                                srt_start=bp.get("srt_start", gap['start_time']),
+                                srt_end=bp.get("srt_end", gap['end_time']),
+                                duration=bp.get("duration", gap_duration),
+                                planned_duration=bp.get("duration", 5.0),
+                                srt_text=bp.get("srt_text", "")[:500],
+                                img_prompt=bp.get("img_prompt", "Cinematic scene, 4K photorealistic"),
+                                video_prompt=bp.get("img_prompt", "Cinematic scene"),
+                                status_img="pending",
+                                status_vid="pending",
+                                characters_used=bp.get("characters_used", "[]"),
+                                location_used=bp.get("location_used", ""),
+                                reference_files=bp.get("reference_files", "[]")
+                            )
+                            workbook.add_scene(new_scene)
+                            next_scene_id += 1
+                            force_filled += 1
+                    else:
+                        # Không có backup → tạo scene placeholder với thông tin từ gap
+                        new_scene = Scene(
+                            scene_id=next_scene_id,
+                            srt_start=gap['start_time'],
+                            srt_end=gap['end_time'],
+                            duration=gap_duration,
+                            planned_duration=min(gap_duration, 8.0),
+                            srt_text=f"[Gap {gap['start_time']} - {gap['end_time']}]",
+                            img_prompt="Cinematic illustration, atmospheric scene, 4K photorealistic, dramatic lighting",
+                            video_prompt="Cinematic scene with smooth camera movement",
+                            status_img="pending",
+                            status_vid="pending",
+                            characters_used="[]",
+                            location_used="",
+                            reference_files="[]"
+                        )
+                        workbook.add_scene(new_scene)
+                        next_scene_id += 1
+                        force_filled += 1
+
+                if force_filled > 0:
+                    workbook.save()
+                    self.logger.info(f"[FINAL] ✓ Force filled {force_filled} scenes cho gaps còn lại!")
             else:
                 self.logger.info("[FINAL] ✓ Timeline đầy đủ - không còn gaps!")
-        except:
-            pass
+        except Exception as e:
+            self.logger.error(f"[FINAL] Lỗi force fill: {e}")
 
         return True
     
