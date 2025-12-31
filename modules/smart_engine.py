@@ -167,6 +167,12 @@ class SmartEngine:
         self._character_gen_result = None
         self._character_gen_error = None
 
+        # Pipeline: Prompts generation thread (chạy song song với image generation)
+        self._prompts_gen_thread = None
+        self._prompts_gen_done = False
+        self._prompts_gen_error = None
+        self._expected_scene_count = 0  # Tổng số scenes cần tạo (từ callback)
+
         # Browser generator - reuse cho ca characters va scenes
         self._browser_generator = None
 
@@ -920,10 +926,12 @@ class SmartEngine:
                 from modules.prompts_generator import PromptGenerator
                 gen = PromptGenerator(cfg)
 
-                # Pass callback de bat dau character generation song song
+                # Pass callbacks để chạy song song
                 if gen.generate_for_project(
                     proj_dir, name,
-                    on_characters_ready=lambda ep, pd: self._on_characters_ready(ep, pd)
+                    on_characters_ready=lambda ep, pd: self._on_characters_ready(ep, pd),
+                    on_scenes_batch_ready=lambda ep, pd, saved, total: self._on_scenes_batch_ready(ep, pd, saved, total),
+                    total_scenes_callback=lambda total: self._on_total_scenes_known(total)
                 ):
                     self.mark_resource_used(ai_key, True)
                     self.log(f"OK: {excel_path.name}", "OK")
@@ -1202,6 +1210,23 @@ class SmartEngine:
         Bat dau generate character images song song.
         """
         self._generate_characters_async(excel_path, proj_dir)
+
+    def _on_total_scenes_known(self, total: int):
+        """
+        Callback khi biết tổng số scenes cần tạo.
+        Lưu để tracking progress.
+        """
+        self._expected_scene_count = total
+        self.log(f"[PIPELINE] Tổng số scenes: {total}")
+
+    def _on_scenes_batch_ready(self, excel_path: Path, proj_dir: Path, saved_count: int, total_count: int):
+        """
+        Callback khi một batch scenes được save vào Excel.
+        Có thể trigger scene image generation ở đây.
+        """
+        self.log(f"[PIPELINE] Scenes batch ready: {saved_count}/{total_count}")
+        # Scene image generation sẽ được xử lý trong run() sau khi prompts hoàn tất
+        # Vì cần đợi characters xong trước
 
     # ========== IMAGE GENERATION ==========
 

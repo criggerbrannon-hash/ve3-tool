@@ -903,7 +903,9 @@ class PromptGenerator:
         project_dir: Path,
         code: str,
         overwrite: bool = False,
-        on_characters_ready: Callable = None
+        on_characters_ready: Callable = None,
+        on_scenes_batch_ready: Callable = None,
+        total_scenes_callback: Callable = None
     ) -> bool:
         """
         Tạo prompts cho một project.
@@ -915,6 +917,12 @@ class PromptGenerator:
             on_characters_ready: Callback được gọi ngay khi characters được save
                                  Signature: on_characters_ready(excel_path, proj_dir)
                                  Cho phép caller bắt đầu tạo ảnh nhân vật song song
+            on_scenes_batch_ready: Callback được gọi sau mỗi batch scenes được save
+                                   Signature: on_scenes_batch_ready(excel_path, proj_dir, saved_count, total_count)
+                                   Cho phép caller bắt đầu tạo ảnh scenes song song
+            total_scenes_callback: Callback để thông báo tổng số scenes cần tạo
+                                   Signature: total_scenes_callback(total_count)
+                                   Gọi trước khi bắt đầu generate để caller biết số lượng
 
         Returns:
             True nếu thành công
@@ -1090,6 +1098,14 @@ class PromptGenerator:
 
         self.logger.info(f"Tổng cộng {len(scenes_data)} scenes")
 
+        # === THÔNG BÁO TỔNG SỐ SCENES CHO CALLER ===
+        if total_scenes_callback:
+            try:
+                total_scenes_callback(len(scenes_data))
+                self.logger.info(f"[PIPELINE] Thông báo: {len(scenes_data)} scenes cần tạo")
+            except Exception as e:
+                self.logger.warning(f"[PIPELINE] total_scenes_callback error: {e}")
+
         # Step 3: Tạo prompts cho từng batch scenes (PARALLEL)
         self.logger.info("=" * 50)
         self.logger.info("Step 3: Tạo IMG PROMPTS cho scenes...")
@@ -1100,6 +1116,7 @@ class PromptGenerator:
             return False
 
         all_scene_prompts = []
+        progressive_saved = False  # Flag để biết đã lưu progressive chưa
 
         # === NẾU ĐẠO DIỄN ĐÃ TẠO PROMPTS → DÙ LUÔN, KHÔNG CẦN GỌI AI NỮA ===
         if using_director_prompts:
@@ -1177,7 +1194,8 @@ class PromptGenerator:
 
                 print(f"[Parallel] Hoan thanh {len(all_scene_prompts)} scene prompts")
             else:
-                # SEQUENTIAL PROCESSING (fallback)
+                # SEQUENTIAL PROCESSING (fallback) - LƯU SAU MỖI BATCH
+                saved_scene_count = 0
                 for i, batch in enumerate(batches):
                     self.logger.info(f"Xu ly batch {i + 1}/{total_batches}")
 
@@ -1187,6 +1205,59 @@ class PromptGenerator:
                         global_style_override=global_style
                     )
                     all_scene_prompts.extend(scene_prompts)
+
+                    # === PROGRESSIVE SAVE: Lưu batch này vào Excel ngay ===
+                    try:
+                        batch_start_idx = saved_scene_count
+                        for j, (scene_data, prompts) in enumerate(zip(batch, scene_prompts)):
+                            # Quick save với data cơ bản
+                            chars_used = prompts.get("characters_used", [])
+                            chars_str = json.dumps(chars_used) if isinstance(chars_used, list) else str(chars_used)
+
+                            # Simple ref_files từ characters_used
+                            ref_files = []
+                            if chars_used:
+                                if isinstance(chars_used, str):
+                                    try:
+                                        chars_used = json.loads(chars_used)
+                                    except:
+                                        chars_used = [chars_used]
+                                for char_id in chars_used:
+                                    if char_id and not char_id.endswith('.png'):
+                                        ref_files.append(f"{char_id}.png")
+                            refs_str = json.dumps(ref_files)
+
+                            scene = Scene(
+                                scene_id=scene_data["scene_id"],
+                                srt_start=scene_data.get("srt_start", "00:00:00,000"),
+                                srt_end=scene_data.get("srt_end", "00:00:05,000"),
+                                duration=scene_data.get("duration", 5.0),
+                                planned_duration=scene_data.get("planned_duration", 5.0),
+                                srt_text=scene_data.get("text", "")[:500],
+                                img_prompt=prompts.get("img_prompt", ""),
+                                video_prompt=prompts.get("video_prompt", ""),
+                                status_img="pending",
+                                status_vid="pending",
+                                characters_used=chars_str,
+                                location_used=prompts.get("location_used", ""),
+                                reference_files=refs_str
+                            )
+                            workbook.add_scene(scene)
+                            saved_scene_count += 1
+
+                        workbook.save()
+                        progressive_saved = True  # Đánh dấu đã lưu progressive
+                        self.logger.info(f"[PROGRESSIVE] Đã lưu batch {i+1}/{total_batches} ({saved_scene_count}/{len(scenes_data)} scenes)")
+
+                        # Callback để thông báo có scenes mới
+                        if on_scenes_batch_ready:
+                            try:
+                                on_scenes_batch_ready(excel_path, project_dir, saved_scene_count, len(scenes_data))
+                            except Exception as e:
+                                self.logger.warning(f"[PROGRESSIVE] Callback error: {e}")
+
+                    except Exception as e:
+                        self.logger.warning(f"[PROGRESSIVE] Lưu batch {i+1} lỗi: {e}")
 
                     # Rate limiting
                     if i + 1 < total_batches:
@@ -1211,8 +1282,17 @@ class PromptGenerator:
                 })
                 self.logger.info(f"Created fallback prompt for scene {idx + 1}")
 
-        # Lưu scenes vào Excel
+        # === LƯU SCENES VÀO EXCEL ===
+        # Nếu đã lưu progressive (sequential mode), skip phần này
+        if progressive_saved:
+            self.logger.info(f"[PROGRESSIVE] Đã lưu {len(all_scene_prompts)} scenes progressive, skip save cuối")
+        else:
+            # Lưu scenes vào Excel (Director Flow hoặc Parallel)
+            self.logger.info(f"Lưu {len(scenes_data)} scenes vào Excel...")
+
         for scene_data, prompts in zip(scenes_data, all_scene_prompts):
+            if progressive_saved:
+                continue  # Skip nếu đã lưu progressive
             # Convert lists to JSON strings for storage
             chars_used = prompts.get("characters_used", [])
 
@@ -1412,10 +1492,14 @@ class PromptGenerator:
                 reference_files=refs_str
             )
             workbook.add_scene(scene)
-        
-        workbook.save()
-        self.logger.info(f"Đã lưu {len(scenes_data)} scenes với prompts")
-        
+
+        # Save final (nếu chưa save progressive)
+        if not progressive_saved:
+            workbook.save()
+            self.logger.info(f"Đã lưu {len(scenes_data)} scenes với prompts")
+        else:
+            self.logger.info(f"[PROGRESSIVE] Hoàn thành - đã lưu {len(scenes_data)} scenes")
+
         return True
     
     def _analyze_characters(self, story_text: str) -> tuple:
