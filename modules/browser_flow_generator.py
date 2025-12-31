@@ -155,17 +155,33 @@ class BrowserFlowGenerator:
             print(f"[{timestamp}] {icons.get(level, '')} {message}")
 
     def _get_profile_path(self) -> Optional[str]:
-        """Lấy Chrome profile path - LUÔN dùng profiles của TOOL.
+        """Lấy Chrome profile path - dùng profiles CÓ SẴN trong tool.
 
-        Mỗi worker có profile riêng: ./chrome_profiles/worker_0, worker_1, ...
-        Không dùng Chrome profile của user để tránh conflict.
+        Ưu tiên profiles đã tạo trong ./chrome_profiles/ (VD: profile_1, profile_2)
+        Assign cho workers theo round-robin.
         """
-        # === LUÔN DÙNG PROFILE CỦA TOOL ===
-        # Mỗi worker có profile riêng trong thư mục chrome_profiles của tool
-        profiles_dir = self.config.get('browser_profiles_dir', './chrome_profiles')
-        profile_path = Path(profiles_dir) / f"worker_{self.worker_id}"
-        profile_path.mkdir(parents=True, exist_ok=True)
-        return str(profile_path)
+        profiles_dir = Path(self.config.get('browser_profiles_dir', './chrome_profiles'))
+
+        # === TÌM PROFILES CÓ SẴN TRONG TOOL ===
+        existing_profiles = []
+        if profiles_dir.exists():
+            # Lấy tất cả folders trong chrome_profiles (trừ worker_X tự tạo)
+            for p in sorted(profiles_dir.iterdir()):
+                if p.is_dir():
+                    existing_profiles.append(p)
+
+        if existing_profiles:
+            # Assign profile theo worker_id (round-robin)
+            profile_index = self.worker_id % len(existing_profiles)
+            profile_path = existing_profiles[profile_index]
+            self._log(f"[Profile] Worker {self.worker_id} → {profile_path.name} (có sẵn)")
+            return str(profile_path)
+        else:
+            # Không có profile có sẵn → tạo mới
+            profile_path = profiles_dir / f"worker_{self.worker_id}"
+            profile_path.mkdir(parents=True, exist_ok=True)
+            self._log(f"[Profile] Worker {self.worker_id} → {profile_path.name} (tạo mới)")
+            return str(profile_path)
 
     def _find_excel_file(self) -> Optional[Path]:
         """Tim file Excel prompts trong project."""
