@@ -1115,6 +1115,50 @@ class PromptGenerator:
             self.logger.error("KHÔNG CÓ SCENES DATA! Dừng.")
             return False
 
+        # === RESUME MODE: Kiểm tra scenes đã có trong Excel ===
+        existing_scene_ids = set()
+        existing_prompts_map = {}  # scene_id -> prompts data
+        missing_scenes_data = []  # Scenes cần generate
+
+        try:
+            existing_scenes = workbook.get_scenes()
+            for s in existing_scenes:
+                # Chỉ đếm scenes đã có img_prompt (không rỗng)
+                if s.img_prompt and s.img_prompt.strip():
+                    existing_scene_ids.add(s.scene_id)
+                    existing_prompts_map[s.scene_id] = {
+                        "img_prompt": s.img_prompt,
+                        "video_prompt": s.video_prompt or s.img_prompt,
+                        "characters_used": s.characters_used,
+                        "location_used": s.location_used or "",
+                        "reference_files": s.reference_files or []
+                    }
+
+            if existing_scene_ids:
+                self.logger.info(f"[RESUME] Phát hiện {len(existing_scene_ids)} scenes đã có prompts trong Excel")
+
+                # Lọc ra scenes chưa có prompt
+                for scene in scenes_data:
+                    if scene["scene_id"] not in existing_scene_ids:
+                        missing_scenes_data.append(scene)
+
+                if not missing_scenes_data:
+                    # Tất cả scenes đã có → skip hoàn toàn
+                    self.logger.info(f"[RESUME] ✓ Tất cả {len(scenes_data)} scenes đã có prompts - SKIP!")
+                    return True
+                else:
+                    # Một số scenes thiếu → chỉ generate phần thiếu
+                    self.logger.info(f"[RESUME] Cần tạo thêm {len(missing_scenes_data)}/{len(scenes_data)} scenes")
+                    # Thay thế scenes_data bằng missing_scenes_data
+                    original_scenes_data = scenes_data  # Lưu lại để merge sau
+                    scenes_data = missing_scenes_data
+            else:
+                # Không có scene nào có prompt → tạo mới tất cả
+                original_scenes_data = None
+        except Exception as e:
+            self.logger.warning(f"[RESUME] Không đọc được Excel scenes: {e}")
+            original_scenes_data = None
+
         all_scene_prompts = []
         progressive_saved = False  # Flag để biết đã lưu progressive chưa
 
