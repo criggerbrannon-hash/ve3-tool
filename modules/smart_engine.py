@@ -2147,12 +2147,43 @@ class SmartEngine:
                 if not self.make_srt(voice_path, srt_path):
                     return {"error": "srt_failed"}
 
-        # Tao Prompts (skip nếu đã có)
+        # Tao Prompts (skip nếu đã có ĐẦY ĐỦ scenes)
         if ext == '.xlsx':
             if inp != excel_path:
                 shutil.copy2(inp, excel_path)
         elif excel_path.exists():
-            self.log("  ⏭️ Excel đã tồn tại, skip!")
+            # Check xem scenes đã có prompt chưa trước khi skip
+            try:
+                from modules.excel_manager import PromptWorkbook
+                workbook = PromptWorkbook(str(excel_path))
+                stats = workbook.get_stats()
+                total_scenes = stats.get('total_scenes', 0)
+                scenes_with_prompts = stats.get('scenes_with_prompts', 0)
+
+                if total_scenes > 0 and scenes_with_prompts >= total_scenes:
+                    # Đã có đầy đủ scenes với prompts
+                    self.log(f"  ⏭️ Excel đã có đủ {scenes_with_prompts} scene prompts, skip!")
+                elif total_scenes == 0:
+                    # Scenes sheet trống hoặc chưa được tạo - cần generate
+                    self.log(f"  ⚠️ Excel tồn tại nhưng CHƯA CÓ scenes - cần generate!", "WARN")
+                    if srt_path.exists():
+                        if not self.make_prompts(proj_dir, name, excel_path):
+                            return {"error": "prompts_failed"}
+                    else:
+                        self.log("  ❌ Không có SRT để tạo scene prompts!", "ERROR")
+                        return {"error": "no_srt"}
+                else:
+                    # Thiếu một số scene prompts - tiếp tục generate
+                    missing = total_scenes - scenes_with_prompts
+                    self.log(f"  ⚠️ Excel thiếu {missing}/{total_scenes} scene prompts - tiếp tục generate!", "WARN")
+                    if srt_path.exists():
+                        if not self.make_prompts(proj_dir, name, excel_path):
+                            return {"error": "prompts_failed"}
+                    else:
+                        self.log("  ❌ Không có SRT để tạo scene prompts!", "ERROR")
+                        return {"error": "no_srt"}
+            except Exception as e:
+                self.log(f"  ⚠️ Check Excel lỗi: {e} - skip", "WARN")
         else:
             if not self.make_prompts(proj_dir, name, excel_path):
                 return {"error": "prompts_failed"}

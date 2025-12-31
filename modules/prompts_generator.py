@@ -932,19 +932,34 @@ class PromptGenerator:
         
         # Load hoặc tạo Excel
         workbook = PromptWorkbook(excel_path).load_or_create()
-        
-        # Kiểm tra đã có prompts chưa
+
+        # === RESUME MODE CHECK ===
+        # Kiểm tra characters và scenes đã có chưa
+        existing_characters = workbook.get_characters()
+        stats = workbook.get_stats()
+        total_scenes = stats.get('total_scenes', 0)
+        scenes_with_prompts = stats.get('scenes_with_prompts', 0)
+
+        # Đã có đầy đủ scenes với prompts → skip
         if workbook.has_prompts() and not overwrite:
-            self.logger.info("Prompts đã tồn tại, bỏ qua (dùng --overwrite-prompts để ghi đè)")
-            return True
-        
+            if total_scenes > 0 and scenes_with_prompts >= total_scenes:
+                self.logger.info("Prompts đã tồn tại đầy đủ, bỏ qua")
+                return True
+
+        # === RESUME MODE: Characters có, scenes thiếu ===
+        resume_scenes_only = False
+        if existing_characters and (total_scenes == 0 or scenes_with_prompts < total_scenes):
+            self.logger.info(f"RESUME: Đã có {len(existing_characters)} nhân vật, tiếp tục tạo scenes...")
+            resume_scenes_only = True
+
         # Clear dữ liệu cũ nếu overwrite
         if overwrite:
             self.logger.info("Xóa prompts cũ...")
             workbook.clear_characters()
             workbook.clear_scenes()
             workbook.save()
-        
+            resume_scenes_only = False  # Clear = tạo lại tất cả
+
         # Đọc và parse SRT
         self.logger.info(f"Đọc SRT file: {srt_path}")
         srt_entries = parse_srt_file(srt_path)
@@ -958,7 +973,8 @@ class PromptGenerator:
         # Tạo full story text để phân tích
         full_story = " ".join([e.text for e in srt_entries])
 
-        # Step 1: Phân tích nhân vật + bối cảnh TRƯỚC
+        # Step 1: Phân tích nhân vật + bối cảnh
+        # (Luôn phân tích để có context, nhưng chỉ lưu vào Excel nếu chưa có)
         self.logger.info("Phân tích nhân vật và bối cảnh...")
         characters, locations, context_lock, global_style = self._analyze_characters(full_story)
 
@@ -968,36 +984,45 @@ class PromptGenerator:
 
         self.logger.info(f"Tìm thấy {len(characters)} nhân vật, {len(locations)} bối cảnh")
 
-        # Lưu nhân vật vào Excel (skip children - họ sẽ được mô tả inline trong scene)
-        children_skipped = 0
-        for char in characters:
-            # Children don't need reference images - they will be described inline in scene prompts
-            if char.is_child or char.english_prompt == "DO_NOT_GENERATE":
-                char.image_file = "NONE"
-                char.status = "skip"  # Skip image generation
-                children_skipped += 1
-                self.logger.info(f"  -> Skipping child character: {char.id} (will use inline description)")
-            else:
-                char.image_file = f"{char.id}.png"
-                char.status = "pending"
-            workbook.add_character(char)
+        # === SKIP nếu RESUME MODE (characters đã có) ===
+        if resume_scenes_only:
+            self.logger.info("RESUME: Bỏ qua thêm nhân vật (đã có trong Excel)")
+            # Dùng characters từ Excel thay vì phân tích lại
+            characters = [c for c in existing_characters if c.role != 'location']
+            locations_from_excel = [c for c in existing_characters if c.role == 'location']
+            # Convert back to Location objects nếu cần
+            self.logger.info(f"  Dùng {len(characters)} nhân vật + {len(locations_from_excel)} locations từ Excel")
+        else:
+            # Lưu nhân vật vào Excel (skip children - họ sẽ được mô tả inline trong scene)
+            children_skipped = 0
+            for char in characters:
+                # Children don't need reference images - they will be described inline in scene prompts
+                if char.is_child or char.english_prompt == "DO_NOT_GENERATE":
+                    char.image_file = "NONE"
+                    char.status = "skip"  # Skip image generation
+                    children_skipped += 1
+                    self.logger.info(f"  -> Skipping child character: {char.id} (will use inline description)")
+                else:
+                    char.image_file = f"{char.id}.png"
+                    char.status = "pending"
+                workbook.add_character(char)
 
-        if children_skipped > 0:
-            self.logger.info(f"  -> {children_skipped} child characters skipped for image generation")
+            if children_skipped > 0:
+                self.logger.info(f"  -> {children_skipped} child characters skipped for image generation")
 
-        # Lưu locations (as Character with role="location")
-        for loc in locations:
-            loc_char = Character(
-                id=loc.id,
-                role="location",
-                name=loc.name,
-                english_prompt=loc.english_prompt,  # location_prompt - for generating reference image
-                character_lock=loc.location_lock,   # location_lock - for scene prompts (IMPORTANT!)
-                vietnamese_prompt=loc.location_lock,  # Keep for backwards compat
-                image_file=f"{loc.id}.png",
-                status="pending"
-            )
-            workbook.add_character(loc_char)
+            # Lưu locations (as Character with role="location")
+            for loc in locations:
+                loc_char = Character(
+                    id=loc.id,
+                    role="location",
+                    name=loc.name,
+                    english_prompt=loc.english_prompt,  # location_prompt - for generating reference image
+                    character_lock=loc.location_lock,   # location_lock - for scene prompts (IMPORTANT!)
+                    vietnamese_prompt=loc.location_lock,  # Keep for backwards compat
+                    image_file=f"{loc.id}.png",
+                    status="pending"
+                )
+                workbook.add_character(loc_char)
 
         workbook.save()
         self.logger.info(f"Đã lưu {len(characters)} nhân vật + {len(locations)} bối cảnh")
@@ -1005,12 +1030,15 @@ class PromptGenerator:
         # === PARALLEL OPTIMIZATION ===
         # Gọi callback để caller có thể bắt đầu tạo ảnh nhân vật SONG SONG
         # trong khi vẫn tiếp tục tạo scene prompts
-        if on_characters_ready:
+        # SKIP callback nếu resume mode (characters đã được tạo ảnh rồi)
+        if on_characters_ready and not resume_scenes_only:
             self.logger.info("[PARALLEL] Characters ready! Triggering character image generation...")
             try:
                 on_characters_ready(excel_path, project_dir)
             except Exception as e:
                 self.logger.warning(f"[PARALLEL] Callback error (non-fatal): {e}")
+        elif resume_scenes_only:
+            self.logger.info("[RESUME] Bỏ qua character image generation (đã có ảnh)")
 
         # Step 1.5: Director's Treatment - Phân tích cấu trúc câu chuyện
         self.logger.info("=" * 50)
