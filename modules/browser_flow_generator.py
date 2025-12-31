@@ -3365,10 +3365,33 @@ class BrowserFlowGenerator:
                     self._log(f"   ✗ Thất bại: {error}", "error")
                     self.stats["failed"] += 1
 
-                    # Check for token expiry
+                    # Check for token expiry - thử refresh và retry
                     if error and "401" in str(error):
-                        self._log("❌ Bearer token hết hạn!", "error")
-                        break
+                        self._log("⚠️ Bearer token hết hạn - thử restart Chrome...", "warn")
+                        try:
+                            if drission_api.restart_chrome():
+                                self._log(f"→ Retry prompt: {pid}...", "info")
+                                success2, images2, error2 = drission_api.generate_image(
+                                    prompt=prompt,
+                                    save_dir=save_dir,
+                                    filename=pid,
+                                    image_inputs=image_inputs if image_inputs else None
+                                )
+                                if success2 and images2:
+                                    self._log(f"   ✓ Retry thành công!")
+                                    self.stats["success"] += 1
+                                    self.stats["failed"] -= 1
+                                    consecutive_errors = 0
+                                    continue
+                                else:
+                                    self._log(f"   ✗ Retry vẫn thất bại - token không hợp lệ", "error")
+                                    break  # Token thực sự hết hạn
+                            else:
+                                self._log("✗ Không restart được Chrome - dừng", "error")
+                                break
+                        except Exception as e:
+                            self._log(f"✗ Refresh token error: {e}", "error")
+                            break
 
                     # Check for 429 - Quota exceeded, cần đổi proxy/tài khoản
                     if error and "429" in str(error):
