@@ -17,6 +17,7 @@ import random
 import base64
 import requests
 import threading
+import os
 from pathlib import Path
 from typing import Optional, Tuple, List, Dict, Any, Callable
 from dataclasses import dataclass
@@ -519,15 +520,28 @@ class DrissionFlowAPI:
             options.set_user_data_path(str(self.profile_dir))
             options.set_local_port(self.chrome_port)
 
-            # Thêm arguments cần thiết cho Linux/headless
+            # Tìm và set đường dẫn Chrome
             import platform
-            if platform.system() == 'Linux':
-                options.set_argument('--no-sandbox')
-                options.set_argument('--disable-dev-shm-usage')
+            if platform.system() == 'Windows':
+                chrome_paths = [
+                    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+                    os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+                ]
+                for chrome_path in chrome_paths:
+                    if os.path.exists(chrome_path):
+                        options.set_browser_path(chrome_path)
+                        self.log(f"  Chrome path: {chrome_path}")
+                        break
 
-            # Disable GPU để tránh lỗi
+            # Thêm arguments cần thiết
+            options.set_argument('--no-sandbox')  # Cần cho cả Windows và Linux
+            options.set_argument('--disable-dev-shm-usage')
             options.set_argument('--disable-gpu')
             options.set_argument('--disable-software-rasterizer')
+            options.set_argument('--disable-extensions')
+            options.set_argument('--no-first-run')
+            options.set_argument('--no-default-browser-check')
 
             # Headless mode - chạy Chrome ẩn
             if self._headless:
