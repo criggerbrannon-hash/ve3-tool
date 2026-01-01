@@ -1246,10 +1246,16 @@ class DrissionFlowAPI:
         self.log(f"→ Calling API with captured payload ({len(original_payload)} chars)...")
 
         try:
-            # API call qua proxy bridge (127.0.0.1:port) để IP match với Chrome
-            # QUAN TRỌNG: Dùng bridge URL, KHÔNG dùng proxy trực tiếp (sẽ bị 407)
+            # API call qua proxy để IP match với Chrome
             proxies = None
-            if self._use_webshare and hasattr(self, '_bridge_port') and self._bridge_port:
+
+            if self._is_ipv6_mode:
+                # IPv6 SOCKS5 proxy
+                socks_url = f"socks5://127.0.0.1:{self._ipv6_proxy_port}"
+                proxies = {"http": socks_url, "https": socks_url}
+                self.log(f"→ Using IPv6 proxy: {socks_url}")
+            elif self._use_webshare and hasattr(self, '_bridge_port') and self._bridge_port:
+                # Webshare proxy bridge
                 bridge_url = f"http://127.0.0.1:{self._bridge_port}"
                 proxies = {"http": bridge_url, "https": bridge_url}
                 self.log(f"→ Using proxy bridge: {bridge_url}")

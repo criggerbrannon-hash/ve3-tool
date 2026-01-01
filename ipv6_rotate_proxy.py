@@ -160,6 +160,8 @@ IPV6_ONLY_MODE = True
 class IPv6Rotator:
     # Thời gian block IPv6 khi bị rate limit (giây)
     BLOCK_DURATION = 300  # 5 phút
+    # Thời gian sticky session - giữ cùng IPv6 (giây)
+    STICKY_DURATION = 60  # 60 giây - đủ cho 1 request cycle
 
     def __init__(self, ipv6_list: List[str]):
         # Filter only bindable IPs
@@ -182,11 +184,20 @@ class IPv6Rotator:
         self.usage_count = {ip: 0 for ip in self.ipv6_list}
         self.blocked_until = {}  # ip -> timestamp khi hết block
         self.last_used = None  # IPv6 vừa dùng
+        self.sticky_until = 0  # Timestamp khi hết sticky
+        self.sticky_ip = None  # IPv6 đang sticky
 
     def get_next(self) -> str:
         with self.lock:
             now = time.time()
 
+            # STICKY MODE: Giữ cùng IPv6 trong STICKY_DURATION
+            if self.sticky_ip and now < self.sticky_until:
+                # Vẫn trong sticky session - dùng IP cũ
+                self.usage_count[self.sticky_ip] += 1
+                return self.sticky_ip
+
+            # Hết sticky hoặc chưa có - lấy IPv6 mới
             # Tìm IPv6 không bị block
             attempts = 0
             while attempts < len(self.ipv6_list):
@@ -203,26 +214,45 @@ class IPv6Rotator:
                         del self.blocked_until[ip]
                         print(f"[PROXY] ✓ Unblocked: {ip}")
 
+                # Set sticky session
+                self.sticky_ip = ip
+                self.sticky_until = now + self.STICKY_DURATION
                 self.usage_count[ip] += 1
                 self.last_used = ip
+                print(f"[PROXY] 🔒 Sticky session: {ip} (60s)")
                 return ip
 
             # Nếu tất cả đều bị block, dùng cái ít bị block nhất
             ip = self.ipv6_list[self.index]
             self.index = (self.index + 1) % len(self.ipv6_list)
+            # Set sticky session
+            self.sticky_ip = ip
+            self.sticky_until = now + self.STICKY_DURATION
             self.usage_count[ip] += 1
             self.last_used = ip
-            print(f"[PROXY] ⚠️ All IPs blocked, using: {ip}")
+            print(f"[PROXY] ⚠️ All IPs blocked, using: {ip} (sticky 60s)")
             return ip
 
     def mark_blocked(self, ip: str = None):
-        """Đánh dấu IPv6 bị block (rate limited)."""
+        """Đánh dấu IPv6 bị block (rate limited) và reset sticky."""
         with self.lock:
             if ip is None:
                 ip = self.last_used
             if ip:
                 self.blocked_until[ip] = time.time() + self.BLOCK_DURATION
+                # Reset sticky để đổi IP mới
+                self.sticky_ip = None
+                self.sticky_until = 0
                 print(f"[PROXY] ✗ Blocked for {self.BLOCK_DURATION}s: {ip}")
+
+    def reset_sticky(self):
+        """Reset sticky session - dùng khi muốn đổi IP mới."""
+        with self.lock:
+            old_ip = self.sticky_ip
+            self.sticky_ip = None
+            self.sticky_until = 0
+            if old_ip:
+                print(f"[PROXY] 🔄 Reset sticky: {old_ip}")
 
     def get_blocked_count(self) -> int:
         """Số IPv6 đang bị block."""
