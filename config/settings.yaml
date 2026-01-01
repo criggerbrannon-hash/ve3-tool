@@ -42,7 +42,7 @@ webshare_proxy:
   # "direct" = Sử dụng Direct Proxy List (100 IP cố định)
   # "rotating" = Sử dụng Rotating Residential (IP tự động đổi)
   # "ipv6" = Sử dụng IPv6 rotation (MIỄN PHÍ - dùng IPv6 của ISP)
-  proxy_mode: "ipv6"  # IPv6 rotation - miễn phí, không giới hạn
+  proxy_mode: "direct"  # Direct Proxy List - 100 IP datacenter cố định
 
   # === IPv6 ROTATION (Miễn phí) ===
   # Yêu cầu: ISP cấp IPv6 subnet (/54 hoặc /48)
