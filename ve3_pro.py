@@ -1421,22 +1421,15 @@ class UnixVoiceToVideo:
         rotating_test_label = ttk.Label(rotating_frame, text="", font=('Segoe UI', 8))
         rotating_test_label.pack(anchor=tk.W)
 
-        # === IPv6 ROTATION FRAME ===
-        ipv6_frame = ttk.LabelFrame(proxy_tab, text="🌐 IPv6 Rotation (MIỄN PHÍ - Dùng IPv6 của ISP)", padding=5)
-        ipv6_frame.pack(fill=tk.X, pady=(3, 5))
-
-        ipv6_info = ttk.Label(ipv6_frame, text="Sử dụng IPv6 subnet của ISP để xoay IP miễn phí. Cần add IPv6 vào adapter trước.",
-                              font=('Segoe UI', 8), foreground='gray')
-        ipv6_info.pack(anchor=tk.W)
-
-        ipv6_port_row = ttk.Frame(ipv6_frame)
-        ipv6_port_row.pack(fill=tk.X, pady=(5, 2))
-        ttk.Label(ipv6_port_row, text="SOCKS5 Port:", font=('Segoe UI', 9)).pack(side=tk.LEFT)
+        # === IPv6 ROTATION FRAME (compact) ===
+        ipv6_frame = ttk.Frame(proxy_tab)
+        ipv6_frame.pack(fill=tk.X, pady=(3, 0))
+        ttk.Label(ipv6_frame, text="🌐 IPv6 Port:", font=('Segoe UI', 9)).pack(side=tk.LEFT)
         ipv6_port_var = tk.IntVar(value=proxy_config.get('ipv6_proxy_port', 1080))
-        ipv6_port_spinbox = ttk.Spinbox(ipv6_port_row, from_=1024, to=65535, width=8,
+        ipv6_port_spinbox = ttk.Spinbox(ipv6_frame, from_=1024, to=65535, width=6,
                                         textvariable=ipv6_port_var, font=('Consolas', 9))
-        ipv6_port_spinbox.pack(side=tk.LEFT, padx=(5, 10))
-        ttk.Label(ipv6_port_row, text="(mặc định: 1080)", foreground='gray',
+        ipv6_port_spinbox.pack(side=tk.LEFT, padx=(5, 5))
+        ttk.Label(ipv6_frame, text="(Dùng IPv6 ISP, cần add IPv6 trước)", foreground='gray',
                   font=('Segoe UI', 8)).pack(side=tk.LEFT)
 
         # API Key (hidden)
