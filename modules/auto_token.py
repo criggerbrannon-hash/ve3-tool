@@ -30,18 +30,20 @@ except ImportError:
 
 class ChromeAutoToken:
     """Auto lay token."""
-    
+
     FLOW_URL = "https://labs.google/fx/vi/tools/flow"
-    
+
     def __init__(
         self,
         chrome_path: str = None,
         profile_path: str = None,
-        headless: bool = False
+        headless: bool = False,
+        proxy_server: str = None  # IPv6 SOCKS5 proxy: "socks5://127.0.0.1:1080"
     ):
         self.chrome_path = chrome_path or r"C:\Program Files\Google\Chrome\Application\chrome.exe"
         self.profile_path = profile_path
         self.headless = headless
+        self.proxy_server = proxy_server  # Proxy cho Chrome bypass 403
         self.callback = None
     
     def log(self, msg: str):
@@ -81,7 +83,12 @@ class ChromeAutoToken:
                     "--start-minimized",
                     "--window-position=-32000,-32000"  # Off-screen
                 ])
-            
+
+            # IPv6/Proxy support - bypass 403
+            if self.proxy_server:
+                cmd.append(f"--proxy-server={self.proxy_server}")
+                self.log(f"Using proxy: {self.proxy_server}")
+
             cmd.append(url)
             subprocess.Popen(cmd, shell=False)
             return True

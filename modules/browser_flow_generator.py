@@ -2020,6 +2020,23 @@ class BrowserFlowGenerator:
         self._log(f"Profile: {profile_path}")
         self._log(f"Headless: {'ON' if use_headless else 'OFF'}")
 
+        # === IPv6 PROXY CHO CHROME (bypass 403) ===
+        proxy_server = None
+        webshare_cfg = self.config.get('webshare_proxy', {})
+        proxy_mode = webshare_cfg.get('proxy_mode', 'direct')
+
+        if proxy_mode == "ipv6":
+            ipv6_port = webshare_cfg.get('ipv6_proxy_port', 1080)
+            try:
+                from modules.drission_flow_api import start_ipv6_proxy_server
+                if start_ipv6_proxy_server(ipv6_port):
+                    proxy_server = f"socks5://127.0.0.1:{ipv6_port}"
+                    self._log(f"🌐 IPv6 Proxy: {proxy_server}")
+                else:
+                    self._log("⚠️ IPv6 proxy không khả dụng", "warn")
+            except ImportError:
+                self._log("⚠️ Không import được IPv6 proxy module", "warn")
+
         try:
             # Callback de log
             def log_callback(msg, level="info"):
@@ -2059,8 +2076,11 @@ class BrowserFlowGenerator:
                 extractor = TokenExtractor(
                     chrome_path=chrome_path,
                     profile_path=profile_path,
-                    headless=use_headless
+                    headless=use_headless,
+                    proxy_server=proxy_server  # IPv6 proxy bypass 403
                 )
+                if proxy_server:
+                    self._log(f"  → Chrome sẽ dùng proxy: {proxy_server}")
                 self._log("Goi extract_token (PyAutoGUI)...")
                 token, proj_id, error = extractor.extract_token(
                     project_id=existing_project_id,
