@@ -7,11 +7,112 @@ Chứa các hàm tiện ích chung cho toàn bộ pipeline.
 import logging
 import re
 import sys
+import subprocess
+import platform
 from datetime import timedelta
 from pathlib import Path
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Callable
 
 import yaml
+
+
+# ============================================================================
+# CHROME RESET - Kill Chrome processes của tool
+# ============================================================================
+
+def reset_tool_chrome(
+    profiles_dir: str = "./chrome_profiles",
+    log_func: Callable = None
+) -> int:
+    """
+    Kill tất cả Chrome processes đang dùng profiles của tool.
+    Gọi hàm này trước khi chạy tool để tránh conflict.
+
+    Args:
+        profiles_dir: Thư mục chứa Chrome profiles của tool
+        log_func: Hàm log (optional)
+
+    Returns:
+        Số Chrome processes đã kill
+    """
+    def log(msg):
+        if log_func:
+            log_func(msg)
+        else:
+            print(msg)
+
+    profiles_path = Path(profiles_dir).absolute()
+    killed = 0
+
+    try:
+        if platform.system() == 'Windows':
+            # Windows: dùng wmic để tìm Chrome dùng profile của tool
+            result = subprocess.run(
+                ['wmic', 'process', 'where', "name='chrome.exe'", 'get', 'commandline,processid'],
+                capture_output=True, text=True, timeout=15
+            )
+
+            if result.returncode == 0:
+                lines = result.stdout.strip().split('\n')
+                for line in lines:
+                    # Kiểm tra xem Chrome có dùng profile của tool không
+                    profile_str = str(profiles_path).replace('/', '\\')
+                    if profile_str in line or 'chrome_profiles' in line.lower():
+                        # Tìm PID ở cuối dòng
+                        parts = line.strip().split()
+                        if parts:
+                            pid = parts[-1]
+                            if pid.isdigit():
+                                try:
+                                    subprocess.run(
+                                        ['taskkill', '/F', '/PID', pid],
+                                        capture_output=True, timeout=5
+                                    )
+                                    log(f"  ✓ Killed Chrome PID: {pid}")
+                                    killed += 1
+                                except:
+                                    pass
+        else:
+            # Linux/Mac: dùng pgrep
+            result = subprocess.run(
+                ['pgrep', '-af', 'chrome'],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0:
+                for line in result.stdout.strip().split('\n'):
+                    if 'chrome_profiles' in line.lower():
+                        parts = line.split()
+                        if parts and parts[0].isdigit():
+                            pid = parts[0]
+                            try:
+                                subprocess.run(['kill', '-9', pid], capture_output=True, timeout=5)
+                                log(f"  ✓ Killed Chrome PID: {pid}")
+                                killed += 1
+                            except:
+                                pass
+
+        # Xóa lock files
+        if profiles_path.exists():
+            for profile_dir in profiles_path.iterdir():
+                if profile_dir.is_dir():
+                    for lock_file in ['SingletonLock', 'SingletonSocket', 'SingletonCookie']:
+                        lock_path = profile_dir / lock_file
+                        if lock_path.exists():
+                            try:
+                                lock_path.unlink()
+                                log(f"  ✓ Removed lock: {profile_dir.name}/{lock_file}")
+                            except:
+                                pass
+
+        if killed > 0:
+            log(f"🧹 Reset Chrome: Killed {killed} processes")
+        else:
+            log("🧹 Reset Chrome: Không có Chrome nào của tool đang chạy")
+
+    except Exception as e:
+        log(f"⚠️ Reset Chrome error: {e}")
+
+    return killed
 
 
 # ============================================================================

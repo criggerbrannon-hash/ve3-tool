@@ -605,6 +605,14 @@ class DrissionFlowAPI:
         self.log("  DRISSION FLOW API - Setup")
         self.log("=" * 50)
 
+        # 0. Reset Chrome cũ của tool (tránh conflict)
+        try:
+            from modules.utils import reset_tool_chrome
+            profiles_dir = str(self.profile_dir.parent)  # chrome_profiles folder
+            reset_tool_chrome(profiles_dir, log_func=self.log)
+        except Exception as e:
+            self.log(f"⚠️ Reset Chrome warning: {e}")
+
         # 1. Tạo thư mục profile
         self.profile_dir.mkdir(parents=True, exist_ok=True)
         self.log(f"Profile: {self.profile_dir}")
