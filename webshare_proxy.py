@@ -60,19 +60,26 @@ class RotatingEndpointConfig:
 
     def get_username_for_session(self, session_id: int = None) -> str:
         """
-        Tạo username với session ID.
-        Mỗi session_id khác = IP khác.
+        Tạo username với session ID cho Webshare Rotating Residential.
 
-        Nếu base_username kết thúc bằng '-rotate', trả về nguyên username
-        (random IP mode - không cần quản lý session).
+        2 Modes:
+        1. Random IP: username kết thúc '-rotate' → IP mới mỗi request (Webshare tự xoay)
+           VD: jhvbehdf-residential-rotate
+
+        2. Sticky Session: username không '-rotate' → append session_id
+           VD: jhvbehdf-residential-1, jhvbehdf-residential-999
+           Mỗi session_id khác = IP khác
+
+        Machine mode: Mỗi máy dùng dải session riêng (1-30000, 30001-60000...)
         """
-        # Mode 2: Random IP (username ends with -rotate)
+        # Mode 1: Random IP (username ends with -rotate)
+        # Webshare tự động cho IP mới mỗi request
         if self.base_username.endswith('-rotate'):
             return self.base_username
 
-        # Mode 1: Sticky session (append session ID)
+        # Mode 2: Sticky session (append session ID)
         if session_id is None:
-            # Auto increment để đổi IP mỗi request
+            # Auto increment
             self._request_count += 1
             session_id = self._request_count
         return f"{self.base_username}-{session_id}"
