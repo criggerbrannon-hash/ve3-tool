@@ -42,7 +42,7 @@ webshare_proxy:
   # "direct" = Sử dụng Direct Proxy List (100 IP cố định)
   # "rotating" = Sử dụng Rotating Residential (IP tự động đổi)
   # "ipv6" = Sử dụng IPv6 rotation (MIỄN PHÍ - dùng IPv6 của ISP)
-  proxy_mode: "direct"  # Direct Proxy List - 100 IP datacenter cố định
+  proxy_mode: "rotating"  # Rotating Residential - IP tự động đổi
 
   # === IPv6 ROTATION (Miễn phí) ===
   # Yêu cầu: ISP cấp IPv6 subnet (/54 hoặc /48)
@@ -59,7 +59,7 @@ webshare_proxy:
   rotating_host: "p.webshare.io"
   rotating_port: 80
   rotating_password: "cf1bi3yvq0t1"
-  rotating_base_username: "jhvbehdf-residential"  # Sticky Session - cùng IP cho Chrome + API call
+  rotating_base_username: "jhvbehdf-residential-rotate"  # Random IP - mỗi request đổi IP
   machine_id: 1  # Chỉ dùng khi Sticky Session (Máy 1→ 1... Máy 2→ 30001...)
 
   # === DIRECT PROXY LIST (100 IPs) ===
