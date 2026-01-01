@@ -41,7 +41,13 @@ webshare_proxy:
   # === PROXY MODE ===
   # "direct" = Sử dụng Direct Proxy List (100 IP cố định)
   # "rotating" = Sử dụng Rotating Residential (IP tự động đổi)
-  proxy_mode: "direct"  # Thử Direct Proxy List thay vì Rotating
+  # "ipv6" = Sử dụng IPv6 rotation (MIỄN PHÍ - dùng IPv6 của ISP)
+  proxy_mode: "ipv6"  # IPv6 rotation - miễn phí, không giới hạn
+
+  # === IPv6 ROTATION (Miễn phí) ===
+  # Yêu cầu: ISP cấp IPv6 subnet (/54 hoặc /48)
+  # Tool sẽ tự động chạy SOCKS5 proxy trên 127.0.0.1:1080
+  ipv6_proxy_port: 1080
 
   # === ROTATING RESIDENTIAL ===
   # Có 2 mode:

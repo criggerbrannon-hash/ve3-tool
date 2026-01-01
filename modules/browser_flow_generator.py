@@ -2920,7 +2920,9 @@ class BrowserFlowGenerator:
         # === PROXY MODE CONFIG ===
         # "direct" = Direct Proxy List (100 IP cố định)
         # "rotating" = Rotating Residential (IP tự động đổi)
+        # "ipv6" = IPv6 rotation (MIỄN PHÍ - dùng IPv6 của ISP)
         proxy_mode = webshare_cfg.get('proxy_mode', 'direct')
+        ipv6_proxy_port = webshare_cfg.get('ipv6_proxy_port', 1080)
         rotating_host = webshare_cfg.get('rotating_host', 'p.webshare.io')
         rotating_port = webshare_cfg.get('rotating_port', 80)
         # Ưu tiên base_username, fallback sang username cũ
@@ -2928,8 +2930,16 @@ class BrowserFlowGenerator:
         rotating_password = webshare_cfg.get('rotating_password', 'cf1bi3yvq0t1')
         machine_id = webshare_cfg.get('machine_id', 1)  # Máy số mấy (1-99)
 
-        # Khởi tạo Webshare Proxy Manager nếu enabled
-        if use_webshare:
+        # === IPv6 MODE ===
+        is_ipv6_mode = (proxy_mode == "ipv6")
+        if is_ipv6_mode:
+            self._log(f"🌐 IPv6 ROTATION mode (MIỄN PHÍ)")
+            self._log(f"   → socks5://127.0.0.1:{ipv6_proxy_port}")
+            self._log(f"   → Xoay IPv6 tự động khi bị 403")
+            use_webshare = False  # Tắt Webshare khi dùng IPv6
+
+        # Khởi tạo Webshare Proxy Manager nếu enabled (không dùng cho IPv6)
+        if use_webshare and not is_ipv6_mode:
 
             try:
                 from webshare_proxy import init_proxy_manager, get_proxy_manager
@@ -3039,13 +3049,17 @@ class BrowserFlowGenerator:
             verbose=self.verbose,
             log_callback=self._log,
             webshare_enabled=use_webshare,
+            ipv6_mode=is_ipv6_mode,  # IPv6 rotation mode
+            ipv6_proxy_port=ipv6_proxy_port,
             worker_id=self.worker_id,  # Parallel mode - mỗi worker có proxy riêng
             headless=drission_headless,  # Chạy Chrome ẩn (default: True)
             machine_id=machine_id  # Máy số mấy - tránh trùng session giữa các máy
         )
 
         self._log("🚀 DrissionPage + Interceptor")
-        if use_webshare:
+        if is_ipv6_mode:
+            self._log(f"   Proxy: 🌐 IPv6 ROTATION (miễn phí)")
+        elif use_webshare:
             manager = get_proxy_manager()
             if manager.is_rotating_mode():
                 self._log(f"   Proxy: 🔄 ROTATING ENDPOINT (auto IP change)")

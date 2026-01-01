@@ -32,7 +32,7 @@ except ImportError:
     ChromiumPage = None
     ChromiumOptions = None
 
-# Webshare Proxy imports (IPv6 proxy đã bị bỏ)
+# Webshare Proxy imports
 WEBSHARE_AVAILABLE = False
 try:
     from webshare_proxy import WebshareProxy, get_proxy_manager, init_proxy_manager
@@ -41,6 +41,48 @@ except ImportError:
     WebshareProxy = None
     get_proxy_manager = None
     init_proxy_manager = None
+
+# IPv6 Proxy imports
+IPV6_PROXY_AVAILABLE = False
+_ipv6_proxy_server = None  # Global IPv6 proxy server instance
+try:
+    from ipv6_rotate_proxy import IPv6Rotator, ProxyServer, IPV6_LIST, test_ipv6_bindable
+    IPV6_PROXY_AVAILABLE = True
+except ImportError:
+    IPv6Rotator = None
+    ProxyServer = None
+    IPV6_LIST = []
+
+
+def start_ipv6_proxy_server(port: int = 1080) -> bool:
+    """Start IPv6 rotating proxy server nếu chưa chạy."""
+    global _ipv6_proxy_server
+
+    if not IPV6_PROXY_AVAILABLE:
+        print("[IPv6] Module ipv6_rotate_proxy không khả dụng")
+        return False
+
+    if _ipv6_proxy_server is not None:
+        print(f"[IPv6] Proxy server đã chạy trên port {port}")
+        return True
+
+    # Test bindable IPv6
+    bindable = [ip for ip in IPV6_LIST if test_ipv6_bindable(ip)]
+    if not bindable:
+        print("[IPv6] Không có IPv6 nào bind được! Cần add IPv6 vào Windows trước.")
+        return False
+
+    try:
+        rotator = IPv6Rotator(bindable)
+        server = ProxyServer(rotator)
+        server.start()
+        _ipv6_proxy_server = server
+        print(f"[IPv6] ✓ Proxy server started: socks5://127.0.0.1:{port}")
+        print(f"[IPv6]   {len(bindable)} IPv6 addresses available")
+        return True
+    except Exception as e:
+        print(f"[IPv6] ✗ Failed to start proxy: {e}")
+        return False
 
 
 # ============================================================================
@@ -252,6 +294,8 @@ class DrissionFlowAPI:
         log_callback: Optional[Callable] = None,
         # Webshare proxy - dùng global proxy manager
         webshare_enabled: bool = True,  # BẬT Webshare proxy by default
+        ipv6_mode: bool = False,  # Dùng IPv6 rotation (miễn phí)
+        ipv6_proxy_port: int = 1080,  # Port cho IPv6 SOCKS5 proxy
         worker_id: int = 0,  # Worker ID cho proxy rotation (mỗi Chrome có proxy riêng)
         headless: bool = True,  # Chạy Chrome ẩn (default: ON)
         machine_id: int = 1,  # Máy số mấy (1-99) - tránh trùng session giữa các máy
@@ -338,7 +382,14 @@ class DrissionFlowAPI:
 
         self._bridge_port = None   # Bridge port for API calls
         self._is_rotating_mode = False  # True = Rotating Endpoint (auto IP change)
-        if webshare_enabled and WEBSHARE_AVAILABLE:
+        self._is_ipv6_mode = ipv6_mode  # True = IPv6 rotation mode
+        self._ipv6_proxy_port = ipv6_proxy_port
+
+        # IPv6 mode ưu tiên hơn Webshare
+        if ipv6_mode and IPV6_PROXY_AVAILABLE:
+            self._use_webshare = False  # Tắt Webshare khi dùng IPv6
+            self.log(f"✓ IPv6 Mode: socks5://127.0.0.1:{ipv6_proxy_port}")
+        elif webshare_enabled and WEBSHARE_AVAILABLE:
             try:
                 from webshare_proxy import get_proxy_manager, WebshareProxy
                 manager = get_proxy_manager()
@@ -658,7 +709,21 @@ class DrissionFlowAPI:
             else:
                 self.log("👁️ Headless mode: OFF (Chrome hiển thị)")
 
-            if self._use_webshare and self._webshare_proxy:
+            # === IPv6 MODE ===
+            if self._is_ipv6_mode:
+                ipv6_port = self._ipv6_proxy_port
+                if start_ipv6_proxy_server(ipv6_port):
+                    # Chrome dùng SOCKS5 proxy
+                    options.set_argument(f'--proxy-server=socks5://127.0.0.1:{ipv6_port}')
+                    options.set_argument('--proxy-bypass-list=<-loopback>')
+                    self.log(f"🌐 IPv6 MODE [Worker {self.worker_id}]")
+                    self.log(f"  → socks5://127.0.0.1:{ipv6_port}")
+                    self.log(f"  → Xoay IPv6 tự động khi bị 403")
+                else:
+                    self.log("⚠️ IPv6 proxy không khả dụng - chạy không proxy", "WARN")
+                    self._is_ipv6_mode = False
+
+            elif self._use_webshare and self._webshare_proxy:
                 from webshare_proxy import get_proxy_manager
                 manager = get_proxy_manager()
 
