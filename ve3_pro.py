@@ -1298,10 +1298,12 @@ class UnixVoiceToVideo:
         mode_row = ttk.Frame(mode_frame)
         mode_row.pack(fill=tk.X)
 
-        ttk.Radiobutton(mode_row, text="📁 Direct Proxy List (100 IP cố định)",
-                        variable=proxy_mode_var, value="direct").pack(side=tk.LEFT, padx=(0, 20))
-        ttk.Radiobutton(mode_row, text="🌍 Rotating Residential (IP tự động đổi)",
-                        variable=proxy_mode_var, value="rotating").pack(side=tk.LEFT)
+        ttk.Radiobutton(mode_row, text="📁 Direct (100 IP)",
+                        variable=proxy_mode_var, value="direct").pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Radiobutton(mode_row, text="🌍 Rotating Residential",
+                        variable=proxy_mode_var, value="rotating").pack(side=tk.LEFT, padx=(0, 10))
+        ttk.Radiobutton(mode_row, text="🌐 IPv6 (MIỄN PHÍ)",
+                        variable=proxy_mode_var, value="ipv6").pack(side=tk.LEFT)
 
         # === DIRECT PROXY LIST FRAME ===
         direct_frame = ttk.LabelFrame(proxy_tab, text="📁 Direct Proxy List", padding=5)
@@ -1419,6 +1421,24 @@ class UnixVoiceToVideo:
         rotating_test_label = ttk.Label(rotating_frame, text="", font=('Segoe UI', 8))
         rotating_test_label.pack(anchor=tk.W)
 
+        # === IPv6 ROTATION FRAME ===
+        ipv6_frame = ttk.LabelFrame(proxy_tab, text="🌐 IPv6 Rotation (MIỄN PHÍ - Dùng IPv6 của ISP)", padding=5)
+        ipv6_frame.pack(fill=tk.X, pady=(3, 5))
+
+        ipv6_info = ttk.Label(ipv6_frame, text="Sử dụng IPv6 subnet của ISP để xoay IP miễn phí. Cần add IPv6 vào adapter trước.",
+                              font=('Segoe UI', 8), foreground='gray')
+        ipv6_info.pack(anchor=tk.W)
+
+        ipv6_port_row = ttk.Frame(ipv6_frame)
+        ipv6_port_row.pack(fill=tk.X, pady=(5, 2))
+        ttk.Label(ipv6_port_row, text="SOCKS5 Port:", font=('Segoe UI', 9)).pack(side=tk.LEFT)
+        ipv6_port_var = tk.IntVar(value=proxy_config.get('ipv6_proxy_port', 1080))
+        ipv6_port_spinbox = ttk.Spinbox(ipv6_port_row, from_=1024, to=65535, width=8,
+                                        textvariable=ipv6_port_var, font=('Consolas', 9))
+        ipv6_port_spinbox.pack(side=tk.LEFT, padx=(5, 10))
+        ttk.Label(ipv6_port_row, text="(mặc định: 1080)", foreground='gray',
+                  font=('Segoe UI', 8)).pack(side=tk.LEFT)
+
         # API Key (hidden)
         ws_api_entry = ttk.Entry(proxy_tab)
         ws_api_entry.insert(0, proxy_config.get('api_key', ''))
@@ -1456,10 +1476,13 @@ class UnixVoiceToVideo:
                 'rotating_password': rotating_password_var.get().strip(),
                 'rotating_base_username': full_username,
                 'machine_id': machine_id_var.get(),  # Máy số mấy (tránh trùng session)
+                # IPv6 config
+                'ipv6_proxy_port': ipv6_port_var.get(),
             }
             self._save_proxy_config(config)
             update_proxy_count()
-            mode_name = "Direct Proxy List" if proxy_mode_var.get() == "direct" else "Rotating Residential"
+            mode_names = {"direct": "Direct Proxy List", "rotating": "Rotating Residential", "ipv6": "IPv6 Rotation"}
+            mode_name = mode_names.get(proxy_mode_var.get(), proxy_mode_var.get())
             session_mode = "Random IP" if session_mode_var.get() == 'rotate' else "Sticky Session"
             messagebox.showinfo("Đã lưu", f"Proxy config đã được lưu!\nChế độ: {mode_name}\nSession: {session_mode}")
 
