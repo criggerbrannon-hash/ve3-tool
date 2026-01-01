@@ -1274,23 +1274,24 @@ class UnixVoiceToVideo:
         api_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
         # Tab 3: Proxy (Webshare)
-        proxy_tab = ttk.Frame(notebook, padding=15)
+        proxy_tab = ttk.Frame(notebook, padding=8)
         notebook.add(proxy_tab, text="  🌐 Proxy  ")
 
-        ttk.Label(proxy_tab, text="Webshare.io Proxy",
-                  font=('Segoe UI', 11, 'bold')).pack(anchor=tk.W, pady=(0, 5))
-
-        ws_link = ttk.Label(proxy_tab, text="🔗 Đăng ký tại webshare.io",
-                           foreground='blue', cursor='hand2')
-        ws_link.pack(anchor=tk.W)
+        header_row = ttk.Frame(proxy_tab)
+        header_row.pack(fill=tk.X)
+        ttk.Label(header_row, text="Webshare.io Proxy",
+                  font=('Segoe UI', 10, 'bold')).pack(side=tk.LEFT)
+        ws_link = ttk.Label(header_row, text="🔗 webshare.io",
+                           foreground='blue', cursor='hand2', font=('Segoe UI', 8))
+        ws_link.pack(side=tk.LEFT, padx=(10, 0))
         ws_link.bind('<Button-1>', lambda e: webbrowser.open("https://webshare.io"))
 
         # Load existing config
         proxy_config = self._load_proxy_config()
 
         # === PROXY MODE SELECTION ===
-        mode_frame = ttk.LabelFrame(proxy_tab, text="🔀 Chế độ Proxy", padding=10)
-        mode_frame.pack(fill=tk.X, pady=(10, 10))
+        mode_frame = ttk.LabelFrame(proxy_tab, text="🔀 Chế độ Proxy", padding=5)
+        mode_frame.pack(fill=tk.X, pady=(5, 3))
 
         current_mode = proxy_config.get('proxy_mode', 'direct')
         proxy_mode_var = tk.StringVar(value=current_mode)
@@ -1310,8 +1311,8 @@ class UnixVoiceToVideo:
                    textvariable=ipv6_port_var, font=('Consolas', 8)).pack(side=tk.LEFT, padx=(2, 0))
 
         # === DIRECT PROXY LIST FRAME ===
-        direct_frame = ttk.LabelFrame(proxy_tab, text="📁 Direct Proxy List", padding=5)
-        direct_frame.pack(fill=tk.X, pady=(3, 5))
+        direct_frame = ttk.LabelFrame(proxy_tab, text="📁 Direct Proxy List", padding=3)
+        direct_frame.pack(fill=tk.X, pady=(2, 2))
 
         file_entry_frame = ttk.Frame(direct_frame)
         file_entry_frame.pack(fill=tk.X)
@@ -1351,8 +1352,8 @@ class UnixVoiceToVideo:
         update_proxy_count()
 
         # === ROTATING RESIDENTIAL FRAME ===
-        rotating_frame = ttk.LabelFrame(proxy_tab, text="🌍 Rotating Residential", padding=5)
-        rotating_frame.pack(fill=tk.X, pady=(3, 5))
+        rotating_frame = ttk.LabelFrame(proxy_tab, text="🌍 Rotating Residential", padding=3)
+        rotating_frame.pack(fill=tk.X, pady=(2, 2))
 
         # Load rotating config
         rotating_host = proxy_config.get('rotating_host', 'p.webshare.io')
@@ -1363,7 +1364,7 @@ class UnixVoiceToVideo:
 
         # === SESSION MODE SELECTION ===
         session_mode_row = ttk.Frame(rotating_frame)
-        session_mode_row.pack(fill=tk.X, pady=(2, 5))
+        session_mode_row.pack(fill=tk.X, pady=(1, 2))
         ttk.Label(session_mode_row, text="Session Mode:", font=('Segoe UI', 9)).pack(side=tk.LEFT)
         # Detect current mode from base_username
         is_rotate_mode = rotating_base_username.endswith('-rotate')
@@ -1375,7 +1376,7 @@ class UnixVoiceToVideo:
 
         # Base username row
         username_row = ttk.Frame(rotating_frame)
-        username_row.pack(fill=tk.X, pady=(2, 5))
+        username_row.pack(fill=tk.X, pady=(1, 2))
         ttk.Label(username_row, text="Username:", font=('Segoe UI', 9)).pack(side=tk.LEFT)
         # Get base part without -rotate suffix for display
         base_part = rotating_base_username.replace('-rotate', '') if is_rotate_mode else rotating_base_username
@@ -1388,7 +1389,7 @@ class UnixVoiceToVideo:
 
         # Password row
         password_row = ttk.Frame(rotating_frame)
-        password_row.pack(fill=tk.X, pady=(2, 5))
+        password_row.pack(fill=tk.X, pady=(1, 2))
         ttk.Label(password_row, text="Password:", font=('Segoe UI', 9)).pack(side=tk.LEFT)
         rotating_password_var = tk.StringVar(value=rotating_password)
         rotating_password_entry = ttk.Entry(password_row, textvariable=rotating_password_var,
@@ -1397,7 +1398,7 @@ class UnixVoiceToVideo:
 
         # Machine ID row - chỉ hiển thị khi dùng Sticky Session
         machine_row = ttk.Frame(rotating_frame)
-        machine_row.pack(fill=tk.X, pady=(2, 5))
+        machine_row.pack(fill=tk.X, pady=(1, 2))
         ttk.Label(machine_row, text="Máy số:", font=('Segoe UI', 9)).pack(side=tk.LEFT)
         machine_id_var = tk.IntVar(value=machine_id)
         machine_spinbox = ttk.Spinbox(machine_row, from_=1, to=99, width=5,
