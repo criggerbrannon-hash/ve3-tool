@@ -88,14 +88,14 @@ class ProxyBridge:
                 remote_host = self.remote_host
                 remote_port = self.remote_port
 
-            max_retries = 3
+            max_retries = 5  # Tăng từ 3 lên 5
             remote_socket = None
             last_error = None
 
             for attempt in range(max_retries):
                 try:
                     remote_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    remote_socket.settimeout(30)
+                    remote_socket.settimeout(60)  # Tăng từ 30 lên 60 giây
                     remote_socket.connect((remote_host, remote_port))
                     break  # Thành công
                 except Exception as e:
@@ -108,7 +108,7 @@ class ProxyBridge:
                     if attempt < max_retries - 1:
                         print(f"[!] Proxy connect failed (attempt {attempt+1}/{max_retries}): {e}")
                         import time
-                        time.sleep(2)  # Wait before retry
+                        time.sleep(3)  # Tăng từ 2 lên 3 giây
                     else:
                         print(f"[!] Cannot connect to remote proxy after {max_retries} attempts: {e}")
 
