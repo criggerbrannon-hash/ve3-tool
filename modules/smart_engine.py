@@ -3943,19 +3943,25 @@ class SmartEngine:
                 from modules.drission_flow_api import DrissionFlowAPI
                 ws_cfg = self.config.get('webshare_proxy', {})
 
-                # === Dùng profile CÓ SẴN trong tool ===
+                # === Ưu tiên dùng profile ĐÃ LƯU khi resume ===
                 profiles_dir = Path(self.config.get('browser_profiles_dir', './chrome_profiles'))
                 profile_dir = None
 
-                # Tìm profiles có sẵn
-                if profiles_dir.exists():
-                    existing_profiles = sorted([p for p in profiles_dir.iterdir() if p.is_dir()])
-                    if existing_profiles:
-                        profile_index = self.worker_id % len(existing_profiles)
-                        profile_dir = existing_profiles[profile_index]
-                        self.log(f"[VIDEO] Worker {self.worker_id} → {profile_dir.name}")
+                # 1. Ưu tiên: profile đã lưu trong _video_settings
+                saved_profile = self._video_settings.get('chrome_profile_path', '')
+                if saved_profile and Path(saved_profile).exists():
+                    profile_dir = Path(saved_profile)
+                    self.log(f"[VIDEO] Chrome profile: {profile_dir.name} (RESUME)")
+                else:
+                    # 2. Fallback: Tìm profiles có sẵn (round-robin)
+                    if profiles_dir.exists():
+                        existing_profiles = sorted([p for p in profiles_dir.iterdir() if p.is_dir()])
+                        if existing_profiles:
+                            profile_index = self.worker_id % len(existing_profiles)
+                            profile_dir = existing_profiles[profile_index]
+                            self.log(f"[VIDEO] Worker {self.worker_id} → {profile_dir.name}")
 
-                # Fallback: tạo mới nếu không có
+                # 3. Fallback: tạo mới nếu không có
                 if not profile_dir:
                     profile_dir = profiles_dir / f"worker_{self.worker_id}"
                     profile_dir.mkdir(parents=True, exist_ok=True)
@@ -4144,23 +4150,31 @@ class SmartEngine:
                         self.log(f"[VIDEO] Proxy init error: {e}", "WARN")
                         use_webshare = False
 
-                # === CHROME PROFILE: Dùng chrome_profiles/ từ cài đặt tool ===
+                # === CHROME PROFILE: Ưu tiên dùng profile đã LƯU khi resume ===
                 root_dir = Path(__file__).parent.parent
                 profiles_dir = root_dir / cfg.get('browser_profiles_dir', './chrome_profiles')
 
                 profile_dir = None
-                if profiles_dir.exists():
-                    for p in sorted(profiles_dir.iterdir()):
-                        if p.is_dir() and not p.name.startswith('.'):
-                            profile_dir = str(p)
-                            break
+
+                # 1. Ưu tiên: Dùng chrome_profile đã lưu trong _video_settings (từ cache)
+                if chrome_profile and Path(chrome_profile).exists():
+                    profile_dir = chrome_profile
+                    self.log(f"[VIDEO] Chrome profile: {profile_dir} (RESUME)")
+                else:
+                    # 2. Fallback: Lấy profile từ chrome_profiles/
+                    if profiles_dir.exists():
+                        for p in sorted(profiles_dir.iterdir()):
+                            if p.is_dir() and not p.name.startswith('.'):
+                                profile_dir = str(p)
+                                break
 
                 if not profile_dir:
                     self.log("[VIDEO] ⚠️ Không có Chrome profile! Cần tạo ở Cài đặt tool.", "ERROR")
                     self._video_worker_running = False
                     return
 
-                self.log(f"[VIDEO] Chrome profile: {profile_dir}")
+                if chrome_profile != profile_dir:
+                    self.log(f"[VIDEO] Chrome profile: {profile_dir}")
 
                 drission_api = DrissionFlowAPI(
                     profile_dir=profile_dir,

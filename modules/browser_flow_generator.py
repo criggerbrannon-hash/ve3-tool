@@ -3019,10 +3019,16 @@ class BrowserFlowGenerator:
             except Exception as e:
                 self._log(f"⚠️ Không đọc được config từ Excel: {e}", "warn")
 
-        # Chọn profile: LUÔN dùng profile của TOOL (mỗi worker có profile riêng)
-        # Không dùng saved_chrome_profile vì có thể conflict khi chạy parallel
-        profile_to_use = self._get_profile_path()
-        self._log(f"📁 Chrome profile: {Path(profile_to_use).name} (Worker {self.worker_id})")
+        # Chọn profile: Ưu tiên dùng profile ĐÃ LƯU khi resume
+        # Chỉ dùng round-robin khi chạy mới hoặc profile cũ không tồn tại
+        if saved_chrome_profile and Path(saved_chrome_profile).exists():
+            # RESUME MODE: Dùng profile đã lưu trong Excel
+            profile_to_use = saved_chrome_profile
+            self._log(f"📁 Chrome profile: {Path(profile_to_use).name} (RESUME - từ Excel)")
+        else:
+            # NEW MODE: Assign profile mới theo worker_id
+            profile_to_use = self._get_profile_path()
+            self._log(f"📁 Chrome profile: {Path(profile_to_use).name} (Worker {self.worker_id})")
 
         # Đọc setting headless từ config (default: True = chạy ẩn)
         # Dùng chung setting 'browser_headless' với Selenium mode
