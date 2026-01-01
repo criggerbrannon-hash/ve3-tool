@@ -53,7 +53,7 @@ webshare_proxy:
   rotating_host: "p.webshare.io"
   rotating_port: 9999
   rotating_password: "cf1bi3yvq0t1"
-  rotating_base_username: "jhvbehdf-residential-rotate"  # -rotate = Random IP mỗi request (Webshare format)
+  rotating_base_username: "jhvbehdf-residential"  # Sticky Session - cùng IP cho Chrome + API call
   machine_id: 1  # Chỉ dùng khi Sticky Session (Máy 1→ 1... Máy 2→ 30001...)
 
   # === DIRECT PROXY LIST (100 IPs) ===
