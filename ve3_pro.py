@@ -1294,16 +1294,20 @@ class UnixVoiceToVideo:
 
         current_mode = proxy_config.get('proxy_mode', 'direct')
         proxy_mode_var = tk.StringVar(value=current_mode)
+        ipv6_port_var = tk.IntVar(value=proxy_config.get('ipv6_proxy_port', 1080))
 
         mode_row = ttk.Frame(mode_frame)
         mode_row.pack(fill=tk.X)
 
-        ttk.Radiobutton(mode_row, text="📁 Direct (100 IP)",
-                        variable=proxy_mode_var, value="direct").pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Radiobutton(mode_row, text="🌍 Rotating Residential",
-                        variable=proxy_mode_var, value="rotating").pack(side=tk.LEFT, padx=(0, 10))
-        ttk.Radiobutton(mode_row, text="🌐 IPv6 (MIỄN PHÍ)",
-                        variable=proxy_mode_var, value="ipv6").pack(side=tk.LEFT)
+        ttk.Radiobutton(mode_row, text="📁 Direct",
+                        variable=proxy_mode_var, value="direct").pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Radiobutton(mode_row, text="🌍 Rotating",
+                        variable=proxy_mode_var, value="rotating").pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Radiobutton(mode_row, text="🌐 IPv6",
+                        variable=proxy_mode_var, value="ipv6").pack(side=tk.LEFT, padx=(0, 3))
+        ttk.Label(mode_row, text="port:", font=('Segoe UI', 8)).pack(side=tk.LEFT)
+        ttk.Spinbox(mode_row, from_=1024, to=65535, width=5,
+                   textvariable=ipv6_port_var, font=('Consolas', 8)).pack(side=tk.LEFT, padx=(2, 0))
 
         # === DIRECT PROXY LIST FRAME ===
         direct_frame = ttk.LabelFrame(proxy_tab, text="📁 Direct Proxy List", padding=5)
@@ -1420,17 +1424,6 @@ class UnixVoiceToVideo:
         # Test result label for rotating
         rotating_test_label = ttk.Label(rotating_frame, text="", font=('Segoe UI', 8))
         rotating_test_label.pack(anchor=tk.W)
-
-        # === IPv6 ROTATION FRAME (compact) ===
-        ipv6_frame = ttk.Frame(proxy_tab)
-        ipv6_frame.pack(fill=tk.X, pady=(3, 0))
-        ttk.Label(ipv6_frame, text="🌐 IPv6 Port:", font=('Segoe UI', 9)).pack(side=tk.LEFT)
-        ipv6_port_var = tk.IntVar(value=proxy_config.get('ipv6_proxy_port', 1080))
-        ipv6_port_spinbox = ttk.Spinbox(ipv6_frame, from_=1024, to=65535, width=6,
-                                        textvariable=ipv6_port_var, font=('Consolas', 9))
-        ipv6_port_spinbox.pack(side=tk.LEFT, padx=(5, 5))
-        ttk.Label(ipv6_frame, text="(Dùng IPv6 ISP, cần add IPv6 trước)", foreground='gray',
-                  font=('Segoe UI', 8)).pack(side=tk.LEFT)
 
         # API Key (hidden)
         ws_api_entry = ttk.Entry(proxy_tab)
