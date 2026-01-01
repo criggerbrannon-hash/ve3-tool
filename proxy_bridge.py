@@ -88,27 +88,45 @@ class ProxyBridge:
                 remote_host = self.remote_host
                 remote_port = self.remote_port
 
-            max_retries = 5  # Tăng từ 3 lên 5
+            # === DEBUG: Resolve DNS trước ===
+            import time as time_module
+            try:
+                resolved_ip = socket.gethostbyname(remote_host)
+                print(f"[DEBUG] DNS: {remote_host} → {resolved_ip}")
+            except Exception as dns_err:
+                print(f"[!] DNS resolution failed for {remote_host}: {dns_err}")
+                client_socket.close()
+                return
+
+            max_retries = 5
             remote_socket = None
             last_error = None
 
             for attempt in range(max_retries):
                 try:
                     remote_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    remote_socket.settimeout(60)  # Tăng từ 30 lên 60 giây
-                    remote_socket.connect((remote_host, remote_port))
+                    remote_socket.settimeout(60)
+
+                    # Debug: measure connection time
+                    start_time = time_module.time()
+                    print(f"[DEBUG] Connecting to {resolved_ip}:{remote_port}...")
+
+                    remote_socket.connect((resolved_ip, remote_port))  # Dùng IP đã resolve
+
+                    elapsed = time_module.time() - start_time
+                    print(f"[DEBUG] Connected in {elapsed:.2f}s")
                     break  # Thành công
                 except Exception as e:
                     last_error = e
+                    elapsed = time_module.time() - start_time
                     if remote_socket:
                         try:
                             remote_socket.close()
                         except:
                             pass
                     if attempt < max_retries - 1:
-                        print(f"[!] Proxy connect failed (attempt {attempt+1}/{max_retries}): {e}")
-                        import time
-                        time.sleep(3)  # Tăng từ 2 lên 3 giây
+                        print(f"[!] Proxy connect failed (attempt {attempt+1}/{max_retries}, {elapsed:.1f}s): {e}")
+                        time_module.sleep(3)
                     else:
                         print(f"[!] Cannot connect to remote proxy after {max_retries} attempts: {e}")
 
