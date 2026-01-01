@@ -51,7 +51,7 @@ webshare_proxy:
   # VD Random: jhvbehdf-residential-rotate:password@p.webshare.io:80
   # VD Sticky: jhvbehdf-residential-1:password@p.webshare.io:80
   rotating_host: "p.webshare.io"
-  rotating_port: 80
+  rotating_port: 9999
   rotating_password: "cf1bi3yvq0t1"
   rotating_base_username: "jhvbehdf-residential-rotate"  # -rotate = Random IP mỗi request (Webshare format)
   machine_id: 1  # Chỉ dùng khi Sticky Session (Máy 1→ 1... Máy 2→ 30001...)
