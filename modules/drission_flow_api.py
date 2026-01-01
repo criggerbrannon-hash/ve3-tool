@@ -46,12 +46,18 @@ except ImportError:
 IPV6_PROXY_AVAILABLE = False
 _ipv6_proxy_server = None  # Global IPv6 proxy server instance
 try:
-    from ipv6_rotate_proxy import IPv6Rotator, ProxyServer, IPV6_LIST, test_ipv6_bindable
+    from ipv6_rotate_proxy import (
+        IPv6Rotator, ProxyServer, IPV6_LIST, test_ipv6_bindable,
+        set_rotator, rotate_ipv6_on_403, block_current_ipv6
+    )
     IPV6_PROXY_AVAILABLE = True
 except ImportError:
     IPv6Rotator = None
     ProxyServer = None
     IPV6_LIST = []
+    set_rotator = None
+    rotate_ipv6_on_403 = None
+    block_current_ipv6 = None
 
 
 def start_ipv6_proxy_server(port: int = 1080) -> bool:
@@ -77,6 +83,9 @@ def start_ipv6_proxy_server(port: int = 1080) -> bool:
         server = ProxyServer(rotator)
         server.start()
         _ipv6_proxy_server = server
+        # Lưu rotator để có thể rotate khi bị 403
+        if set_rotator:
+            set_rotator(rotator)
         print(f"[IPv6] ✓ Proxy server started: socks5://127.0.0.1:{port}")
         print(f"[IPv6]   {len(bindable)} IPv6 addresses available")
         return True
@@ -424,6 +433,7 @@ class DrissionFlowAPI:
         self.x_browser_validation: Optional[str] = None
         self.captured_url: Optional[str] = None
         self.captured_payload: Optional[str] = None
+        self.user_agent: Optional[str] = None  # Chrome User-Agent for API calls
 
         # State
         self._ready = False
@@ -1040,6 +1050,14 @@ class DrissionFlowAPI:
         result = self.driver.run_js(JS_INTERCEPTOR)
         self.log(f"✓ Interceptor: {result}")
 
+        # 8. Capture Chrome User-Agent for API calls
+        try:
+            self.user_agent = self.driver.run_js("return navigator.userAgent;")
+            if self.user_agent:
+                self.log(f"✓ User-Agent: {self.user_agent[:50]}...")
+        except Exception as e:
+            self.log(f"⚠️ Cannot get User-Agent: {e}", "WARN")
+
         self._ready = True
         return True
 
@@ -1233,13 +1251,21 @@ class DrissionFlowAPI:
         except Exception as e:
             self.log(f"⚠️ Không sửa được payload: {e}", "WARN")
 
-        # Headers
+        # Headers - PHẢI giống Chrome để bypass reCAPTCHA check
         headers = {
             "Authorization": self.bearer_token,
             "Content-Type": "text/plain;charset=UTF-8",
             "Origin": "https://labs.google",
             "Referer": "https://labs.google/",
+            "Accept": "*/*",
+            "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
         }
+        # Dùng Chrome User-Agent thay vì python-requests
+        if self.user_agent:
+            headers["User-Agent"] = self.user_agent
+        else:
+            # Fallback: Chrome UA mặc định
+            headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
         if self.x_browser_validation:
             headers["x-browser-validation"] = self.x_browser_validation
 
@@ -1273,6 +1299,12 @@ class DrissionFlowAPI:
             else:
                 error = f"{resp.status_code}: {resp.text[:200]}"
                 self.log(f"✗ API Error: {error}", "ERROR")
+
+                # IPv6 mode: rotate IP khi bị 403
+                if resp.status_code == 403 and self._is_ipv6_mode and rotate_ipv6_on_403:
+                    if rotate_ipv6_on_403():
+                        self.log("🔄 IPv6 rotated - will use new IP on next request")
+
                 return [], error
 
         except Exception as e:
@@ -1687,7 +1719,14 @@ class DrissionFlowAPI:
                 "Content-Type": "application/json",
                 "Origin": "https://labs.google",
                 "Referer": "https://labs.google/",
+                "Accept": "*/*",
+                "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
             }
+            # Dùng Chrome User-Agent thay vì python-requests
+            if self.user_agent:
+                headers["User-Agent"] = self.user_agent
+            else:
+                headers["User-Agent"] = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
             if self.x_browser_validation:
                 headers["x-browser-validation"] = self.x_browser_validation
 

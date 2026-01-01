@@ -516,5 +516,44 @@ def main():
         server.close()
 
 
+# ============================================================================
+# GLOBAL ROTATOR ACCESS - Cho phép module khác gọi rotate IPv6
+# ============================================================================
+_global_rotator: IPv6Rotator = None
+
+
+def get_rotator() -> IPv6Rotator:
+    """Get global rotator instance (nếu đã khởi tạo)."""
+    return _global_rotator
+
+
+def set_rotator(rotator: IPv6Rotator):
+    """Set global rotator instance (gọi từ drission_flow_api khi start server)."""
+    global _global_rotator
+    _global_rotator = rotator
+
+
+def rotate_ipv6_on_403():
+    """
+    Gọi khi API trả 403 - reset sticky session để đổi IPv6 mới.
+    Trả về True nếu thành công, False nếu rotator chưa khởi tạo.
+    """
+    if _global_rotator:
+        _global_rotator.reset_sticky()
+        return True
+    return False
+
+
+def block_current_ipv6():
+    """
+    Gọi khi muốn block IPv6 hiện tại (bị rate limit nặng).
+    Block trong 5 phút.
+    """
+    if _global_rotator:
+        _global_rotator.mark_blocked()
+        return True
+    return False
+
+
 if __name__ == "__main__":
     main()
