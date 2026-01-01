@@ -1271,17 +1271,14 @@ class DrissionFlowAPI:
 
         self.log(f"→ Calling API with captured payload ({len(original_payload)} chars)...")
 
-        try:
-            # API call qua proxy để IP match với Chrome
-            proxies = None
+        # IPv6 mode: Dùng Chrome's fetch để giữ TLS session (bypass reCAPTCHA check)
+        if self._is_ipv6_mode and self.driver:
+            return self._call_api_via_chrome(url, headers, original_payload)
 
-            if self._is_ipv6_mode:
-                # IPv6 SOCKS5 proxy
-                socks_url = f"socks5://127.0.0.1:{self._ipv6_proxy_port}"
-                proxies = {"http": socks_url, "https": socks_url}
-                self.log(f"→ Using IPv6 proxy: {socks_url}")
-            elif self._use_webshare and hasattr(self, '_bridge_port') and self._bridge_port:
-                # Webshare proxy bridge
+        try:
+            # Webshare mode: Dùng Python requests với proxy
+            proxies = None
+            if self._use_webshare and hasattr(self, '_bridge_port') and self._bridge_port:
                 bridge_url = f"http://127.0.0.1:{self._bridge_port}"
                 proxies = {"http": bridge_url, "https": bridge_url}
                 self.log(f"→ Using proxy bridge: {bridge_url}")
@@ -1299,16 +1296,79 @@ class DrissionFlowAPI:
             else:
                 error = f"{resp.status_code}: {resp.text[:200]}"
                 self.log(f"✗ API Error: {error}", "ERROR")
+                return [], error
 
-                # IPv6 mode: rotate IP khi bị 403
-                if resp.status_code == 403 and self._is_ipv6_mode and rotate_ipv6_on_403:
+        except Exception as e:
+            self.log(f"✗ Request error: {e}", "ERROR")
+            return [], str(e)
+
+    def _call_api_via_chrome(self, url: str, headers: Dict, payload: str) -> Tuple[List[GeneratedImage], Optional[str]]:
+        """
+        Gọi API qua Chrome's fetch - giữ nguyên TLS session.
+        QUAN TRỌNG: Dùng cùng TLS fingerprint với request tạo reCAPTCHA token!
+        """
+        self.log("→ Using Chrome's fetch (same TLS session)")
+
+        # Build headers JSON (exclude User-Agent - Chrome tự thêm)
+        headers_for_js = {k: v for k, v in headers.items() if k.lower() != 'user-agent'}
+
+        # Escape payload for JavaScript
+        payload_escaped = payload.replace('\\', '\\\\').replace("'", "\\'").replace('\n', '\\n').replace('\r', '\\r')
+
+        # JavaScript to make fetch call
+        js_code = f'''
+        (async function() {{
+            try {{
+                const response = await fetch('{url}', {{
+                    method: 'POST',
+                    headers: {json.dumps(headers_for_js)},
+                    body: '{payload_escaped}'
+                }});
+                const status = response.status;
+                const text = await response.text();
+                return JSON.stringify({{status: status, body: text}});
+            }} catch(e) {{
+                return JSON.stringify({{error: e.toString()}});
+            }}
+        }})();
+        '''
+
+        try:
+            # Execute fetch in Chrome
+            result_str = self.driver.run_js(js_code)
+
+            if not result_str:
+                return [], "Chrome fetch returned empty"
+
+            result = json.loads(result_str)
+
+            if result.get('error'):
+                error = f"Chrome fetch error: {result['error']}"
+                self.log(f"✗ {error}", "ERROR")
+                return [], error
+
+            status = result.get('status', 0)
+            body = result.get('body', '')
+
+            if status == 200:
+                try:
+                    data = json.loads(body)
+                    return self._parse_response(data), None
+                except json.JSONDecodeError as e:
+                    return [], f"JSON parse error: {e}"
+            else:
+                error = f"{status}: {body[:200]}"
+                self.log(f"✗ API Error: {error}", "ERROR")
+
+                # Rotate IPv6 on 403
+                if status == 403 and rotate_ipv6_on_403:
                     if rotate_ipv6_on_403():
                         self.log("🔄 IPv6 rotated - will use new IP on next request")
 
                 return [], error
 
         except Exception as e:
-            self.log(f"✗ Request error: {e}", "ERROR")
+            self.log(f"✗ Chrome fetch error: {e}", "ERROR")
             return [], str(e)
 
     def _parse_response(self, data: Dict) -> List[GeneratedImage]:
