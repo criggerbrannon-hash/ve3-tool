@@ -147,8 +147,10 @@ class GeneratedImage:
 
 # JS Interceptor - Capture tokens và CANCEL request
 # Giống batch_generator.py - đã test hoạt động
+# QUAN TRỌNG: Có flag _allowNextFetch để skip cancel khi tool gọi fetch
 JS_INTERCEPTOR = '''
 window._tk=null;window._pj=null;window._xbv=null;window._rct=null;window._payload=null;window._sid=null;window._url=null;
+window._allowNextFetch=false;
 (function(){
     if(window.__interceptReady) return 'ALREADY_READY';
     window.__interceptReady = true;
@@ -159,6 +161,14 @@ window._tk=null;window._pj=null;window._xbv=null;window._rct=null;window._payloa
 
         // Match nhiều pattern hơn
         if (urlStr.includes('aisandbox') && (urlStr.includes('batchGenerate') || urlStr.includes('flowMedia') || urlStr.includes('generateContent'))) {
+
+            // Nếu tool đang gọi fetch → cho phép đi thẳng, không cancel
+            if (window._allowNextFetch) {
+                console.log('[INTERCEPT] Tool fetch - allowing through');
+                window._allowNextFetch = false;  // Reset flag
+                return orig.apply(this, arguments);
+            }
+
             console.log('[INTERCEPT] Capturing request to:', urlStr);
 
             // Capture URL gốc
@@ -1407,9 +1417,11 @@ class DrissionFlowAPI:
         payload_escaped = json.dumps(payload)  # Double-encode để an toàn
 
         # JavaScript to make fetch call - lưu kết quả vào window variable
+        # QUAN TRỌNG: Set _allowNextFetch = true để interceptor không cancel request này
         js_code = f'''
         window._fetch_result = null;
         window._fetch_status = 'pending';
+        window._allowNextFetch = true;  // Cho phép fetch này đi qua interceptor
         (async function() {{
             try {{
                 const response = await fetch('{url}', {{
