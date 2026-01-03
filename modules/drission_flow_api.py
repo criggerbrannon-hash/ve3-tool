@@ -1050,10 +1050,6 @@ class DrissionFlowAPI:
         result = self.driver.run_js(JS_INTERCEPTOR)
         self.log(f"✓ Interceptor: {result}")
 
-        # Verify interceptor is working
-        check = self.driver.run_js("return window.__interceptReady;")
-        self.log(f"  → __interceptReady = {check}")
-
         # 8. Capture Chrome User-Agent for API calls
         try:
             self.user_agent = self.driver.run_js("return navigator.userAgent;")
@@ -1116,14 +1112,6 @@ class DrissionFlowAPI:
         if not textarea:
             self.log("✗ Không tìm thấy textarea", "ERROR")
             return False
-
-        # QUAN TRỌNG: Verify interceptor còn active trước khi gửi
-        # Page có thể reload và mất interceptor
-        interceptor_check = self.driver.run_js("return window.__interceptReady;")
-        if not interceptor_check:
-            self.log("    ⚠️ Interceptor mất - re-inject...")
-            self.driver.run_js(JS_INTERCEPTOR)
-            time.sleep(0.3)
 
         textarea.clear()
         time.sleep(0.2)
