@@ -19,9 +19,9 @@ chrome_path: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
 # Hoặc paste thủ công vào đây
 
 # === API CALL MODE ===
-# "python" = Tool gọi API bằng Python requests (cần proxy tốt)
-# "chrome" = Chrome tự gọi API (dùng mạng máy trực tiếp, KHÔNG cần proxy)
-api_call_mode: "chrome"
+# "python" = Tool gọi API bằng Python requests (dùng proxy)
+# "chrome" = Chrome tự gọi API (không cần proxy, nhưng không thể thêm media_id)
+api_call_mode: "python"
 
 flow_bearer_token: ""
 flow_project_id: ""

@@ -784,14 +784,23 @@ class DrissionFlowAPI:
                         self.log(f"  Chrome path: {chrome_path}")
                         break
 
-            # Thêm arguments cần thiết
+            # Thêm arguments - TỐI ƯU CHO ANTI-DETECTION
             options.set_argument('--no-sandbox')  # Cần cho cả Windows và Linux
             options.set_argument('--disable-dev-shm-usage')
-            options.set_argument('--disable-gpu')
-            options.set_argument('--disable-software-rasterizer')
-            options.set_argument('--disable-extensions')
+            # KHÔNG dùng --disable-gpu để giống browser thật hơn
+            # KHÔNG dùng --disable-extensions để VPN extension hoạt động
             options.set_argument('--no-first-run')
             options.set_argument('--no-default-browser-check')
+
+            # Anti-detection flags
+            options.set_argument('--disable-blink-features=AutomationControlled')
+            options.set_argument('--disable-infobars')
+            options.set_argument('--disable-background-timer-throttling')
+            options.set_argument('--disable-backgrounding-occluded-windows')
+            options.set_argument('--disable-renderer-backgrounding')
+            # Giả lập user thật
+            options.set_argument('--lang=vi-VN,vi')
+            options.set_argument('--accept-lang=vi-VN,vi,en-US,en')
 
             # Headless mode - chạy Chrome ẩn
             if self._headless:
@@ -948,6 +957,38 @@ class DrissionFlowAPI:
                         time.sleep(3)  # Đợi lâu hơn để Chrome cũ tắt hẳn
                     else:
                         raise chrome_err
+
+            # === ANTI-DETECTION: Inject JavaScript để ẩn dấu hiệu automation ===
+            try:
+                self.driver.run_js('''
+                    // Ẩn webdriver property
+                    Object.defineProperty(navigator, 'webdriver', {
+                        get: () => undefined
+                    });
+
+                    // Giả lập plugins
+                    Object.defineProperty(navigator, 'plugins', {
+                        get: () => [1, 2, 3, 4, 5]
+                    });
+
+                    // Giả lập languages
+                    Object.defineProperty(navigator, 'languages', {
+                        get: () => ['vi-VN', 'vi', 'en-US', 'en']
+                    });
+
+                    // Ẩn automation flags trong chrome object
+                    if (window.chrome) {
+                        window.chrome.runtime = {
+                            sendMessage: () => {},
+                            connect: () => {}
+                        };
+                    }
+
+                    console.log('[STEALTH] Anti-detection applied');
+                ''')
+                self.log("✓ Anti-detection injected")
+            except Exception as e:
+                self.log(f"⚠️ Anti-detection injection failed: {e}", "WARN")
 
             # Setup proxy auth nếu cần (CDP-based)
             if self._use_webshare and hasattr(self, '_proxy_auth') and self._proxy_auth:
