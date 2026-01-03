@@ -722,6 +722,65 @@ class DrissionFlowAPI:
         except Exception as e:
             pass
 
+    def _reset_chrome_profile(self):
+        """
+        Reset Chrome profile - xóa sạch cookies, cache, history.
+        Giúp Chrome "sạch" như mới khi đổi proxy.
+        """
+        import shutil
+
+        try:
+            profile_path = self.profile_dir
+
+            # Các thư mục cần xóa để reset hoàn toàn
+            folders_to_delete = [
+                "Default/Cache",
+                "Default/Code Cache",
+                "Default/GPUCache",
+                "Default/Cookies",
+                "Default/Cookies-journal",
+                "Default/History",
+                "Default/History-journal",
+                "Default/Visited Links",
+                "Default/Web Data",
+                "Default/Web Data-journal",
+                "Default/Login Data",
+                "Default/Login Data-journal",
+                "Default/Network",
+                "Default/Session Storage",
+                "Default/Local Storage",
+                "Default/IndexedDB",
+                "Default/Service Worker",
+                "ShaderCache",
+                "GrShaderCache",
+            ]
+
+            deleted_count = 0
+            for folder in folders_to_delete:
+                target = profile_path / folder
+                if target.exists():
+                    try:
+                        if target.is_dir():
+                            shutil.rmtree(target)
+                        else:
+                            target.unlink()
+                        deleted_count += 1
+                    except Exception as e:
+                        pass  # Bỏ qua lỗi, có thể file đang bị lock
+
+            self.log(f"  → 🧹 Đã xóa {deleted_count} thư mục/file trong profile")
+
+            # Xóa cả SingletonLock nếu có
+            lock_file = profile_path / "SingletonLock"
+            if lock_file.exists():
+                try:
+                    lock_file.unlink()
+                except:
+                    pass
+
+        except Exception as e:
+            self.log(f"  → ⚠️ Reset profile lỗi: {e}", "WARN")
+
     def setup(
         self,
         wait_for_project: bool = True,
@@ -1776,9 +1835,16 @@ class DrissionFlowAPI:
 
                     return False, [], f"Quota exceeded sau {max_retries} lần thử. Hãy đổi proxy hoặc tài khoản."
 
-                # Nếu lỗi 403, xoay IP và retry
+                # Nếu lỗi 403, xoay IP và RESET CHROME PROFILE
                 if "403" in error:
                     self.log(f"⚠️ 403 error (attempt {attempt+1}/{max_retries})", "WARN")
+                    self.log(f"  → 🧹 Reset Chrome profile để sạch 100%...")
+
+                    # === RESET CHROME PROFILE ===
+                    # Xóa sạch profile để không bị fingerprint cũ ảnh hưởng
+                    self._kill_chrome()
+                    self.close()
+                    self._reset_chrome_profile()  # XÓA SẠCH PROFILE
 
                     # === ROTATING ENDPOINT MODE ===
                     # Restart Chrome để đổi IP
@@ -1799,11 +1865,8 @@ class DrissionFlowAPI:
                             _save_last_session_id(self._machine_id, self.worker_id, self._rotating_session_id)
 
                         if attempt < max_retries - 1:
-                            # Restart Chrome với IP mới
-                            self._kill_chrome()
-                            self.close()
                             time.sleep(2)
-                            self.log(f"  → Restart Chrome...")
+                            self.log(f"  → Restart Chrome với profile sạch...")
                             if self.setup(project_url=getattr(self, '_current_project_url', None)):
                                 continue
                             else:
