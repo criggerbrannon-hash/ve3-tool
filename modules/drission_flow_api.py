@@ -1393,7 +1393,7 @@ class DrissionFlowAPI:
             self.log(f"✗ Request error: {e}", "ERROR")
             return [], str(e)
 
-    def _call_api_via_chrome(self, url: str, headers: Dict, payload: str) -> Tuple[List[GeneratedImage], Optional[str]]:
+    def _call_api_via_chrome(self, url: str, headers: Dict, payload: str, timeout: int = 120) -> Tuple[List[GeneratedImage], Optional[str]]:
         """
         Gọi API qua Chrome's fetch - giữ nguyên TLS session.
         QUAN TRỌNG: Dùng cùng TLS fingerprint với request tạo reCAPTCHA token!
@@ -1403,33 +1403,57 @@ class DrissionFlowAPI:
         # Build headers JSON (exclude User-Agent - Chrome tự thêm)
         headers_for_js = {k: v for k, v in headers.items() if k.lower() != 'user-agent'}
 
-        # Escape payload for JavaScript
-        payload_escaped = payload.replace('\\', '\\\\').replace("'", "\\'").replace('\n', '\\n').replace('\r', '\\r')
+        # Escape payload for JavaScript - cần escape đúng cho JSON trong JS
+        payload_escaped = json.dumps(payload)  # Double-encode để an toàn
 
-        # JavaScript to make fetch call
+        # JavaScript to make fetch call - lưu kết quả vào window variable
         js_code = f'''
+        window._fetch_result = null;
+        window._fetch_status = 'pending';
         (async function() {{
             try {{
                 const response = await fetch('{url}', {{
                     method: 'POST',
                     headers: {json.dumps(headers_for_js)},
-                    body: '{payload_escaped}'
+                    body: {payload_escaped}
                 }});
                 const status = response.status;
                 const text = await response.text();
-                return JSON.stringify({{status: status, body: text}});
+                window._fetch_result = JSON.stringify({{status: status, body: text}});
+                window._fetch_status = 'done';
             }} catch(e) {{
-                return JSON.stringify({{error: e.toString()}});
+                window._fetch_result = JSON.stringify({{error: e.toString()}});
+                window._fetch_status = 'error';
             }}
         }})();
+        return 'started';
         '''
 
         try:
-            # Execute fetch in Chrome
-            result_str = self.driver.run_js(js_code)
+            # Start fetch
+            self.driver.run_js(js_code)
+            self.log("  → Fetch started, waiting for response...")
+
+            # Poll for result
+            start_time = time.time()
+            while time.time() - start_time < timeout:
+                status = self.driver.run_js("return window._fetch_status;")
+
+                if status in ('done', 'error'):
+                    result_str = self.driver.run_js("return window._fetch_result;")
+                    break
+
+                time.sleep(1)
+
+                # Log progress mỗi 10s
+                elapsed = int(time.time() - start_time)
+                if elapsed > 0 and elapsed % 10 == 0:
+                    self.log(f"  → Waiting... {elapsed}s")
+            else:
+                return [], f"Chrome fetch timeout after {timeout}s"
 
             if not result_str:
-                return [], "Chrome fetch returned empty"
+                return [], "Chrome fetch returned empty result"
 
             result = json.loads(result_str)
 
@@ -1444,6 +1468,7 @@ class DrissionFlowAPI:
             if status == 200:
                 try:
                     data = json.loads(body)
+                    self.log(f"  ✓ API response received!")
                     return self._parse_response(data), None
                 except json.JSONDecodeError as e:
                     return [], f"JSON parse error: {e}"
