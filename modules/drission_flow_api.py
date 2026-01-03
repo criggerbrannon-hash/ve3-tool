@@ -1276,12 +1276,10 @@ class DrissionFlowAPI:
             return self._call_api_via_chrome(url, headers, original_payload)
 
         try:
-            # Webshare mode: Dùng Python requests với proxy
+            # TEST: Gọi API KHÔNG qua proxy để tránh bị detect
+            # Chrome vẫn dùng proxy, nhưng Python API call đi direct
             proxies = None
-            if self._use_webshare and hasattr(self, '_bridge_port') and self._bridge_port:
-                bridge_url = f"http://127.0.0.1:{self._bridge_port}"
-                proxies = {"http": bridge_url, "https": bridge_url}
-                self.log(f"→ Using proxy bridge: {bridge_url}")
+            self.log(f"→ Using DIRECT connection (no proxy) for API call")
 
             resp = requests.post(
                 url,
