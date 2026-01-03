@@ -1469,11 +1469,21 @@ class DrissionFlowAPI:
                 try:
                     data = json.loads(body)
                     self.log(f"  ✓ API response received!")
+                    # Debug: log response structure
+                    self.log(f"  [DEBUG] Response keys: {list(data.keys())[:5]}")
+                    if 'error' in data:
+                        self.log(f"  [DEBUG] Error in response: {data['error']}")
+                        return [], f"API error: {data['error'].get('message', str(data['error']))}"
+                    if 'media' in data:
+                        self.log(f"  [DEBUG] media count: {len(data.get('media', []))}")
+                    else:
+                        self.log(f"  [DEBUG] No 'media' key, body[:300]: {body[:300]}")
                     return self._parse_response(data), None
                 except json.JSONDecodeError as e:
+                    self.log(f"  [DEBUG] Raw body[:500]: {body[:500]}")
                     return [], f"JSON parse error: {e}"
             else:
-                error = f"{status}: {body[:200]}"
+                error = f"{status}: {body[:500]}"
                 self.log(f"✗ API Error: {error}", "ERROR")
 
                 # Rotate IPv6 on 403
