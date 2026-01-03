@@ -1114,15 +1114,14 @@ class DrissionFlowAPI:
             return False
 
         textarea.clear()
-        time.sleep(0.1)  # Giảm từ 0.2
+        time.sleep(0.2)
         textarea.input(prompt)
-        time.sleep(0.1)  # Giảm từ 0.3
+        time.sleep(0.3)
         textarea.input('\n')  # Enter để gửi
         self.log("    ✓ Đã gửi, đợi capture...")
 
-        # TĂNG TỐC: Interceptor chặn ngay lập tức, không cần đợi lâu
-        # Giảm từ 3s xuống 0.5s
-        time.sleep(0.5)
+        # Đợi 3 giây theo hướng dẫn (giống batch_generator.py)
+        time.sleep(3)
 
         # Đọc tokens từ window variables
         for i in range(timeout):
@@ -1158,7 +1157,7 @@ class DrissionFlowAPI:
                     self.log(f"    ✓ Captured URL: {self.captured_url[:60]}...")
                 return True
 
-            time.sleep(0.2)  # TĂNG TỐC: Giảm từ 1s xuống 0.2s
+            time.sleep(1)
 
         self.log("    ✗ Không lấy được đủ tokens", "ERROR")
         return False
@@ -1182,22 +1181,22 @@ class DrissionFlowAPI:
             return False
 
         textarea.clear()
-        time.sleep(0.1)  # TĂNG TỐC
+        time.sleep(0.2)
         textarea.input(prompt)
-        time.sleep(0.1)  # TĂNG TỐC
+        time.sleep(0.3)
         textarea.input('\n')
 
-        # TĂNG TỐC: Giảm từ 3s xuống 0.5s
-        time.sleep(0.5)
+        # Đợi 3 giây
+        time.sleep(3)
 
-        # Wait for new token - TĂNG TỐC: 0.2s thay vì 1s
-        for i in range(25):  # 25 x 0.2s = 5s max
+        # Wait for new token
+        for i in range(10):
             rct = self.driver.run_js("return window._rct;")
             if rct:
                 self.recaptcha_token = rct
                 self.log("    ✓ Got new recaptchaToken!")
                 return True
-            time.sleep(0.2)
+            time.sleep(1)
 
         self.log("    ✗ Không lấy được recaptchaToken mới", "ERROR")
         return False
