@@ -224,6 +224,76 @@ window._tk=null;window._pj=null;window._xbv=null;window._rct=null;window._payloa
 })();
 '''
 
+# JS Interceptor cho CHROME API MODE
+# Không cancel request - để Chrome tự gọi API
+# Capture RESPONSE để lấy media_id
+JS_INTERCEPTOR_CHROME_MODE = '''
+window._chrome_response = null;
+window._chrome_error = null;
+window._chrome_media_ids = [];
+window._chrome_status = 'idle';
+(function(){
+    if(window.__chromeInterceptReady) return 'ALREADY_READY';
+    window.__chromeInterceptReady = true;
+
+    var orig = window.fetch;
+    window.fetch = function(url, opts) {
+        var urlStr = typeof url === 'string' ? url : url.url;
+
+        // Match API requests
+        if (urlStr.includes('aisandbox') && (urlStr.includes('batchGenerate') || urlStr.includes('flowMedia') || urlStr.includes('generateContent'))) {
+            console.log('[CHROME_MODE] Intercepting request to:', urlStr);
+            window._chrome_status = 'pending';
+
+            // Gọi fetch gốc và capture response
+            return orig.apply(this, arguments).then(function(response) {
+                console.log('[CHROME_MODE] Got response, status:', response.status);
+
+                // Clone response để đọc body
+                return response.clone().text().then(function(bodyText) {
+                    try {
+                        var data = JSON.parse(bodyText);
+                        window._chrome_response = data;
+
+                        // Extract media_ids từ response
+                        if (data.media && Array.isArray(data.media)) {
+                            window._chrome_media_ids = [];
+                            for (var i = 0; i < data.media.length; i++) {
+                                var item = data.media[i];
+                                if (item.name) {
+                                    window._chrome_media_ids.push(item.name);
+                                }
+                            }
+                            console.log('[CHROME_MODE] Captured media_ids:', window._chrome_media_ids);
+                            window._chrome_status = 'success';
+                        } else if (data.error) {
+                            window._chrome_error = data.error.message || JSON.stringify(data.error);
+                            window._chrome_status = 'error';
+                            console.log('[CHROME_MODE] API Error:', window._chrome_error);
+                        }
+                    } catch(e) {
+                        console.log('[CHROME_MODE] Parse error:', e);
+                        window._chrome_error = e.toString();
+                        window._chrome_status = 'error';
+                    }
+
+                    return response;
+                });
+            }).catch(function(err) {
+                console.log('[CHROME_MODE] Fetch error:', err);
+                window._chrome_error = err.toString();
+                window._chrome_status = 'error';
+                throw err;
+            });
+        }
+
+        return orig.apply(this, arguments);
+    };
+    console.log('[CHROME_MODE] Interceptor Ready - will capture responses');
+    return 'READY';
+})();
+'''
+
 # JS để click "Dự án mới"
 JS_CLICK_NEW_PROJECT = '''
 (function() {
@@ -308,6 +378,8 @@ class DrissionFlowAPI:
         worker_id: int = 0,  # Worker ID cho proxy rotation (mỗi Chrome có proxy riêng)
         headless: bool = True,  # Chạy Chrome ẩn (default: ON)
         machine_id: int = 1,  # Máy số mấy (1-99) - tránh trùng session giữa các máy
+        # API CALL MODE
+        api_call_mode: str = "python",  # "python" = tool gọi API, "chrome" = Chrome tự gọi API
         # Legacy params (ignored)
         proxy_port: int = 1080,
         use_proxy: bool = False,
@@ -324,11 +396,13 @@ class DrissionFlowAPI:
             worker_id: Worker ID cho proxy rotation (mỗi Chrome có proxy riêng)
             headless: Chạy Chrome ẩn không hiện cửa sổ (default True)
             machine_id: Máy số mấy (1-99), mỗi máy cách nhau 30000 session để tránh trùng
+            api_call_mode: "python" = tool gọi API, "chrome" = Chrome tự gọi API (ít bị captcha)
         """
         self.profile_dir = Path(profile_dir)
         self.worker_id = worker_id  # Lưu worker_id để dùng cho proxy rotation
         self._headless = headless  # Lưu setting headless
         self._machine_id = machine_id  # Máy số mấy (1-99)
+        self._api_call_mode = api_call_mode  # "python" hoặc "chrome"
         # Auto-generate unique port for parallel execution
         if chrome_port == 0:
             self.chrome_port = random.randint(9222, 9999)
@@ -1045,10 +1119,17 @@ class DrissionFlowAPI:
                 self.log("⚠️ Warm up không thành công, tiếp tục...", "WARN")
 
         # 7. Inject interceptor (SAU khi warm up)
-        self.log("Inject interceptor...")
-        self._reset_tokens()
-        result = self.driver.run_js(JS_INTERCEPTOR)
-        self.log(f"✓ Interceptor: {result}")
+        # Chọn interceptor dựa trên api_call_mode
+        if self._api_call_mode == "chrome":
+            self.log("Inject interceptor (CHROME MODE - capture response)...")
+            self._reset_chrome_mode_tokens()
+            result = self.driver.run_js(JS_INTERCEPTOR_CHROME_MODE)
+            self.log(f"✓ Chrome Mode Interceptor: {result}")
+        else:
+            self.log("Inject interceptor (PYTHON MODE - capture tokens)...")
+            self._reset_tokens()
+            result = self.driver.run_js(JS_INTERCEPTOR)
+            self.log(f"✓ Interceptor: {result}")
 
         # 8. Capture Chrome User-Agent for API calls
         try:
@@ -1083,6 +1164,16 @@ class DrissionFlowAPI:
             window._payload = null;
             window._sid = null;
             window._url = null;
+        """)
+
+    def _reset_chrome_mode_tokens(self):
+        """Reset Chrome mode tokens (cho mode Chrome tự gọi API)."""
+        self.driver.run_js("""
+            window.__chromeInterceptReady = false;
+            window._chrome_response = null;
+            window._chrome_error = null;
+            window._chrome_media_ids = [];
+            window._chrome_status = 'idle';
         """)
 
     def _capture_tokens(self, prompt: str, timeout: int = 10) -> bool:
@@ -1407,6 +1498,89 @@ class DrissionFlowAPI:
         self.log(f"✓ Parsed {len(images)} images")
         return images
 
+    def _generate_image_chrome_mode(
+        self,
+        prompt: str,
+        timeout: int = 120
+    ) -> Tuple[List[GeneratedImage], Optional[str]]:
+        """
+        Generate image bằng cách để Chrome tự gọi API.
+        Ít bị captcha 403 vì cùng TLS session với reCAPTCHA.
+
+        Args:
+            prompt: Prompt mô tả ảnh
+            timeout: Timeout đợi response (giây)
+
+        Returns:
+            Tuple[list of images, error]
+        """
+        self.log(f"[CHROME MODE] Generating image...")
+        self.log(f"  Prompt: {prompt[:50]}...")
+
+        # 1. Reset Chrome mode tokens
+        self._reset_chrome_mode_tokens()
+
+        # 2. Tìm textarea và gửi prompt
+        textarea = self._find_textarea()
+        if not textarea:
+            return [], "Không tìm thấy textarea"
+
+        textarea.clear()
+        time.sleep(0.2)
+        textarea.input(prompt)
+        time.sleep(0.3)
+        textarea.input('\n')  # Enter để gửi
+        self.log("  ✓ Đã gửi prompt, đợi Chrome xử lý...")
+
+        # 3. Đợi Chrome hoàn thành request và capture response
+        start_time = time.time()
+        last_status = 'idle'
+
+        while time.time() - start_time < timeout:
+            # Check Chrome status
+            status_data = self.driver.run_js("""
+                return {
+                    status: window._chrome_status,
+                    error: window._chrome_error,
+                    media_ids: window._chrome_media_ids,
+                    response: window._chrome_response
+                };
+            """)
+
+            status = status_data.get('status', 'idle')
+
+            if status != last_status:
+                self.log(f"  [STATUS] {last_status} → {status}")
+                last_status = status
+
+            if status == 'success':
+                # Chrome đã nhận được response thành công
+                media_ids = status_data.get('media_ids', [])
+                response = status_data.get('response', {})
+
+                self.log(f"  ✓ Chrome API success!")
+                if media_ids:
+                    self.log(f"  ✓ Got {len(media_ids)} media_id(s)")
+
+                # Parse response to images
+                images = self._parse_response(response)
+                return images, None
+
+            elif status == 'error':
+                error = status_data.get('error', 'Unknown error')
+                self.log(f"  ✗ Chrome API error: {error}", "ERROR")
+                return [], error
+
+            time.sleep(2)
+
+            # Log progress mỗi 15s
+            elapsed = int(time.time() - start_time)
+            if elapsed > 0 and elapsed % 15 == 0:
+                self.log(f"  ... đợi {elapsed}s (status: {status})")
+
+        # Timeout
+        return [], f"Timeout sau {timeout}s - Chrome không trả về response"
+
     def generate_image(
         self,
         prompt: str,
@@ -1438,12 +1612,22 @@ class DrissionFlowAPI:
             self.log(f"→ Using {len(image_inputs)} reference image(s)")
 
         for attempt in range(max_retries):
-            # 1. Capture tokens với prompt (mỗi lần retry lấy token mới)
-            if not self._capture_tokens(prompt):
-                return False, [], "Không capture được tokens"
+            # === CHROME MODE: Chrome tự gọi API ===
+            if self._api_call_mode == "chrome":
+                # Chrome mode không hỗ trợ image_inputs (reference images)
+                if image_inputs:
+                    self.log("⚠️ Chrome mode không hỗ trợ reference images, sẽ bỏ qua", "WARN")
 
-            # 2. Gọi API với image_inputs (reference images)
-            images, error = self.call_api(image_inputs=image_inputs)
+                images, error = self._generate_image_chrome_mode(prompt)
+
+            # === PYTHON MODE: Tool capture tokens → gọi API ===
+            else:
+                # 1. Capture tokens với prompt (mỗi lần retry lấy token mới)
+                if not self._capture_tokens(prompt):
+                    return False, [], "Không capture được tokens"
+
+                # 2. Gọi API với image_inputs (reference images)
+                images, error = self.call_api(image_inputs=image_inputs)
 
             if error:
                 last_error = error
