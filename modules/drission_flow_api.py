@@ -1119,17 +1119,15 @@ class DrissionFlowAPI:
                 self.log("⚠️ Warm up không thành công, tiếp tục...", "WARN")
 
         # 7. Inject interceptor (SAU khi warm up)
-        # Chọn interceptor dựa trên api_call_mode
+        # Luôn dùng JS_INTERCEPTOR để capture tokens (cancel request)
+        # Sự khác biệt giữa Python/Chrome mode là CÁCH GỌI API, không phải interceptor
+        self.log("Inject interceptor (capture tokens)...")
+        self._reset_tokens()
+        result = self.driver.run_js(JS_INTERCEPTOR)
         if self._api_call_mode == "chrome":
-            self.log("Inject interceptor (CHROME MODE - capture response)...")
-            self._reset_chrome_mode_tokens()
-            result = self.driver.run_js(JS_INTERCEPTOR_CHROME_MODE)
-            self.log(f"✓ Chrome Mode Interceptor: {result}")
+            self.log(f"✓ Interceptor: {result} (Chrome fetch mode)")
         else:
-            self.log("Inject interceptor (PYTHON MODE - capture tokens)...")
-            self._reset_tokens()
-            result = self.driver.run_js(JS_INTERCEPTOR)
-            self.log(f"✓ Interceptor: {result}")
+            self.log(f"✓ Interceptor: {result} (Python requests mode)")
 
         # 8. Capture Chrome User-Agent for API calls
         try:
