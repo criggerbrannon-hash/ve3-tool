@@ -1292,7 +1292,7 @@ class DrissionFlowAPI:
         self.log("    ✗ Không lấy được recaptchaToken mới", "ERROR")
         return False
 
-    def call_api(self, prompt: str = None, num_images: int = 1, image_inputs: Optional[List[Dict]] = None) -> Tuple[List[GeneratedImage], Optional[str]]:
+    def call_api(self, prompt: str = None, num_images: int = 1, image_inputs: Optional[List[Dict]] = None, use_chrome_fetch: bool = False) -> Tuple[List[GeneratedImage], Optional[str]]:
         """
         Gọi API với captured tokens.
         Giống batch_generator.py - lấy payload từ browser mỗi lần.
@@ -1301,6 +1301,7 @@ class DrissionFlowAPI:
             prompt: Prompt (nếu None, dùng payload đã capture)
             num_images: Số ảnh cần tạo (mặc định 1)
             image_inputs: List of reference images [{name, inputType}]
+            use_chrome_fetch: True = dùng Chrome fetch (cùng TLS), False = dùng Python requests
 
         Returns:
             Tuple[list of GeneratedImage, error message]
@@ -1362,12 +1363,13 @@ class DrissionFlowAPI:
 
         self.log(f"→ Calling API with captured payload ({len(original_payload)} chars)...")
 
-        # IPv6 mode: Dùng Chrome's fetch để giữ TLS session (bypass reCAPTCHA check)
-        if self._is_ipv6_mode and self.driver:
+        # Chrome fetch mode: Dùng Chrome's fetch để giữ TLS session (bypass reCAPTCHA check)
+        if (use_chrome_fetch or self._is_ipv6_mode) and self.driver:
+            self.log("→ Using Chrome fetch (same TLS session)")
             return self._call_api_via_chrome(url, headers, original_payload)
 
         try:
-            # Webshare mode: Dùng Python requests với proxy
+            # Python requests mode: Dùng Python requests với proxy
             proxies = None
             if self._use_webshare and hasattr(self, '_bridge_port') and self._bridge_port:
                 bridge_url = f"http://127.0.0.1:{self._bridge_port}"
@@ -1612,15 +1614,16 @@ class DrissionFlowAPI:
             self.log(f"→ Using {len(image_inputs)} reference image(s)")
 
         for attempt in range(max_retries):
-            # === CHROME MODE: Chrome tự gọi API ===
+            # === CHROME MODE: Capture tokens → Chrome gọi API (có thể dùng media_id) ===
             if self._api_call_mode == "chrome":
-                # Chrome mode không hỗ trợ image_inputs (reference images)
-                if image_inputs:
-                    self.log("⚠️ Chrome mode không hỗ trợ reference images, sẽ bỏ qua", "WARN")
+                # 1. Capture tokens với prompt
+                if not self._capture_tokens(prompt):
+                    return False, [], "Không capture được tokens"
 
-                images, error = self._generate_image_chrome_mode(prompt)
+                # 2. Gọi API qua Chrome fetch (cùng TLS session)
+                images, error = self.call_api(image_inputs=image_inputs, use_chrome_fetch=True)
 
-            # === PYTHON MODE: Tool capture tokens → gọi API ===
+            # === PYTHON MODE: Tool capture tokens → Python gọi API ===
             else:
                 # 1. Capture tokens với prompt (mỗi lần retry lấy token mới)
                 if not self._capture_tokens(prompt):
