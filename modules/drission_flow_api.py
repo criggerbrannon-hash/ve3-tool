@@ -147,10 +147,8 @@ class GeneratedImage:
 
 # JS Interceptor - Capture tokens và CANCEL request
 # Giống batch_generator.py - đã test hoạt động
-# QUAN TRỌNG: Có flag _allowNextFetch để skip cancel khi tool gọi fetch
 JS_INTERCEPTOR = '''
 window._tk=null;window._pj=null;window._xbv=null;window._rct=null;window._payload=null;window._sid=null;window._url=null;
-window._allowNextFetch=false;
 (function(){
     if(window.__interceptReady) return 'ALREADY_READY';
     window.__interceptReady = true;
@@ -161,14 +159,6 @@ window._allowNextFetch=false;
 
         // Match nhiều pattern hơn
         if (urlStr.includes('aisandbox') && (urlStr.includes('batchGenerate') || urlStr.includes('flowMedia') || urlStr.includes('generateContent'))) {
-
-            // Nếu tool đang gọi fetch → cho phép đi thẳng, không cancel
-            if (window._allowNextFetch) {
-                console.log('[INTERCEPT] Tool fetch - allowing through');
-                window._allowNextFetch = false;  // Reset flag
-                return orig.apply(this, arguments);
-            }
-
             console.log('[INTERCEPT] Capturing request to:', urlStr);
 
             // Capture URL gốc
@@ -230,76 +220,6 @@ window._allowNextFetch=false;
         return orig.apply(this, arguments);
     };
     console.log('[INTERCEPTOR] Ready - will capture batchGenerateImages requests');
-    return 'READY';
-})();
-'''
-
-# JS Interceptor cho CHROME API MODE
-# Không cancel request - để Chrome tự gọi API
-# Capture RESPONSE để lấy media_id
-JS_INTERCEPTOR_CHROME_MODE = '''
-window._chrome_response = null;
-window._chrome_error = null;
-window._chrome_media_ids = [];
-window._chrome_status = 'idle';
-(function(){
-    if(window.__chromeInterceptReady) return 'ALREADY_READY';
-    window.__chromeInterceptReady = true;
-
-    var orig = window.fetch;
-    window.fetch = function(url, opts) {
-        var urlStr = typeof url === 'string' ? url : url.url;
-
-        // Match API requests
-        if (urlStr.includes('aisandbox') && (urlStr.includes('batchGenerate') || urlStr.includes('flowMedia') || urlStr.includes('generateContent'))) {
-            console.log('[CHROME_MODE] Intercepting request to:', urlStr);
-            window._chrome_status = 'pending';
-
-            // Gọi fetch gốc và capture response
-            return orig.apply(this, arguments).then(function(response) {
-                console.log('[CHROME_MODE] Got response, status:', response.status);
-
-                // Clone response để đọc body
-                return response.clone().text().then(function(bodyText) {
-                    try {
-                        var data = JSON.parse(bodyText);
-                        window._chrome_response = data;
-
-                        // Extract media_ids từ response
-                        if (data.media && Array.isArray(data.media)) {
-                            window._chrome_media_ids = [];
-                            for (var i = 0; i < data.media.length; i++) {
-                                var item = data.media[i];
-                                if (item.name) {
-                                    window._chrome_media_ids.push(item.name);
-                                }
-                            }
-                            console.log('[CHROME_MODE] Captured media_ids:', window._chrome_media_ids);
-                            window._chrome_status = 'success';
-                        } else if (data.error) {
-                            window._chrome_error = data.error.message || JSON.stringify(data.error);
-                            window._chrome_status = 'error';
-                            console.log('[CHROME_MODE] API Error:', window._chrome_error);
-                        }
-                    } catch(e) {
-                        console.log('[CHROME_MODE] Parse error:', e);
-                        window._chrome_error = e.toString();
-                        window._chrome_status = 'error';
-                    }
-
-                    return response;
-                });
-            }).catch(function(err) {
-                console.log('[CHROME_MODE] Fetch error:', err);
-                window._chrome_error = err.toString();
-                window._chrome_status = 'error';
-                throw err;
-            });
-        }
-
-        return orig.apply(this, arguments);
-    };
-    console.log('[CHROME_MODE] Interceptor Ready - will capture responses');
     return 'READY';
 })();
 '''
@@ -388,8 +308,6 @@ class DrissionFlowAPI:
         worker_id: int = 0,  # Worker ID cho proxy rotation (mỗi Chrome có proxy riêng)
         headless: bool = True,  # Chạy Chrome ẩn (default: ON)
         machine_id: int = 1,  # Máy số mấy (1-99) - tránh trùng session giữa các máy
-        # API CALL MODE
-        api_call_mode: str = "python",  # "python" = tool gọi API, "chrome" = Chrome tự gọi API
         # Legacy params (ignored)
         proxy_port: int = 1080,
         use_proxy: bool = False,
@@ -406,13 +324,11 @@ class DrissionFlowAPI:
             worker_id: Worker ID cho proxy rotation (mỗi Chrome có proxy riêng)
             headless: Chạy Chrome ẩn không hiện cửa sổ (default True)
             machine_id: Máy số mấy (1-99), mỗi máy cách nhau 30000 session để tránh trùng
-            api_call_mode: "python" = tool gọi API, "chrome" = Chrome tự gọi API (ít bị captcha)
         """
         self.profile_dir = Path(profile_dir)
         self.worker_id = worker_id  # Lưu worker_id để dùng cho proxy rotation
         self._headless = headless  # Lưu setting headless
         self._machine_id = machine_id  # Máy số mấy (1-99)
-        self._api_call_mode = api_call_mode  # "python" hoặc "chrome"
         # Auto-generate unique port for parallel execution
         if chrome_port == 0:
             self.chrome_port = random.randint(9222, 9999)
@@ -722,65 +638,6 @@ class DrissionFlowAPI:
         except Exception as e:
             pass
 
-    def _reset_chrome_profile(self):
-        """
-        Reset Chrome profile - xóa sạch cookies, cache, history.
-        Giúp Chrome "sạch" như mới khi đổi proxy.
-        """
-        import shutil
-
-        try:
-            profile_path = self.profile_dir
-
-            # Các thư mục cần xóa để reset hoàn toàn
-            folders_to_delete = [
-                "Default/Cache",
-                "Default/Code Cache",
-                "Default/GPUCache",
-                "Default/Cookies",
-                "Default/Cookies-journal",
-                "Default/History",
-                "Default/History-journal",
-                "Default/Visited Links",
-                "Default/Web Data",
-                "Default/Web Data-journal",
-                "Default/Login Data",
-                "Default/Login Data-journal",
-                "Default/Network",
-                "Default/Session Storage",
-                "Default/Local Storage",
-                "Default/IndexedDB",
-                "Default/Service Worker",
-                "ShaderCache",
-                "GrShaderCache",
-            ]
-
-            deleted_count = 0
-            for folder in folders_to_delete:
-                target = profile_path / folder
-                if target.exists():
-                    try:
-                        if target.is_dir():
-                            shutil.rmtree(target)
-                        else:
-                            target.unlink()
-                        deleted_count += 1
-                    except Exception as e:
-                        pass  # Bỏ qua lỗi, có thể file đang bị lock
-
-            self.log(f"  → 🧹 Đã xóa {deleted_count} thư mục/file trong profile")
-
-            # Xóa cả SingletonLock nếu có
-            lock_file = profile_path / "SingletonLock"
-            if lock_file.exists():
-                try:
-                    lock_file.unlink()
-                except:
-                    pass
-
-        except Exception as e:
-            self.log(f"  → ⚠️ Reset profile lỗi: {e}", "WARN")
-
     def setup(
         self,
         wait_for_project: bool = True,
@@ -843,23 +700,14 @@ class DrissionFlowAPI:
                         self.log(f"  Chrome path: {chrome_path}")
                         break
 
-            # Thêm arguments - TỐI ƯU CHO ANTI-DETECTION
+            # Thêm arguments cần thiết
             options.set_argument('--no-sandbox')  # Cần cho cả Windows và Linux
             options.set_argument('--disable-dev-shm-usage')
-            # KHÔNG dùng --disable-gpu để giống browser thật hơn
-            # KHÔNG dùng --disable-extensions để VPN extension hoạt động
+            options.set_argument('--disable-gpu')
+            options.set_argument('--disable-software-rasterizer')
+            options.set_argument('--disable-extensions')
             options.set_argument('--no-first-run')
             options.set_argument('--no-default-browser-check')
-
-            # Anti-detection flags
-            options.set_argument('--disable-blink-features=AutomationControlled')
-            options.set_argument('--disable-infobars')
-            options.set_argument('--disable-background-timer-throttling')
-            options.set_argument('--disable-backgrounding-occluded-windows')
-            options.set_argument('--disable-renderer-backgrounding')
-            # Giả lập user thật
-            options.set_argument('--lang=vi-VN,vi')
-            options.set_argument('--accept-lang=vi-VN,vi,en-US,en')
 
             # Headless mode - chạy Chrome ẩn
             if self._headless:
@@ -1016,38 +864,6 @@ class DrissionFlowAPI:
                         time.sleep(3)  # Đợi lâu hơn để Chrome cũ tắt hẳn
                     else:
                         raise chrome_err
-
-            # === ANTI-DETECTION: Inject JavaScript để ẩn dấu hiệu automation ===
-            try:
-                self.driver.run_js('''
-                    // Ẩn webdriver property
-                    Object.defineProperty(navigator, 'webdriver', {
-                        get: () => undefined
-                    });
-
-                    // Giả lập plugins
-                    Object.defineProperty(navigator, 'plugins', {
-                        get: () => [1, 2, 3, 4, 5]
-                    });
-
-                    // Giả lập languages
-                    Object.defineProperty(navigator, 'languages', {
-                        get: () => ['vi-VN', 'vi', 'en-US', 'en']
-                    });
-
-                    // Ẩn automation flags trong chrome object
-                    if (window.chrome) {
-                        window.chrome.runtime = {
-                            sendMessage: () => {},
-                            connect: () => {}
-                        };
-                    }
-
-                    console.log('[STEALTH] Anti-detection applied');
-                ''')
-                self.log("✓ Anti-detection injected")
-            except Exception as e:
-                self.log(f"⚠️ Anti-detection injection failed: {e}", "WARN")
 
             # Setup proxy auth nếu cần (CDP-based)
             if self._use_webshare and hasattr(self, '_proxy_auth') and self._proxy_auth:
@@ -1229,15 +1045,10 @@ class DrissionFlowAPI:
                 self.log("⚠️ Warm up không thành công, tiếp tục...", "WARN")
 
         # 7. Inject interceptor (SAU khi warm up)
-        # Luôn dùng JS_INTERCEPTOR để capture tokens (cancel request)
-        # Sự khác biệt giữa Python/Chrome mode là CÁCH GỌI API, không phải interceptor
-        self.log("Inject interceptor (capture tokens)...")
+        self.log("Inject interceptor...")
         self._reset_tokens()
         result = self.driver.run_js(JS_INTERCEPTOR)
-        if self._api_call_mode == "chrome":
-            self.log(f"✓ Interceptor: {result} (Chrome fetch mode)")
-        else:
-            self.log(f"✓ Interceptor: {result} (Python requests mode)")
+        self.log(f"✓ Interceptor: {result}")
 
         # 8. Capture Chrome User-Agent for API calls
         try:
@@ -1272,16 +1083,6 @@ class DrissionFlowAPI:
             window._payload = null;
             window._sid = null;
             window._url = null;
-        """)
-
-    def _reset_chrome_mode_tokens(self):
-        """Reset Chrome mode tokens (cho mode Chrome tự gọi API)."""
-        self.driver.run_js("""
-            window.__chromeInterceptReady = false;
-            window._chrome_response = null;
-            window._chrome_error = null;
-            window._chrome_media_ids = [];
-            window._chrome_status = 'idle';
         """)
 
     def _capture_tokens(self, prompt: str, timeout: int = 10) -> bool:
@@ -1400,7 +1201,7 @@ class DrissionFlowAPI:
         self.log("    ✗ Không lấy được recaptchaToken mới", "ERROR")
         return False
 
-    def call_api(self, prompt: str = None, num_images: int = 1, image_inputs: Optional[List[Dict]] = None, use_chrome_fetch: bool = False) -> Tuple[List[GeneratedImage], Optional[str]]:
+    def call_api(self, prompt: str = None, num_images: int = 1, image_inputs: Optional[List[Dict]] = None) -> Tuple[List[GeneratedImage], Optional[str]]:
         """
         Gọi API với captured tokens.
         Giống batch_generator.py - lấy payload từ browser mỗi lần.
@@ -1409,7 +1210,6 @@ class DrissionFlowAPI:
             prompt: Prompt (nếu None, dùng payload đã capture)
             num_images: Số ảnh cần tạo (mặc định 1)
             image_inputs: List of reference images [{name, inputType}]
-            use_chrome_fetch: True = dùng Chrome fetch (cùng TLS), False = dùng Python requests
 
         Returns:
             Tuple[list of GeneratedImage, error message]
@@ -1471,13 +1271,12 @@ class DrissionFlowAPI:
 
         self.log(f"→ Calling API with captured payload ({len(original_payload)} chars)...")
 
-        # Chrome fetch mode: Dùng Chrome's fetch để giữ TLS session (bypass reCAPTCHA check)
-        if (use_chrome_fetch or self._is_ipv6_mode) and self.driver:
-            self.log("→ Using Chrome fetch (same TLS session)")
+        # IPv6 mode: Dùng Chrome's fetch để giữ TLS session (bypass reCAPTCHA check)
+        if self._is_ipv6_mode and self.driver:
             return self._call_api_via_chrome(url, headers, original_payload)
 
         try:
-            # Python requests mode: Dùng Python requests với proxy
+            # Webshare mode: Dùng Python requests với proxy
             proxies = None
             if self._use_webshare and hasattr(self, '_bridge_port') and self._bridge_port:
                 bridge_url = f"http://127.0.0.1:{self._bridge_port}"
@@ -1503,7 +1302,7 @@ class DrissionFlowAPI:
             self.log(f"✗ Request error: {e}", "ERROR")
             return [], str(e)
 
-    def _call_api_via_chrome(self, url: str, headers: Dict, payload: str, timeout: int = 120) -> Tuple[List[GeneratedImage], Optional[str]]:
+    def _call_api_via_chrome(self, url: str, headers: Dict, payload: str) -> Tuple[List[GeneratedImage], Optional[str]]:
         """
         Gọi API qua Chrome's fetch - giữ nguyên TLS session.
         QUAN TRỌNG: Dùng cùng TLS fingerprint với request tạo reCAPTCHA token!
@@ -1513,59 +1312,33 @@ class DrissionFlowAPI:
         # Build headers JSON (exclude User-Agent - Chrome tự thêm)
         headers_for_js = {k: v for k, v in headers.items() if k.lower() != 'user-agent'}
 
-        # Escape payload for JavaScript - cần escape đúng cho JSON trong JS
-        payload_escaped = json.dumps(payload)  # Double-encode để an toàn
+        # Escape payload for JavaScript
+        payload_escaped = payload.replace('\\', '\\\\').replace("'", "\\'").replace('\n', '\\n').replace('\r', '\\r')
 
-        # JavaScript to make fetch call - lưu kết quả vào window variable
-        # QUAN TRỌNG: Set _allowNextFetch = true để interceptor không cancel request này
+        # JavaScript to make fetch call
         js_code = f'''
-        window._fetch_result = null;
-        window._fetch_status = 'pending';
-        window._allowNextFetch = true;  // Cho phép fetch này đi qua interceptor
         (async function() {{
             try {{
                 const response = await fetch('{url}', {{
                     method: 'POST',
                     headers: {json.dumps(headers_for_js)},
-                    body: {payload_escaped}
+                    body: '{payload_escaped}'
                 }});
                 const status = response.status;
                 const text = await response.text();
-                window._fetch_result = JSON.stringify({{status: status, body: text}});
-                window._fetch_status = 'done';
+                return JSON.stringify({{status: status, body: text}});
             }} catch(e) {{
-                window._fetch_result = JSON.stringify({{error: e.toString()}});
-                window._fetch_status = 'error';
+                return JSON.stringify({{error: e.toString()}});
             }}
         }})();
-        return 'started';
         '''
 
         try:
-            # Start fetch
-            self.driver.run_js(js_code)
-            self.log("  → Fetch started, waiting for response...")
-
-            # Poll for result
-            start_time = time.time()
-            while time.time() - start_time < timeout:
-                status = self.driver.run_js("return window._fetch_status;")
-
-                if status in ('done', 'error'):
-                    result_str = self.driver.run_js("return window._fetch_result;")
-                    break
-
-                time.sleep(1)
-
-                # Log progress mỗi 10s
-                elapsed = int(time.time() - start_time)
-                if elapsed > 0 and elapsed % 10 == 0:
-                    self.log(f"  → Waiting... {elapsed}s")
-            else:
-                return [], f"Chrome fetch timeout after {timeout}s"
+            # Execute fetch in Chrome
+            result_str = self.driver.run_js(js_code)
 
             if not result_str:
-                return [], "Chrome fetch returned empty result"
+                return [], "Chrome fetch returned empty"
 
             result = json.loads(result_str)
 
@@ -1580,22 +1353,11 @@ class DrissionFlowAPI:
             if status == 200:
                 try:
                     data = json.loads(body)
-                    self.log(f"  ✓ API response received!")
-                    # Debug: log response structure
-                    self.log(f"  [DEBUG] Response keys: {list(data.keys())[:5]}")
-                    if 'error' in data:
-                        self.log(f"  [DEBUG] Error in response: {data['error']}")
-                        return [], f"API error: {data['error'].get('message', str(data['error']))}"
-                    if 'media' in data:
-                        self.log(f"  [DEBUG] media count: {len(data.get('media', []))}")
-                    else:
-                        self.log(f"  [DEBUG] No 'media' key, body[:300]: {body[:300]}")
                     return self._parse_response(data), None
                 except json.JSONDecodeError as e:
-                    self.log(f"  [DEBUG] Raw body[:500]: {body[:500]}")
                     return [], f"JSON parse error: {e}"
             else:
-                error = f"{status}: {body[:500]}"
+                error = f"{status}: {body[:200]}"
                 self.log(f"✗ API Error: {error}", "ERROR")
 
                 # Rotate IPv6 on 403
@@ -1645,89 +1407,6 @@ class DrissionFlowAPI:
         self.log(f"✓ Parsed {len(images)} images")
         return images
 
-    def _generate_image_chrome_mode(
-        self,
-        prompt: str,
-        timeout: int = 120
-    ) -> Tuple[List[GeneratedImage], Optional[str]]:
-        """
-        Generate image bằng cách để Chrome tự gọi API.
-        Ít bị captcha 403 vì cùng TLS session với reCAPTCHA.
-
-        Args:
-            prompt: Prompt mô tả ảnh
-            timeout: Timeout đợi response (giây)
-
-        Returns:
-            Tuple[list of images, error]
-        """
-        self.log(f"[CHROME MODE] Generating image...")
-        self.log(f"  Prompt: {prompt[:50]}...")
-
-        # 1. Reset Chrome mode tokens
-        self._reset_chrome_mode_tokens()
-
-        # 2. Tìm textarea và gửi prompt
-        textarea = self._find_textarea()
-        if not textarea:
-            return [], "Không tìm thấy textarea"
-
-        textarea.clear()
-        time.sleep(0.2)
-        textarea.input(prompt)
-        time.sleep(0.3)
-        textarea.input('\n')  # Enter để gửi
-        self.log("  ✓ Đã gửi prompt, đợi Chrome xử lý...")
-
-        # 3. Đợi Chrome hoàn thành request và capture response
-        start_time = time.time()
-        last_status = 'idle'
-
-        while time.time() - start_time < timeout:
-            # Check Chrome status
-            status_data = self.driver.run_js("""
-                return {
-                    status: window._chrome_status,
-                    error: window._chrome_error,
-                    media_ids: window._chrome_media_ids,
-                    response: window._chrome_response
-                };
-            """)
-
-            status = status_data.get('status', 'idle')
-
-            if status != last_status:
-                self.log(f"  [STATUS] {last_status} → {status}")
-                last_status = status
-
-            if status == 'success':
-                # Chrome đã nhận được response thành công
-                media_ids = status_data.get('media_ids', [])
-                response = status_data.get('response', {})
-
-                self.log(f"  ✓ Chrome API success!")
-                if media_ids:
-                    self.log(f"  ✓ Got {len(media_ids)} media_id(s)")
-
-                # Parse response to images
-                images = self._parse_response(response)
-                return images, None
-
-            elif status == 'error':
-                error = status_data.get('error', 'Unknown error')
-                self.log(f"  ✗ Chrome API error: {error}", "ERROR")
-                return [], error
-
-            time.sleep(2)
-
-            # Log progress mỗi 15s
-            elapsed = int(time.time() - start_time)
-            if elapsed > 0 and elapsed % 15 == 0:
-                self.log(f"  ... đợi {elapsed}s (status: {status})")
-
-        # Timeout
-        return [], f"Timeout sau {timeout}s - Chrome không trả về response"
-
     def generate_image(
         self,
         prompt: str,
@@ -1759,23 +1438,12 @@ class DrissionFlowAPI:
             self.log(f"→ Using {len(image_inputs)} reference image(s)")
 
         for attempt in range(max_retries):
-            # === CHROME MODE: Capture tokens → Chrome gọi API (có thể dùng media_id) ===
-            if self._api_call_mode == "chrome":
-                # 1. Capture tokens với prompt
-                if not self._capture_tokens(prompt):
-                    return False, [], "Không capture được tokens"
+            # 1. Capture tokens với prompt (mỗi lần retry lấy token mới)
+            if not self._capture_tokens(prompt):
+                return False, [], "Không capture được tokens"
 
-                # 2. Gọi API qua Chrome fetch (cùng TLS session)
-                images, error = self.call_api(image_inputs=image_inputs, use_chrome_fetch=True)
-
-            # === PYTHON MODE: Tool capture tokens → Python gọi API ===
-            else:
-                # 1. Capture tokens với prompt (mỗi lần retry lấy token mới)
-                if not self._capture_tokens(prompt):
-                    return False, [], "Không capture được tokens"
-
-                # 2. Gọi API với image_inputs (reference images)
-                images, error = self.call_api(image_inputs=image_inputs)
+            # 2. Gọi API với image_inputs (reference images)
+            images, error = self.call_api(image_inputs=image_inputs)
 
             if error:
                 last_error = error
@@ -1835,16 +1503,9 @@ class DrissionFlowAPI:
 
                     return False, [], f"Quota exceeded sau {max_retries} lần thử. Hãy đổi proxy hoặc tài khoản."
 
-                # Nếu lỗi 403, xoay IP và RESET CHROME PROFILE
+                # Nếu lỗi 403, xoay IP và retry
                 if "403" in error:
                     self.log(f"⚠️ 403 error (attempt {attempt+1}/{max_retries})", "WARN")
-                    self.log(f"  → 🧹 Reset Chrome profile để sạch 100%...")
-
-                    # === RESET CHROME PROFILE ===
-                    # Xóa sạch profile để không bị fingerprint cũ ảnh hưởng
-                    self._kill_chrome()
-                    self.close()
-                    self._reset_chrome_profile()  # XÓA SẠCH PROFILE
 
                     # === ROTATING ENDPOINT MODE ===
                     # Restart Chrome để đổi IP
@@ -1865,8 +1526,11 @@ class DrissionFlowAPI:
                             _save_last_session_id(self._machine_id, self.worker_id, self._rotating_session_id)
 
                         if attempt < max_retries - 1:
+                            # Restart Chrome với IP mới
+                            self._kill_chrome()
+                            self.close()
                             time.sleep(2)
-                            self.log(f"  → Restart Chrome với profile sạch...")
+                            self.log(f"  → Restart Chrome...")
                             if self.setup(project_url=getattr(self, '_current_project_url', None)):
                                 continue
                             else:

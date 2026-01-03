@@ -18,11 +18,6 @@ chrome_path: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe"
 # Token sẽ được tự động lấy khi chạy GUI
 # Hoặc paste thủ công vào đây
 
-# === API CALL MODE ===
-# "python" = Tool gọi API bằng Python requests (dùng proxy)
-# "chrome" = Chrome tự gọi API (không cần proxy, nhưng không thể thêm media_id)
-api_call_mode: "python"
-
 flow_bearer_token: ""
 flow_project_id: ""
 flow_aspect_ratio: "landscape"
