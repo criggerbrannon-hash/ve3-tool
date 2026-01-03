@@ -3064,16 +3064,6 @@ class BrowserFlowGenerator:
         # Dùng chung setting 'browser_headless' với Selenium mode
         drission_headless = self.config.get('browser_headless', True)
 
-        # Đọc api_call_mode từ config: "python" hoặc "chrome"
-        # Chrome mode: dùng mạng máy trực tiếp, KHÔNG cần proxy
-        api_call_mode = self.config.get('api_call_mode', 'python')
-
-        # Chrome mode: tắt proxy, dùng mạng máy trực tiếp
-        if api_call_mode == "chrome":
-            use_webshare = False
-            is_ipv6_mode = False
-            self._log("🌐 CHROME MODE - Dùng mạng máy trực tiếp (không proxy)")
-
         drission_api = DrissionFlowAPI(
             profile_dir=profile_to_use,
             verbose=self.verbose,
@@ -3083,15 +3073,10 @@ class BrowserFlowGenerator:
             ipv6_proxy_port=ipv6_proxy_port,
             worker_id=self.worker_id,  # Parallel mode - mỗi worker có proxy riêng
             headless=drission_headless,  # Chạy Chrome ẩn (default: True)
-            machine_id=machine_id,  # Máy số mấy - tránh trùng session giữa các máy
-            api_call_mode=api_call_mode  # "python" hoặc "chrome"
+            machine_id=machine_id  # Máy số mấy - tránh trùng session giữa các máy
         )
 
         self._log("🚀 DrissionPage + Interceptor")
-        if api_call_mode == "chrome":
-            self._log("   API Mode: 🌐 CHROME (mạng máy trực tiếp)")
-        else:
-            self._log("   API Mode: 🐍 PYTHON (capture tokens)")
         if is_ipv6_mode:
             self._log(f"   Proxy: 🌐 IPv6 ROTATION (miễn phí)")
         elif use_webshare:
