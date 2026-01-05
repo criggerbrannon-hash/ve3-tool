@@ -1467,7 +1467,20 @@ class DrissionFlowAPI:
         textarea.input('\n')  # Enter để gửi - Chrome sẽ tạo request với fresh token
         self.log("→ Chrome đang tạo reCAPTCHA... Interceptor sẽ inject payload...")
 
-        # 4. Đợi response từ browser (không gọi API riêng!)
+        # DEBUG: Check interceptor state after 1 second
+        time.sleep(1)
+        debug_state = self.driver.run_js("""
+            return {
+                customPayload: window._customPayload ? 'STILL_SET' : 'CONSUMED',
+                requestPending: window._requestPending,
+                hasResponse: window._response ? 'YES' : 'NO',
+                lastRecaptcha: window._rct ? window._rct.substring(0, 20) + '...' : 'NULL',
+                url: window._url ? 'SET' : 'NULL'
+            };
+        """)
+        self.log(f"  [DEBUG] State: {debug_state}")
+
+        # 4. Đợi response từ browser
         start_time = time.time()
         while time.time() - start_time < timeout:
             result = self.driver.run_js("""
