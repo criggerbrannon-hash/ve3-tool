@@ -310,9 +310,11 @@ class BrowserFlowGenerator:
             self._working_profile = str(working_profile)  # Luu de reference
             options.add_argument(f"--user-data-dir={working_profile}")
 
-            # PARALLEL SAFE: Moi instance dung port rieng
-            debug_port = random.randint(9222, 9999)
+            # PARALLEL SAFE: Mỗi worker có port riêng (không random để tránh conflict)
+            worker_id = getattr(self, 'worker_id', 0) or 0
+            debug_port = 9222 + worker_id
             options.add_argument(f"--remote-debugging-port={debug_port}")
+            self._log(f"[Worker {worker_id}] Chrome port: {debug_port}")
 
             # Headless mac dinh (chay an, toi uu cho auto)
             if self.headless:

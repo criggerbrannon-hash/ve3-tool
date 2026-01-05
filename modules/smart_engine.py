@@ -1873,16 +1873,18 @@ class SmartEngine:
             self.log(f"Tim profile tai: {profiles_dir}")
 
             if profiles_dir.exists():
-                # Liet ke tat ca profiles
-                all_items = list(profiles_dir.iterdir())
+                # Liet ke tat ca profiles (sorted để đảm bảo thứ tự ổn định)
+                all_items = sorted(list(profiles_dir.iterdir()))
                 available_profiles = [p.name for p in all_items if p.is_dir() and not p.name.startswith('.')]
                 self.log(f"Cac profiles: {available_profiles}")
 
                 if available_profiles:
-                    # Uu tien profile KHONG phai "main" (user da tao)
-                    non_main = [p for p in available_profiles if p != "main"]
-                    profile_name = non_main[0] if non_main else available_profiles[0]
-                    self.log(f">>> Dung profile: {profile_name}")
+                    # === PARALLEL MODE: Mỗi worker dùng profile khác nhau ===
+                    # Worker 0 → profile[0], Worker 1 → profile[1], ...
+                    worker_id = getattr(self, 'worker_id', 0) or 0
+                    profile_idx = worker_id % len(available_profiles)
+                    profile_name = available_profiles[profile_idx]
+                    self.log(f"[Worker {worker_id}] Dùng profile: {profile_name}")
             else:
                 self.log(f"Chua co thu muc chrome_profiles, tao moi...")
                 profiles_dir.mkdir(exist_ok=True)
@@ -4006,11 +4008,22 @@ class SmartEngine:
             try:
                 from modules.drission_flow_api import DrissionFlowAPI
                 ws_cfg = self.config.get('webshare_proxy', {})
+                # === PARALLEL: Chọn profile theo worker_id ===
+                root_dir = Path(__file__).parent.parent
+                profiles_dir = root_dir / "chrome_profiles"
+                profile_dir = None
+                if profiles_dir.exists():
+                    available = sorted([p for p in profiles_dir.iterdir() if p.is_dir() and not p.name.startswith('.')])
+                    if available:
+                        worker_id = getattr(self, 'worker_id', 0) or 0
+                        profile_dir = str(available[worker_id % len(available)])
                 drission_api = DrissionFlowAPI(
+                    profile_dir=profile_dir or "./chrome_profiles/main",
                     headless=True,
                     verbose=False,
                     webshare_enabled=ws_cfg.get('enabled', True),
-                    machine_id=ws_cfg.get('machine_id', 1)
+                    machine_id=ws_cfg.get('machine_id', 1),
+                    worker_id=getattr(self, 'worker_id', 0) or 0
                 )
                 if drission_api.setup():
                     # Lấy token bằng cách trigger một request đơn giản
@@ -4188,16 +4201,19 @@ class SmartEngine:
                         self.log(f"[VIDEO] Proxy init error: {e}", "WARN")
                         use_webshare = False
 
-                # === CHROME PROFILE: Dùng chrome_profiles/ từ cài đặt tool ===
+                # === CHROME PROFILE: Mỗi worker dùng profile riêng ===
                 root_dir = Path(__file__).parent.parent
                 profiles_dir = root_dir / cfg.get('browser_profiles_dir', './chrome_profiles')
 
                 profile_dir = None
                 if profiles_dir.exists():
-                    for p in sorted(profiles_dir.iterdir()):
-                        if p.is_dir() and not p.name.startswith('.'):
-                            profile_dir = str(p)
-                            break
+                    # PARALLEL: Chọn profile theo worker_id
+                    available = sorted([p for p in profiles_dir.iterdir() if p.is_dir() and not p.name.startswith('.')])
+                    if available:
+                        worker_id = getattr(self, 'worker_id', 0) or 0
+                        profile_idx = worker_id % len(available)
+                        profile_dir = str(available[profile_idx])
+                        self.log(f"[VIDEO] [Worker {worker_id}] Dùng profile: {available[profile_idx].name}")
 
                 if not profile_dir:
                     self.log("[VIDEO] ⚠️ Không có Chrome profile! Cần tạo ở Cài đặt tool.", "ERROR")
