@@ -1359,15 +1359,20 @@ class DrissionFlowAPI:
         timeout: int = 120
     ) -> Tuple[List[GeneratedImage], Optional[str]]:
         """
-        Generate image bằng CUSTOM PAYLOAD INJECTION mode.
+        Generate image bằng MODIFY MODE - giữ nguyên Chrome's payload.
 
         Flow:
-        1. Python chuẩn bị FULL payload (có prompt, imageInputs/media_id)
-        2. Lưu vào window._customPayload
-        3. Trigger Chrome gửi request (type prompt + Enter)
-        4. Chrome tạo reCAPTCHA token fresh
-        5. Interceptor INJECT token vào payload của ta và gửi NGAY (trong 0.05s)
-        6. Capture response
+        1. Type FULL prompt vào Chrome textarea
+        2. Chrome tạo payload với model mới nhất + prompt enhancement + reCAPTCHA
+        3. Interceptor chỉ THÊM imageInputs (nếu có) vào payload
+        4. Forward request với tất cả settings gốc của Chrome
+        5. Capture response
+
+        Ưu điểm so với Custom Payload:
+        - Dùng model mới nhất của Google (không hardcode GEM_PIX)
+        - Giữ prompt enhancement của Chrome
+        - Giữ tất cả settings/parameters của Chrome
+        - Chất lượng ảnh tốt hơn
 
         Args:
             prompt: Prompt mô tả ảnh
@@ -1386,44 +1391,24 @@ class DrissionFlowAPI:
             window._response = null;
             window._responseError = null;
             window._requestPending = false;
-            window._customPayload = null;
+            window._modifyConfig = null;
         """)
 
-        # 2. Chuẩn bị CUSTOM PAYLOAD (có đầy đủ media_id)
-        # Payload này sẽ THAY THẾ hoàn toàn body của Chrome
-        # Chỉ cần reCAPTCHA token từ Chrome
-        custom_payload = {
-            "clientContext": {
-                "tool": "PINHOLE",
-                "userPaygateTier": "PAYGATE_TIER_TWO",
-                # recaptchaToken, sessionId, projectId sẽ được inject từ Chrome
-            },
-            "requests": [{
-                "prompt": prompt,
-                "imageModelName": "GEM_PIX",
-                "imageAspectRatio": "IMAGE_ASPECT_RATIO_LANDSCAPE",
-                "seed": int(time.time()) % 100000
-            }]
-        }
+        # 2. MODIFY MODE: Chỉ set imageInputs, giữ nguyên payload của Chrome
+        # Chrome sẽ dùng model mới nhất, prompt enhancement, tất cả settings
+        # Ta chỉ thêm imageInputs (reference images) nếu có
+        if image_inputs and len(image_inputs) > 0:
+            modify_config = {
+                "imageInputs": image_inputs,
+                "imageCount": num_images if num_images else 1
+            }
+            self.driver.run_js(f"window._modifyConfig = {json.dumps(modify_config)};")
+            self.log(f"→ MODIFY MODE: {len(image_inputs)} reference image(s)")
+        else:
+            self.log(f"→ PASSTHROUGH MODE: Chrome's original payload")
 
-        # Thêm reference images (media_id) nếu có
-        if image_inputs:
-            custom_payload["requests"][0]["imageInputs"] = image_inputs
-            self.log(f"→ Custom payload với {len(image_inputs)} reference image(s)")
-
-        # Giới hạn số ảnh
-        if num_images and num_images > 1:
-            # Duplicate request cho nhiều ảnh
-            base_req = custom_payload["requests"][0].copy()
-            custom_payload["requests"] = [base_req.copy() for _ in range(num_images)]
-            for i, req in enumerate(custom_payload["requests"]):
-                req["seed"] = (int(time.time()) + i) % 100000
-
-        # 3. Lưu payload vào browser TRƯỚC khi trigger
-        self.driver.run_js(f"window._customPayload = {json.dumps(custom_payload)};")
-        self.log(f"→ Custom payload ready (imageInputs: {len(image_inputs) if image_inputs else 0})")
-
-        # 4. Trigger Chrome tạo reCAPTCHA
+        # 3. Trigger Chrome với FULL prompt
+        # Chrome sẽ tạo payload với model mới nhất + prompt enhancement
         self.log(f"→ Prompt: {prompt[:50]}...")
         textarea = self._find_textarea()
         if not textarea:
@@ -1431,13 +1416,13 @@ class DrissionFlowAPI:
 
         textarea.clear()
         time.sleep(0.2)
-        textarea.input(prompt[:20])  # Chỉ cần type một chút để trigger
+        textarea.input(prompt)  # Type FULL prompt - Chrome sẽ dùng nguyên văn
 
         # Đợi 2 giây để reCAPTCHA chuẩn bị token
         time.sleep(2)
 
         textarea.input('\n')  # Enter để gửi - Chrome sẽ tạo request với fresh token
-        self.log("→ Chrome đang tạo reCAPTCHA... Interceptor sẽ inject payload...")
+        self.log("→ Chrome đang gửi request... (giữ nguyên model + settings của Chrome)")
 
         # 4. Đợi response từ browser (không gọi API riêng!)
         start_time = time.time()
