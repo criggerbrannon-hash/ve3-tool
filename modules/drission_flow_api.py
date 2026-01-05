@@ -907,7 +907,15 @@ class DrissionFlowAPI:
             self.log(f"✗ Chrome error: {e}", "ERROR")
             return False
 
-        # 3. Vào Google Flow (hoặc project cố định nếu có) - VỚI RETRY
+        # 3. QUAN TRỌNG: Inject interceptor TRƯỚC khi navigate
+        # Dùng CDP để inject script chạy trước mọi script khác của page
+        try:
+            self.driver.run_cdp('Page.addScriptToEvaluateOnNewDocument', source=JS_INTERCEPTOR)
+            self.log("✓ CDP: Interceptor sẽ chạy trước page scripts")
+        except Exception as e:
+            self.log(f"⚠️ CDP injection failed: {e}", "WARN")
+
+        # 4. Vào Google Flow (hoặc project cố định nếu có) - VỚI RETRY
         target_url = project_url if project_url else self.FLOW_URL
         self.log(f"Vào: {target_url[:60]}...")
 
@@ -1078,11 +1086,22 @@ class DrissionFlowAPI:
             if not self._warm_up_session():
                 self.log("⚠️ Warm up không thành công, tiếp tục...", "WARN")
 
-        # 7. Inject interceptor (SAU khi warm up)
-        self.log("Inject interceptor...")
-        self._reset_tokens()
-        result = self.driver.run_js(JS_INTERCEPTOR)
-        self.log(f"✓ Interceptor: {result}")
+        # 7. Verify interceptor (đã inject qua CDP trước khi navigate)
+        self.log("Verify interceptor...")
+        time.sleep(1)
+
+        # Verify interceptor is active
+        verify = self.driver.run_js("return window.__interceptReady === true ? 'ACTIVE' : 'INACTIVE';")
+
+        if verify == 'ACTIVE':
+            self.log(f"✓ Interceptor: ACTIVE (từ CDP injection)")
+        else:
+            # CDP injection có thể không hoạt động, thử inject thủ công
+            self.log("⚠️ CDP không hoạt động, inject thủ công...", "WARN")
+            self._reset_tokens()
+            result = self.driver.run_js(JS_INTERCEPTOR)
+            verify = self.driver.run_js("return window.__interceptReady === true ? 'ACTIVE' : 'INACTIVE';")
+            self.log(f"  → Manual: {result} (verify: {verify})")
 
         self._ready = True
         return True
