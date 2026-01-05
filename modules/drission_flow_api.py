@@ -1102,7 +1102,7 @@ class DrissionFlowAPI:
         return True
 
     def _find_textarea(self):
-        """Tìm textarea input."""
+        """Tìm textarea input (không click)."""
         for sel in ["tag:textarea", "css:textarea"]:
             try:
                 el = self.driver.ele(sel, timeout=2)
@@ -1111,6 +1111,64 @@ class DrissionFlowAPI:
             except:
                 pass
         return None
+
+    def _click_textarea(self):
+        """
+        Click vào textarea để focus - QUAN TRỌNG để nhập prompt.
+        Dùng JavaScript với MouseEvent để đảm bảo click chính xác.
+        """
+        try:
+            result = self.driver.run_js("""
+                (function() {
+                    var textarea = document.querySelector('textarea');
+                    if (!textarea) return 'not_found';
+
+                    // Scroll vào view
+                    textarea.scrollIntoView({block: 'center', behavior: 'instant'});
+
+                    // Lấy vị trí giữa textarea
+                    var rect = textarea.getBoundingClientRect();
+                    var centerX = rect.left + rect.width / 2;
+                    var centerY = rect.top + rect.height / 2;
+
+                    // Tạo và dispatch mousedown event
+                    var mousedown = new MouseEvent('mousedown', {
+                        bubbles: true, cancelable: true, view: window,
+                        clientX: centerX, clientY: centerY
+                    });
+                    textarea.dispatchEvent(mousedown);
+
+                    // Tạo và dispatch mouseup event
+                    var mouseup = new MouseEvent('mouseup', {
+                        bubbles: true, cancelable: true, view: window,
+                        clientX: centerX, clientY: centerY
+                    });
+                    textarea.dispatchEvent(mouseup);
+
+                    // Tạo và dispatch click event
+                    var click = new MouseEvent('click', {
+                        bubbles: true, cancelable: true, view: window,
+                        clientX: centerX, clientY: centerY
+                    });
+                    textarea.dispatchEvent(click);
+
+                    // Focus
+                    textarea.focus();
+
+                    return 'clicked';
+                })();
+            """)
+
+            if result == 'clicked':
+                self.log("✓ Clicked textarea (JS)")
+                time.sleep(0.3)
+                return True
+            elif result == 'not_found':
+                self.log("✗ Textarea not found", "ERROR")
+            return False
+        except Exception as e:
+            self.log(f"⚠️ Click textarea error: {e}", "WARN")
+            return False
 
     def _reset_tokens(self):
         """Reset captured tokens trong browser."""
@@ -1431,9 +1489,12 @@ class DrissionFlowAPI:
             self.driver.run_js(f"window._modifyConfig = {json.dumps(modify_config)};")
             self.log(f"→ MODIFY MODE: {modify_config['imageCount']} image(s), no reference")
 
-        # 3. Trigger Chrome với FULL prompt
-        # Chrome sẽ tạo payload với model mới nhất + prompt enhancement
+        # 3. CLICK VÀO TEXTAREA TRƯỚC (quan trọng!)
         self.log(f"→ Prompt: {prompt[:50]}...")
+        if not self._click_textarea():
+            return [], "Không thể click vào textarea"
+
+        # 4. Tìm textarea và nhập prompt
         textarea = self._find_textarea()
         if not textarea:
             return [], "Không tìm thấy textarea"
@@ -1445,7 +1506,9 @@ class DrissionFlowAPI:
         # Đợi 2 giây để reCAPTCHA chuẩn bị token
         time.sleep(2)
 
-        textarea.input('\n')  # Enter để gửi - Chrome sẽ tạo request với fresh token
+        # 5. Nhấn Enter để gửi
+        textarea.input('\n')
+        self.log("→ Pressed Enter to send")
         self.log("→ Chrome đang gửi request... (giữ nguyên model + settings của Chrome)")
 
         # 4. Đợi response từ browser (không gọi API riêng!)
