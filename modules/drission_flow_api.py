@@ -94,146 +94,148 @@ class GeneratedImage:
     local_path: Optional[Path] = None
 
 
-# JS Interceptor - BLOCK Chrome's request, make our own API call
-# Flow: Chrome trigger → Capture reCAPTCHA → BLOCK Chrome → Call API with custom payload
+# JS Interceptor - SUPER EARLY INJECTION
+# Chạy TRƯỚC mọi script khác của page, override fetch ngay lập tức
+# Sử dụng Object.defineProperty để không bị ghi đè
 JS_INTERCEPTOR = '''
-window._tk=null;window._pj=null;window._xbv=null;window._rct=null;window._payload=null;window._sid=null;window._url=null;
-window._response=null;window._responseError=null;window._requestPending=false;
-window._customPayload=null; // Payload đầy đủ từ Python (có media_id)
-window._capturedHeaders=null; // Headers từ Chrome
-window._videoResponse=null;window._videoError=null;window._videoPending=false;
-
 (function(){
-    if(window.__interceptReady) return 'ALREADY_READY';
-    window.__interceptReady = true;
+    // Tránh chạy 2 lần
+    if(window.__VE3_INTERCEPTOR_V2__) return 'ALREADY_INSTALLED';
+    window.__VE3_INTERCEPTOR_V2__ = true;
 
-    var orig = window.fetch;
-    window.fetch = async function(url, opts) {
-        var urlStr = typeof url === 'string' ? url : url.url;
+    // State variables
+    window._tk=null;window._pj=null;window._xbv=null;window._rct=null;window._sid=null;window._url=null;
+    window._response=null;window._responseError=null;window._requestPending=false;
+    window._customPayload=null;
+    window._capturedHeaders=null;
+    window._videoResponse=null;window._videoError=null;window._videoPending=false;
+    window._interceptCount = 0; // Debug counter
+
+    // Lưu original fetch NGAY LẬP TỨC
+    var _originalFetch = window.fetch;
+
+    // Custom fetch function
+    var customFetch = async function(url, opts) {
+        var urlStr = typeof url === 'string' ? url : (url && url.url ? url.url : String(url));
 
         // ============================================
         // IMAGE GENERATION REQUESTS
         // ============================================
         if (urlStr.includes('aisandbox') && (urlStr.includes('batchGenerate') || urlStr.includes('flowMedia'))) {
-            console.log('[IMG] Request intercepted:', urlStr);
+            window._interceptCount++;
+            console.log('========================================');
+            console.log('[VE3] INTERCEPTED #' + window._interceptCount + ':', urlStr.substring(0, 80));
+            console.log('[VE3] customPayload:', window._customPayload ? 'SET' : 'NULL');
+
             window._requestPending = true;
             window._response = null;
             window._responseError = null;
             window._url = urlStr;
 
-            // Capture headers từ Chrome
+            // Capture headers
             var capturedHeaders = {};
             if (opts && opts.headers) {
                 var h = opts.headers;
                 capturedHeaders = Object.assign({}, h);
-                if (h['Authorization']) {
-                    window._tk = h['Authorization'].replace('Bearer ', '');
-                }
-                if (h['x-browser-validation']) {
-                    window._xbv = h['x-browser-validation'];
-                }
+                if (h['Authorization']) window._tk = h['Authorization'].replace('Bearer ', '');
+                if (h['x-browser-validation']) window._xbv = h['x-browser-validation'];
             }
             window._capturedHeaders = capturedHeaders;
 
-            // Parse Chrome's body để lấy reCAPTCHA token FRESH
+            // Parse body để lấy reCAPTCHA
             var chromeBody = null;
             var freshRecaptcha = null;
             if (opts && opts.body) {
                 try {
                     chromeBody = JSON.parse(opts.body);
-                    if (chromeBody.recaptchaToken) {
-                        freshRecaptcha = chromeBody.recaptchaToken;
-                    } else if (chromeBody.clientContext && chromeBody.clientContext.recaptchaToken) {
-                        freshRecaptcha = chromeBody.clientContext.recaptchaToken;
-                    }
+                    freshRecaptcha = chromeBody.recaptchaToken ||
+                                    (chromeBody.clientContext && chromeBody.clientContext.recaptchaToken);
                     window._rct = freshRecaptcha;
-                    window._pj = chromeBody.clientContext ? chromeBody.clientContext.projectId : null;
-                    window._sid = chromeBody.clientContext ? chromeBody.clientContext.sessionId : null;
+                    if (chromeBody.clientContext) {
+                        window._pj = chromeBody.clientContext.projectId;
+                        window._sid = chromeBody.clientContext.sessionId;
+                    }
+                    console.log('[VE3] reCAPTCHA:', freshRecaptcha ? freshRecaptcha.substring(0, 30) + '...' : 'NULL');
                 } catch(e) {
-                    console.log('[ERROR] Parse Chrome body failed:', e);
+                    console.log('[VE3] Parse body error:', e);
                 }
             }
 
             // ============================================
-            // BLOCK + API MODE: Chặn Chrome, gọi API riêng
+            // BLOCK + API MODE
             // ============================================
             if (window._customPayload && freshRecaptcha) {
-                try {
-                    var customBody = window._customPayload;
+                console.log('[VE3] >>> BLOCK MODE ACTIVATED <<<');
 
-                    // Inject reCAPTCHA và session info
-                    if (customBody.clientContext) {
-                        customBody.clientContext.recaptchaToken = freshRecaptcha;
-                        if (chromeBody && chromeBody.clientContext) {
-                            customBody.clientContext.sessionId = chromeBody.clientContext.sessionId;
-                            customBody.clientContext.projectId = chromeBody.clientContext.projectId;
-                        }
+                try {
+                    var customBody = JSON.parse(JSON.stringify(window._customPayload)); // Deep clone
+
+                    // Inject fresh data
+                    if (!customBody.clientContext) customBody.clientContext = {};
+                    customBody.clientContext.recaptchaToken = freshRecaptcha;
+                    if (chromeBody && chromeBody.clientContext) {
+                        customBody.clientContext.sessionId = chromeBody.clientContext.sessionId;
+                        customBody.clientContext.projectId = chromeBody.clientContext.projectId;
                     }
 
-                    console.log('[BLOCK] Chặn Chrome request');
-                    console.log('[API] Gọi API riêng với custom payload');
-                    console.log('[API] imageInputs:', customBody.requests[0].imageInputs ? customBody.requests[0].imageInputs.length : 0);
+                    var imgInputs = customBody.requests && customBody.requests[0] && customBody.requests[0].imageInputs;
+                    console.log('[VE3] Sending API with imageInputs:', imgInputs ? imgInputs.length : 0);
 
-                    // Clear để không dùng lại
+                    // Clear ngay
                     window._customPayload = null;
 
-                    // GỌI API RIÊNG (không dùng Chrome's request)
+                    // GỌI API RIÊNG
+                    var apiResponse = await _originalFetch.call(window, urlStr, {
+                        method: 'POST',
+                        headers: capturedHeaders,
+                        body: JSON.stringify(customBody)
+                    });
+
+                    console.log('[VE3] API Response status:', apiResponse.status);
+
+                    var cloned = apiResponse.clone();
                     try {
-                        var apiResponse = await orig.call(this, urlStr, {
-                            method: 'POST',
-                            headers: capturedHeaders,
-                            body: JSON.stringify(customBody)
-                        });
-
-                        var cloned = apiResponse.clone();
-                        try {
-                            var data = await cloned.json();
-                            window._response = data;
-                            console.log('[API] Response status:', apiResponse.status);
-                            if (data.media) {
-                                console.log('[API] Got', data.media.length, 'images');
-                            }
-                        } catch(e) {
-                            window._response = {status: apiResponse.status, error: 'parse_failed'};
-                        }
-
-                        window._requestPending = false;
-
-                        // Trả về response cho Chrome (Chrome sẽ hiển thị kết quả)
-                        return apiResponse;
-
+                        var data = await cloned.json();
+                        window._response = data;
+                        if (data.media) console.log('[VE3] Got', data.media.length, 'images');
+                        if (data.error) console.log('[VE3] API Error:', data.error);
                     } catch(e) {
-                        console.log('[API] Error:', e);
-                        window._responseError = e.toString();
-                        window._requestPending = false;
-                        throw e;
+                        window._response = {status: apiResponse.status, parseError: true};
                     }
 
+                    window._requestPending = false;
+                    console.log('[VE3] >>> BLOCK MODE COMPLETE <<<');
+                    console.log('========================================');
+                    return apiResponse;
+
                 } catch(e) {
-                    console.log('[ERROR] Custom payload failed:', e);
+                    console.log('[VE3] BLOCK MODE ERROR:', e);
+                    window._responseError = e.toString();
+                    window._requestPending = false;
+                    throw e;
                 }
             }
 
             // ============================================
-            // PASSTHROUGH: Không có custom payload, forward nguyên bản
+            // PASSTHROUGH MODE
             // ============================================
+            console.log('[VE3] >>> PASSTHROUGH MODE <<<');
             try {
-                console.log('[PASSTHROUGH] Forward Chrome request');
-                var response = await orig.apply(this, [url, opts]);
-                var cloned = response.clone();
+                var response = await _originalFetch.apply(window, [url, opts]);
+                console.log('[VE3] PASSTHROUGH Response:', response.status);
 
+                var cloned = response.clone();
                 try {
-                    var data = await cloned.json();
-                    window._response = data;
-                    console.log('[RESPONSE] Status:', response.status);
+                    window._response = await cloned.json();
                 } catch(e) {
-                    window._response = {status: response.status, error: 'parse_failed'};
+                    window._response = {status: response.status, parseError: true};
                 }
 
                 window._requestPending = false;
+                console.log('========================================');
                 return response;
             } catch(e) {
-                console.log('[ERROR] Request failed:', e);
+                console.log('[VE3] PASSTHROUGH ERROR:', e);
                 window._responseError = e.toString();
                 window._requestPending = false;
                 throw e;
@@ -241,10 +243,10 @@ window._videoResponse=null;window._videoError=null;window._videoPending=false;
         }
 
         // ============================================
-        // VIDEO GENERATION REQUESTS (I2V)
+        // VIDEO GENERATION REQUESTS
         // ============================================
         if (urlStr.includes('aisandbox') && urlStr.includes('video:')) {
-            console.log('[VIDEO] Request to:', urlStr);
+            console.log('[VE3-VIDEO] Request:', urlStr.substring(0, 60));
             window._videoPending = true;
             window._videoResponse = null;
             window._videoError = null;
@@ -267,12 +269,12 @@ window._videoResponse=null;window._videoError=null;window._videoPending=false;
             }
 
             try {
-                var response = await orig.apply(this, [url, opts]);
+                var response = await _originalFetch.apply(window, [url, opts]);
                 var cloned = response.clone();
                 try {
                     window._videoResponse = await cloned.json();
                 } catch(e) {
-                    window._videoResponse = {status: response.status, error: 'parse_failed'};
+                    window._videoResponse = {status: response.status, parseError: true};
                 }
                 window._videoPending = false;
                 return response;
@@ -283,10 +285,25 @@ window._videoResponse=null;window._videoError=null;window._videoPending=false;
             }
         }
 
-        return orig.apply(this, arguments);
+        // Other requests - forward normally
+        return _originalFetch.apply(window, arguments);
     };
-    console.log('[INTERCEPTOR] Ready - CUSTOM PAYLOAD INJECTION mode');
-    return 'READY';
+
+    // Override fetch với Object.defineProperty để không bị ghi đè
+    try {
+        Object.defineProperty(window, 'fetch', {
+            value: customFetch,
+            writable: false,
+            configurable: false
+        });
+        console.log('[VE3] Interceptor installed (non-writable)');
+    } catch(e) {
+        // Fallback nếu không define được
+        window.fetch = customFetch;
+        console.log('[VE3] Interceptor installed (writable fallback)');
+    }
+
+    return 'INSTALLED_V2';
 })();
 '''
 
@@ -1090,17 +1107,17 @@ class DrissionFlowAPI:
         self.log("Verify interceptor...")
         time.sleep(1)
 
-        # Verify interceptor is active
-        verify = self.driver.run_js("return window.__interceptReady === true ? 'ACTIVE' : 'INACTIVE';")
+        # Verify interceptor V2 is active
+        verify = self.driver.run_js("return window.__VE3_INTERCEPTOR_V2__ === true ? 'ACTIVE_V2' : 'INACTIVE';")
 
-        if verify == 'ACTIVE':
-            self.log(f"✓ Interceptor: ACTIVE (từ CDP injection)")
+        if verify == 'ACTIVE_V2':
+            self.log(f"✓ Interceptor V2: ACTIVE (từ CDP injection)")
         else:
             # CDP injection có thể không hoạt động, thử inject thủ công
             self.log("⚠️ CDP không hoạt động, inject thủ công...", "WARN")
             self._reset_tokens()
             result = self.driver.run_js(JS_INTERCEPTOR)
-            verify = self.driver.run_js("return window.__interceptReady === true ? 'ACTIVE' : 'INACTIVE';")
+            verify = self.driver.run_js("return window.__VE3_INTERCEPTOR_V2__ === true ? 'ACTIVE_V2' : 'INACTIVE';")
             self.log(f"  → Manual: {result} (verify: {verify})")
 
         self._ready = True
@@ -1120,7 +1137,7 @@ class DrissionFlowAPI:
     def _reset_tokens(self):
         """Reset captured tokens trong browser."""
         self.driver.run_js("""
-            window.__interceptReady = false;
+            window.__VE3_INTERCEPTOR_V2__ = false;
             window._tk = null;
             window._pj = null;
             window._xbv = null;
@@ -1135,6 +1152,7 @@ class DrissionFlowAPI:
             window._videoResponse = null;
             window._videoError = null;
             window._videoPending = false;
+            window._interceptCount = 0;
         """)
 
     def _capture_tokens(self, prompt: str, timeout: int = 10) -> bool:
@@ -1471,11 +1489,12 @@ class DrissionFlowAPI:
         time.sleep(1)
         debug_state = self.driver.run_js("""
             return {
+                interceptorV2: window.__VE3_INTERCEPTOR_V2__ ? 'YES' : 'NO',
+                interceptCount: window._interceptCount || 0,
                 customPayload: window._customPayload ? 'STILL_SET' : 'CONSUMED',
                 requestPending: window._requestPending,
                 hasResponse: window._response ? 'YES' : 'NO',
-                lastRecaptcha: window._rct ? window._rct.substring(0, 20) + '...' : 'NULL',
-                url: window._url ? 'SET' : 'NULL'
+                lastRecaptcha: window._rct ? window._rct.substring(0, 20) + '...' : 'NULL'
             };
         """)
         self.log(f"  [DEBUG] State: {debug_state}")
