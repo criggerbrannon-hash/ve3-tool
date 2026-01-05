@@ -1069,11 +1069,37 @@ class DrissionFlowAPI:
             if not self._warm_up_session():
                 self.log("⚠️ Warm up không thành công, tiếp tục...", "WARN")
 
-        # 7. Inject interceptor (SAU khi warm up)
+        # 7. Inject interceptor (SAU khi warm up) - với retry
         self.log("Inject interceptor...")
         self._reset_tokens()
-        result = self.driver.run_js(JS_INTERCEPTOR)
-        self.log(f"✓ Interceptor: {result}")
+
+        # Đợi page ổn định trước khi inject
+        time.sleep(1)
+
+        # Retry inject 3 lần
+        result = None
+        for attempt in range(3):
+            try:
+                result = self.driver.run_js(JS_INTERCEPTOR)
+                if result in ['READY', 'ALREADY_READY']:
+                    break
+                self.log(f"  Attempt {attempt+1}: {result}, retrying...")
+                time.sleep(1)
+            except Exception as e:
+                self.log(f"  Attempt {attempt+1} error: {e}")
+                time.sleep(1)
+
+        # Verify interceptor is active
+        verify = self.driver.run_js("return window.__interceptReady === true ? 'ACTIVE' : 'INACTIVE';")
+        self.log(f"✓ Interceptor: {result} (verify: {verify})")
+
+        if verify != 'ACTIVE':
+            self.log("⚠️ Interceptor không active, thử inject lại...", "WARN")
+            # Force inject lại
+            self.driver.run_js("window.__interceptReady = false;")
+            result = self.driver.run_js(JS_INTERCEPTOR)
+            verify = self.driver.run_js("return window.__interceptReady === true ? 'ACTIVE' : 'INACTIVE';")
+            self.log(f"  → Retry result: {result} (verify: {verify})")
 
         self._ready = True
         return True
