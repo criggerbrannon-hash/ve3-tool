@@ -2243,11 +2243,106 @@ class DrissionFlowAPI:
             self.log(f"[!] Proxy auth error: {e}", "WARN")
             self.log("    → Whitelist IP: 14.224.157.134 trên Webshare")
 
-    def restart_chrome(self) -> bool:
+    def reset_chrome_profile(self) -> bool:
+        """
+        Reset Chrome profile hoàn toàn - xóa tất cả cookies, localStorage, cache.
+        Cần thiết khi Google đã lưu fingerprint và block.
+
+        Returns:
+            True nếu reset thành công
+        """
+        import shutil
+
+        self.log("🧹 Reset Chrome profile...")
+
+        # Close Chrome trước
+        self._kill_chrome()
+        self.close()
+        time.sleep(1)
+
+        try:
+            profile_path = self.profile_dir
+
+            # Danh sách folders/files cần xóa để reset hoàn toàn
+            items_to_delete = [
+                "Cookies",
+                "Cookies-journal",
+                "Local Storage",
+                "Session Storage",
+                "IndexedDB",
+                "Cache",
+                "Code Cache",
+                "GPUCache",
+                "Service Worker",
+                "Web Data",
+                "Web Data-journal",
+                "History",
+                "History-journal",
+                "Visited Links",
+                "Network Action Predictor",
+                "Network Action Predictor-journal",
+                "Network Persistent State",
+                "Preferences",
+                "Secure Preferences",
+                "TransportSecurity",
+                "databases",
+                "blob_storage",
+                "File System",
+                "Platform Notifications",
+                "Site Characteristics Database",
+                "shared_proto_db",
+                "optimization_guide_hint_cache",
+                "optimization_guide_model_metadata",
+                "BudgetDatabase",
+                "coupon_db",
+                "commerce_subscription_db",
+                "DIPS",
+                "PrivateAggregation",
+            ]
+
+            deleted_count = 0
+            for item in items_to_delete:
+                item_path = profile_path / item
+                if item_path.exists():
+                    try:
+                        if item_path.is_dir():
+                            shutil.rmtree(item_path)
+                        else:
+                            item_path.unlink()
+                        deleted_count += 1
+                    except Exception as e:
+                        pass  # Bỏ qua nếu không xóa được (file đang bị lock)
+
+            # Cũng xóa trong Default subfolder nếu có
+            default_path = profile_path / "Default"
+            if default_path.exists():
+                for item in items_to_delete:
+                    item_path = default_path / item
+                    if item_path.exists():
+                        try:
+                            if item_path.is_dir():
+                                shutil.rmtree(item_path)
+                            else:
+                                item_path.unlink()
+                            deleted_count += 1
+                        except Exception:
+                            pass
+
+            self.log(f"  ✓ Đã xóa {deleted_count} items trong Chrome profile")
+            return True
+
+        except Exception as e:
+            self.log(f"  ✗ Lỗi reset profile: {e}", "ERROR")
+            return False
+
+    def restart_chrome(self, reset_profile: bool = True) -> bool:
         """
         Restart Chrome với proxy mới sau khi rotate.
         Proxy đã được rotate trước khi gọi hàm này.
         setup() sẽ lấy proxy mới từ manager.get_proxy_for_worker(worker_id).
+
+        Args:
+            reset_profile: True để xóa toàn bộ Chrome data trước khi restart (default True)
 
         Returns:
             True nếu restart thành công
@@ -2262,12 +2357,15 @@ class DrissionFlowAPI:
             else:
                 self.log(f"🔄 Restart Chrome [Worker {self.worker_id}]...")
         else:
-            self.log("🔄 Restart Chrome với proxy mới...")
+            self.log("🔄 Restart Chrome...")
 
-        # Close Chrome và proxy bridge hiện tại
-        self.close()
-
-        time.sleep(2)
+        # Reset Chrome profile nếu cần (xóa cookies, localStorage, cache, ...)
+        if reset_profile:
+            self.reset_chrome_profile()
+        else:
+            # Chỉ close Chrome
+            self.close()
+            time.sleep(2)
 
         # Restart Chrome với proxy mới - setup() sẽ lấy proxy từ manager
         # Lấy saved project URL để vào lại đúng project
