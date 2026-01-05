@@ -94,32 +94,38 @@ class GeneratedImage:
     local_path: Optional[Path] = None
 
 
-# JS Interceptor - Capture tokens và CANCEL request
-# Giống batch_generator.py - đã test hoạt động
+# JS Interceptor - MODIFY & FORWARD (không cancel)
+# reCAPTCHA token chỉ có 0.05s - phải forward ngay, không cancel!
 JS_INTERCEPTOR = '''
 window._tk=null;window._pj=null;window._xbv=null;window._rct=null;window._payload=null;window._sid=null;window._url=null;
+window._response=null;window._responseError=null;window._requestPending=false;
+window._modifyConfig=null; // {imageCount: N, imageInputs: [...]}
+window._videoResponse=null;window._videoError=null;window._videoPending=false;
+
 (function(){
     if(window.__interceptReady) return 'ALREADY_READY';
     window.__interceptReady = true;
 
     var orig = window.fetch;
-    window.fetch = function(url, opts) {
+    window.fetch = async function(url, opts) {
         var urlStr = typeof url === 'string' ? url : url.url;
 
-        // Match nhiều pattern hơn
-        if (urlStr.includes('aisandbox') && (urlStr.includes('batchGenerate') || urlStr.includes('flowMedia') || urlStr.includes('generateContent'))) {
-            console.log('[INTERCEPT] Capturing request to:', urlStr);
+        // ============================================
+        // IMAGE GENERATION REQUESTS
+        // ============================================
+        if (urlStr.includes('aisandbox') && (urlStr.includes('batchGenerate') || urlStr.includes('flowMedia'))) {
+            console.log('[IMG] Request to:', urlStr);
+            window._requestPending = true;
+            window._response = null;
+            window._responseError = null;
 
-            // Capture URL gốc
+            // Capture URL
             window._url = urlStr;
 
-            // Extract projectId from URL: /v1/projects/{projectId}/flowMedia:batchGenerateImages
+            // Extract projectId from URL
             var match = urlStr.match(/\\/projects\\/([a-f0-9\\-]+)/i);
             if (match && match[1]) {
                 window._pj = match[1];
-                console.log('[TOKEN] projectId from URL:', window._pj);
-            } else {
-                console.log('[TOKEN] projectId NOT FOUND in URL:', urlStr);
             }
 
             // Capture từ headers
@@ -131,44 +137,149 @@ window._tk=null;window._pj=null;window._xbv=null;window._rct=null;window._payloa
                 }
                 if (h['x-browser-validation']) {
                     window._xbv = h['x-browser-validation'];
-                    console.log('[TOKEN] x-browser-validation captured!');
                 }
             }
 
-            // Capture payload và recaptchaToken
-            if (opts && opts.body) {
-                window._payload = opts.body;
+            // MODIFY payload nếu có config
+            if (opts && opts.body && window._modifyConfig) {
                 try {
                     var body = JSON.parse(opts.body);
-                    // sessionId from clientContext
+                    var cfg = window._modifyConfig;
+
+                    // Capture tokens từ body gốc
                     if (body.clientContext) {
                         window._sid = body.clientContext.sessionId;
-                        // Fallback projectId from body if not in URL
                         if (!window._pj && body.clientContext.projectId) {
                             window._pj = body.clientContext.projectId;
                         }
                     }
-                    // recaptchaToken có thể ở root hoặc trong requests[0]
                     if (body.recaptchaToken) {
                         window._rct = body.recaptchaToken;
-                        console.log('[TOKEN] recaptchaToken captured (root)!');
-                    } else if (body.requests && body.requests[0] && body.requests[0].clientContext && body.requests[0].clientContext.recaptchaToken) {
-                        window._rct = body.requests[0].clientContext.recaptchaToken;
-                        console.log('[TOKEN] recaptchaToken captured (requests[0])!');
+                    }
+
+                    // Modify image count
+                    if (cfg.imageCount && body.requests) {
+                        var targetCount = cfg.imageCount;
+                        if (body.requests.length > targetCount) {
+                            body.requests = body.requests.slice(0, targetCount);
+                            console.log('[MODIFY] Image count: ' + body.requests.length + ' -> ' + targetCount);
+                        }
+                    }
+
+                    // Add reference images
+                    if (cfg.imageInputs && body.requests) {
+                        body.requests.forEach(function(req) {
+                            req.imageInputs = cfg.imageInputs;
+                        });
+                        console.log('[MODIFY] Added ' + cfg.imageInputs.length + ' reference images');
+                    }
+
+                    // Update payload
+                    opts.body = JSON.stringify(body);
+                    window._payload = opts.body;
+                    console.log('[MODIFY] Payload modified, forwarding with fresh reCAPTCHA token!');
+                } catch(e) {
+                    console.log('[ERROR] Modify failed:', e);
+                }
+            } else if (opts && opts.body) {
+                // Just capture, no modify
+                window._payload = opts.body;
+                try {
+                    var body = JSON.parse(opts.body);
+                    if (body.clientContext) {
+                        window._sid = body.clientContext.sessionId;
+                        if (!window._pj) window._pj = body.clientContext.projectId;
+                    }
+                    if (body.recaptchaToken) window._rct = body.recaptchaToken;
+                } catch(e) {}
+            }
+
+            // FORWARD request - reCAPTCHA token còn fresh
+            try {
+                console.log('[IMG] Forwarding with fresh reCAPTCHA token...');
+                var response = await orig.apply(this, [url, opts]);
+                var cloned = response.clone();
+
+                try {
+                    var data = await cloned.json();
+                    window._response = data;
+                    console.log('[IMG] Response captured! Status:', response.status);
+                    if (data.media) {
+                        console.log('[IMG] Got ' + data.media.length + ' images');
                     }
                 } catch(e) {
-                    console.log('[ERROR] Parse body failed:', e);
+                    window._response = {status: response.status, error: 'parse_failed'};
+                }
+
+                window._requestPending = false;
+                return response;
+            } catch(e) {
+                console.log('[IMG] Request failed:', e);
+                window._responseError = e.toString();
+                window._requestPending = false;
+                throw e;
+            }
+        }
+
+        // ============================================
+        // VIDEO GENERATION REQUESTS (I2V)
+        // ============================================
+        if (urlStr.includes('aisandbox') && urlStr.includes('video:')) {
+            console.log('[VIDEO] Request to:', urlStr);
+            window._videoPending = true;
+            window._videoResponse = null;
+            window._videoError = null;
+
+            // Capture tokens từ headers
+            if (opts && opts.headers) {
+                var h = opts.headers;
+                if (h['Authorization']) {
+                    window._tk = h['Authorization'].replace('Bearer ', '');
+                }
+                if (h['x-browser-validation']) {
+                    window._xbv = h['x-browser-validation'];
                 }
             }
 
-            // CANCEL request - return fake response
-            console.log('[INTERCEPT] Request cancelled, tokens captured!');
-            return Promise.resolve(new Response(JSON.stringify({cancelled:true})));
+            // Capture tokens từ body
+            if (opts && opts.body) {
+                try {
+                    var body = JSON.parse(opts.body);
+                    if (body.clientContext) {
+                        window._sid = body.clientContext.sessionId;
+                        window._pj = body.clientContext.projectId;
+                        window._rct = body.clientContext.recaptchaToken;
+                    }
+                } catch(e) {}
+            }
+
+            // FORWARD video request - reCAPTCHA token còn fresh
+            try {
+                console.log('[VIDEO] Forwarding with fresh reCAPTCHA token...');
+                var response = await orig.apply(this, [url, opts]);
+                var cloned = response.clone();
+
+                try {
+                    var data = await cloned.json();
+                    window._videoResponse = data;
+                    console.log('[VIDEO] Response captured! Status:', response.status);
+                } catch(e) {
+                    window._videoResponse = {status: response.status, error: 'parse_failed'};
+                }
+
+                window._videoPending = false;
+                return response;
+            } catch(e) {
+                console.log('[VIDEO] Request failed:', e);
+                window._videoError = e.toString();
+                window._videoPending = false;
+                throw e;
+            }
         }
 
         return orig.apply(this, arguments);
     };
-    console.log('[INTERCEPTOR] Ready - will capture batchGenerateImages requests');
+    console.log('[INTERCEPTOR] Ready - IMAGE + VIDEO FORWARD mode');
     return 'READY';
 })();
 '''
@@ -982,7 +1093,7 @@ class DrissionFlowAPI:
         return None
 
     def _reset_tokens(self):
-        """Reset captured tokens trong browser. Giống batch_generator.py."""
+        """Reset captured tokens trong browser."""
         self.driver.run_js("""
             window.__interceptReady = false;
             window._tk = null;
@@ -992,6 +1103,13 @@ class DrissionFlowAPI:
             window._payload = null;
             window._sid = null;
             window._url = null;
+            window._response = null;
+            window._responseError = null;
+            window._requestPending = false;
+            window._modifyConfig = null;
+            window._videoResponse = null;
+            window._videoError = null;
+            window._videoPending = false;
         """)
 
     def _capture_tokens(self, prompt: str, timeout: int = 10) -> bool:
@@ -1236,6 +1354,112 @@ class DrissionFlowAPI:
         self.log(f"✓ Parsed {len(images)} images")
         return images
 
+    def generate_image_forward(
+        self,
+        prompt: str,
+        num_images: int = 1,
+        image_inputs: Optional[List[Dict]] = None,
+        timeout: int = 60
+    ) -> Tuple[List[GeneratedImage], Optional[str]]:
+        """
+        Generate image bằng FORWARD mode - không cancel request.
+        reCAPTCHA token được dùng ngay (0.05s không bị expired).
+
+        Flow:
+        1. Set modifyConfig (image count, reference images)
+        2. Gửi prompt qua textarea
+        3. Browser tự request với fresh reCAPTCHA token
+        4. Capture response từ browser
+        5. Parse và trả về images
+
+        Args:
+            prompt: Prompt mô tả ảnh
+            num_images: Số ảnh cần tạo
+            image_inputs: Reference images [{name, inputType}]
+            timeout: Timeout đợi response (giây)
+
+        Returns:
+            Tuple[list of GeneratedImage, error message]
+        """
+        if not self._ready:
+            return [], "API chưa setup! Gọi setup() trước."
+
+        # 1. Reset state
+        self.driver.run_js("""
+            window._response = null;
+            window._responseError = null;
+            window._requestPending = false;
+        """)
+
+        # 2. Set modify config TRƯỚC khi gửi prompt
+        modify_config = {}
+        if num_images:
+            modify_config['imageCount'] = num_images
+        if image_inputs:
+            modify_config['imageInputs'] = image_inputs
+            self.log(f"→ Sẽ inject {len(image_inputs)} reference image(s)")
+
+        if modify_config:
+            self.driver.run_js(f"window._modifyConfig = {json.dumps(modify_config)};")
+            self.log(f"→ ModifyConfig: imageCount={num_images}")
+        else:
+            self.driver.run_js("window._modifyConfig = null;")
+
+        # 3. Gửi prompt
+        self.log(f"→ Prompt: {prompt[:50]}...")
+        textarea = self._find_textarea()
+        if not textarea:
+            return [], "Không tìm thấy textarea"
+
+        textarea.clear()
+        time.sleep(0.1)
+        textarea.input(prompt)
+        time.sleep(0.1)
+        textarea.input('\n')  # Enter để gửi
+        self.log("→ Đã gửi prompt, đợi browser forward request...")
+
+        # 4. Đợi response từ browser (không gọi API riêng!)
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            result = self.driver.run_js("""
+                return {
+                    pending: window._requestPending,
+                    response: window._response,
+                    error: window._responseError
+                };
+            """)
+
+            if result.get('error'):
+                error_msg = result['error']
+                self.log(f"✗ Browser request error: {error_msg}", "ERROR")
+                return [], error_msg
+
+            if result.get('response'):
+                response_data = result['response']
+
+                # Check for API errors in response
+                if isinstance(response_data, dict):
+                    if response_data.get('error'):
+                        error_info = response_data['error']
+                        error_msg = f"{error_info.get('code', 'unknown')}: {error_info.get('message', str(error_info))}"
+                        self.log(f"✗ API Error: {error_msg}", "ERROR")
+                        return [], error_msg
+
+                    # Parse successful response
+                    images = self._parse_response(response_data)
+                    self.log(f"✓ Got {len(images)} images from browser!")
+
+                    # Clear modifyConfig for next request
+                    self.driver.run_js("window._modifyConfig = null;")
+
+                    return images, None
+
+            # Still pending or no response yet
+            time.sleep(0.5)
+
+        self.log("✗ Timeout đợi response từ browser", "ERROR")
+        return [], "Timeout waiting for browser response"
+
     def generate_image(
         self,
         prompt: str,
@@ -1267,12 +1491,14 @@ class DrissionFlowAPI:
             self.log(f"→ Using {len(image_inputs)} reference image(s)")
 
         for attempt in range(max_retries):
-            # 1. Capture tokens với prompt (mỗi lần retry lấy token mới)
-            if not self._capture_tokens(prompt):
-                return False, [], "Không capture được tokens"
-
-            # 2. Gọi API với image_inputs (reference images)
-            images, error = self.call_api(image_inputs=image_inputs)
+            # SỬ DỤNG FORWARD MODE - không cancel request
+            # reCAPTCHA token được dùng ngay (0.05s không bị expired)
+            images, error = self.generate_image_forward(
+                prompt=prompt,
+                num_images=1,
+                image_inputs=image_inputs,
+                timeout=90
+            )
 
             if error:
                 last_error = error
@@ -1464,22 +1690,12 @@ class DrissionFlowAPI:
         for i, prompt in enumerate(prompts):
             self.log(f"\n[{i+1}/{len(prompts)}] {prompt[:50]}...")
 
-            # Lần đầu capture tất cả, sau đó chỉ refresh recaptcha
-            if i == 0:
-                if not self._capture_tokens(prompt):
-                    results["failed"] += 1
-                    if on_progress:
-                        on_progress(i+1, len(prompts), False, "Không capture được tokens")
-                    continue
-            else:
-                if not self.refresh_recaptcha(prompt):
-                    results["failed"] += 1
-                    if on_progress:
-                        on_progress(i+1, len(prompts), False, "Không refresh được recaptcha")
-                    continue
-
-            # Gọi API
-            images, error = self.call_api()
+            # FORWARD MODE: Không cancel request, reCAPTCHA token còn fresh
+            images, error = self.generate_image_forward(
+                prompt=prompt,
+                num_images=1,
+                timeout=90
+            )
 
             if error:
                 results["failed"] += 1
