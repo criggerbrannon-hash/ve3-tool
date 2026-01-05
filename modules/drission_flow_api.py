@@ -94,145 +94,137 @@ class GeneratedImage:
     local_path: Optional[Path] = None
 
 
-# JS Interceptor - SUPER EARLY INJECTION
-# Chạy TRƯỚC mọi script khác của page, override fetch ngay lập tức
-# Sử dụng Object.defineProperty để không bị ghi đè
+# JS Interceptor - INJECT CUSTOM PAYLOAD với reCAPTCHA token fresh
+# Flow: Python chuẩn bị payload (có media_id) → Chrome trigger reCAPTCHA → Inject token → Gửi ngay
 JS_INTERCEPTOR = '''
+window._tk=null;window._pj=null;window._xbv=null;window._rct=null;window._payload=null;window._sid=null;window._url=null;
+window._response=null;window._responseError=null;window._requestPending=false;
+window._customPayload=null; // Payload đầy đủ từ Python (có media_id)
+window._videoResponse=null;window._videoError=null;window._videoPending=false;
+
 (function(){
-    // Tránh chạy 2 lần
-    if(window.__VE3_INTERCEPTOR_V2__) return 'ALREADY_INSTALLED';
-    window.__VE3_INTERCEPTOR_V2__ = true;
+    if(window.__interceptReady) return 'ALREADY_READY';
+    window.__interceptReady = true;
 
-    // State variables
-    window._tk=null;window._pj=null;window._xbv=null;window._rct=null;window._sid=null;window._url=null;
-    window._response=null;window._responseError=null;window._requestPending=false;
-    window._imageInputsToInject=null; // Chỉ chứa imageInputs, không phải full payload
-    window._capturedHeaders=null;
-    window._videoResponse=null;window._videoError=null;window._videoPending=false;
-    window._interceptCount = 0; // Debug counter
-
-    // Lưu original fetch NGAY LẬP TỨC
-    var _originalFetch = window.fetch;
-
-    // Custom fetch function
-    var customFetch = async function(url, opts) {
-        var urlStr = typeof url === 'string' ? url : (url && url.url ? url.url : String(url));
+    var orig = window.fetch;
+    window.fetch = async function(url, opts) {
+        var urlStr = typeof url === 'string' ? url : url.url;
 
         // ============================================
         // IMAGE GENERATION REQUESTS
         // ============================================
         if (urlStr.includes('aisandbox') && (urlStr.includes('batchGenerate') || urlStr.includes('flowMedia'))) {
-            window._interceptCount++;
-            console.log('========================================');
-            console.log('[VE3] INTERCEPTED #' + window._interceptCount + ':', urlStr.substring(0, 80));
-            console.log('[VE3] imageInputsToInject:', window._imageInputsToInject ? window._imageInputsToInject.length : 0);
-
+            console.log('[IMG] Request intercepted:', urlStr);
             window._requestPending = true;
             window._response = null;
             window._responseError = null;
             window._url = urlStr;
 
             // Capture headers
-            var capturedHeaders = {};
             if (opts && opts.headers) {
                 var h = opts.headers;
-                capturedHeaders = Object.assign({}, h);
-                if (h['Authorization']) window._tk = h['Authorization'].replace('Bearer ', '');
-                if (h['x-browser-validation']) window._xbv = h['x-browser-validation'];
+                if (h['Authorization']) {
+                    window._tk = h['Authorization'].replace('Bearer ', '');
+                }
+                if (h['x-browser-validation']) {
+                    window._xbv = h['x-browser-validation'];
+                }
             }
-            window._capturedHeaders = capturedHeaders;
 
-            // Parse body để lấy reCAPTCHA
+            // Parse Chrome's original body để lấy reCAPTCHA token FRESH
             var chromeBody = null;
             var freshRecaptcha = null;
             if (opts && opts.body) {
                 try {
                     chromeBody = JSON.parse(opts.body);
-                    freshRecaptcha = chromeBody.recaptchaToken ||
-                                    (chromeBody.clientContext && chromeBody.clientContext.recaptchaToken);
+                    // Lấy reCAPTCHA token từ Chrome (FRESH!)
+                    if (chromeBody.recaptchaToken) {
+                        freshRecaptcha = chromeBody.recaptchaToken;
+                    } else if (chromeBody.clientContext && chromeBody.clientContext.recaptchaToken) {
+                        freshRecaptcha = chromeBody.clientContext.recaptchaToken;
+                    }
                     window._rct = freshRecaptcha;
-                    if (chromeBody.clientContext) {
-                        window._pj = chromeBody.clientContext.projectId;
-                        window._sid = chromeBody.clientContext.sessionId;
-                    }
-                    console.log('[VE3] reCAPTCHA:', freshRecaptcha ? freshRecaptcha.substring(0, 30) + '...' : 'NULL');
+                    window._pj = chromeBody.clientContext ? chromeBody.clientContext.projectId : null;
+                    window._sid = chromeBody.clientContext ? chromeBody.clientContext.sessionId : null;
                 } catch(e) {
-                    console.log('[VE3] Parse body error:', e);
+                    console.log('[ERROR] Parse Chrome body failed:', e);
                 }
             }
 
             // ============================================
-            // MODIFY MODE: Giữ body Chrome, chỉ thêm imageInputs
-            // Lý do: reCAPTCHA token có thể bind với body gốc
+            // CUSTOM PAYLOAD MODE: Thay thế body bằng payload của Python
             // ============================================
-            if (window._imageInputsToInject && window._imageInputsToInject.length > 0) {
-                console.log('[VE3] >>> MODIFY MODE <<<');
-
+            if (window._customPayload && freshRecaptcha) {
                 try {
-                    // Giữ nguyên body của Chrome, chỉ thêm imageInputs
-                    var modifiedBody = JSON.parse(JSON.stringify(chromeBody)); // Clone Chrome's body
+                    var customBody = window._customPayload;
 
-                    // Thêm imageInputs vào request đầu tiên
-                    if (modifiedBody.requests && modifiedBody.requests[0]) {
-                        modifiedBody.requests[0].imageInputs = window._imageInputsToInject;
-                        console.log('[VE3] Injected', window._imageInputsToInject.length, 'imageInputs into Chrome body');
+                    // INJECT fresh reCAPTCHA token vào payload của chúng ta
+                    if (customBody.clientContext) {
+                        customBody.clientContext.recaptchaToken = freshRecaptcha;
+                        // Cũng copy sessionId và projectId
+                        if (chromeBody && chromeBody.clientContext) {
+                            customBody.clientContext.sessionId = chromeBody.clientContext.sessionId;
+                            customBody.clientContext.projectId = chromeBody.clientContext.projectId;
+                        }
                     }
 
-                    // Clear ngay
-                    window._imageInputsToInject = null;
+                    // Thay thế body
+                    opts.body = JSON.stringify(customBody);
+                    console.log('[INJECT] Custom payload với fresh reCAPTCHA, gửi NGAY!');
+                    console.log('[INJECT] imageInputs:', customBody.requests[0].imageInputs ? customBody.requests[0].imageInputs.length : 0);
 
-                    // GỌI API với body đã modify
-                    var apiResponse = await _originalFetch.call(window, urlStr, {
-                        method: 'POST',
-                        headers: capturedHeaders,
-                        body: JSON.stringify(modifiedBody)
-                    });
-
-                    console.log('[VE3] MODIFY Response status:', apiResponse.status);
-
-                    var cloned = apiResponse.clone();
-                    try {
-                        var data = await cloned.json();
-                        window._response = data;
-                        if (data.media) console.log('[VE3] Got', data.media.length, 'images');
-                        if (data.error) console.log('[VE3] API Error:', data.error);
-                    } catch(e) {
-                        window._response = {status: apiResponse.status, parseError: true};
-                    }
-
-                    window._requestPending = false;
-                    console.log('[VE3] >>> MODIFY MODE COMPLETE <<<');
-                    console.log('========================================');
-                    return apiResponse;
-
+                    // Clear để không dùng lại
+                    window._customPayload = null;
                 } catch(e) {
-                    console.log('[VE3] MODIFY MODE ERROR:', e);
-                    window._responseError = e.toString();
-                    window._requestPending = false;
-                    throw e;
+                    console.log('[ERROR] Inject custom payload failed:', e);
+                }
+            }
+            // ============================================
+            // SIMPLE MODIFY MODE: Chỉ sửa imageCount/imageInputs
+            // ============================================
+            else if (window._modifyConfig && chromeBody) {
+                try {
+                    var cfg = window._modifyConfig;
+
+                    if (cfg.imageCount && chromeBody.requests) {
+                        chromeBody.requests = chromeBody.requests.slice(0, cfg.imageCount);
+                    }
+
+                    if (cfg.imageInputs && chromeBody.requests) {
+                        chromeBody.requests.forEach(function(req) {
+                            req.imageInputs = cfg.imageInputs;
+                        });
+                        console.log('[MODIFY] Added ' + cfg.imageInputs.length + ' reference images');
+                    }
+
+                    opts.body = JSON.stringify(chromeBody);
+                    window._modifyConfig = null;
+                } catch(e) {
+                    console.log('[ERROR] Modify failed:', e);
                 }
             }
 
-            // ============================================
-            // PASSTHROUGH MODE
-            // ============================================
-            console.log('[VE3] >>> PASSTHROUGH MODE <<<');
+            // FORWARD NGAY LẬP TỨC (trong 0.05s)
             try {
-                var response = await _originalFetch.apply(window, [url, opts]);
-                console.log('[VE3] PASSTHROUGH Response:', response.status);
-
+                console.log('[FORWARD] Sending with fresh reCAPTCHA...');
+                var response = await orig.apply(this, [url, opts]);
                 var cloned = response.clone();
+
                 try {
-                    window._response = await cloned.json();
+                    var data = await cloned.json();
+                    window._response = data;
+                    console.log('[RESPONSE] Status:', response.status);
+                    if (data.media) {
+                        console.log('[RESPONSE] Got ' + data.media.length + ' images');
+                    }
                 } catch(e) {
-                    window._response = {status: response.status, parseError: true};
+                    window._response = {status: response.status, error: 'parse_failed'};
                 }
 
                 window._requestPending = false;
-                console.log('========================================');
                 return response;
             } catch(e) {
-                console.log('[VE3] PASSTHROUGH ERROR:', e);
+                console.log('[ERROR] Request failed:', e);
                 window._responseError = e.toString();
                 window._requestPending = false;
                 throw e;
@@ -240,10 +232,10 @@ JS_INTERCEPTOR = '''
         }
 
         // ============================================
-        // VIDEO GENERATION REQUESTS
+        // VIDEO GENERATION REQUESTS (I2V)
         // ============================================
         if (urlStr.includes('aisandbox') && urlStr.includes('video:')) {
-            console.log('[VE3-VIDEO] Request:', urlStr.substring(0, 60));
+            console.log('[VIDEO] Request to:', urlStr);
             window._videoPending = true;
             window._videoResponse = null;
             window._videoError = null;
@@ -266,12 +258,12 @@ JS_INTERCEPTOR = '''
             }
 
             try {
-                var response = await _originalFetch.apply(window, [url, opts]);
+                var response = await orig.apply(this, [url, opts]);
                 var cloned = response.clone();
                 try {
                     window._videoResponse = await cloned.json();
                 } catch(e) {
-                    window._videoResponse = {status: response.status, parseError: true};
+                    window._videoResponse = {status: response.status, error: 'parse_failed'};
                 }
                 window._videoPending = false;
                 return response;
@@ -282,25 +274,10 @@ JS_INTERCEPTOR = '''
             }
         }
 
-        // Other requests - forward normally
-        return _originalFetch.apply(window, arguments);
+        return orig.apply(this, arguments);
     };
-
-    // Override fetch với Object.defineProperty để không bị ghi đè
-    try {
-        Object.defineProperty(window, 'fetch', {
-            value: customFetch,
-            writable: false,
-            configurable: false
-        });
-        console.log('[VE3] Interceptor installed (non-writable)');
-    } catch(e) {
-        // Fallback nếu không define được
-        window.fetch = customFetch;
-        console.log('[VE3] Interceptor installed (writable fallback)');
-    }
-
-    return 'INSTALLED_V2';
+    console.log('[INTERCEPTOR] Ready - CUSTOM PAYLOAD INJECTION mode');
+    return 'READY';
 })();
 '''
 
@@ -921,15 +898,7 @@ class DrissionFlowAPI:
             self.log(f"✗ Chrome error: {e}", "ERROR")
             return False
 
-        # 3. QUAN TRỌNG: Inject interceptor TRƯỚC khi navigate
-        # Dùng CDP để inject script chạy trước mọi script khác của page
-        try:
-            self.driver.run_cdp('Page.addScriptToEvaluateOnNewDocument', source=JS_INTERCEPTOR)
-            self.log("✓ CDP: Interceptor sẽ chạy trước page scripts")
-        except Exception as e:
-            self.log(f"⚠️ CDP injection failed: {e}", "WARN")
-
-        # 4. Vào Google Flow (hoặc project cố định nếu có) - VỚI RETRY
+        # 3. Vào Google Flow (hoặc project cố định nếu có) - VỚI RETRY
         target_url = project_url if project_url else self.FLOW_URL
         self.log(f"Vào: {target_url[:60]}...")
 
@@ -1100,22 +1069,11 @@ class DrissionFlowAPI:
             if not self._warm_up_session():
                 self.log("⚠️ Warm up không thành công, tiếp tục...", "WARN")
 
-        # 7. Verify interceptor (đã inject qua CDP trước khi navigate)
-        self.log("Verify interceptor...")
-        time.sleep(1)
-
-        # Verify interceptor V2 is active
-        verify = self.driver.run_js("return window.__VE3_INTERCEPTOR_V2__ === true ? 'ACTIVE_V2' : 'INACTIVE';")
-
-        if verify == 'ACTIVE_V2':
-            self.log(f"✓ Interceptor V2: ACTIVE (từ CDP injection)")
-        else:
-            # CDP injection có thể không hoạt động, thử inject thủ công
-            self.log("⚠️ CDP không hoạt động, inject thủ công...", "WARN")
-            self._reset_tokens()
-            result = self.driver.run_js(JS_INTERCEPTOR)
-            verify = self.driver.run_js("return window.__VE3_INTERCEPTOR_V2__ === true ? 'ACTIVE_V2' : 'INACTIVE';")
-            self.log(f"  → Manual: {result} (verify: {verify})")
+        # 7. Inject interceptor (SAU khi warm up)
+        self.log("Inject interceptor...")
+        self._reset_tokens()
+        result = self.driver.run_js(JS_INTERCEPTOR)
+        self.log(f"✓ Interceptor: {result}")
 
         self._ready = True
         return True
@@ -1134,7 +1092,7 @@ class DrissionFlowAPI:
     def _reset_tokens(self):
         """Reset captured tokens trong browser."""
         self.driver.run_js("""
-            window.__VE3_INTERCEPTOR_V2__ = false;
+            window.__interceptReady = false;
             window._tk = null;
             window._pj = null;
             window._xbv = null;
@@ -1145,11 +1103,10 @@ class DrissionFlowAPI:
             window._response = null;
             window._responseError = null;
             window._requestPending = false;
-            window._imageInputsToInject = null;
+            window._customPayload = null;
             window._videoResponse = null;
             window._videoError = null;
             window._videoPending = false;
-            window._interceptCount = 0;
         """)
 
     def _capture_tokens(self, prompt: str, timeout: int = 10) -> bool:
@@ -1402,14 +1359,15 @@ class DrissionFlowAPI:
         timeout: int = 60
     ) -> Tuple[List[GeneratedImage], Optional[str]]:
         """
-        Generate image bằng MODIFY MODE.
+        Generate image bằng CUSTOM PAYLOAD INJECTION mode.
 
         Flow:
-        1. Python set imageInputs nếu có (để inject vào body của Chrome)
-        2. Type FULL prompt vào Chrome textarea
-        3. Chrome tạo reCAPTCHA token fresh và gửi request
-        4. Interceptor intercept, THÊM imageInputs vào body gốc (giữ nguyên reCAPTCHA)
-        5. Gửi request đã modify, capture response
+        1. Python chuẩn bị FULL payload (có prompt, imageInputs/media_id)
+        2. Lưu vào window._customPayload
+        3. Trigger Chrome gửi request (type prompt + Enter)
+        4. Chrome tạo reCAPTCHA token fresh
+        5. Interceptor INJECT token vào payload của ta và gửi NGAY (trong 0.05s)
+        6. Capture response
 
         Args:
             prompt: Prompt mô tả ảnh
@@ -1428,20 +1386,44 @@ class DrissionFlowAPI:
             window._response = null;
             window._responseError = null;
             window._requestPending = false;
-            window._imageInputsToInject = null;
+            window._customPayload = null;
         """)
 
-        # 2. MODIFY MODE: Chỉ set imageInputs nếu có
-        # Chrome sẽ tạo request với prompt, reCAPTCHA, etc.
-        # Interceptor sẽ chỉ THÊM imageInputs vào body gốc của Chrome
-        if image_inputs and len(image_inputs) > 0:
-            self.driver.run_js(f"window._imageInputsToInject = {json.dumps(image_inputs)};")
-            self.log(f"→ MODIFY MODE: {len(image_inputs)} imageInputs ready to inject")
-        else:
-            self.driver.run_js("window._imageInputsToInject = null;")
-            self.log(f"→ PASSTHROUGH MODE: No imageInputs")
+        # 2. Chuẩn bị CUSTOM PAYLOAD (có đầy đủ media_id)
+        # Payload này sẽ THAY THẾ hoàn toàn body của Chrome
+        # Chỉ cần reCAPTCHA token từ Chrome
+        custom_payload = {
+            "clientContext": {
+                "tool": "PINHOLE",
+                "userPaygateTier": "PAYGATE_TIER_TWO",
+                # recaptchaToken, sessionId, projectId sẽ được inject từ Chrome
+            },
+            "requests": [{
+                "prompt": prompt,
+                "imageModelName": "GEM_PIX",
+                "imageAspectRatio": "IMAGE_ASPECT_RATIO_LANDSCAPE",
+                "seed": int(time.time()) % 100000
+            }]
+        }
 
-        # 3. Trigger Chrome tạo reCAPTCHA với FULL prompt
+        # Thêm reference images (media_id) nếu có
+        if image_inputs:
+            custom_payload["requests"][0]["imageInputs"] = image_inputs
+            self.log(f"→ Custom payload với {len(image_inputs)} reference image(s)")
+
+        # Giới hạn số ảnh
+        if num_images and num_images > 1:
+            # Duplicate request cho nhiều ảnh
+            base_req = custom_payload["requests"][0].copy()
+            custom_payload["requests"] = [base_req.copy() for _ in range(num_images)]
+            for i, req in enumerate(custom_payload["requests"]):
+                req["seed"] = (int(time.time()) + i) % 100000
+
+        # 3. Lưu payload vào browser TRƯỚC khi trigger
+        self.driver.run_js(f"window._customPayload = {json.dumps(custom_payload)};")
+        self.log(f"→ Custom payload ready (imageInputs: {len(image_inputs) if image_inputs else 0})")
+
+        # 4. Trigger Chrome tạo reCAPTCHA
         self.log(f"→ Prompt: {prompt[:50]}...")
         textarea = self._find_textarea()
         if not textarea:
@@ -1449,29 +1431,15 @@ class DrissionFlowAPI:
 
         textarea.clear()
         time.sleep(0.2)
-        textarea.input(prompt)  # Type FULL prompt - Chrome sẽ dùng prompt này
+        textarea.input(prompt[:20])  # Chỉ cần type một chút để trigger
 
         # Đợi 2 giây để reCAPTCHA chuẩn bị token
         time.sleep(2)
 
         textarea.input('\n')  # Enter để gửi - Chrome sẽ tạo request với fresh token
-        self.log("→ Chrome đang gửi request... Interceptor sẽ modify nếu có imageInputs...")
+        self.log("→ Chrome đang tạo reCAPTCHA... Interceptor sẽ inject payload...")
 
-        # DEBUG: Check interceptor state after 1 second
-        time.sleep(1)
-        debug_state = self.driver.run_js("""
-            return {
-                interceptorV2: window.__VE3_INTERCEPTOR_V2__ ? 'YES' : 'NO',
-                interceptCount: window._interceptCount || 0,
-                imageInputs: window._imageInputsToInject ? window._imageInputsToInject.length : 0,
-                requestPending: window._requestPending,
-                hasResponse: window._response ? 'YES' : 'NO',
-                lastRecaptcha: window._rct ? window._rct.substring(0, 20) + '...' : 'NULL'
-            };
-        """)
-        self.log(f"  [DEBUG] State: {debug_state}")
-
-        # 4. Đợi response từ browser
+        # 4. Đợi response từ browser (không gọi API riêng!)
         start_time = time.time()
         while time.time() - start_time < timeout:
             result = self.driver.run_js("""
@@ -2243,106 +2211,11 @@ class DrissionFlowAPI:
             self.log(f"[!] Proxy auth error: {e}", "WARN")
             self.log("    → Whitelist IP: 14.224.157.134 trên Webshare")
 
-    def reset_chrome_profile(self) -> bool:
-        """
-        Reset Chrome profile hoàn toàn - xóa tất cả cookies, localStorage, cache.
-        Cần thiết khi Google đã lưu fingerprint và block.
-
-        Returns:
-            True nếu reset thành công
-        """
-        import shutil
-
-        self.log("🧹 Reset Chrome profile...")
-
-        # Close Chrome trước
-        self._kill_chrome()
-        self.close()
-        time.sleep(1)
-
-        try:
-            profile_path = self.profile_dir
-
-            # Danh sách folders/files cần xóa để reset hoàn toàn
-            items_to_delete = [
-                "Cookies",
-                "Cookies-journal",
-                "Local Storage",
-                "Session Storage",
-                "IndexedDB",
-                "Cache",
-                "Code Cache",
-                "GPUCache",
-                "Service Worker",
-                "Web Data",
-                "Web Data-journal",
-                "History",
-                "History-journal",
-                "Visited Links",
-                "Network Action Predictor",
-                "Network Action Predictor-journal",
-                "Network Persistent State",
-                "Preferences",
-                "Secure Preferences",
-                "TransportSecurity",
-                "databases",
-                "blob_storage",
-                "File System",
-                "Platform Notifications",
-                "Site Characteristics Database",
-                "shared_proto_db",
-                "optimization_guide_hint_cache",
-                "optimization_guide_model_metadata",
-                "BudgetDatabase",
-                "coupon_db",
-                "commerce_subscription_db",
-                "DIPS",
-                "PrivateAggregation",
-            ]
-
-            deleted_count = 0
-            for item in items_to_delete:
-                item_path = profile_path / item
-                if item_path.exists():
-                    try:
-                        if item_path.is_dir():
-                            shutil.rmtree(item_path)
-                        else:
-                            item_path.unlink()
-                        deleted_count += 1
-                    except Exception as e:
-                        pass  # Bỏ qua nếu không xóa được (file đang bị lock)
-
-            # Cũng xóa trong Default subfolder nếu có
-            default_path = profile_path / "Default"
-            if default_path.exists():
-                for item in items_to_delete:
-                    item_path = default_path / item
-                    if item_path.exists():
-                        try:
-                            if item_path.is_dir():
-                                shutil.rmtree(item_path)
-                            else:
-                                item_path.unlink()
-                            deleted_count += 1
-                        except Exception:
-                            pass
-
-            self.log(f"  ✓ Đã xóa {deleted_count} items trong Chrome profile")
-            return True
-
-        except Exception as e:
-            self.log(f"  ✗ Lỗi reset profile: {e}", "ERROR")
-            return False
-
-    def restart_chrome(self, reset_profile: bool = True) -> bool:
+    def restart_chrome(self) -> bool:
         """
         Restart Chrome với proxy mới sau khi rotate.
         Proxy đã được rotate trước khi gọi hàm này.
         setup() sẽ lấy proxy mới từ manager.get_proxy_for_worker(worker_id).
-
-        Args:
-            reset_profile: True để xóa toàn bộ Chrome data trước khi restart (default True)
 
         Returns:
             True nếu restart thành công
@@ -2357,15 +2230,12 @@ class DrissionFlowAPI:
             else:
                 self.log(f"🔄 Restart Chrome [Worker {self.worker_id}]...")
         else:
-            self.log("🔄 Restart Chrome...")
+            self.log("🔄 Restart Chrome với proxy mới...")
 
-        # Reset Chrome profile nếu cần (xóa cookies, localStorage, cache, ...)
-        if reset_profile:
-            self.reset_chrome_profile()
-        else:
-            # Chỉ close Chrome
-            self.close()
-            time.sleep(2)
+        # Close Chrome và proxy bridge hiện tại
+        self.close()
+
+        time.sleep(2)
 
         # Restart Chrome với proxy mới - setup() sẽ lấy proxy từ manager
         # Lấy saved project URL để vào lại đúng project
