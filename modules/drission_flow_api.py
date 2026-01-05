@@ -384,9 +384,10 @@ class DrissionFlowAPI:
         self.worker_id = worker_id  # Lưu worker_id để dùng cho proxy rotation
         self._headless = headless  # Lưu setting headless
         self._machine_id = machine_id  # Máy số mấy (1-99)
-        # Auto-generate unique port for parallel execution
+        # Unique port cho mỗi worker (không random để tránh conflict)
+        # Worker 0 → 9222, Worker 1 → 9223, ...
         if chrome_port == 0:
-            self.chrome_port = random.randint(9222, 9999)
+            self.chrome_port = 9222 + worker_id
         else:
             self.chrome_port = chrome_port
         self.verbose = verbose

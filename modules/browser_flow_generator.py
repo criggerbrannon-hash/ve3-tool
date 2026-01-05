@@ -155,14 +155,35 @@ class BrowserFlowGenerator:
             print(f"[{timestamp}] {icons.get(level, '')} {message}")
 
     def _get_profile_path(self) -> Optional[str]:
-        """Lấy Chrome profile path từ config hoặc default."""
-        # Từ settings.yaml
+        """
+        Lấy Chrome profile path cho worker này.
+        Mỗi worker cần profile riêng để chạy song song.
+        """
+        base_dir = Path(__file__).parent.parent
+        profiles_dir = base_dir / "chrome_profiles"
+
+        # === PARALLEL MODE: Mỗi worker dùng profile khác nhau ===
+        if profiles_dir.exists():
+            # Lấy danh sách profiles có sẵn (đã đăng nhập từ GUI)
+            available_profiles = sorted([
+                p for p in profiles_dir.iterdir()
+                if p.is_dir() and not p.name.startswith('.')
+            ])
+
+            if available_profiles:
+                # Worker 0 → profile[0], Worker 1 → profile[1], ...
+                worker_id = getattr(self, 'worker_id', 0) or 0
+                profile_idx = worker_id % len(available_profiles)
+                selected_profile = available_profiles[profile_idx]
+                self._log(f"[Worker {worker_id}] Dùng profile: {selected_profile.name}")
+                return str(selected_profile)
+
+        # Fallback: từ settings.yaml
         chrome_profile = self.config.get('chrome_profile', '')
         if chrome_profile:
             profile_path = Path(chrome_profile)
             if profile_path.exists():
                 return str(profile_path)
-            # Thử resolve từ project root
             abs_path = Path.cwd() / chrome_profile
             if abs_path.exists():
                 return str(abs_path)
