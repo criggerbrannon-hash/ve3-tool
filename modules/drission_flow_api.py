@@ -1394,18 +1394,19 @@ class DrissionFlowAPI:
             window._modifyConfig = null;
         """)
 
-        # 2. MODIFY MODE: Chỉ set imageInputs, giữ nguyên payload của Chrome
+        # 2. MODIFY MODE: Luôn set imageCount=1, thêm imageInputs nếu có
         # Chrome sẽ dùng model mới nhất, prompt enhancement, tất cả settings
-        # Ta chỉ thêm imageInputs (reference images) nếu có
+        modify_config = {
+            "imageCount": num_images if num_images else 1  # Luôn giới hạn số ảnh
+        }
+
         if image_inputs and len(image_inputs) > 0:
-            modify_config = {
-                "imageInputs": image_inputs,
-                "imageCount": num_images if num_images else 1
-            }
+            modify_config["imageInputs"] = image_inputs
             self.driver.run_js(f"window._modifyConfig = {json.dumps(modify_config)};")
-            self.log(f"→ MODIFY MODE: {len(image_inputs)} reference image(s)")
+            self.log(f"→ MODIFY MODE: {len(image_inputs)} reference image(s), {modify_config['imageCount']} image(s)")
         else:
-            self.log(f"→ PASSTHROUGH MODE: Chrome's original payload")
+            self.driver.run_js(f"window._modifyConfig = {json.dumps(modify_config)};")
+            self.log(f"→ MODIFY MODE: {modify_config['imageCount']} image(s), no reference")
 
         # 3. Trigger Chrome với FULL prompt
         # Chrome sẽ tạo payload với model mới nhất + prompt enhancement
