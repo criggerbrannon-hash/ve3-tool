@@ -155,14 +155,35 @@ class BrowserFlowGenerator:
             print(f"[{timestamp}] {icons.get(level, '')} {message}")
 
     def _get_profile_path(self) -> Optional[str]:
-        """Lấy Chrome profile path từ config hoặc default."""
-        # Từ settings.yaml
+        """
+        Lấy Chrome profile path cho worker này.
+        Mỗi worker cần profile riêng để chạy song song.
+        """
+        base_dir = Path(__file__).parent.parent
+        profiles_dir = base_dir / "chrome_profiles"
+
+        # === PARALLEL MODE: Mỗi worker dùng profile khác nhau ===
+        if profiles_dir.exists():
+            # Lấy danh sách profiles có sẵn (đã đăng nhập từ GUI)
+            available_profiles = sorted([
+                p for p in profiles_dir.iterdir()
+                if p.is_dir() and not p.name.startswith('.')
+            ])
+
+            if available_profiles:
+                # Worker 0 → profile[0], Worker 1 → profile[1], ...
+                worker_id = getattr(self, 'worker_id', 0) or 0
+                profile_idx = worker_id % len(available_profiles)
+                selected_profile = available_profiles[profile_idx]
+                self._log(f"[Worker {worker_id}] Dùng profile: {selected_profile.name}")
+                return str(selected_profile)
+
+        # Fallback: từ settings.yaml
         chrome_profile = self.config.get('chrome_profile', '')
         if chrome_profile:
             profile_path = Path(chrome_profile)
             if profile_path.exists():
                 return str(profile_path)
-            # Thử resolve từ project root
             abs_path = Path.cwd() / chrome_profile
             if abs_path.exists():
                 return str(abs_path)
@@ -289,9 +310,11 @@ class BrowserFlowGenerator:
             self._working_profile = str(working_profile)  # Luu de reference
             options.add_argument(f"--user-data-dir={working_profile}")
 
-            # PARALLEL SAFE: Moi instance dung port rieng
-            debug_port = random.randint(9222, 9999)
+            # PARALLEL SAFE: Mỗi worker có port riêng (không random để tránh conflict)
+            worker_id = getattr(self, 'worker_id', 0) or 0
+            debug_port = 9222 + worker_id
             options.add_argument(f"--remote-debugging-port={debug_port}")
+            self._log(f"[Worker {worker_id}] Chrome port: {debug_port}")
 
             # Headless mac dinh (chay an, toi uu cho auto)
             if self.headless:
@@ -3076,6 +3099,50 @@ class BrowserFlowGenerator:
         for setup_attempt in range(MAX_SETUP_RETRIES):
             if drission_api.setup(project_url=saved_project_url):
                 setup_success = True
+
+                # === LƯU PROJECT URL VÀO EXCEL NGAY SAU KHI SETUP ===
+                # Đảm bảo 1 voice = 1 project link (không bị mất nếu fail giữa chừng)
+                new_project_url = getattr(drission_api, '_current_project_url', '')
+                if new_project_url and '/project/' in new_project_url and excel_path:
+                    try:
+                        import openpyxl
+                        wb = openpyxl.load_workbook(excel_path)
+                        if 'config' not in wb.sheetnames:
+                            wb.create_sheet('config')
+                        ws = wb['config']
+
+                        # Tìm hoặc thêm row cho flow_project_url
+                        found = False
+                        for row_num in range(2, ws.max_row + 1):
+                            if ws.cell(row=row_num, column=1).value == 'flow_project_url':
+                                ws.cell(row=row_num, column=2, value=new_project_url)
+                                found = True
+                                break
+                        if not found:
+                            next_row = ws.max_row + 1
+                            ws.cell(row=next_row, column=1, value='flow_project_url')
+                            ws.cell(row=next_row, column=2, value=new_project_url)
+
+                        # Cũng lưu chrome_profile_path
+                        profile_path = str(drission_api.profile_dir) if hasattr(drission_api, 'profile_dir') else ''
+                        if profile_path:
+                            found = False
+                            for row_num in range(2, ws.max_row + 1):
+                                if ws.cell(row=row_num, column=1).value == 'chrome_profile_path':
+                                    ws.cell(row=row_num, column=2, value=profile_path)
+                                    found = True
+                                    break
+                            if not found:
+                                next_row = ws.max_row + 1
+                                ws.cell(row=next_row, column=1, value='chrome_profile_path')
+                                ws.cell(row=next_row, column=2, value=profile_path)
+
+                        wb.save(excel_path)
+                        wb.close()
+                        self._log(f"✓ Lưu project URL vào Excel: {new_project_url[:50]}...")
+                    except Exception as e:
+                        self._log(f"⚠️ Không lưu được project URL: {e}", "warn")
+
                 break
             else:
                 self._log(f"❌ Setup failed (attempt {setup_attempt + 1}/{MAX_SETUP_RETRIES})", "error")

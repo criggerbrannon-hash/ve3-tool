@@ -1222,11 +1222,75 @@ class SmartEngine:
     def _on_scenes_batch_ready(self, excel_path: Path, proj_dir: Path, saved_count: int, total_count: int):
         """
         Callback khi một batch scenes được save vào Excel.
-        Có thể trigger scene image generation ở đây.
+        Bắt đầu generate scene images song song nếu characters đã xong.
         """
         self.log(f"[PIPELINE] Scenes batch ready: {saved_count}/{total_count}")
-        # Scene image generation sẽ được xử lý trong run() sau khi prompts hoàn tất
-        # Vì cần đợi characters xong trước
+
+        # Kiểm tra xem characters đã xong chưa
+        if not hasattr(self, '_scenes_gen_started'):
+            self._scenes_gen_started = False
+            self._scenes_gen_queue = []
+
+        # Nếu character thread còn chạy, queue lại để xử lý sau
+        if self._character_gen_thread is not None and self._character_gen_thread.is_alive():
+            self.log(f"[PIPELINE] Characters chưa xong - queue {saved_count} scenes để đợi...")
+            self._scenes_gen_queue.append((excel_path, proj_dir, saved_count))
+            return
+
+        # Characters đã xong hoặc không có characters - bắt đầu generate scenes
+        if not self._scenes_gen_started:
+            self._scenes_gen_started = True
+            self.log(f"[PIPELINE] Bắt đầu generate scene images song song...")
+            self._start_scenes_generation_async(excel_path, proj_dir)
+
+    def _start_scenes_generation_async(self, excel_path: Path, proj_dir: Path):
+        """
+        Generate scene images trong background thread.
+        Được gọi khi characters đã xong và scenes đã ready.
+        """
+        def _worker():
+            try:
+                self.log("[PARALLEL-SCENES] Bắt đầu tạo ảnh scenes (background)...")
+
+                # Load scene prompts (không bao gồm characters)
+                scene_prompts = self._load_prompts(excel_path, proj_dir)
+
+                if not scene_prompts:
+                    self.log("[PARALLEL-SCENES] Không có scene prompts")
+                    return
+
+                self.log(f"[PARALLEL-SCENES] Tạo {len(scene_prompts)} ảnh scenes...")
+
+                # Check generation_mode setting
+                generation_mode = 'api'  # Default
+                try:
+                    import yaml
+                    settings_path = self.config_dir / "settings.yaml"
+                    if settings_path.exists():
+                        with open(settings_path, 'r', encoding='utf-8') as f:
+                            settings = yaml.safe_load(f) or {}
+                        generation_mode = settings.get('generation_mode', 'api')
+                except:
+                    pass
+
+                # Generate using correct mode
+                if generation_mode == 'api':
+                    self.log("[PARALLEL-SCENES] Dùng API MODE...")
+                    results = self.generate_images_api(scene_prompts, proj_dir)
+                else:
+                    self.log("[PARALLEL-SCENES] Dùng BROWSER MODE...")
+                    results = self.generate_images_browser(scene_prompts, proj_dir)
+
+                self._scenes_gen_result = results
+                self.log(f"[PARALLEL-SCENES] Xong! Success={results.get('success', 0)}, Failed={results.get('failed', 0)}")
+
+            except Exception as e:
+                self.log(f"[PARALLEL-SCENES] Lỗi: {e}", "ERROR")
+
+        # Start thread
+        self._scenes_gen_thread = threading.Thread(target=_worker, daemon=True)
+        self._scenes_gen_thread.start()
+        self.log("[PARALLEL-SCENES] Scene generation thread started!")
 
     # ========== IMAGE GENERATION ==========
 
@@ -1809,16 +1873,18 @@ class SmartEngine:
             self.log(f"Tim profile tai: {profiles_dir}")
 
             if profiles_dir.exists():
-                # Liet ke tat ca profiles
-                all_items = list(profiles_dir.iterdir())
+                # Liet ke tat ca profiles (sorted để đảm bảo thứ tự ổn định)
+                all_items = sorted(list(profiles_dir.iterdir()))
                 available_profiles = [p.name for p in all_items if p.is_dir() and not p.name.startswith('.')]
                 self.log(f"Cac profiles: {available_profiles}")
 
                 if available_profiles:
-                    # Uu tien profile KHONG phai "main" (user da tao)
-                    non_main = [p for p in available_profiles if p != "main"]
-                    profile_name = non_main[0] if non_main else available_profiles[0]
-                    self.log(f">>> Dung profile: {profile_name}")
+                    # === PARALLEL MODE: Mỗi worker dùng profile khác nhau ===
+                    # Worker 0 → profile[0], Worker 1 → profile[1], ...
+                    worker_id = getattr(self, 'worker_id', 0) or 0
+                    profile_idx = worker_id % len(available_profiles)
+                    profile_name = available_profiles[profile_idx]
+                    self.log(f"[Worker {worker_id}] Dùng profile: {profile_name}")
             else:
                 self.log(f"Chua co thu muc chrome_profiles, tao moi...")
                 profiles_dir.mkdir(exist_ok=True)
@@ -3942,11 +4008,22 @@ class SmartEngine:
             try:
                 from modules.drission_flow_api import DrissionFlowAPI
                 ws_cfg = self.config.get('webshare_proxy', {})
+                # === PARALLEL: Chọn profile theo worker_id ===
+                root_dir = Path(__file__).parent.parent
+                profiles_dir = root_dir / "chrome_profiles"
+                profile_dir = None
+                if profiles_dir.exists():
+                    available = sorted([p for p in profiles_dir.iterdir() if p.is_dir() and not p.name.startswith('.')])
+                    if available:
+                        worker_id = getattr(self, 'worker_id', 0) or 0
+                        profile_dir = str(available[worker_id % len(available)])
                 drission_api = DrissionFlowAPI(
+                    profile_dir=profile_dir or "./chrome_profiles/main",
                     headless=True,
                     verbose=False,
                     webshare_enabled=ws_cfg.get('enabled', True),
-                    machine_id=ws_cfg.get('machine_id', 1)
+                    machine_id=ws_cfg.get('machine_id', 1),
+                    worker_id=getattr(self, 'worker_id', 0) or 0
                 )
                 if drission_api.setup():
                     # Lấy token bằng cách trigger một request đơn giản
@@ -4124,16 +4201,19 @@ class SmartEngine:
                         self.log(f"[VIDEO] Proxy init error: {e}", "WARN")
                         use_webshare = False
 
-                # === CHROME PROFILE: Dùng chrome_profiles/ từ cài đặt tool ===
+                # === CHROME PROFILE: Mỗi worker dùng profile riêng ===
                 root_dir = Path(__file__).parent.parent
                 profiles_dir = root_dir / cfg.get('browser_profiles_dir', './chrome_profiles')
 
                 profile_dir = None
                 if profiles_dir.exists():
-                    for p in sorted(profiles_dir.iterdir()):
-                        if p.is_dir() and not p.name.startswith('.'):
-                            profile_dir = str(p)
-                            break
+                    # PARALLEL: Chọn profile theo worker_id
+                    available = sorted([p for p in profiles_dir.iterdir() if p.is_dir() and not p.name.startswith('.')])
+                    if available:
+                        worker_id = getattr(self, 'worker_id', 0) or 0
+                        profile_idx = worker_id % len(available)
+                        profile_dir = str(available[profile_idx])
+                        self.log(f"[VIDEO] [Worker {worker_id}] Dùng profile: {available[profile_idx].name}")
 
                 if not profile_dir:
                     self.log("[VIDEO] ⚠️ Không có Chrome profile! Cần tạo ở Cài đặt tool.", "ERROR")

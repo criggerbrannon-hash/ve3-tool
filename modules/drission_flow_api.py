@@ -94,81 +94,189 @@ class GeneratedImage:
     local_path: Optional[Path] = None
 
 
-# JS Interceptor - Capture tokens và CANCEL request
-# Giống batch_generator.py - đã test hoạt động
+# JS Interceptor - INJECT CUSTOM PAYLOAD với reCAPTCHA token fresh
+# Flow: Python chuẩn bị payload (có media_id) → Chrome trigger reCAPTCHA → Inject token → Gửi ngay
 JS_INTERCEPTOR = '''
 window._tk=null;window._pj=null;window._xbv=null;window._rct=null;window._payload=null;window._sid=null;window._url=null;
+window._response=null;window._responseError=null;window._requestPending=false;
+window._customPayload=null; // Payload đầy đủ từ Python (có media_id)
+window._videoResponse=null;window._videoError=null;window._videoPending=false;
+
 (function(){
     if(window.__interceptReady) return 'ALREADY_READY';
     window.__interceptReady = true;
 
     var orig = window.fetch;
-    window.fetch = function(url, opts) {
+    window.fetch = async function(url, opts) {
         var urlStr = typeof url === 'string' ? url : url.url;
 
-        // Match nhiều pattern hơn
-        if (urlStr.includes('aisandbox') && (urlStr.includes('batchGenerate') || urlStr.includes('flowMedia') || urlStr.includes('generateContent'))) {
-            console.log('[INTERCEPT] Capturing request to:', urlStr);
-
-            // Capture URL gốc
+        // ============================================
+        // IMAGE GENERATION REQUESTS
+        // ============================================
+        if (urlStr.includes('aisandbox') && (urlStr.includes('batchGenerate') || urlStr.includes('flowMedia'))) {
+            console.log('[IMG] Request intercepted:', urlStr);
+            window._requestPending = true;
+            window._response = null;
+            window._responseError = null;
             window._url = urlStr;
 
-            // Extract projectId from URL: /v1/projects/{projectId}/flowMedia:batchGenerateImages
-            var match = urlStr.match(/\\/projects\\/([a-f0-9\\-]+)/i);
-            if (match && match[1]) {
-                window._pj = match[1];
-                console.log('[TOKEN] projectId from URL:', window._pj);
-            } else {
-                console.log('[TOKEN] projectId NOT FOUND in URL:', urlStr);
-            }
-
-            // Capture từ headers
+            // Capture headers
             if (opts && opts.headers) {
                 var h = opts.headers;
                 if (h['Authorization']) {
                     window._tk = h['Authorization'].replace('Bearer ', '');
-                    console.log('[TOKEN] Bearer captured!');
                 }
                 if (h['x-browser-validation']) {
                     window._xbv = h['x-browser-validation'];
-                    console.log('[TOKEN] x-browser-validation captured!');
                 }
             }
 
-            // Capture payload và recaptchaToken
+            // Parse Chrome's original body để lấy reCAPTCHA token FRESH
+            var chromeBody = null;
+            var freshRecaptcha = null;
             if (opts && opts.body) {
-                window._payload = opts.body;
                 try {
-                    var body = JSON.parse(opts.body);
-                    // sessionId from clientContext
-                    if (body.clientContext) {
-                        window._sid = body.clientContext.sessionId;
-                        // Fallback projectId from body if not in URL
-                        if (!window._pj && body.clientContext.projectId) {
-                            window._pj = body.clientContext.projectId;
+                    chromeBody = JSON.parse(opts.body);
+                    // Lấy reCAPTCHA token từ Chrome (FRESH!)
+                    if (chromeBody.recaptchaToken) {
+                        freshRecaptcha = chromeBody.recaptchaToken;
+                    } else if (chromeBody.clientContext && chromeBody.clientContext.recaptchaToken) {
+                        freshRecaptcha = chromeBody.clientContext.recaptchaToken;
+                    }
+                    window._rct = freshRecaptcha;
+                    window._pj = chromeBody.clientContext ? chromeBody.clientContext.projectId : null;
+                    window._sid = chromeBody.clientContext ? chromeBody.clientContext.sessionId : null;
+                } catch(e) {
+                    console.log('[ERROR] Parse Chrome body failed:', e);
+                }
+            }
+
+            // ============================================
+            // CUSTOM PAYLOAD MODE: Thay thế body bằng payload của Python
+            // ============================================
+            if (window._customPayload && freshRecaptcha) {
+                try {
+                    var customBody = window._customPayload;
+
+                    // INJECT fresh reCAPTCHA token vào payload của chúng ta
+                    if (customBody.clientContext) {
+                        customBody.clientContext.recaptchaToken = freshRecaptcha;
+                        // Cũng copy sessionId và projectId
+                        if (chromeBody && chromeBody.clientContext) {
+                            customBody.clientContext.sessionId = chromeBody.clientContext.sessionId;
+                            customBody.clientContext.projectId = chromeBody.clientContext.projectId;
                         }
                     }
-                    // recaptchaToken có thể ở root hoặc trong requests[0]
-                    if (body.recaptchaToken) {
-                        window._rct = body.recaptchaToken;
-                        console.log('[TOKEN] recaptchaToken captured (root)!');
-                    } else if (body.requests && body.requests[0] && body.requests[0].clientContext && body.requests[0].clientContext.recaptchaToken) {
-                        window._rct = body.requests[0].clientContext.recaptchaToken;
-                        console.log('[TOKEN] recaptchaToken captured (requests[0])!');
-                    }
+
+                    // Thay thế body
+                    opts.body = JSON.stringify(customBody);
+                    console.log('[INJECT] Custom payload với fresh reCAPTCHA, gửi NGAY!');
+                    console.log('[INJECT] imageInputs:', customBody.requests[0].imageInputs ? customBody.requests[0].imageInputs.length : 0);
+
+                    // Clear để không dùng lại
+                    window._customPayload = null;
                 } catch(e) {
-                    console.log('[ERROR] Parse body failed:', e);
+                    console.log('[ERROR] Inject custom payload failed:', e);
+                }
+            }
+            // ============================================
+            // SIMPLE MODIFY MODE: Chỉ sửa imageCount/imageInputs
+            // ============================================
+            else if (window._modifyConfig && chromeBody) {
+                try {
+                    var cfg = window._modifyConfig;
+
+                    if (cfg.imageCount && chromeBody.requests) {
+                        chromeBody.requests = chromeBody.requests.slice(0, cfg.imageCount);
+                    }
+
+                    if (cfg.imageInputs && chromeBody.requests) {
+                        chromeBody.requests.forEach(function(req) {
+                            req.imageInputs = cfg.imageInputs;
+                        });
+                        console.log('[MODIFY] Added ' + cfg.imageInputs.length + ' reference images');
+                    }
+
+                    opts.body = JSON.stringify(chromeBody);
+                    window._modifyConfig = null;
+                } catch(e) {
+                    console.log('[ERROR] Modify failed:', e);
                 }
             }
 
-            // CANCEL request - return fake response
-            console.log('[INTERCEPT] Request cancelled, tokens captured!');
-            return Promise.resolve(new Response(JSON.stringify({cancelled:true})));
+            // FORWARD NGAY LẬP TỨC (trong 0.05s)
+            try {
+                console.log('[FORWARD] Sending with fresh reCAPTCHA...');
+                var response = await orig.apply(this, [url, opts]);
+                var cloned = response.clone();
+
+                try {
+                    var data = await cloned.json();
+                    window._response = data;
+                    console.log('[RESPONSE] Status:', response.status);
+                    if (data.media) {
+                        console.log('[RESPONSE] Got ' + data.media.length + ' images');
+                    }
+                } catch(e) {
+                    window._response = {status: response.status, error: 'parse_failed'};
+                }
+
+                window._requestPending = false;
+                return response;
+            } catch(e) {
+                console.log('[ERROR] Request failed:', e);
+                window._responseError = e.toString();
+                window._requestPending = false;
+                throw e;
+            }
+        }
+
+        // ============================================
+        // VIDEO GENERATION REQUESTS (I2V)
+        // ============================================
+        if (urlStr.includes('aisandbox') && urlStr.includes('video:')) {
+            console.log('[VIDEO] Request to:', urlStr);
+            window._videoPending = true;
+            window._videoResponse = null;
+            window._videoError = null;
+
+            if (opts && opts.headers) {
+                var h = opts.headers;
+                if (h['Authorization']) window._tk = h['Authorization'].replace('Bearer ', '');
+                if (h['x-browser-validation']) window._xbv = h['x-browser-validation'];
+            }
+
+            if (opts && opts.body) {
+                try {
+                    var body = JSON.parse(opts.body);
+                    if (body.clientContext) {
+                        window._sid = body.clientContext.sessionId;
+                        window._pj = body.clientContext.projectId;
+                        window._rct = body.clientContext.recaptchaToken;
+                    }
+                } catch(e) {}
+            }
+
+            try {
+                var response = await orig.apply(this, [url, opts]);
+                var cloned = response.clone();
+                try {
+                    window._videoResponse = await cloned.json();
+                } catch(e) {
+                    window._videoResponse = {status: response.status, error: 'parse_failed'};
+                }
+                window._videoPending = false;
+                return response;
+            } catch(e) {
+                window._videoError = e.toString();
+                window._videoPending = false;
+                throw e;
+            }
         }
 
         return orig.apply(this, arguments);
     };
-    console.log('[INTERCEPTOR] Ready - will capture batchGenerateImages requests');
+    console.log('[INTERCEPTOR] Ready - CUSTOM PAYLOAD INJECTION mode');
     return 'READY';
 })();
 '''
@@ -276,9 +384,10 @@ class DrissionFlowAPI:
         self.worker_id = worker_id  # Lưu worker_id để dùng cho proxy rotation
         self._headless = headless  # Lưu setting headless
         self._machine_id = machine_id  # Máy số mấy (1-99)
-        # Auto-generate unique port for parallel execution
+        # Unique port cho mỗi worker (không random để tránh conflict)
+        # Worker 0 → 9222, Worker 1 → 9223, ...
         if chrome_port == 0:
-            self.chrome_port = random.randint(9222, 9999)
+            self.chrome_port = 9222 + worker_id
         else:
             self.chrome_port = chrome_port
         self.verbose = verbose
@@ -460,6 +569,19 @@ class DrissionFlowAPI:
             current_url = self.driver.url
             if "/project/" in current_url:
                 self.log(f"✓ Đã vào dự án!")
+
+                # Quan trọng: Chọn "Tạo hình ảnh" từ dropdown
+                time.sleep(1)
+                for j in range(10):
+                    result = self.driver.run_js(JS_SELECT_IMAGE_MODE)
+                    if result == 'CLICKED':
+                        self.log("✓ Chọn 'Tạo hình ảnh'")
+                        time.sleep(1)
+                        break
+                    time.sleep(0.5)
+                else:
+                    self.log("⚠️ Không tìm thấy dropdown 'Tạo hình ảnh'", "WARN")
+
                 return True
             time.sleep(1)
 
@@ -944,6 +1066,15 @@ class DrissionFlowAPI:
                         self.log(f"  → New project URL saved")
             else:
                 self.log("✓ Đã ở trong project!")
+                # Chọn "Tạo hình ảnh" từ dropdown
+                time.sleep(1)
+                for j in range(10):
+                    result = self.driver.run_js(JS_SELECT_IMAGE_MODE)
+                    if result == 'CLICKED':
+                        self.log("✓ Chọn 'Tạo hình ảnh'")
+                        time.sleep(1)
+                        break
+                    time.sleep(0.5)
 
         # 5. Đợi textarea sẵn sàng
         self.log("Đợi project load...")
@@ -971,7 +1102,7 @@ class DrissionFlowAPI:
         return True
 
     def _find_textarea(self):
-        """Tìm textarea input."""
+        """Tìm textarea input (không click)."""
         for sel in ["tag:textarea", "css:textarea"]:
             try:
                 el = self.driver.ele(sel, timeout=2)
@@ -981,8 +1112,66 @@ class DrissionFlowAPI:
                 pass
         return None
 
+    def _click_textarea(self):
+        """
+        Click vào textarea để focus - QUAN TRỌNG để nhập prompt.
+        Dùng JavaScript với MouseEvent để đảm bảo click chính xác.
+        """
+        try:
+            result = self.driver.run_js("""
+                (function() {
+                    var textarea = document.querySelector('textarea');
+                    if (!textarea) return 'not_found';
+
+                    // Scroll vào view
+                    textarea.scrollIntoView({block: 'center', behavior: 'instant'});
+
+                    // Lấy vị trí giữa textarea
+                    var rect = textarea.getBoundingClientRect();
+                    var centerX = rect.left + rect.width / 2;
+                    var centerY = rect.top + rect.height / 2;
+
+                    // Tạo và dispatch mousedown event
+                    var mousedown = new MouseEvent('mousedown', {
+                        bubbles: true, cancelable: true, view: window,
+                        clientX: centerX, clientY: centerY
+                    });
+                    textarea.dispatchEvent(mousedown);
+
+                    // Tạo và dispatch mouseup event
+                    var mouseup = new MouseEvent('mouseup', {
+                        bubbles: true, cancelable: true, view: window,
+                        clientX: centerX, clientY: centerY
+                    });
+                    textarea.dispatchEvent(mouseup);
+
+                    // Tạo và dispatch click event
+                    var click = new MouseEvent('click', {
+                        bubbles: true, cancelable: true, view: window,
+                        clientX: centerX, clientY: centerY
+                    });
+                    textarea.dispatchEvent(click);
+
+                    // Focus
+                    textarea.focus();
+
+                    return 'clicked';
+                })();
+            """)
+
+            if result == 'clicked':
+                self.log("✓ Clicked textarea (JS)")
+                time.sleep(0.3)
+                return True
+            elif result == 'not_found':
+                self.log("✗ Textarea not found", "ERROR")
+            return False
+        except Exception as e:
+            self.log(f"⚠️ Click textarea error: {e}", "WARN")
+            return False
+
     def _reset_tokens(self):
-        """Reset captured tokens trong browser. Giống batch_generator.py."""
+        """Reset captured tokens trong browser."""
         self.driver.run_js("""
             window.__interceptReady = false;
             window._tk = null;
@@ -992,6 +1181,13 @@ class DrissionFlowAPI:
             window._payload = null;
             window._sid = null;
             window._url = null;
+            window._response = null;
+            window._responseError = null;
+            window._requestPending = false;
+            window._customPayload = null;
+            window._videoResponse = null;
+            window._videoError = null;
+            window._videoPending = false;
         """)
 
     def _capture_tokens(self, prompt: str, timeout: int = 10) -> bool:
@@ -1236,6 +1432,134 @@ class DrissionFlowAPI:
         self.log(f"✓ Parsed {len(images)} images")
         return images
 
+    def generate_image_forward(
+        self,
+        prompt: str,
+        num_images: int = 1,
+        image_inputs: Optional[List[Dict]] = None,
+        timeout: int = 120
+    ) -> Tuple[List[GeneratedImage], Optional[str]]:
+        """
+        Generate image bằng MODIFY MODE - giữ nguyên Chrome's payload.
+
+        Flow:
+        1. Type FULL prompt vào Chrome textarea
+        2. Chrome tạo payload với model mới nhất + prompt enhancement + reCAPTCHA
+        3. Interceptor chỉ THÊM imageInputs (nếu có) vào payload
+        4. Forward request với tất cả settings gốc của Chrome
+        5. Capture response
+
+        Ưu điểm so với Custom Payload:
+        - Dùng model mới nhất của Google (không hardcode GEM_PIX)
+        - Giữ prompt enhancement của Chrome
+        - Giữ tất cả settings/parameters của Chrome
+        - Chất lượng ảnh tốt hơn
+
+        Args:
+            prompt: Prompt mô tả ảnh
+            num_images: Số ảnh cần tạo
+            image_inputs: Reference images [{name, inputType}] với name = media_id
+            timeout: Timeout đợi response (giây)
+
+        Returns:
+            Tuple[list of GeneratedImage, error message]
+        """
+        if not self._ready:
+            return [], "API chưa setup! Gọi setup() trước."
+
+        # 1. Reset state
+        self.driver.run_js("""
+            window._response = null;
+            window._responseError = null;
+            window._requestPending = false;
+            window._modifyConfig = null;
+        """)
+
+        # 2. MODIFY MODE: Luôn set imageCount=1, thêm imageInputs nếu có
+        # Chrome sẽ dùng model mới nhất, prompt enhancement, tất cả settings
+        modify_config = {
+            "imageCount": num_images if num_images else 1  # Luôn giới hạn số ảnh
+        }
+
+        if image_inputs and len(image_inputs) > 0:
+            modify_config["imageInputs"] = image_inputs
+            self.driver.run_js(f"window._modifyConfig = {json.dumps(modify_config)};")
+            self.log(f"→ MODIFY MODE: {len(image_inputs)} reference image(s), {modify_config['imageCount']} image(s)")
+        else:
+            self.driver.run_js(f"window._modifyConfig = {json.dumps(modify_config)};")
+            self.log(f"→ MODIFY MODE: {modify_config['imageCount']} image(s), no reference")
+
+        # 3. Tìm textarea và nhập prompt (giống phiên bản hoạt động)
+        self.log(f"→ Prompt: {prompt[:50]}...")
+        textarea = self._find_textarea()
+        if not textarea:
+            return [], "Không tìm thấy textarea"
+
+        # Click vào textarea trước (dùng DrissionPage click)
+        try:
+            textarea.click()
+            time.sleep(0.3)
+        except:
+            pass
+
+        textarea.clear()
+        time.sleep(0.2)
+        textarea.input(prompt)  # Type FULL prompt
+
+        # Đợi 2 giây để reCAPTCHA chuẩn bị token
+        time.sleep(2)
+
+        # Nhấn Enter để gửi
+        textarea.input('\n')
+        self.log("→ Pressed Enter to send")
+        self.log("→ Chrome đang gửi request...")
+
+        # 4. Đợi response từ browser (không gọi API riêng!)
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            result = self.driver.run_js("""
+                return {
+                    pending: window._requestPending,
+                    response: window._response,
+                    error: window._responseError
+                };
+            """)
+
+            if result.get('error'):
+                error_msg = result['error']
+                self.log(f"✗ Browser request error: {error_msg}", "ERROR")
+                return [], error_msg
+
+            if result.get('response'):
+                response_data = result['response']
+
+                # Check for API errors in response
+                if isinstance(response_data, dict):
+                    if response_data.get('error'):
+                        error_info = response_data['error']
+                        error_msg = f"{error_info.get('code', 'unknown')}: {error_info.get('message', str(error_info))}"
+                        self.log(f"✗ API Error: {error_msg}", "ERROR")
+                        return [], error_msg
+
+                    # Parse successful response
+                    images = self._parse_response(response_data)
+                    self.log(f"✓ Got {len(images)} images from browser!")
+
+                    # Clear modifyConfig for next request
+                    self.driver.run_js("window._modifyConfig = null;")
+
+                    # Đợi 3 giây để reCAPTCHA có thời gian regenerate token mới
+                    # Nếu không đợi, request tiếp theo sẽ bị 403
+                    time.sleep(3)
+
+                    return images, None
+
+            # Still pending or no response yet
+            time.sleep(0.5)
+
+        self.log("✗ Timeout đợi response từ browser", "ERROR")
+        return [], "Timeout waiting for browser response"
+
     def generate_image(
         self,
         prompt: str,
@@ -1267,12 +1591,14 @@ class DrissionFlowAPI:
             self.log(f"→ Using {len(image_inputs)} reference image(s)")
 
         for attempt in range(max_retries):
-            # 1. Capture tokens với prompt (mỗi lần retry lấy token mới)
-            if not self._capture_tokens(prompt):
-                return False, [], "Không capture được tokens"
-
-            # 2. Gọi API với image_inputs (reference images)
-            images, error = self.call_api(image_inputs=image_inputs)
+            # SỬ DỤNG FORWARD MODE - không cancel request
+            # reCAPTCHA token được dùng ngay (0.05s không bị expired)
+            images, error = self.generate_image_forward(
+                prompt=prompt,
+                num_images=1,
+                image_inputs=image_inputs,
+                timeout=90
+            )
 
             if error:
                 last_error = error
@@ -1332,6 +1658,16 @@ class DrissionFlowAPI:
 
                     return False, [], f"Quota exceeded sau {max_retries} lần thử. Hãy đổi proxy hoặc tài khoản."
 
+                # Nếu lỗi 500 (Internal Error), retry với delay
+                if "500" in error:
+                    self.log(f"⚠️ 500 Internal Error (attempt {attempt+1}/{max_retries})", "WARN")
+                    if attempt < max_retries - 1:
+                        self.log(f"  → Đợi 3s rồi retry...")
+                        time.sleep(3)
+                        continue
+                    else:
+                        return False, [], error
+
                 # Nếu lỗi 403, xoay IP và retry
                 if "403" in error:
                     self.log(f"⚠️ 403 error (attempt {attempt+1}/{max_retries})", "WARN")
@@ -1389,9 +1725,60 @@ class DrissionFlowAPI:
                         continue
                     else:
                         return False, [], error
-                else:
-                    # Lỗi khác, không retry
+
+                # === TIMEOUT ERROR: Tương tự 403, cần reset Chrome và đổi proxy ===
+                if "timeout" in error.lower():
+                    self.log(f"⚠️ Timeout error (attempt {attempt+1}/{max_retries}) - Reset Chrome...", "WARN")
+
+                    # Kill Chrome và đổi proxy
+                    self._kill_chrome()
+                    self.close()
+
+                    # === ROTATING ENDPOINT MODE ===
+                    if hasattr(self, '_is_rotating_mode') and self._is_rotating_mode:
+                        if hasattr(self, '_is_random_ip_mode') and self._is_random_ip_mode:
+                            self.log(f"  → 🎲 Random IP: Restart Chrome để lấy IP mới...")
+                        else:
+                            # Sticky Session mode: Tăng session ID
+                            self._rotating_session_id += 1
+                            if self._rotating_session_id > self._session_range_end:
+                                self._rotating_session_id = self._session_range_start
+                                self.log(f"  → ♻️ Hết dải, quay lại session {self._rotating_session_id}")
+                            else:
+                                self.log(f"  → Sticky: Đổi sang session {self._rotating_session_id}")
+                            _save_last_session_id(self._machine_id, self.worker_id, self._rotating_session_id)
+
+                        if attempt < max_retries - 1:
+                            time.sleep(3)
+                            if self.setup(project_url=getattr(self, '_current_project_url', None)):
+                                continue
+                            else:
+                                return False, [], "Không restart được Chrome sau timeout"
+                        else:
+                            return False, [], error
+
+                    # === DIRECT PROXY LIST MODE ===
+                    if self._use_webshare and self._webshare_proxy:
+                        success, msg = self._webshare_proxy.rotate_ip(self.worker_id, "Timeout")
+                        self.log(f"  → Webshare rotate [Worker {self.worker_id}]: {msg}", "WARN")
+
+                        if success and attempt < max_retries - 1:
+                            self.log("  → Restart Chrome với IP mới...")
+                            time.sleep(3)
+                            if self.setup(project_url=getattr(self, '_current_project_url', None)):
+                                continue
+                            else:
+                                return False, [], "Không restart được Chrome sau khi đổi proxy"
+
+                    if attempt < max_retries - 1:
+                        self.log(f"  → Đợi 5s rồi retry...", "WARN")
+                        time.sleep(5)
+                        if self.setup(project_url=getattr(self, '_current_project_url', None)):
+                            continue
                     return False, [], error
+
+                # Lỗi khác, không retry
+                return False, [], error
 
             if not images:
                 return False, [], "Không có ảnh trong response"
@@ -1464,22 +1851,12 @@ class DrissionFlowAPI:
         for i, prompt in enumerate(prompts):
             self.log(f"\n[{i+1}/{len(prompts)}] {prompt[:50]}...")
 
-            # Lần đầu capture tất cả, sau đó chỉ refresh recaptcha
-            if i == 0:
-                if not self._capture_tokens(prompt):
-                    results["failed"] += 1
-                    if on_progress:
-                        on_progress(i+1, len(prompts), False, "Không capture được tokens")
-                    continue
-            else:
-                if not self.refresh_recaptcha(prompt):
-                    results["failed"] += 1
-                    if on_progress:
-                        on_progress(i+1, len(prompts), False, "Không refresh được recaptcha")
-                    continue
-
-            # Gọi API
-            images, error = self.call_api()
+            # FORWARD MODE: Không cancel request, reCAPTCHA token còn fresh
+            images, error = self.generate_image_forward(
+                prompt=prompt,
+                num_images=1,
+                timeout=90
+            )
 
             if error:
                 results["failed"] += 1

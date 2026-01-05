@@ -887,7 +887,7 @@ class UnixVoiceToVideo:
         """Open settings dialog with all tools."""
         win = tk.Toplevel(self.root)
         win.title("⚙️ Cài đặt")
-        win.geometry("700x550")
+        win.geometry("700x700")
         win.transient(self.root)
         win.grab_set()
 
@@ -1501,6 +1501,7 @@ class UnixVoiceToVideo:
                     if proxy_file and Path(proxy_file).exists():
                         manager = init_proxy_manager(
                             proxy_file=proxy_file,
+                            rotating_endpoint=False,  # Explicitly disable rotating
                             force_reinit=True
                         )
                     else:
@@ -1508,12 +1509,34 @@ class UnixVoiceToVideo:
                         return
 
                     if manager.proxies:
-                        success, msg = manager.test_proxy(0)
+                        # Test first 5 proxies to find a working one
                         stats = manager.get_stats()
-                        if success:
-                            messagebox.showinfo("Test OK", f"Kết nối thành công!\n{msg}\n\nTotal: {stats['total']} proxies")
+                        working = 0
+                        failed = 0
+                        last_msg = ""
+
+                        for i in range(min(5, len(manager.proxies))):
+                            success, msg = manager.test_proxy(i)
+                            if success:
+                                working += 1
+                                last_msg = msg
+                            else:
+                                failed += 1
+
+                        if working > 0:
+                            messagebox.showinfo("Test OK",
+                                f"Direct Proxy List OK!\n\n"
+                                f"Tested: {working + failed} proxies\n"
+                                f"Working: {working}\n"
+                                f"Failed: {failed}\n\n"
+                                f"Total proxies: {stats['total']}\n\n"
+                                f"Last success: {last_msg}")
                         else:
-                            messagebox.showerror("Test Failed", f"Lỗi kết nối:\n{msg}")
+                            messagebox.showerror("Test Failed",
+                                f"Không proxy nào hoạt động!\n\n"
+                                f"Tested: {failed} proxies\n"
+                                f"Total: {stats['total']}\n\n"
+                                f"Proxies có thể đã hết hạn hoặc bị block.")
                     else:
                         messagebox.showerror("Lỗi", "Không load được proxy nào!")
             except Exception as e:
@@ -2201,16 +2224,20 @@ class UnixVoiceToVideo:
 
     def _process_batch(self):
         """
-        Process all pending voice files from batch_voice_folder - SEQUENTIAL.
+        Process all pending voice files from batch_voice_folder - PARALLEL mode.
 
-        Đơn giản: xử lý từng voice một, xong voice này mới đến voice tiếp theo.
-        Mỗi voice chạy như single file - mở Chrome mới, proxy mới.
+        Chạy song song nhiều voice cùng lúc, mỗi voice độc lập như chạy file đơn.
+        Mỗi worker có Chrome profile riêng, proxy riêng từ Direct list.
 
         Structure:
         - voice/AR16-T1/AR16-0035.mp3  →  PROJECTS/AR16-T1/...
         """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import threading
+
         try:
             from modules.smart_engine import SmartEngine
+            from modules.utils import load_settings
 
             # Create done folder if not exists
             self.batch_done_folder.mkdir(parents=True, exist_ok=True)
@@ -2249,35 +2276,58 @@ class UnixVoiceToVideo:
                 return
 
             total = len(pending_files)
-            self.log(f"📋 Tìm thấy {total} file cần xử lý - Chế độ TUẦN TỰ")
+
+            # === ĐỌC SỐ LUỒNG TỪ SETTINGS ===
+            settings = load_settings(Path("config/settings.yaml"))
+            max_workers = settings.get('parallel_voices', 2)  # Mặc định 2 luồng
+            max_workers = max(1, min(max_workers, 5))  # Giới hạn 1-5 luồng
+
+            self.log(f"📋 Tìm thấy {total} file cần xử lý")
+            self.log(f"⚡ Chế độ SONG SONG: {max_workers} luồng")
+            self.log(f"   Mỗi luồng = 1 Chrome profile riêng, proxy riêng")
             for i, f in enumerate(pending_files[:5]):
                 self.log(f"   {i+1}. {f['subfolder']}/{f['voice_path'].name}")
             if total > 5:
                 self.log(f"   ... và {total - 5} file khác")
 
-            # Results tracking
-            results = {"success": 0, "failed": 0}
+            # Thread-safe result tracking and worker_id assignment
+            results_lock = threading.Lock()
+            total_results = {"success": 0, "failed": 0, "completed": 0}
 
-            # Process each voice SEQUENTIALLY (like single mode)
-            for i, file_info in enumerate(pending_files):
-                if self._stop:
-                    self.log("⏹️ Đã dừng theo yêu cầu")
-                    break
+            # Map thread ID → worker_id (để mỗi thread có proxy riêng)
+            thread_worker_map = {}
+            next_worker_id = [0]  # Mutable để dùng trong closure
 
+            def get_worker_id_for_thread() -> int:
+                """Gán worker_id dựa trên thread thực tế."""
+                thread_id = threading.current_thread().ident
+                with results_lock:
+                    if thread_id not in thread_worker_map:
+                        thread_worker_map[thread_id] = next_worker_id[0]
+                        next_worker_id[0] += 1
+                    return thread_worker_map[thread_id]
+
+            def process_single_voice(file_info: dict) -> dict:
+                """Process a single voice file - GIỐNG HỆT chạy file đơn."""
+                import time as time_module
+                import shutil
+                start_time = time_module.time()
+
+                # Lấy worker_id dựa trên thread đang chạy
+                worker_id = get_worker_id_for_thread()
                 voice_path = file_info['voice_path']
                 output_folder = file_info['output_folder']
+                voice_name = voice_path.stem
+                result = {"voice": voice_name, "success": False, "error": None}
 
-                self.log("")
-                self.log("=" * 60)
-                self.log(f"[{i+1}/{total}] 📄 {file_info['subfolder']}/{voice_path.name}")
-                self.log("=" * 60)
+                self.root.after(0, lambda w=worker_id, v=voice_name:
+                    self.log(f"[Worker {w}] 🎬 BẮT ĐẦU: {v}"))
 
                 try:
                     output_folder.mkdir(parents=True, exist_ok=True)
 
-                    # Create new engine for each voice (like single mode)
-                    engine = SmartEngine()
-                    self._engine = engine
+                    # === TẠO ENGINE VỚI WORKER_ID ===
+                    engine = SmartEngine(worker_id=worker_id)
 
                     def log_cb(msg):
                         level = "INFO"
@@ -2287,47 +2337,45 @@ class UnixVoiceToVideo:
                             level = "ERROR"
                         elif "[WARN]" in msg or "⚠️" in msg:
                             level = "WARN"
-                        self.root.after(0, lambda m=msg, l=level: self.log(m, l))
+                        prefixed_msg = f"[W{worker_id}] {msg}"
+                        self.root.after(0, lambda m=prefixed_msg, l=level: self.log(m, l))
 
-                    # Run like single mode
-                    result = engine.run(
+                    # === CHẠY GIỐNG HỆT FILE ĐƠN ===
+                    engine_result = engine.run(
                         str(voice_path),
                         output_dir=str(output_folder),
                         callback=log_cb
                     )
 
-                    if result and result.get('success'):
-                        results["success"] += 1
-                        self.log(f"✅ Xong: {voice_path.name}", "OK")
+                    if engine_result and engine_result.get('success'):
+                        result["success"] = True
+                        elapsed = time_module.time() - start_time
+                        elapsed_min = int(elapsed // 60)
+                        elapsed_sec = int(elapsed % 60)
+                        self.root.after(0, lambda w=worker_id, v=voice_name, m=elapsed_min, s=elapsed_sec:
+                            self.log(f"[Worker {w}] ✅ XONG: {v} ({m}m {s}s)", "OK"))
 
                         # Cleanup voice files after success
                         try:
-                            import shutil
                             stem = voice_path.stem
                             parent_folder = voice_path.parent
                             voice_root = self.batch_voice_folder
 
-                            # 1. Xóa file voice chính
                             if voice_path.exists():
                                 voice_path.unlink()
-                                self.log(f"🗑️ Xóa: {voice_path.name}")
 
-                            # 2. Xóa .txt trong cùng thư mục
                             txt_in_folder = parent_folder / f"{stem}.txt"
                             if txt_in_folder.exists():
                                 txt_in_folder.unlink()
 
-                            # 3. Xóa .dgt trong cùng thư mục
                             dgt_in_folder = parent_folder / f"{stem}.dgt"
                             if dgt_in_folder.exists():
                                 dgt_in_folder.unlink()
 
-                            # 4. Xóa thư mục con
                             sub_folder = parent_folder / stem
                             if sub_folder.exists() and sub_folder.is_dir():
                                 shutil.rmtree(sub_folder)
 
-                            # 5. Lưu trữ .txt từ voice root
                             txt_in_root = voice_root / f"{stem}.txt"
                             if txt_in_root.exists():
                                 done_archive = voice_root / "done"
@@ -2335,33 +2383,74 @@ class UnixVoiceToVideo:
                                 shutil.copy2(txt_in_root, done_archive / f"{stem}.txt")
                                 txt_in_root.unlink()
 
-                            # 6. Xóa thư mục cha nếu rỗng
                             if parent_folder.exists() and not any(parent_folder.iterdir()):
                                 parent_folder.rmdir()
 
                         except Exception as del_err:
-                            self.log(f"⚠️ Lỗi cleanup: {del_err}", "WARN")
+                            self.root.after(0, lambda w=worker_id, e=del_err:
+                                self.log(f"[Worker {w}] ⚠️ Cleanup error: {e}", "WARN"))
                     else:
-                        results["failed"] += 1
-                        err_msg = result.get('error', 'Unknown') if result else 'No result'
-                        self.log(f"❌ Lỗi: {err_msg}", "ERROR")
+                        result["error"] = engine_result.get('error', 'Unknown') if engine_result else 'No result'
+                        self.root.after(0, lambda w=worker_id, v=voice_name, e=result["error"]:
+                            self.log(f"[Worker {w}] ❌ LỖI {v}: {e}", "ERROR"))
 
                 except Exception as e:
                     import traceback
                     traceback.print_exc()
-                    self.log(f"❌ Exception: {e}", "ERROR")
-                    results["failed"] += 1
+                    result["error"] = str(e)
+                    self.root.after(0, lambda w=worker_id, v=voice_name, err=e:
+                        self.log(f"[Worker {w}] ❌ Exception {v}: {err}", "ERROR"))
 
                 # Update progress
-                progress = ((i + 1) / total) * 100
+                with results_lock:
+                    total_results["completed"] += 1
+                    if result["success"]:
+                        total_results["success"] += 1
+                    else:
+                        total_results["failed"] += 1
+                    completed = total_results["completed"]
+
+                progress = (completed / total) * 100
                 self.root.after(0, lambda p=progress: self.progress_var.set(p))
-                self.root.after(0, lambda c=i+1, t=total, s=results['success'], f=results['failed']:
+                self.root.after(0, lambda c=completed, t=total, s=total_results['success'], f=total_results['failed']:
                     self.progress_label.config(text=f"Xong {c}/{t} | ✅ {s} | ❌ {f}"))
 
-            # Summary
+                return result
+
+            # Run workers in parallel
             self.log("")
             self.log("=" * 60)
-            self.log(f"📊 TỔNG KẾT: {results['success']} ✅ | {results['failed']} ❌", "OK")
+            self.log(f"🚀 CHẠY SONG SONG: {max_workers} luồng, {total} voices")
+            self.log("=" * 60)
+
+            import time as time_module
+            batch_start = time_module.time()
+
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                futures = {}
+                for i, file_info in enumerate(pending_files):
+                    if self._stop:
+                        break
+                    future = executor.submit(process_single_voice, file_info)
+                    futures[future] = file_info
+                    self.log(f"   📋 Queued: {file_info['project_name']} (position {i+1}/{total})")
+
+                for future in as_completed(futures):
+                    if self._stop:
+                        self.log("⏹️ Đang dừng...", "WARN")
+                        executor.shutdown(wait=False, cancel_futures=True)
+                        break
+
+            # Summary
+            total_elapsed = time_module.time() - batch_start
+            total_min = int(total_elapsed // 60)
+            total_sec = int(total_elapsed % 60)
+
+            self.log("")
+            self.log("=" * 60)
+            self.log(f"📊 TỔNG KẾT ({total_min}m {total_sec}s):")
+            self.log(f"   ✅ Thành công: {total_results['success']} voices")
+            self.log(f"   ❌ Thất bại: {total_results['failed']} voices")
             self.log("=" * 60)
 
             self.root.after(0, lambda: self.progress_var.set(100))

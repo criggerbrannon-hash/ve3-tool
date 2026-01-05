@@ -615,7 +615,7 @@ class PromptGenerator:
         self.ai_client = MultiAIClient(settings)
 
         # Scene grouping settings
-        self.min_scene_duration = settings.get("min_scene_duration", 3)  # Min 3s
+        self.min_scene_duration = settings.get("min_scene_duration", 5)  # Min 5s (đủ thời gian xem)
         self.max_scene_duration = settings.get("max_scene_duration", 8)  # Max 8s per scene
 
         # Parallel processing settings
@@ -3797,7 +3797,7 @@ Estimated Shots: {part_info.get('estimated_shots', 5)}
                     "story_beat": ai_data.get("story_beat", ""),
                     "start_time": start_time,
                     "end_time": end_time,
-                    "duration_seconds": duration,
+                    "duration": round(duration, 2),  # Duration từ SRT timing (3-8s)
                     "text": scene["text"],  # Keep for subtitle reference
                     "visual_moment": final_visual,  # Use AI visual, NOT narration!
                     "img_prompt": ai_img_prompt,  # NEW: Direct img_prompt from AI
@@ -3892,7 +3892,7 @@ Estimated Shots: {part_info.get('estimated_shots', 5)}
                 "story_beat": "",
                 "start_time": start_time,
                 "end_time": end_time,
-                "duration_seconds": duration,
+                "duration": round(duration, 2),  # Duration từ SRT timing (3-8s)
                 "text": scene["text"],
                 "visual_moment": scene["text"],
                 "shot_type": "Medium shot",
@@ -3984,7 +3984,7 @@ Estimated Shots: {part_info.get('estimated_shots', 5)}
                             "story_beat": scene.get("story_beat", ""),
                             "start_time": sub_start,
                             "end_time": sub_end,
-                            "duration_seconds": sub_duration,
+                            "duration": round(sub_duration, 2),  # Duration từ SRT timing
                             "text": sub["text"],
                             "visual_moment": scene.get("visual_moment", sub["text"]),
                             "shot_type": scene.get("shot_type", "Medium shot"),
@@ -4016,7 +4016,7 @@ Estimated Shots: {part_info.get('estimated_shots', 5)}
                             "story_beat": scene.get("story_beat", ""),
                             "start_time": sec_to_ts(part_start_sec),
                             "end_time": sec_to_ts(part_end_sec),
-                            "duration_seconds": part_end_sec - part_start_sec,
+                            "duration": round(part_end_sec - part_start_sec, 2),  # Duration từ split
                             "text": original_text,
                             "visual_moment": scene.get("visual_moment", original_text),
                             "shot_type": scene.get("shot_type", "Medium shot"),
