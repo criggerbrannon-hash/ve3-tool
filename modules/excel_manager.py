@@ -796,7 +796,9 @@ class PromptWorkbook:
             ws.cell(row=next_row, column=1, value=scene.get("scene_id", 0))
             ws.cell(row=next_row, column=2, value=scene.get("srt_start", ""))
             ws.cell(row=next_row, column=3, value=scene.get("srt_end", ""))
-            ws.cell(row=next_row, column=4, value=scene.get("duration", 0))
+            # Duration: handle cả "duration" và "duration_seconds" (3-8s từ SRT timing)
+            duration = scene.get("duration") or scene.get("duration_seconds") or 0
+            ws.cell(row=next_row, column=4, value=round(duration, 2) if duration else 0)
             ws.cell(row=next_row, column=5, value=scene.get("text", "")[:500])
             # New columns for backup
             ws.cell(row=next_row, column=6, value=scene.get("characters_used", "[]"))
