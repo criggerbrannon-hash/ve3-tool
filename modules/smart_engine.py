@@ -1222,11 +1222,75 @@ class SmartEngine:
     def _on_scenes_batch_ready(self, excel_path: Path, proj_dir: Path, saved_count: int, total_count: int):
         """
         Callback khi một batch scenes được save vào Excel.
-        Có thể trigger scene image generation ở đây.
+        Bắt đầu generate scene images song song nếu characters đã xong.
         """
         self.log(f"[PIPELINE] Scenes batch ready: {saved_count}/{total_count}")
-        # Scene image generation sẽ được xử lý trong run() sau khi prompts hoàn tất
-        # Vì cần đợi characters xong trước
+
+        # Kiểm tra xem characters đã xong chưa
+        if not hasattr(self, '_scenes_gen_started'):
+            self._scenes_gen_started = False
+            self._scenes_gen_queue = []
+
+        # Nếu character thread còn chạy, queue lại để xử lý sau
+        if self._character_gen_thread is not None and self._character_gen_thread.is_alive():
+            self.log(f"[PIPELINE] Characters chưa xong - queue {saved_count} scenes để đợi...")
+            self._scenes_gen_queue.append((excel_path, proj_dir, saved_count))
+            return
+
+        # Characters đã xong hoặc không có characters - bắt đầu generate scenes
+        if not self._scenes_gen_started:
+            self._scenes_gen_started = True
+            self.log(f"[PIPELINE] Bắt đầu generate scene images song song...")
+            self._start_scenes_generation_async(excel_path, proj_dir)
+
+    def _start_scenes_generation_async(self, excel_path: Path, proj_dir: Path):
+        """
+        Generate scene images trong background thread.
+        Được gọi khi characters đã xong và scenes đã ready.
+        """
+        def _worker():
+            try:
+                self.log("[PARALLEL-SCENES] Bắt đầu tạo ảnh scenes (background)...")
+
+                # Load scene prompts (không bao gồm characters)
+                scene_prompts = self._load_prompts(excel_path, proj_dir)
+
+                if not scene_prompts:
+                    self.log("[PARALLEL-SCENES] Không có scene prompts")
+                    return
+
+                self.log(f"[PARALLEL-SCENES] Tạo {len(scene_prompts)} ảnh scenes...")
+
+                # Check generation_mode setting
+                generation_mode = 'api'  # Default
+                try:
+                    import yaml
+                    settings_path = self.config_dir / "settings.yaml"
+                    if settings_path.exists():
+                        with open(settings_path, 'r', encoding='utf-8') as f:
+                            settings = yaml.safe_load(f) or {}
+                        generation_mode = settings.get('generation_mode', 'api')
+                except:
+                    pass
+
+                # Generate using correct mode
+                if generation_mode == 'api':
+                    self.log("[PARALLEL-SCENES] Dùng API MODE...")
+                    results = self.generate_images_api(scene_prompts, proj_dir)
+                else:
+                    self.log("[PARALLEL-SCENES] Dùng BROWSER MODE...")
+                    results = self.generate_images_browser(scene_prompts, proj_dir)
+
+                self._scenes_gen_result = results
+                self.log(f"[PARALLEL-SCENES] Xong! Success={results.get('success', 0)}, Failed={results.get('failed', 0)}")
+
+            except Exception as e:
+                self.log(f"[PARALLEL-SCENES] Lỗi: {e}", "ERROR")
+
+        # Start thread
+        self._scenes_gen_thread = threading.Thread(target=_worker, daemon=True)
+        self._scenes_gen_thread.start()
+        self.log("[PARALLEL-SCENES] Scene generation thread started!")
 
     # ========== IMAGE GENERATION ==========
 
