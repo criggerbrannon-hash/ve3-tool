@@ -1421,50 +1421,35 @@ class DrissionFlowAPI:
             window._responseError = null;
             window._requestPending = false;
             window._customPayload = null;
+            window._modifyConfig = null;
         """)
 
-        # 2. Chuẩn bị CUSTOM PAYLOAD (có đầy đủ media_id)
-        # Payload này sẽ THAY THẾ hoàn toàn body của Chrome
-        # Chỉ cần reCAPTCHA token từ Chrome
-        custom_payload = {
-            "clientContext": {
-                "tool": "PINHOLE",
-                "userPaygateTier": "PAYGATE_TIER_TWO",
-                # recaptchaToken, sessionId, projectId sẽ được inject từ Chrome
-            },
-            "requests": [{
-                "prompt": prompt,
-                "imageModelName": "GEM_PIX",
-                "imageAspectRatio": "IMAGE_ASPECT_RATIO_LANDSCAPE",
-                "seed": int(time.time()) % 100000
-            }]
-        }
+        # 2. Dùng MODIFY MODE: Chỉ thêm imageInputs vào Chrome's body
+        # KHÔNG thay thế body - giữ nguyên format của Google
+        modify_config = {}
 
         # Thêm reference images (media_id) nếu có
         if image_inputs:
-            custom_payload["requests"][0]["imageInputs"] = image_inputs
-            self.log(f"→ Custom payload với {len(image_inputs)} reference image(s)")
+            modify_config["imageInputs"] = image_inputs
+            self.log(f"→ MODIFY mode: Thêm {len(image_inputs)} reference image(s)")
 
         # Giới hạn số ảnh
-        if num_images and num_images > 1:
-            # Duplicate request cho nhiều ảnh
-            base_req = custom_payload["requests"][0].copy()
-            custom_payload["requests"] = [base_req.copy() for _ in range(num_images)]
-            for i, req in enumerate(custom_payload["requests"]):
-                req["seed"] = (int(time.time()) + i) % 100000
+        if num_images:
+            modify_config["imageCount"] = num_images
 
-        # 3. Lưu payload vào browser TRƯỚC khi trigger
-        self.driver.run_js(f"window._customPayload = {json.dumps(custom_payload)};")
+        # 3. Lưu config vào browser TRƯỚC khi trigger
+        if modify_config:
+            self.driver.run_js(f"window._modifyConfig = {json.dumps(modify_config)};")
 
-        # DEBUG: Verify payload was set
+        # DEBUG: Verify state
         debug_info = self.driver.run_js("""
             return {
-                customPayload: window._customPayload ? 'SET' : 'NULL',
+                modifyConfig: window._modifyConfig ? 'SET' : 'NULL',
                 interceptReady: window.__interceptReady,
-                fetchOverridden: window.fetch.toString().includes('intercepted') || window.fetch.toString().length > 100
+                fetchOverridden: window.fetch.toString().includes('orig') || window.fetch.toString().length > 100
             };
         """)
-        self.log(f"→ Custom payload ready (imageInputs: {len(image_inputs) if image_inputs else 0})")
+        self.log(f"→ Ready (imageInputs: {len(image_inputs) if image_inputs else 0})")
         self.log(f"  [DEBUG] State: {debug_info}")
 
         # 4. Trigger Chrome tạo reCAPTCHA
@@ -1475,10 +1460,12 @@ class DrissionFlowAPI:
 
         textarea.clear()
         time.sleep(0.2)
-        textarea.input(prompt[:20])  # Chỉ cần type một chút để trigger
 
-        # Đợi 2 giây để reCAPTCHA chuẩn bị token
-        time.sleep(2)
+        # MODIFY mode: Chrome gửi prompt thật, ta chỉ thêm imageInputs
+        textarea.input(prompt)
+
+        # Đợi 1 giây để UI update
+        time.sleep(1)
 
         textarea.input('\n')  # Enter để gửi - Chrome sẽ tạo request với fresh token
         self.log("→ Chrome đang tạo reCAPTCHA... Interceptor sẽ inject payload...")
@@ -1487,7 +1474,7 @@ class DrissionFlowAPI:
         time.sleep(0.5)
         post_state = self.driver.run_js("""
             return {
-                customPayload: window._customPayload ? 'STILL_SET' : 'CONSUMED',
+                modifyConfig: window._modifyConfig ? 'STILL_SET' : 'CONSUMED',
                 requestPending: window._requestPending,
                 lastRecaptcha: window._rct ? window._rct.substring(0, 20) + '...' : 'NULL',
                 url: window._url ? 'SET' : 'NULL'
