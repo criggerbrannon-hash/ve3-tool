@@ -1412,9 +1412,13 @@ class DrissionFlowAPI:
             return [], "Không tìm thấy textarea"
 
         textarea.clear()
-        time.sleep(0.1)
+        time.sleep(0.2)
         textarea.input(prompt)
-        time.sleep(0.1)
+
+        # Đợi 2 giây để reCAPTCHA chuẩn bị token TRƯỚC KHI gửi
+        # reCAPTCHA cần thời gian để validate user action
+        time.sleep(2)
+
         textarea.input('\n')  # Enter để gửi
         self.log("→ Đã gửi prompt, đợi browser forward request...")
 
