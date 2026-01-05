@@ -887,7 +887,7 @@ class UnixVoiceToVideo:
         """Open settings dialog with all tools."""
         win = tk.Toplevel(self.root)
         win.title("⚙️ Cài đặt")
-        win.geometry("700x550")
+        win.geometry("700x700")
         win.transient(self.root)
         win.grab_set()
 
