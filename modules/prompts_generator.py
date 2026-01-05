@@ -615,7 +615,7 @@ class PromptGenerator:
         self.ai_client = MultiAIClient(settings)
 
         # Scene grouping settings
-        self.min_scene_duration = settings.get("min_scene_duration", 3)  # Min 3s
+        self.min_scene_duration = settings.get("min_scene_duration", 5)  # Min 5s (đủ thời gian xem)
         self.max_scene_duration = settings.get("max_scene_duration", 8)  # Max 8s per scene
 
         # Parallel processing settings

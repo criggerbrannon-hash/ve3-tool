@@ -140,9 +140,9 @@ retry_count: 3
 wait_timeout: 30
 
 # Scene duration (giây) - thời lượng mỗi ảnh trong video
-# 3-8s: Video sinh động, nhiều ảnh
-# 15-25s: Ít ảnh hơn, mỗi ảnh hiển thị lâu hơn
-min_scene_duration: 3
+# 5-8s: Phù hợp với video (đủ thời gian để người xem nhìn rõ)
+# Video chuyên nghiệp thường dùng 5-8s mỗi scene
+min_scene_duration: 5
 max_scene_duration: 8
 
 # ============================================================================
