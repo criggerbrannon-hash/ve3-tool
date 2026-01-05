@@ -1447,7 +1447,17 @@ class DrissionFlowAPI:
 
         # 3. Lưu payload vào browser TRƯỚC khi trigger
         self.driver.run_js(f"window._customPayload = {json.dumps(custom_payload)};")
+
+        # DEBUG: Verify payload was set
+        debug_info = self.driver.run_js("""
+            return {
+                customPayload: window._customPayload ? 'SET' : 'NULL',
+                interceptReady: window.__interceptReady,
+                fetchOverridden: window.fetch.toString().includes('intercepted') || window.fetch.toString().length > 100
+            };
+        """)
         self.log(f"→ Custom payload ready (imageInputs: {len(image_inputs) if image_inputs else 0})")
+        self.log(f"  [DEBUG] State: {debug_info}")
 
         # 4. Trigger Chrome tạo reCAPTCHA
         self.log(f"→ Prompt: {prompt[:50]}...")
@@ -1464,6 +1474,18 @@ class DrissionFlowAPI:
 
         textarea.input('\n')  # Enter để gửi - Chrome sẽ tạo request với fresh token
         self.log("→ Chrome đang tạo reCAPTCHA... Interceptor sẽ inject payload...")
+
+        # DEBUG: Check interceptor state after trigger
+        time.sleep(0.5)
+        post_state = self.driver.run_js("""
+            return {
+                customPayload: window._customPayload ? 'STILL_SET' : 'CONSUMED',
+                requestPending: window._requestPending,
+                lastRecaptcha: window._rct ? window._rct.substring(0, 20) + '...' : 'NULL',
+                url: window._url ? 'SET' : 'NULL'
+            };
+        """)
+        self.log(f"  [DEBUG] Post-trigger: {post_state}")
 
         # 4. Đợi response từ browser (không gọi API riêng!)
         start_time = time.time()
