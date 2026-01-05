@@ -1424,33 +1424,18 @@ class DrissionFlowAPI:
             window._modifyConfig = null;
         """)
 
-        # 2. Dùng MODIFY MODE: Chỉ thêm imageInputs vào Chrome's body
-        # KHÔNG thay thế body - giữ nguyên format của Google
-        modify_config = {}
+        # 2. PASSTHROUGH MODE: Test không modify gì
+        # Nếu request nguyên bản vẫn 403 → vấn đề không phải do modify
+        self.log(f"→ PASSTHROUGH mode: Không modify, chỉ capture response")
 
-        # Thêm reference images (media_id) nếu có
-        if image_inputs:
-            modify_config["imageInputs"] = image_inputs
-            self.log(f"→ MODIFY mode: Thêm {len(image_inputs)} reference image(s)")
-
-        # Giới hạn số ảnh
-        if num_images:
-            modify_config["imageCount"] = num_images
-
-        # 3. Lưu config vào browser TRƯỚC khi trigger
-        if modify_config:
-            self.driver.run_js(f"window._modifyConfig = {json.dumps(modify_config)};")
-
-        # DEBUG: Verify state
+        # DEBUG: Verify interceptor active
         debug_info = self.driver.run_js("""
             return {
-                modifyConfig: window._modifyConfig ? 'SET' : 'NULL',
                 interceptReady: window.__interceptReady,
                 fetchOverridden: window.fetch.toString().includes('orig') || window.fetch.toString().length > 100
             };
         """)
-        self.log(f"→ Ready (imageInputs: {len(image_inputs) if image_inputs else 0})")
-        self.log(f"  [DEBUG] State: {debug_info}")
+        self.log(f"  [DEBUG] Interceptor: {debug_info}")
 
         # 4. Trigger Chrome tạo reCAPTCHA
         self.log(f"→ Prompt: {prompt[:50]}...")
@@ -1474,8 +1459,8 @@ class DrissionFlowAPI:
         time.sleep(0.5)
         post_state = self.driver.run_js("""
             return {
-                modifyConfig: window._modifyConfig ? 'STILL_SET' : 'CONSUMED',
                 requestPending: window._requestPending,
+                hasResponse: window._response ? 'YES' : 'NO',
                 lastRecaptcha: window._rct ? window._rct.substring(0, 20) + '...' : 'NULL',
                 url: window._url ? 'SET' : 'NULL'
             };
