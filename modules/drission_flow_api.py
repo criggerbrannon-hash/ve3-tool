@@ -1452,6 +1452,10 @@ class DrissionFlowAPI:
                     # Clear modifyConfig for next request
                     self.driver.run_js("window._modifyConfig = null;")
 
+                    # Đợi 3 giây để reCAPTCHA có thời gian regenerate token mới
+                    # Nếu không đợi, request tiếp theo sẽ bị 403
+                    time.sleep(3)
+
                     return images, None
 
             # Still pending or no response yet
