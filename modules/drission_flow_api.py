@@ -94,12 +94,12 @@ class GeneratedImage:
     local_path: Optional[Path] = None
 
 
-# JS Interceptor - MODIFY & FORWARD (không cancel)
-# reCAPTCHA token chỉ có 0.05s - phải forward ngay, không cancel!
+# JS Interceptor - INJECT CUSTOM PAYLOAD với reCAPTCHA token fresh
+# Flow: Python chuẩn bị payload (có media_id) → Chrome trigger reCAPTCHA → Inject token → Gửi ngay
 JS_INTERCEPTOR = '''
 window._tk=null;window._pj=null;window._xbv=null;window._rct=null;window._payload=null;window._sid=null;window._url=null;
 window._response=null;window._responseError=null;window._requestPending=false;
-window._modifyConfig=null; // {imageCount: N, imageInputs: [...]}
+window._customPayload=null; // Payload đầy đủ từ Python (có media_id)
 window._videoResponse=null;window._videoError=null;window._videoPending=false;
 
 (function(){
@@ -114,98 +114,108 @@ window._videoResponse=null;window._videoError=null;window._videoPending=false;
         // IMAGE GENERATION REQUESTS
         // ============================================
         if (urlStr.includes('aisandbox') && (urlStr.includes('batchGenerate') || urlStr.includes('flowMedia'))) {
-            console.log('[IMG] Request to:', urlStr);
+            console.log('[IMG] Request intercepted:', urlStr);
             window._requestPending = true;
             window._response = null;
             window._responseError = null;
-
-            // Capture URL
             window._url = urlStr;
 
-            // Extract projectId from URL
-            var match = urlStr.match(/\\/projects\\/([a-f0-9\\-]+)/i);
-            if (match && match[1]) {
-                window._pj = match[1];
-            }
-
-            // Capture từ headers
+            // Capture headers
             if (opts && opts.headers) {
                 var h = opts.headers;
                 if (h['Authorization']) {
                     window._tk = h['Authorization'].replace('Bearer ', '');
-                    console.log('[TOKEN] Bearer captured!');
                 }
                 if (h['x-browser-validation']) {
                     window._xbv = h['x-browser-validation'];
                 }
             }
 
-            // MODIFY payload nếu có config
-            if (opts && opts.body && window._modifyConfig) {
+            // Parse Chrome's original body để lấy reCAPTCHA token FRESH
+            var chromeBody = null;
+            var freshRecaptcha = null;
+            if (opts && opts.body) {
                 try {
-                    var body = JSON.parse(opts.body);
+                    chromeBody = JSON.parse(opts.body);
+                    // Lấy reCAPTCHA token từ Chrome (FRESH!)
+                    if (chromeBody.recaptchaToken) {
+                        freshRecaptcha = chromeBody.recaptchaToken;
+                    } else if (chromeBody.clientContext && chromeBody.clientContext.recaptchaToken) {
+                        freshRecaptcha = chromeBody.clientContext.recaptchaToken;
+                    }
+                    window._rct = freshRecaptcha;
+                    window._pj = chromeBody.clientContext ? chromeBody.clientContext.projectId : null;
+                    window._sid = chromeBody.clientContext ? chromeBody.clientContext.sessionId : null;
+                } catch(e) {
+                    console.log('[ERROR] Parse Chrome body failed:', e);
+                }
+            }
+
+            // ============================================
+            // CUSTOM PAYLOAD MODE: Thay thế body bằng payload của Python
+            // ============================================
+            if (window._customPayload && freshRecaptcha) {
+                try {
+                    var customBody = window._customPayload;
+
+                    // INJECT fresh reCAPTCHA token vào payload của chúng ta
+                    if (customBody.clientContext) {
+                        customBody.clientContext.recaptchaToken = freshRecaptcha;
+                        // Cũng copy sessionId và projectId
+                        if (chromeBody && chromeBody.clientContext) {
+                            customBody.clientContext.sessionId = chromeBody.clientContext.sessionId;
+                            customBody.clientContext.projectId = chromeBody.clientContext.projectId;
+                        }
+                    }
+
+                    // Thay thế body
+                    opts.body = JSON.stringify(customBody);
+                    console.log('[INJECT] Custom payload với fresh reCAPTCHA, gửi NGAY!');
+                    console.log('[INJECT] imageInputs:', customBody.requests[0].imageInputs ? customBody.requests[0].imageInputs.length : 0);
+
+                    // Clear để không dùng lại
+                    window._customPayload = null;
+                } catch(e) {
+                    console.log('[ERROR] Inject custom payload failed:', e);
+                }
+            }
+            // ============================================
+            // SIMPLE MODIFY MODE: Chỉ sửa imageCount/imageInputs
+            // ============================================
+            else if (window._modifyConfig && chromeBody) {
+                try {
                     var cfg = window._modifyConfig;
 
-                    // Capture tokens từ body gốc
-                    if (body.clientContext) {
-                        window._sid = body.clientContext.sessionId;
-                        if (!window._pj && body.clientContext.projectId) {
-                            window._pj = body.clientContext.projectId;
-                        }
-                    }
-                    if (body.recaptchaToken) {
-                        window._rct = body.recaptchaToken;
+                    if (cfg.imageCount && chromeBody.requests) {
+                        chromeBody.requests = chromeBody.requests.slice(0, cfg.imageCount);
                     }
 
-                    // Modify image count
-                    if (cfg.imageCount && body.requests) {
-                        var targetCount = cfg.imageCount;
-                        if (body.requests.length > targetCount) {
-                            body.requests = body.requests.slice(0, targetCount);
-                            console.log('[MODIFY] Image count: ' + body.requests.length + ' -> ' + targetCount);
-                        }
-                    }
-
-                    // Add reference images
-                    if (cfg.imageInputs && body.requests) {
-                        body.requests.forEach(function(req) {
+                    if (cfg.imageInputs && chromeBody.requests) {
+                        chromeBody.requests.forEach(function(req) {
                             req.imageInputs = cfg.imageInputs;
                         });
                         console.log('[MODIFY] Added ' + cfg.imageInputs.length + ' reference images');
                     }
 
-                    // Update payload
-                    opts.body = JSON.stringify(body);
-                    window._payload = opts.body;
-                    console.log('[MODIFY] Payload modified, forwarding with fresh reCAPTCHA token!');
+                    opts.body = JSON.stringify(chromeBody);
+                    window._modifyConfig = null;
                 } catch(e) {
                     console.log('[ERROR] Modify failed:', e);
                 }
-            } else if (opts && opts.body) {
-                // Just capture, no modify
-                window._payload = opts.body;
-                try {
-                    var body = JSON.parse(opts.body);
-                    if (body.clientContext) {
-                        window._sid = body.clientContext.sessionId;
-                        if (!window._pj) window._pj = body.clientContext.projectId;
-                    }
-                    if (body.recaptchaToken) window._rct = body.recaptchaToken;
-                } catch(e) {}
             }
 
-            // FORWARD request - reCAPTCHA token còn fresh
+            // FORWARD NGAY LẬP TỨC (trong 0.05s)
             try {
-                console.log('[IMG] Forwarding with fresh reCAPTCHA token...');
+                console.log('[FORWARD] Sending with fresh reCAPTCHA...');
                 var response = await orig.apply(this, [url, opts]);
                 var cloned = response.clone();
 
                 try {
                     var data = await cloned.json();
                     window._response = data;
-                    console.log('[IMG] Response captured! Status:', response.status);
+                    console.log('[RESPONSE] Status:', response.status);
                     if (data.media) {
-                        console.log('[IMG] Got ' + data.media.length + ' images');
+                        console.log('[RESPONSE] Got ' + data.media.length + ' images');
                     }
                 } catch(e) {
                     window._response = {status: response.status, error: 'parse_failed'};
@@ -214,7 +224,7 @@ window._videoResponse=null;window._videoError=null;window._videoPending=false;
                 window._requestPending = false;
                 return response;
             } catch(e) {
-                console.log('[IMG] Request failed:', e);
+                console.log('[ERROR] Request failed:', e);
                 window._responseError = e.toString();
                 window._requestPending = false;
                 throw e;
@@ -230,18 +240,12 @@ window._videoResponse=null;window._videoError=null;window._videoPending=false;
             window._videoResponse = null;
             window._videoError = null;
 
-            // Capture tokens từ headers
             if (opts && opts.headers) {
                 var h = opts.headers;
-                if (h['Authorization']) {
-                    window._tk = h['Authorization'].replace('Bearer ', '');
-                }
-                if (h['x-browser-validation']) {
-                    window._xbv = h['x-browser-validation'];
-                }
+                if (h['Authorization']) window._tk = h['Authorization'].replace('Bearer ', '');
+                if (h['x-browser-validation']) window._xbv = h['x-browser-validation'];
             }
 
-            // Capture tokens từ body
             if (opts && opts.body) {
                 try {
                     var body = JSON.parse(opts.body);
@@ -253,24 +257,17 @@ window._videoResponse=null;window._videoError=null;window._videoPending=false;
                 } catch(e) {}
             }
 
-            // FORWARD video request - reCAPTCHA token còn fresh
             try {
-                console.log('[VIDEO] Forwarding with fresh reCAPTCHA token...');
                 var response = await orig.apply(this, [url, opts]);
                 var cloned = response.clone();
-
                 try {
-                    var data = await cloned.json();
-                    window._videoResponse = data;
-                    console.log('[VIDEO] Response captured! Status:', response.status);
+                    window._videoResponse = await cloned.json();
                 } catch(e) {
                     window._videoResponse = {status: response.status, error: 'parse_failed'};
                 }
-
                 window._videoPending = false;
                 return response;
             } catch(e) {
-                console.log('[VIDEO] Request failed:', e);
                 window._videoError = e.toString();
                 window._videoPending = false;
                 throw e;
@@ -279,7 +276,7 @@ window._videoResponse=null;window._videoError=null;window._videoPending=false;
 
         return orig.apply(this, arguments);
     };
-    console.log('[INTERCEPTOR] Ready - IMAGE + VIDEO FORWARD mode');
+    console.log('[INTERCEPTOR] Ready - CUSTOM PAYLOAD INJECTION mode');
     return 'READY';
 })();
 '''
@@ -1106,7 +1103,7 @@ class DrissionFlowAPI:
             window._response = null;
             window._responseError = null;
             window._requestPending = false;
-            window._modifyConfig = null;
+            window._customPayload = null;
             window._videoResponse = null;
             window._videoError = null;
             window._videoPending = false;
@@ -1362,20 +1359,20 @@ class DrissionFlowAPI:
         timeout: int = 60
     ) -> Tuple[List[GeneratedImage], Optional[str]]:
         """
-        Generate image bằng FORWARD mode - không cancel request.
-        reCAPTCHA token được dùng ngay (0.05s không bị expired).
+        Generate image bằng CUSTOM PAYLOAD INJECTION mode.
 
         Flow:
-        1. Set modifyConfig (image count, reference images)
-        2. Gửi prompt qua textarea
-        3. Browser tự request với fresh reCAPTCHA token
-        4. Capture response từ browser
-        5. Parse và trả về images
+        1. Python chuẩn bị FULL payload (có prompt, imageInputs/media_id)
+        2. Lưu vào window._customPayload
+        3. Trigger Chrome gửi request (type prompt + Enter)
+        4. Chrome tạo reCAPTCHA token fresh
+        5. Interceptor INJECT token vào payload của ta và gửi NGAY (trong 0.05s)
+        6. Capture response
 
         Args:
             prompt: Prompt mô tả ảnh
             num_images: Số ảnh cần tạo
-            image_inputs: Reference images [{name, inputType}]
+            image_inputs: Reference images [{name, inputType}] với name = media_id
             timeout: Timeout đợi response (giây)
 
         Returns:
@@ -1389,23 +1386,43 @@ class DrissionFlowAPI:
             window._response = null;
             window._responseError = null;
             window._requestPending = false;
+            window._customPayload = null;
         """)
 
-        # 2. Set modify config TRƯỚC khi gửi prompt
-        modify_config = {}
-        if num_images:
-            modify_config['imageCount'] = num_images
+        # 2. Chuẩn bị CUSTOM PAYLOAD (có đầy đủ media_id)
+        # Payload này sẽ THAY THẾ hoàn toàn body của Chrome
+        # Chỉ cần reCAPTCHA token từ Chrome
+        custom_payload = {
+            "clientContext": {
+                "tool": "PINHOLE",
+                "userPaygateTier": "PAYGATE_TIER_TWO",
+                # recaptchaToken, sessionId, projectId sẽ được inject từ Chrome
+            },
+            "requests": [{
+                "prompt": prompt,
+                "aspectRatio": "ASPECT_RATIO_LANDSCAPE",
+                "seed": int(time.time()) % 100000
+            }]
+        }
+
+        # Thêm reference images (media_id) nếu có
         if image_inputs:
-            modify_config['imageInputs'] = image_inputs
-            self.log(f"→ Sẽ inject {len(image_inputs)} reference image(s)")
+            custom_payload["requests"][0]["imageInputs"] = image_inputs
+            self.log(f"→ Custom payload với {len(image_inputs)} reference image(s)")
 
-        if modify_config:
-            self.driver.run_js(f"window._modifyConfig = {json.dumps(modify_config)};")
-            self.log(f"→ ModifyConfig: imageCount={num_images}")
-        else:
-            self.driver.run_js("window._modifyConfig = null;")
+        # Giới hạn số ảnh
+        if num_images and num_images > 1:
+            # Duplicate request cho nhiều ảnh
+            base_req = custom_payload["requests"][0].copy()
+            custom_payload["requests"] = [base_req.copy() for _ in range(num_images)]
+            for i, req in enumerate(custom_payload["requests"]):
+                req["seed"] = (int(time.time()) + i) % 100000
 
-        # 3. Gửi prompt
+        # 3. Lưu payload vào browser TRƯỚC khi trigger
+        self.driver.run_js(f"window._customPayload = {json.dumps(custom_payload)};")
+        self.log(f"→ Custom payload ready (imageInputs: {len(image_inputs) if image_inputs else 0})")
+
+        # 4. Trigger Chrome tạo reCAPTCHA
         self.log(f"→ Prompt: {prompt[:50]}...")
         textarea = self._find_textarea()
         if not textarea:
@@ -1413,14 +1430,13 @@ class DrissionFlowAPI:
 
         textarea.clear()
         time.sleep(0.2)
-        textarea.input(prompt)
+        textarea.input(prompt[:20])  # Chỉ cần type một chút để trigger
 
-        # Đợi 2 giây để reCAPTCHA chuẩn bị token TRƯỚC KHI gửi
-        # reCAPTCHA cần thời gian để validate user action
+        # Đợi 2 giây để reCAPTCHA chuẩn bị token
         time.sleep(2)
 
-        textarea.input('\n')  # Enter để gửi
-        self.log("→ Đã gửi prompt, đợi browser forward request...")
+        textarea.input('\n')  # Enter để gửi - Chrome sẽ tạo request với fresh token
+        self.log("→ Chrome đang tạo reCAPTCHA... Interceptor sẽ inject payload...")
 
         # 4. Đợi response từ browser (không gọi API riêng!)
         start_time = time.time()
