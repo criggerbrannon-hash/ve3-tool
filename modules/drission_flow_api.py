@@ -94,12 +94,13 @@ class GeneratedImage:
     local_path: Optional[Path] = None
 
 
-# JS Interceptor - INJECT CUSTOM PAYLOAD với reCAPTCHA token fresh
-# Flow: Python chuẩn bị payload (có media_id) → Chrome trigger reCAPTCHA → Inject token → Gửi ngay
+# JS Interceptor - BLOCK Chrome's request, make our own API call
+# Flow: Chrome trigger → Capture reCAPTCHA → BLOCK Chrome → Call API with custom payload
 JS_INTERCEPTOR = '''
 window._tk=null;window._pj=null;window._xbv=null;window._rct=null;window._payload=null;window._sid=null;window._url=null;
 window._response=null;window._responseError=null;window._requestPending=false;
 window._customPayload=null; // Payload đầy đủ từ Python (có media_id)
+window._capturedHeaders=null; // Headers từ Chrome
 window._videoResponse=null;window._videoError=null;window._videoPending=false;
 
 (function(){
@@ -120,9 +121,11 @@ window._videoResponse=null;window._videoError=null;window._videoPending=false;
             window._responseError = null;
             window._url = urlStr;
 
-            // Capture headers
+            // Capture headers từ Chrome
+            var capturedHeaders = {};
             if (opts && opts.headers) {
                 var h = opts.headers;
+                capturedHeaders = Object.assign({}, h);
                 if (h['Authorization']) {
                     window._tk = h['Authorization'].replace('Bearer ', '');
                 }
@@ -130,14 +133,14 @@ window._videoResponse=null;window._videoError=null;window._videoPending=false;
                     window._xbv = h['x-browser-validation'];
                 }
             }
+            window._capturedHeaders = capturedHeaders;
 
-            // Parse Chrome's original body để lấy reCAPTCHA token FRESH
+            // Parse Chrome's body để lấy reCAPTCHA token FRESH
             var chromeBody = null;
             var freshRecaptcha = null;
             if (opts && opts.body) {
                 try {
                     chromeBody = JSON.parse(opts.body);
-                    // Lấy reCAPTCHA token từ Chrome (FRESH!)
                     if (chromeBody.recaptchaToken) {
                         freshRecaptcha = chromeBody.recaptchaToken;
                     } else if (chromeBody.clientContext && chromeBody.clientContext.recaptchaToken) {
@@ -152,61 +155,70 @@ window._videoResponse=null;window._videoError=null;window._videoPending=false;
             }
 
             // ============================================
-            // CUSTOM PAYLOAD MODE: Thay thế body bằng payload của Python
+            // BLOCK + API MODE: Chặn Chrome, gọi API riêng
             // ============================================
             if (window._customPayload && freshRecaptcha) {
                 try {
                     var customBody = window._customPayload;
 
-                    // INJECT fresh reCAPTCHA token vào payload của chúng ta
+                    // Inject reCAPTCHA và session info
                     if (customBody.clientContext) {
                         customBody.clientContext.recaptchaToken = freshRecaptcha;
-                        // Cũng copy sessionId và projectId
                         if (chromeBody && chromeBody.clientContext) {
                             customBody.clientContext.sessionId = chromeBody.clientContext.sessionId;
                             customBody.clientContext.projectId = chromeBody.clientContext.projectId;
                         }
                     }
 
-                    // Thay thế body
-                    opts.body = JSON.stringify(customBody);
-                    console.log('[INJECT] Custom payload với fresh reCAPTCHA, gửi NGAY!');
-                    console.log('[INJECT] imageInputs:', customBody.requests[0].imageInputs ? customBody.requests[0].imageInputs.length : 0);
+                    console.log('[BLOCK] Chặn Chrome request');
+                    console.log('[API] Gọi API riêng với custom payload');
+                    console.log('[API] imageInputs:', customBody.requests[0].imageInputs ? customBody.requests[0].imageInputs.length : 0);
 
                     // Clear để không dùng lại
                     window._customPayload = null;
-                } catch(e) {
-                    console.log('[ERROR] Inject custom payload failed:', e);
-                }
-            }
-            // ============================================
-            // SIMPLE MODIFY MODE: Chỉ sửa imageCount/imageInputs
-            // ============================================
-            else if (window._modifyConfig && chromeBody) {
-                try {
-                    var cfg = window._modifyConfig;
 
-                    if (cfg.imageCount && chromeBody.requests) {
-                        chromeBody.requests = chromeBody.requests.slice(0, cfg.imageCount);
-                    }
-
-                    if (cfg.imageInputs && chromeBody.requests) {
-                        chromeBody.requests.forEach(function(req) {
-                            req.imageInputs = cfg.imageInputs;
+                    // GỌI API RIÊNG (không dùng Chrome's request)
+                    try {
+                        var apiResponse = await orig.call(this, urlStr, {
+                            method: 'POST',
+                            headers: capturedHeaders,
+                            body: JSON.stringify(customBody)
                         });
-                        console.log('[MODIFY] Added ' + cfg.imageInputs.length + ' reference images');
+
+                        var cloned = apiResponse.clone();
+                        try {
+                            var data = await cloned.json();
+                            window._response = data;
+                            console.log('[API] Response status:', apiResponse.status);
+                            if (data.media) {
+                                console.log('[API] Got', data.media.length, 'images');
+                            }
+                        } catch(e) {
+                            window._response = {status: apiResponse.status, error: 'parse_failed'};
+                        }
+
+                        window._requestPending = false;
+
+                        // Trả về response cho Chrome (Chrome sẽ hiển thị kết quả)
+                        return apiResponse;
+
+                    } catch(e) {
+                        console.log('[API] Error:', e);
+                        window._responseError = e.toString();
+                        window._requestPending = false;
+                        throw e;
                     }
 
-                    opts.body = JSON.stringify(chromeBody);
-                    window._modifyConfig = null;
                 } catch(e) {
-                    console.log('[ERROR] Modify failed:', e);
+                    console.log('[ERROR] Custom payload failed:', e);
                 }
             }
 
-            // FORWARD NGAY LẬP TỨC (trong 0.05s)
+            // ============================================
+            // PASSTHROUGH: Không có custom payload, forward nguyên bản
+            // ============================================
             try {
-                console.log('[FORWARD] Sending with fresh reCAPTCHA...');
+                console.log('[PASSTHROUGH] Forward Chrome request');
                 var response = await orig.apply(this, [url, opts]);
                 var cloned = response.clone();
 
@@ -214,9 +226,6 @@ window._videoResponse=null;window._videoError=null;window._videoPending=false;
                     var data = await cloned.json();
                     window._response = data;
                     console.log('[RESPONSE] Status:', response.status);
-                    if (data.media) {
-                        console.log('[RESPONSE] Got ' + data.media.length + ' images');
-                    }
                 } catch(e) {
                     window._response = {status: response.status, error: 'parse_failed'};
                 }
