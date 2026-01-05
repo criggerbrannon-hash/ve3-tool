@@ -714,31 +714,47 @@ class WebshareProxyManager:
         return proxy.username, proxy.password
 
     def test_proxy(self, worker_id: int = None) -> Tuple[bool, str]:
-        """Test proxy của worker."""
+        """Test proxy của worker với nhiều URL fallback."""
         proxy = self.get_proxy_for_worker(worker_id) if worker_id is not None else None
         if not proxy and self.proxies:
             proxy = self.proxies[0]
         if not proxy:
             return False, "Không có proxy"
 
-        try:
-            start = time.time()
-            resp = requests.get(
-                "https://ipv4.webshare.io/",
-                proxies={"http": proxy.proxy_url, "https": proxy.proxy_url},
-                timeout=15
-            )
-            elapsed = time.time() - start
+        # Try multiple test URLs in case one is blocked
+        test_urls = [
+            ("http://ip-api.com/json", lambda r: r.json().get('query', r.text)),
+            ("https://api.ipify.org", lambda r: r.text.strip()),
+            ("https://httpbin.org/ip", lambda r: r.json().get('origin', r.text)),
+        ]
 
-            if resp.status_code == 200:
-                ip = resp.text.strip()
-                return True, f"OK! IP: {ip} ({elapsed:.1f}s)"
-            return False, f"HTTP {resp.status_code}"
+        last_error = ""
+        for url, extract_ip in test_urls:
+            try:
+                start = time.time()
+                resp = requests.get(
+                    url,
+                    proxies={"http": proxy.proxy_url, "https": proxy.proxy_url},
+                    timeout=10
+                )
+                elapsed = time.time() - start
 
-        except requests.exceptions.ProxyError as e:
-            return False, f"Proxy error: {e}"
-        except Exception as e:
-            return False, f"Error: {e}"
+                if resp.status_code == 200:
+                    try:
+                        ip = extract_ip(resp)
+                    except:
+                        ip = resp.text[:50]
+                    return True, f"OK! IP: {ip} ({elapsed:.1f}s) via {proxy.endpoint}"
+                last_error = f"HTTP {resp.status_code} from {url}"
+
+            except requests.exceptions.ProxyError as e:
+                last_error = f"Proxy error: {str(e)[:100]}"
+            except requests.exceptions.Timeout:
+                last_error = f"Timeout connecting to {url}"
+            except Exception as e:
+                last_error = f"Error: {str(e)[:100]}"
+
+        return False, last_error
 
     def get_stats(self) -> Dict:
         """Thống kê."""
