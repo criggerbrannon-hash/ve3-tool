@@ -898,15 +898,7 @@ class DrissionFlowAPI:
             self.log(f"✗ Chrome error: {e}", "ERROR")
             return False
 
-        # 3. QUAN TRỌNG: Inject interceptor TRƯỚC khi navigate
-        # Dùng CDP để inject script chạy trước mọi script khác của page
-        try:
-            self.driver.run_cdp('Page.addScriptToEvaluateOnNewDocument', source=JS_INTERCEPTOR)
-            self.log("✓ CDP: Interceptor sẽ chạy trước page scripts")
-        except Exception as e:
-            self.log(f"⚠️ CDP injection failed: {e}", "WARN")
-
-        # 4. Vào Google Flow (hoặc project cố định nếu có) - VỚI RETRY
+        # 3. Vào Google Flow (hoặc project cố định nếu có) - VỚI RETRY
         target_url = project_url if project_url else self.FLOW_URL
         self.log(f"Vào: {target_url[:60]}...")
 
@@ -1077,37 +1069,11 @@ class DrissionFlowAPI:
             if not self._warm_up_session():
                 self.log("⚠️ Warm up không thành công, tiếp tục...", "WARN")
 
-        # 7. Verify interceptor (đã inject qua CDP trước khi navigate)
-        self.log("Verify interceptor...")
-
-        # Đợi page ổn định
-        time.sleep(1)
-
-        # Verify interceptor is active (should be from CDP injection)
-        verify = self.driver.run_js("return window.__interceptReady === true ? 'ACTIVE' : 'INACTIVE';")
-
-        if verify == 'ACTIVE':
-            self.log(f"✓ Interceptor: ACTIVE (từ CDP injection)")
-        else:
-            # CDP injection có thể không hoạt động, thử inject thủ công
-            self.log("⚠️ CDP injection không hoạt động, thử inject thủ công...", "WARN")
-            self._reset_tokens()
-
-            # Retry inject 3 lần
-            result = None
-            for attempt in range(3):
-                try:
-                    result = self.driver.run_js(JS_INTERCEPTOR)
-                    if result in ['READY', 'ALREADY_READY']:
-                        break
-                    self.log(f"  Attempt {attempt+1}: {result}, retrying...")
-                    time.sleep(1)
-                except Exception as e:
-                    self.log(f"  Attempt {attempt+1} error: {e}")
-                    time.sleep(1)
-
-            verify = self.driver.run_js("return window.__interceptReady === true ? 'ACTIVE' : 'INACTIVE';")
-            self.log(f"  → Manual inject: {result} (verify: {verify})")
+        # 7. Inject interceptor (SAU khi warm up)
+        self.log("Inject interceptor...")
+        self._reset_tokens()
+        result = self.driver.run_js(JS_INTERCEPTOR)
+        self.log(f"✓ Interceptor: {result}")
 
         self._ready = True
         return True
@@ -1421,21 +1387,41 @@ class DrissionFlowAPI:
             window._responseError = null;
             window._requestPending = false;
             window._customPayload = null;
-            window._modifyConfig = null;
         """)
 
-        # 2. PASSTHROUGH MODE: Test không modify gì
-        # Nếu request nguyên bản vẫn 403 → vấn đề không phải do modify
-        self.log(f"→ PASSTHROUGH mode: Không modify, chỉ capture response")
+        # 2. Chuẩn bị CUSTOM PAYLOAD (có đầy đủ media_id)
+        # Payload này sẽ THAY THẾ hoàn toàn body của Chrome
+        # Chỉ cần reCAPTCHA token từ Chrome
+        custom_payload = {
+            "clientContext": {
+                "tool": "PINHOLE",
+                "userPaygateTier": "PAYGATE_TIER_TWO",
+                # recaptchaToken, sessionId, projectId sẽ được inject từ Chrome
+            },
+            "requests": [{
+                "prompt": prompt,
+                "imageModelName": "GEM_PIX",
+                "imageAspectRatio": "IMAGE_ASPECT_RATIO_LANDSCAPE",
+                "seed": int(time.time()) % 100000
+            }]
+        }
 
-        # DEBUG: Verify interceptor active
-        debug_info = self.driver.run_js("""
-            return {
-                interceptReady: window.__interceptReady,
-                fetchOverridden: window.fetch.toString().includes('orig') || window.fetch.toString().length > 100
-            };
-        """)
-        self.log(f"  [DEBUG] Interceptor: {debug_info}")
+        # Thêm reference images (media_id) nếu có
+        if image_inputs:
+            custom_payload["requests"][0]["imageInputs"] = image_inputs
+            self.log(f"→ Custom payload với {len(image_inputs)} reference image(s)")
+
+        # Giới hạn số ảnh
+        if num_images and num_images > 1:
+            # Duplicate request cho nhiều ảnh
+            base_req = custom_payload["requests"][0].copy()
+            custom_payload["requests"] = [base_req.copy() for _ in range(num_images)]
+            for i, req in enumerate(custom_payload["requests"]):
+                req["seed"] = (int(time.time()) + i) % 100000
+
+        # 3. Lưu payload vào browser TRƯỚC khi trigger
+        self.driver.run_js(f"window._customPayload = {json.dumps(custom_payload)};")
+        self.log(f"→ Custom payload ready (imageInputs: {len(image_inputs) if image_inputs else 0})")
 
         # 4. Trigger Chrome tạo reCAPTCHA
         self.log(f"→ Prompt: {prompt[:50]}...")
@@ -1445,27 +1431,13 @@ class DrissionFlowAPI:
 
         textarea.clear()
         time.sleep(0.2)
+        textarea.input(prompt[:20])  # Chỉ cần type một chút để trigger
 
-        # MODIFY mode: Chrome gửi prompt thật, ta chỉ thêm imageInputs
-        textarea.input(prompt)
-
-        # Đợi 1 giây để UI update
-        time.sleep(1)
+        # Đợi 2 giây để reCAPTCHA chuẩn bị token
+        time.sleep(2)
 
         textarea.input('\n')  # Enter để gửi - Chrome sẽ tạo request với fresh token
         self.log("→ Chrome đang tạo reCAPTCHA... Interceptor sẽ inject payload...")
-
-        # DEBUG: Check interceptor state after trigger
-        time.sleep(0.5)
-        post_state = self.driver.run_js("""
-            return {
-                requestPending: window._requestPending,
-                hasResponse: window._response ? 'YES' : 'NO',
-                lastRecaptcha: window._rct ? window._rct.substring(0, 20) + '...' : 'NULL',
-                url: window._url ? 'SET' : 'NULL'
-            };
-        """)
-        self.log(f"  [DEBUG] Post-trigger: {post_state}")
 
         # 4. Đợi response từ browser (không gọi API riêng!)
         start_time = time.time()
