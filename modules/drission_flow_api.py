@@ -1356,7 +1356,7 @@ class DrissionFlowAPI:
         prompt: str,
         num_images: int = 1,
         image_inputs: Optional[List[Dict]] = None,
-        timeout: int = 60
+        timeout: int = 120
     ) -> Tuple[List[GeneratedImage], Optional[str]]:
         """
         Generate image bằng CUSTOM PAYLOAD INJECTION mode.
