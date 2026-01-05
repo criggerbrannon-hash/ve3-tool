@@ -3076,6 +3076,50 @@ class BrowserFlowGenerator:
         for setup_attempt in range(MAX_SETUP_RETRIES):
             if drission_api.setup(project_url=saved_project_url):
                 setup_success = True
+
+                # === LƯU PROJECT URL VÀO EXCEL NGAY SAU KHI SETUP ===
+                # Đảm bảo 1 voice = 1 project link (không bị mất nếu fail giữa chừng)
+                new_project_url = getattr(drission_api, '_current_project_url', '')
+                if new_project_url and '/project/' in new_project_url and excel_path:
+                    try:
+                        import openpyxl
+                        wb = openpyxl.load_workbook(excel_path)
+                        if 'config' not in wb.sheetnames:
+                            wb.create_sheet('config')
+                        ws = wb['config']
+
+                        # Tìm hoặc thêm row cho flow_project_url
+                        found = False
+                        for row_num in range(2, ws.max_row + 1):
+                            if ws.cell(row=row_num, column=1).value == 'flow_project_url':
+                                ws.cell(row=row_num, column=2, value=new_project_url)
+                                found = True
+                                break
+                        if not found:
+                            next_row = ws.max_row + 1
+                            ws.cell(row=next_row, column=1, value='flow_project_url')
+                            ws.cell(row=next_row, column=2, value=new_project_url)
+
+                        # Cũng lưu chrome_profile_path
+                        profile_path = str(drission_api.profile_dir) if hasattr(drission_api, 'profile_dir') else ''
+                        if profile_path:
+                            found = False
+                            for row_num in range(2, ws.max_row + 1):
+                                if ws.cell(row=row_num, column=1).value == 'chrome_profile_path':
+                                    ws.cell(row=row_num, column=2, value=profile_path)
+                                    found = True
+                                    break
+                            if not found:
+                                next_row = ws.max_row + 1
+                                ws.cell(row=next_row, column=1, value='chrome_profile_path')
+                                ws.cell(row=next_row, column=2, value=profile_path)
+
+                        wb.save(excel_path)
+                        wb.close()
+                        self._log(f"✓ Lưu project URL vào Excel: {new_project_url[:50]}...")
+                    except Exception as e:
+                        self._log(f"⚠️ Không lưu được project URL: {e}", "warn")
+
                 break
             else:
                 self._log(f"❌ Setup failed (attempt {setup_attempt + 1}/{MAX_SETUP_RETRIES})", "error")
