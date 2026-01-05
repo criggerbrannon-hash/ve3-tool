@@ -1489,27 +1489,30 @@ class DrissionFlowAPI:
             self.driver.run_js(f"window._modifyConfig = {json.dumps(modify_config)};")
             self.log(f"→ MODIFY MODE: {modify_config['imageCount']} image(s), no reference")
 
-        # 3. CLICK VÀO TEXTAREA TRƯỚC (quan trọng!)
+        # 3. Tìm textarea và nhập prompt (giống phiên bản hoạt động)
         self.log(f"→ Prompt: {prompt[:50]}...")
-        if not self._click_textarea():
-            return [], "Không thể click vào textarea"
-
-        # 4. Tìm textarea và nhập prompt
         textarea = self._find_textarea()
         if not textarea:
             return [], "Không tìm thấy textarea"
 
+        # Click vào textarea trước (dùng DrissionPage click)
+        try:
+            textarea.click()
+            time.sleep(0.3)
+        except:
+            pass
+
         textarea.clear()
         time.sleep(0.2)
-        textarea.input(prompt)  # Type FULL prompt - Chrome sẽ dùng nguyên văn
+        textarea.input(prompt)  # Type FULL prompt
 
         # Đợi 2 giây để reCAPTCHA chuẩn bị token
         time.sleep(2)
 
-        # 5. Nhấn Enter để gửi
+        # Nhấn Enter để gửi
         textarea.input('\n')
         self.log("→ Pressed Enter to send")
-        self.log("→ Chrome đang gửi request... (giữ nguyên model + settings của Chrome)")
+        self.log("→ Chrome đang gửi request...")
 
         # 4. Đợi response từ browser (không gọi API riêng!)
         start_time = time.time()
