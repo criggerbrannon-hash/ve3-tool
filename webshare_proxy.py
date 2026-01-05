@@ -868,6 +868,10 @@ def init_proxy_manager(
         )
 
         # === ROTATING ENDPOINT MODE ===
+        if rotating_endpoint is False:
+            # Explicitly disable rotating mode (Direct Proxy List mode)
+            _manager.disable_rotating_endpoint()
+
         if rotating_endpoint:
             _manager.setup_rotating_endpoint(
                 host=rotating_host,

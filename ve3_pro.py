@@ -1501,6 +1501,7 @@ class UnixVoiceToVideo:
                     if proxy_file and Path(proxy_file).exists():
                         manager = init_proxy_manager(
                             proxy_file=proxy_file,
+                            rotating_endpoint=False,  # Explicitly disable rotating
                             force_reinit=True
                         )
                     else:
@@ -1508,12 +1509,34 @@ class UnixVoiceToVideo:
                         return
 
                     if manager.proxies:
-                        success, msg = manager.test_proxy(0)
+                        # Test first 5 proxies to find a working one
                         stats = manager.get_stats()
-                        if success:
-                            messagebox.showinfo("Test OK", f"Kết nối thành công!\n{msg}\n\nTotal: {stats['total']} proxies")
+                        working = 0
+                        failed = 0
+                        last_msg = ""
+
+                        for i in range(min(5, len(manager.proxies))):
+                            success, msg = manager.test_proxy(i)
+                            if success:
+                                working += 1
+                                last_msg = msg
+                            else:
+                                failed += 1
+
+                        if working > 0:
+                            messagebox.showinfo("Test OK",
+                                f"Direct Proxy List OK!\n\n"
+                                f"Tested: {working + failed} proxies\n"
+                                f"Working: {working}\n"
+                                f"Failed: {failed}\n\n"
+                                f"Total proxies: {stats['total']}\n\n"
+                                f"Last success: {last_msg}")
                         else:
-                            messagebox.showerror("Test Failed", f"Lỗi kết nối:\n{msg}")
+                            messagebox.showerror("Test Failed",
+                                f"Không proxy nào hoạt động!\n\n"
+                                f"Tested: {failed} proxies\n"
+                                f"Total: {stats['total']}\n\n"
+                                f"Proxies có thể đã hết hạn hoặc bị block.")
                     else:
                         messagebox.showerror("Lỗi", "Không load được proxy nào!")
             except Exception as e:
