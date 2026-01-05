@@ -1400,7 +1400,8 @@ class DrissionFlowAPI:
             },
             "requests": [{
                 "prompt": prompt,
-                "aspectRatio": "ASPECT_RATIO_LANDSCAPE",
+                "imageModelName": "GEM_PIX",
+                "imageAspectRatio": "IMAGE_ASPECT_RATIO_LANDSCAPE",
                 "seed": int(time.time()) % 100000
             }]
         }
