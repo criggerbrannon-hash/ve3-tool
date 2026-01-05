@@ -568,6 +568,19 @@ class DrissionFlowAPI:
             current_url = self.driver.url
             if "/project/" in current_url:
                 self.log(f"✓ Đã vào dự án!")
+
+                # Quan trọng: Chọn "Tạo hình ảnh" từ dropdown
+                time.sleep(1)
+                for j in range(10):
+                    result = self.driver.run_js(JS_SELECT_IMAGE_MODE)
+                    if result == 'CLICKED':
+                        self.log("✓ Chọn 'Tạo hình ảnh'")
+                        time.sleep(1)
+                        break
+                    time.sleep(0.5)
+                else:
+                    self.log("⚠️ Không tìm thấy dropdown 'Tạo hình ảnh'", "WARN")
+
                 return True
             time.sleep(1)
 
@@ -1052,6 +1065,15 @@ class DrissionFlowAPI:
                         self.log(f"  → New project URL saved")
             else:
                 self.log("✓ Đã ở trong project!")
+                # Chọn "Tạo hình ảnh" từ dropdown
+                time.sleep(1)
+                for j in range(10):
+                    result = self.driver.run_js(JS_SELECT_IMAGE_MODE)
+                    if result == 'CLICKED':
+                        self.log("✓ Chọn 'Tạo hình ảnh'")
+                        time.sleep(1)
+                        break
+                    time.sleep(0.5)
 
         # 5. Đợi textarea sẵn sàng
         self.log("Đợi project load...")
@@ -1568,6 +1590,16 @@ class DrissionFlowAPI:
                             continue
 
                     return False, [], f"Quota exceeded sau {max_retries} lần thử. Hãy đổi proxy hoặc tài khoản."
+
+                # Nếu lỗi 500 (Internal Error), retry với delay
+                if "500" in error:
+                    self.log(f"⚠️ 500 Internal Error (attempt {attempt+1}/{max_retries})", "WARN")
+                    if attempt < max_retries - 1:
+                        self.log(f"  → Đợi 3s rồi retry...")
+                        time.sleep(3)
+                        continue
+                    else:
+                        return False, [], error
 
                 # Nếu lỗi 403, xoay IP và retry
                 if "403" in error:
